@@ -1,0 +1,1699 @@
+Title: Composing Non-Conjugate Factor Graphs with Closed-Form Variational Inference
+
+URL Source: https://arxiv.org/pdf/2605.29467v1
+
+Published Time: Fri, 29 May 2026 00:45:32 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Composing Non-Conjugate Factor Graphs with Closed-Form Variational Inference 
+
+Mykola Lukashchuk Eindhoven University of Technology, the Netherlands 
+
+Kyrylo Yemets Lviv Polytechnic National University, Lviv, Ukraine 
+
+Wouter M. Kouw Eindhoven University of Technology, the Netherlands 
+
+Dmitry Bagaev Eindhoven University of Technology, the Netherlands 
+
+İsmail Şenöz Lazy Dynamics, Utrecht, the Netherlands 
+
+Jeff Beck Great Sky, Boulder, Colorado, USA 
+
+Bert de Vries Eindhoven University of Technology, the Netherlands 
+
+# Abstract 
+
+Stacking probabilistic building blocks into deeper architectures typically breaks closed-form inference. We show that closed-form inference can be preserved. We identify five factor-graph primitives: a bilinear factor, an exponential link, a Gamma prior, a Gaussian likelihood, and an equality node, and prove that any model composed from them admits closed-form variational message passing. The construction works because each primitive preserves a small set of message families: under mean-field factorization, messages on Gaussian variables remain Gaussian and messages on precision variables remain Gamma, while the only non-conjugate interface, the exponential link, remains tractable through the Gaussian moment-generating function and the sufficient statistics of the Gamma family. We demonstrate composition at increasing depth, from static ensembles through input-dependent gating to split-branch routing, and show that stacking routing layers encodes arbitrary decision trees, establishing universal function approximation with closed-form inference. Applied to ensemble time-series forecasting, the framework yields a Bayesian mixture of experts in which gating functions are inferred rather than learned, providing calibrated uncertainty over expert selection across five benchmark datasets. 
+
+Accepted to ProbNum 2026. OpenReview record will be accessible after the camera-ready deadline: 
+
+https://openreview.net/forum?id=fi4qX94LI8 .
+
+# 1 Introduction 
+
+In deterministic computation, building hierarchical sys-tems is straightforward. Functions call functions, ex-pressions nest within expressions, and complexity grows without any fundamental barrier. Languages and com-pilers execute such computational graphs step by step. Probabilistic models need the same kind of hierarchy to be expressive enough. Consider ensemble forecasting: a simple model assigns a fixed precision to each expert, but what if an expert’s reliability varies with the in-put? Then precision itself becomes a learned function of the input features, and that function should carry its own uncertainty. What if different experts are relevant in different regions of the input space? Then a rout-ing layer must select among experts, adding another level of probabilistic structure on top. Each layer adds modeling power, and each layer should propagate uncer-tainty. Yet, stacking probabilistic building blocks into deeper architectures typically leads to intractable oper-ations. The field has responded by developing increas-ingly powerful black-box inference methods: Markov chain Monte Carlo (Neal, 2011), black-box variational inference (Ranganath et al., 2014), amortized variational autoencoders (Kingma and Welling, 2013), normaliz-ing flows (Rezende and Mohamed, 2015), and diffusion models (Ho et al., 2020). These approaches handle non-conjugacy by learning or sampling the inference proce-dure but sacrifice closed-form tractability in the process. We take a different path. Rather than improving black-box inference to handle with compositional models, we ask: can probabilistic models compose hierarchically while retaining closed-form inference? Structural constraints on the approximate posterior—mean-field factorization and exponential-family form constraints—are known to reduce variational inference to closed-form updates in favorable settings. Message passing algorithms that minimize the Bethe free energy (Yedidia et al., 2005; Senöz et al., 2021) provide the execution mechanism. We show how to choose and compose fundamental prob-abilistic building blocks such that closed-form inference is preserved at every level of nesting. The paper is organized around an analogy with pro-gramming languages: an alphabet of building blocks (Section 2), a grammar for composing them into mod-els of increasing depth (Section 3), and a runtime in which form constraints and the Bethe free energy yield closed-form message passing derived from the model, not prescribed by the modeler (Section 4). We make the following contributions: 1. We identify a five-letter alphabet of building blocks. The set is sufficient for universal approximation and closed under Q-conjugate variational message 1
+
+> arXiv:2605.29467v1 [cs.LG] 28 May 2026
+
+passing, so any composed model admits closed-form updates. 2. We demonstrate composition at increasing depth: a static ensemble, input-dependent gating, and split-branch routing with piecewise-linear bound-aries. Stacking routing layers encodes arbitrary decision trees, establishing universal function ap-proximation. 3. We apply the framework to ensemble forecasting, yielding a Bayesian mixture of experts in which gating functions are inferred rather than learned, providing principled uncertainty over expert se-lection. 
+
+# 2 The Alphabet 
+
+We seek a set of probabilistic factors from which arbi-trarily expressive models can be composed while retain-ing closed-form inference. We identify five such factors (Fig. 1). Sub-labels (a)–(e) match between figure and equation; edge styles encode variable roles: solid for weights and observations ( w, ϕ, y, μ), dashed for preci-sions ( τ , γ, β), and dash-dotted for the latent z.This set is sufficient for universal approximation (Corol-lary 1) and closed under Q-conjugate variational mes-sage passing (Theorems 1 and 2); we do not claim min-imum cardinality. 
+
+f∗(z | w, ϕ, τ ) = N (z | w⊤ϕ, τ −1), (1a) 
+
+fexp (γ | z) = δ(γ − exp( z)), (1b) 
+
+fG (γ | α, β) = G(γ | α, β), (1c) 
+
+fN (y | μ, τ ) = N (y | μ, τ −1), (1d) 
+
+f=(x1, x2, x3) = δ(x1 − x2) δ(x1 − x3). (1e) When y and μ are vectors, the normal factor (1d) de-notes N (y | μ, τ −1I), i.e. a multivariate Gaussian whose covariance is a scalar precision τ shared across all di-mensions. In this paper, we compose these factors into Forney-style factor graphs (FFG) (Forney, 2001; Loeliger, 2004). In an FFG, square nodes represent factors and edges represent variables; each expression above becomes one node. For instance, the square labeled ∗ in Fig. 1 a is the factor f∗ from (1a), and its four edges are the variables w, ϕ, τ , and z. Two factors that share a vari-able are connected by the same edge; composing models amounts to connecting nodes via shared edges. 
+
+# 3 The Grammar 
+
+This section shows how to write models in the factor-graph language. We start with one simple translation exercise: write a familiar probabilistic model as a graph (Depth 0). Then we extend it by composition: first by introducing a reusable word (Depth 1), followed by com-posing larger words for richer sentences (Depth 2). Run-time and update rules are deferred to Section 4. Readers who prefer an executable description may consult Sec-tion D, which provides the GraphPPL.jl (Nuijten et al., 2024) code corresponding to each factor graph in this section. 
+
+## 3.1 From letters to a model 
+
+Given n forecasters with predictions ˆyi,j for observa-tion yj , the Depth-0 smoothing problem is to infer the forecaster precisions from paired observations and pre-dictions: 
+
+p(γ | y, ˆy) ∝
+
+> n
+
+Y
+
+> i=1
+
+fG (γi | αi, βi)
+
+> n,m
+
+Y
+
+> i=1
+> j=1
+
+fN (ˆ yi,j | yj , γi). 
+
+(2) The conditional notation in (2) names the inference task, not a directed sampling order. Since the pre-ceding section introduced local factor functions rather than a complete joint distribution, for now (2) should be read simply as “infer γ given observed targets and fore-caster predictions.” The runtime later explains how the same product of local factors induces different message-passing problems depending on which variables are ob-served and which are left latent. The factor graph is a direct letter-by-letter transcription of this product: one gamma prior letter fG per expert, one normal let-ter fN per expert-observation pair, and equality letters that share γi across observations and yj across experts. Figure 2 shows the fragment for expert i=1 and obser-vation j=1 ; dotted edges indicate repetition over the remaining indices. The executable GraphPPL.jl code for this model is given in Section D.1. 
+
+## 3.2 Defining a new word 
+
+To make the precision variables γi input-dependent, we define one reusable word. This is composed of the soft-dot (1a) node with an exponential link (1b), which gives the precision word π (Fig. 3), mapping (w, ϕ, τ ) to γ.Writing a Depth-1 sentence means replacing each Depth-0 precision letter fG (γi | αi, βi) with π, and adding shared parameter nodes (wi, τi). The right-hand likeli-hood part is unchanged; only the precision-generation part is replaced. Figure 3c shows this pattern. We call this sentence family Precision-Gated Experts (PGE). 
+
+## 3.3 Writing richer sentences 
+
+The Depth-1 precision word π maps w⊤ϕ(x) through an exponential link, so γ grows monotonically with the linear score: wherever w⊤ϕ is large, γ is large too. A single π can therefore only cut the input space with one hyperplane, producing two regions. To express patterns like an exclusive-or (XOR) relation, which requires at least four regions, we need to compose a larger word from the same alphabet letters (Fig. 4). The key idea is to create two branches that compete. A router softdot produces a score h from routing weights 
+
+vi and features ϕ(xj ). h is then taken by two switch 2∗                                      
+
+> ϕ
+> w
+> τ
+> z
+> (a) softdot
+> exp
+> z
+> γ
+> (b) exp link
+> Gα
+> β
+> γ
+> (c) gamma
+> N
+> y
+> μ
+> τ
+> (d) normal
+> =
+> (e) equality
+> Figure 1: The building blocks as factor graph nodes. Square nodes are factors; round nodes represent neighboring nodes to which these factors connect (e.g., priors, likelihoods, or other factors sharing the same variable). Filled black squares denote clamped
+> variables: fixed numerical values that cannot be connected to other factors (e.g., the shape αof the gamma factor). This clamped notation is used throughout for any factor edge that carries a fixed constant rather than a latent. Orientation markers on the softdot factor (filled semi-circle on the wside, open on the ϕside) allow edge roles to be identified even when the node is rotated in composed graphs. Edge styles distinguish variable roles: solid for weights, features, and observations ( w,ϕ,y,μ), dashed for precisions ( τ,γ,β), and dash-dotted for the latent z. The equality node enforces that all connected edges carry the same variable. Composing models amounts to connecting factors via shared variable edges of the same line type.
+> G
+> β1
+> α1=
+> γ1
+> ...
+> N
+> ˆy1,1
+> =
+> y1
+> y1
+> · · ·
+> Figure 2: Depth 0 factor graph (static ensemble), shown start-ing from expert i=1 and observation j=1 .The vertical dots ...on the γ1equality node extend to the other observations
+> j= 2, . . . ,m; the horizontal dots · · · on the y1equality node extends to the other n−1experts.
+
+softdots with opposing signs, followed by exponential links: when h > 0 the left switch produces a large ac-tivation κL and the right switch a small κR, and vice versa. Each branch has its own precision word π (with separate weights wi and ui), whose output feeds into a normal factor gated by the switch activation κb. A large 
+
+κb makes that normal factor tight, forcing the branch to pass its sub-expert score through; a small κb leaves the normal diffuse and the branch negligible. After a fi-nal exponential link and likelihood, both branches share the observation yj through an equality node. The result is a piecewise-linear precision function: the router se-lects which sub-expert controls γ in each region of input space. Two experts with split-branch routing partition the input into four regions, which is sufficient to capture XOR. Stacking split-branch layers yields deeper sen-tences encoding arbitrary binary decision trees; the for-mal expressiveness argument is deferred to Section 5. 
+
+# 4 The Runtime 
+
+The inference algorithm for any model composed of the alphabet of Section 2 is not prescribed by the mod-eler but emerges from the model specification (Senöz et al., 2021; Yedidia et al., 2005). Executing inference requires two alternating operations: computing a mes-sage from a factor toward an edge, and computing the marginal on an edge from incoming messages. This sec-tion shows that both operations have closed-form so-lutions of known parametric form for any factor graph composed from the alphabet. 
+
+## 4.1 Declarative inference 
+
+The modeler specifies four things: 1. A graph : a Forney-style factor graph assembled from the five alphabet letters (1). 2. Terminations : observation or unity factors at-tached to half-edges (edges connected to only one factor), determining which variables are observed or latent. 3. Factorization constraints : a mean-field decom-position of the approximate posterior, e.g., 
+
+q(w, τ , z) = Y
+
+> i
+
+q(wi) q(τi) Y
+
+> j
+
+q(zi,j ) . 
+
+4. Form constraints : the exponential-family form for each marginal (Gaussian for solid and dash-dot edges, Gamma for dashed edges). A terminated graph defines a conditional distribution after normalization; Section A.2 illustrates this on the Depth-0 model. Given these declarations, the Bethe free energy (BFE) provides the variational objective (Section A.3). Two message passing algorithms emerge from the BFE stationarity conditions (Section A.4): vari-ational message passing (VMP) emerges when mean-field factorization constraints are imposed, and belief propagation (BP) emerges in the unconstrained case. Around deterministic factors such as the exponential link (1b), mean-field factorization cannot be imposed without degeneracy, so BP is the only option there. Both algorithms produce messages sent along edges; the difference is what information they require as input. 
+
+## 4.2 Computing messages 
+
+A VMP message from factor a toward edge j (Eq. (22)) requires only the marginals qi(si) on the remaining edges 
+
+i ∈ E (a) \ j. Suppose that each marginal has the para-metric form indicated by its line style: Gaussian for solid and dash-dot edges, Gamma for dashed edges. Then the message computation depends only on the fac-tor a and the line types of its other edges—not on the rest of the graph. The line styles introduced in Section 2 3∗ exp 
+
+> zw
+> ϕ
+> τ
+> γ
+
+(a) Expanded 
+
+> π
+> w
+> ϕ
+> τ
+> γ
+
+(b) Compact     
+
+> N=
+> w1· · ·
+> G=
+> τ1
+> · · ·
+> πϕ(x1)Nγ1,1
+> ˆy1,1
+> =
+> y1
+> y1
+> · · ·
+
+(c) Depth 1 (PGE) Figure 3: The precision word π and Depth-1 model. (a) Internal structure: a softdot and exponential link connected by latent z,computing input-dependent precision γ from w, ϕ, and τ . (b) Compact notation; double border indicates a composite word, filled semi-circle marks the τ (input precision) side. (c) Depth 1 factor graph (Precision-Gated Experts) for expert i=1 , observation 
+
+j=1 : compared to Depth 0 (Fig. 2), the gamma prior is replaced by π, producing input-dependent γ1,1 . Weights w1 and τ1 are shared across observations ( · · · ).     
+
+> ∗
+> ϕ(xj)
+> vi
+> τ
+> =
+> h
+> π
+> −1
+> τ
+> π
+> +1
+> τ
+> N
+> κR
+> ∗wi
+> ϕ(xj)
+> τe
+> zR
+> exp
+> mR
+> N
+> γR
+> ˆyi,j
+> N
+> κL
+> ∗ui
+> ϕ(xj)
+> τe
+> zL
+> exp
+> mLN
+> γL
+> ˆyi,j
+> =
+> yj
+> yj
+> · · ·
+
+Figure 4: Depth 2 factor graph (split-branch routing) for one expert, one observation. The router softdot produces h; two switch 
+
+π words with clamped weights −1 and +1 convert h into opposing activations κR , κL. Each branch has a sub-expert softdot producing zb , gated by a normal factor whose precision is κb : the active branch ( κ large) passes zb tightly, while the suppressed branch ( κ small) is diffuse. After exponential links and likelihoods, both branches share yj via the equality node. 
+
+act as a type system: given marginals of the matching types, every VMP message is determined locally. A BP message from factor a toward edge j (Eq. (19)) requires the incoming messages μia (si) on the remain-ing edges, not marginals. The form of these messages depends on what is connected on the other side of those edges, so the line-type argument does not apply directly. In our alphabet, two factors require BP: the equality node (1e) and the exponential link (1b). Both are de-terministic (delta functions) and cannot be mean-field factorized without degeneracy. The equality node is trivial—its BP message toward any edge is the prod-uct of incoming messages from the other edges, which preserves the message type. The exponential link is the non-trivial case: as a nonlinear deterministic factor, it cannot be mean-field factorized, so imposing q(z) q(γ)
+
+with the constraint γ = ez would force both marginals to be degenerate. However, every factor adjacent to the exp link is mean-field factorized, so the messages arriving at the exp link have known forms. On the z edge (Fig. 5b), the only possible neighbors are the softdot (1a), the normal fac-tor (1d), and the equality node (1e)—and each sends a Gaussian message under the mean-field assumption. In every case, the incoming message on z is Gaussian. The BP rule through the delta function then gives 
+
+μγ←exp (γ) = 
+
+Z
+
+δ(γ − ez ) μz→exp (z) d z, (3) which is always a log-normal distribution on γ. The same enumeration on the γ edge (normal (1d), soft-dot (1a), gamma (1c), or equality (1e) as neighbors) shows that the incoming message is always Gamma-typed. The BP rule in the γ → z direction then pro-duces a log-gamma distribution on z (Lukashchuk et al., 2024, Section 2.2). The VMP line-type argument together with the BP enu-meration above covers every factor–edge pair in the al-phabet. We summarize this with the following defini-tion and theorem. 
+
+Definition 1 (Proper factor graph) . A factor graph is 
+
+proper if it is assembled from the alphabet (1) and every shared edge respects the line types: solid and dash-dot edges connect only to Gaussian-typed ports, and dashed edges connect only to Gamma-typed ports. 
+
+Theorem 1 (Closed-form messages of known type) .
+
+Let G be a proper factor graph with full mean-field fac-
+
+4VMP                                         
+
+> ∗
+> w
+> ϕ
+> τ
+> z
+> BP
+> ∗exp
+> zγ
+> Nexp
+> zγ
+> =exp
+> zγ
+> Figure 5: Two modes of message computation. (a) Under mean-field factorization constraints, the message from the softdot toward zdepends only on the marginal types of its other edges: q(w)∈ N and q(ϕ)∈ N (solid lines), q(τ)∈ G (dashed line). Which factors are connected on the other side of these edges is irrelevant; the line styles act as a type system. (b) The exp link uses belief propagation (BP); as a deterministic node it cannot be mean-field factorized. The message toward γdepends on the actual message arriving on z:μγ←exp (γ) = Rδ(γ−ez)μz→exp (z) d z. We enumerate all possible connections on the zedge: softdot, normal, and equality each send a Gaussian message under mean-field, so the outgoing message on γis always log-normal. The equality node (1e) also uses BP, but its message is simply the product of incoming messages, which preserves the type; the exp link is the only BP node where the enumeration is non-trivial.
+
+torization on all non-deterministic factors, and suppose the marginals on all edges have the parametric form in-dicated by their line type. Then for every factor–edge pair in G, the outgoing message exists in closed form and has a known parametric type: 1. At VMP factors (softdot (1a) , normal (1d) , gamma 
+
+(1c)) : the message type matches the line type of the target edge—Gaussian on solid and dash-dot edges, Gamma on dashed edges. 2. At the equality node (1e) ( BP, trivial ): the mes-sage is the product of incoming messages from the other edges and preserves their type. 3. At the exp link (1b) ( BP, non-trivial ): the mes-sage toward γ is log-normal; the message toward z
+
+is log-gamma (Lukashchuk et al., 2024, Section 2.2). Proof. For VMP factors, the message depends only on the factor and the marginal types on its other edges (Eq. (22)). The line types fix these marginal types, so the message is determined locally, regardless of the rest of the graph. The equality node uses BP, but its mes-sage is the product of incoming messages (Eq. (19)), which preserves the exponential family. For the exp link, mean-field factorization on all adjacent factors guar-anties that the incoming message on z is always Gaus-sian and the incoming message on γ is always Gamma, as established by the enumeration above. The BP rule (3) then produces a log-normal message on γ and a log-gamma message on z. The full catalog of update rules is given in Section A.5. 
+
+## 4.3 Computing marginals 
+
+For all edges not adjacent to an exp-link factor , the BFE stationarity condition (Eq. (20)) gives the marginal as the normalized product of the two incoming messages: 
+
+q∗ 
+
+> j
+
+(sj ) ∝ μjb (sj ) μjc (sj ). (4) By Theorem 1, both messages at such edges belong to the same exponential family (Gaussian or Gamma). Their product stays in-family, and the marginal is ob-tained by combining natural parameters. No approxi-mation is involved. At the two edges of each exp-link factor, the situation is different. Theorem 1 states that on the z edge, one message is Gaussian (from the adjacent VMP factor) and the other is log-gamma (from the exp link); on the γ edge, one is Gamma and the other is log-normal. In neither case does the product (4) belong to a stan-dard parametric family, so direct multiplication does not yield a tractable marginal. To handle these edges, we impose a form constraint: 
+
+q(z) ∈ Q z = {N (z | m, v)} with natural parameters 
+
+η = ( η1, η2)⊤ = ( m/v , −1/(2 v)) ⊤. Restricting the BFE to this parametric family yields a constrained objective 
+
+F [η] that upper-bounds the unconstrained BFE, so the resulting inference is a variational bound. We derive the stationarity condition for q(z) in the con-crete case where z connects the softdot (1a) on the left to the exp link (1b) on the right, with a normal fac-tor (1d) on the far side of γ (so that ez serves as the precision of the normal). The exp link is a deterministic factor fexp (z, γ) = δ(γ −
+
+ez ). By (Senöz et al., 2021, Theorem 8), the node-local belief must respect the deterministic constraint, giving qexp (z, γ) = q(z) δ(γ −ez ) and reducing the node-local free energy to −H [q(z)] (for a general overview of the treatment of deterministic nodes in FFGs, see (Senöz et al., 2021, Section 5.2)). The delta absorbs γ
+
+and couples the far-side normal factor to z: the normal factor contributes log fN (y | μ, e−z ) evaluated at γ =
+
+ez . Under full mean-field on the normal factor, the BFE terms that depend on q(z) reduce to 
+
+Fz [η] = −H [q(z)] + Eqz qw qτ [− log f∗]
+
+| {z }
+
+> softdot
+
++ Eqz qy qμ
+
+− log fN (y | μ, e−z ) − z| {z }
+
+> exp + normal
+
+, (5) where the Jacobian term −z arises from the change of variables γ = ez . The softdot factor is conjugate in z:its contribution involves only Gaussian sufficient statis-5tics of q(z). The second term, originating from the exp link and the far-side normal factor, expands to 
+
+Eq(z)
+
+−¯ℓexp (z) = 12 Eq(z) [z]
+
+− 12 Eq(y), q(μ)
+
+(y − μ)2 Eq(z) [ez ] + const , (6) where the coefficient of Eq(z) [ez ] depends on the marginals 
+
+q(y) and q(μ) of the far-side normal factor. The two contributions in (5) can be recognized as the two mes-sages from Theorem 1: the softdot contribution is the Gaussian message μz←softdot , and the exp-link contribu-tion (6) is the log-gamma message μz←exp (with its co-efficients determined by the far-side normal factor). In a terminated FFG, edge z connects exactly two factors, so Theorem 1 provides exactly two messages. Their log-sum defines the stationarity target: 
+
+¯ℓ(z) = log μz←softdot (z) + log μz←exp (z), (7) where μz←softdot is Gaussian and μz←exp is log-gamma (Theorem 1). For exponential-family q(z), the gradient of the entropy satisfies ∇ηH [q(z)] = −F(η) η, where 
+
+F(η) is the Fisher information matrix (Khan and Rue, 2023). Setting ∇ηFz = 0 and rearranging gives the stationarity condition 
+
+η∗ = F(η∗)−1 ∇η∗ Eq∗(z)
+
+−¯ℓ(z) . (8) The non-conjugate term in (6) requires Eq(z) [ez ] and its derivatives with respect to η. Under the Gaussian form constraint, the moment-generating function pro-vides this in closed form: 
+
+Eq(z) [ez ] = exp  m + v
+
+> 2
+
+ , (9) and its derivatives with respect to η are analytic ex-pressions of (η1, η2). This is precisely the Q-conjugacy condition (Lukashchuk et al., 2024): the expectations under q(z) of all log-factors adjacent to z are closed-form functions of η. Combined with the closed-form Fisher information for the Gaussian in natural param-eters, 
+
+F(η) = 
+
+− 12η2
+
+> η1
+> 2η22
+> η1
+> 2η22
+> 12η22
+
+− η21
+
+> 2η32
+
+!
+
+, (10) the stationarity condition (8) yields closed-form fixed-point equations for η∗.1
+
+The derivation for q(γ) on the γ edge is analogous: the Gamma form constraint provides closed-form sufficient statistics Eq(γ) [log γ] = ψ(α) − log β and Eq(γ) [γ] = 
+
+α/β , where ψ denotes the digamma function and α, β
+
+are the shape and rate of the Gamma marginal q(γ),        
+
+> 1By “closed-form” we mean that every term in (8), in-cluding the expectations, the Fisher information, and their gradients, is an analytic function of η, with no intractable integrals. The resulting equation is nevertheless nonlinear in η∗(through the moment-generating function (9)), so it does not admit a closed-form solution .What it does ad-mit is a closed-form update scheme : each evaluation of the right-hand side of (8) is available in closed form, and iter-ating this map converges to the fixed point. In practice, we solve (8) by natural gradient descent on the exponential family manifold (Lukashchuk et al., 2025) using the Rieman-nian optimization framework Manopt.jl (Bergmann, 2022); see Section E for details.
+
+ensuring Q-conjugacy on that edge as well. The full derivation is deferred to Section A.6. The specific conjugate partner on the far side of the exp link—whether softdot, normal, gamma, or equality— does not affect the argument: Theorem 1 guarantees it always produces a message of the matching line type, so the coefficients in (6) change but the closed-form struc-ture is preserved. We summarize the result. 
+
+Theorem 2 (Closed-form marginals) . Let G be a proper factor graph (Definition 1) with full mean-field factor-ization on all non-deterministic factors and form con-straints matching the line types. Then for every edge in G, the BFE-stationary marginal exists in closed form: at edges not adjacent to an exp link, as the normalized product of two same-family messages; at edges adjacent to an exp link, as the solution of a closed-form fixed-point equation. 
+
+Together, Theorems 1 and 2 establish that both oper-ations of the runtime—computing messages and com-puting marginals—are closed-form for any proper fac-tor graph. Full mean-field is the worst case; structured factorization at conjugate boundaries can only improve the approximation. 
+
+# 5 Expressiveness 
+
+By Theorems 1 and 2, any proper factor graph (Def-inition 1) has closed-form inference. The question is therefore: how expressive are proper factor graphs? 
+
+Proposition 1 (Decision tree encoding) . For any bi-nary decision tree T of depth d with axis-aligned splits and linear leaf functions, there exists a proper factor graph that implements T in the limit τ → ∞ .Proof. By induction on d. The base case ( d=0 ) is a single softdot factor. For d > 0, the root split is im-plemented by a depth-2 router with opposing switches (Section 3.3); each child subtree of depth d−1 is imple-mented by the inductive hypothesis. Consider the output variable yj in the depth-2 construc-tion (Fig. 4): it is shared across all branches via equality nodes, and its posterior mean Eq [yj ]( x) is determined by the precision-weighted combination of the expert predictions ˆyi. In the sharp-routing limit ( τ → ∞ ), each routing decision becomes deterministic and the dominant expert’s prediction is selected in each region. Stacking d layers of splits produces 2d regions, and each region selects one expert’s constant prediction ˆyi. The posterior mean is then a so-called simple function (a fi-nite sum of constants times indicator functions of mea-surable sets), which can approximate any measurable function to arbitrary accuracy (Rudin, 2013, Ch. 1, Theorem 1.17). Universal approximation follows. 
+
+Corollary 1 (Universal approximation) . For any con-tinuous f : X → R on compact X ⊂ Rp and any ϵ > 0,there exists a proper factor graph built by stacking split-branch routing layers such that ∥Eq [yj ]( x)−f (x)∥∞ < ϵ 
+
+in the sharp-routing limit, with all inference updates closed-form. 
+
+6𝔼  q [y]( x)        
+
+> 0.0 0.5 1.0
+> 𝜏 = 10
+> x1
+> 0.0 0.5 1.0
+> Std  q [y]( x)
+> 0.0 0.5 1.0 0.0 0.5 1.0
+> 𝜏 = 500
+> x1
+> 0.0 0.5 1.0 0.0 0.5 1.0
+> Mean 0.0 0.5 1.0
+> Std 0.0 0.1 0.2 0.3 0.4 0.5 0.6
+
+Figure 6: Posterior prediction for the XOR encoding with two depth-2 experts at different routing precisions τ . Top: the pos-terior mean Eq [yj ]( x) transitions from a smooth blend ( τ =10 )to sharp classification regions ( τ =500 ). Bottom: the poste-rior standard deviation reveals routing uncertainty—large every-where under soft routing, concentrated at the decision bound-ary under sharp routing. Explicit parameter values are given in Section B. 
+
+For finite τ the posterior over yj carries calibrated un-certainty about the routing decisions (Fig. 6). Small τ
+
+yields wide posteriors over the router score h, so both branches contribute and the model hedges across ex-perts; large τ concentrates the posterior on a single branch. This uncertainty is a direct output of infer-ence, not an add-on; it can be propagated downstream to any quantity that depends on yj . The connection to classical neural universal approximation theorems is discussed in Section C. 
+
+# 6 Application 
+
+Time series forecasting is a natural testbed for the frame-work. Multiple forecasters with different inductive bi-ases (linear, convolutional, recurrent) are trained inde-pendently on the same data, and their relative reliabil-ity varies with the temporal context: one forecaster may excel during trend regimes while another is more accu-rate around seasonal peaks. The task of predicting the next time window is a standard regression problem, but the interesting question is which expert to trust given the current context . Our framework answers this question probabilistically: the precision-gated mechanism learns input-dependent trust from the recent history. 
+
+## 6.1 Models and inference variants 
+
+We evaluate three model structures at increasing depth. The Static ensemble (Depth 0, Fig. 2) learns a single precision γi per forecaster, recovering Cochran’s inverse-variance weighting (Cochran, 1937). The Dynamic model (Depth 1, Fig. 3c) replaces each gamma prior with a precision word π, making trust input-dependent. The Noisy model (Depth 1) augments the Dynamic model with an additional normal factor with precision κ be-tween the expert-combined variable and the observa-tion, separating forecaster disagreement from irreducible predictive noise; the factor graph and GraphPPL.jl code are given in Section D.3. For the Dynamic and Noisy models, inference main-tains a posterior q(wi) over the weight vectors. We con-sider two inference variants that share the same model but differ in the covariance constraint: full covariance 
+
+q(wi) = N (wi | mi, Vi), or diagonal covariance q(wi) = 
+
+N (wi | mi, diag (vi)) , reducing parameters from O(d2)
+
+to O(d) per expert. This gives five configurations: Static, Dynamic, Dynamic Diagonal, Noisy, and Noisy Diago-nal. All use the same closed-form message passing of Section 4. 
+
+## 6.2 Setup 
+
+We combine n = 7 forecasters (five neural: CNN, DLin-ear, NLinear (Zeng et al., 2023), LSTM (Hochreiter and Schmidhuber, 1997), NConv; two constant: 10th and 90th quantiles) on five benchmarks (ETTh1, ETTh2 (Zhou et al., 2021), Exchange Rate, Electricity (Trindade, 2015), Traffic) with horizons H ∈ { 96, 192, 336, 720 }.Feature vectors ϕ(xj ) are obtained from a VAE with a latent dimension of 64. For comparison, we include softmax-based Mixture-of-Experts (MoE) (Jacobs et al., 1991) baselines with single-layer and two-layer gating networks. Full experimental details, dataset statistics, and parameter counts are in the appendix (Section E and Tables 2 and 3). We report MSE and negative log-likelihood (NLL; see Section E.3 for MoE baseline NLL computation). Our framework provides calibrated pre-dictive distributions via marginal posteriors, not just point forecasts. 
+
+## 6.3 Results 
+
+Full results are in Table 5; radar charts and Pareto fron-tiers in Figs. 7 and 9. Forecasting examples and com-parison of models with distribution of experts in Figure 10. The Static ensemble already provides a strong baseline, matching or surpassing the best individual forecaster on multiple dataset–horizon pairs. The Dynamic vari-ants extend this by adapting expert trust to the input, achieving the best MSE across all ETTh1 horizons with substantially lower NLL. The Diagonal inference vari-ants are particularly strong on multivariate datasets: on Exchange Rate, Noisy Diagonal achieves the best NLL by a large margin while reducing the parameter count from 15 512 to 952 ( d=65 ). The softmax-based MoE baselines are unstable: although occasionally competi-tive in MSE, their NLL values are often non-finite, in-dicating poor calibration. Overall, the Noisy Diagonal variant provides the best aggregate trade-off between accuracy, calibration, and parameter efficiency (Fig. 9). Code implementation available in repository: Reposi-tory. 7(a) All methods: Log MSE (b) All methods: Log NLL   
+
+> (c) Our framework: Log MSE (d) Our framework: Log NLL Figure 7: Radar charts of log-transformed MSE and NLL averaged over all horizons. Each axis corresponds to a dataset; larger area indicates better performance. (a, b) All methods: the Noisy Diagonal variant attains the largest overall area; larger neural MoE models improve MSE but become overconfident, resulting in poor NLL. (c, d) Our framework only: Noisy Diagonal achieves the best MSE coverage; both noisy variants provide comparable NLL.
+
+# 7 Related Work 
+
+The depth-0 instance of our framework recovers the inverse-variance weighting of Cochran (1937); our frame-work generalizes it by learning precisions from data, making them input-dependent and composing them hi-erarchically. Our universality result (Corollary 1) parallels classical universal approximation theorems for neural networks (Cybenko, 1989; Hornik, 1991): the core mechanism, a sufficiently fine partition of the input space, is the same; however, our framework replaces gradient-based point estimation with Bethe free energy optimization, yielding marginal posterior distributions. The current alphabet covers ×, exp , and + (the last is not needed for universality but is easy to include); these suffice so that a model shares the topology of the corresponding computational graph but carries uncer-tainty on every edge. Unlike a deterministic compiler, which executes instructions without an objective, the probabilistic runtime optimizes the Bethe free energy at every iteration. This separates the framework from linearization-based approaches such as Laplace propa-gation (Smola et al., 2003), which approximate the non-linearity and optimize no bound; here, the nonlinearity is exact, and only the posterior family is constrained. We do not have a formal lower bound on alphabet size, but we conjecture at least one non-conjugate factor is required: a purely linear–Gaussian alphabet remains linear–Gaussian end-to-end and cannot reach univer-8sal approximation; the exponential link plays that role here. The per-edge stationarity condition (8) has the same form as the global optimality condition of Khan (2025, Eq. 5); our contribution is that it arises locally at each non-conjugate edge of the factor graph, so that marginal computation decomposes into independent per-edge prob-lems solved by message passing. Concurrent work on the generalized HGF (Weber et al., 2026) shares this philosophy but relies on a Laplace approximation updates without expressiveness guaran-tees; our construction provides both. 
+
+# 8 Conclusion 
+
+The practical success of deep learning rests not only on its expressive power (LeCun et al., 2015) but also on its accessibility : layers, backpropagation, and an opti-mizer suffice to compose powerful models from modu-lar building blocks. The factor graph approach follows a similar compositional philosophy (Loeliger, 2004), yet in practice demands considerably more: deriving message rules, selecting message types, and mixing algorithmic techniques for each new problem. Our contribution is to narrow this gap. A finite al-phabet of Q-conjugate factors composes freely, bringing layer-like modularity to probabilistic inference: softdot experts, exponential-link gates, and split-branch routers stack to arbitrary depth with guaranteed closed-form variational message passing. The alphabet is the lan-guage, the Bethe free energy is the compiler, and mes-sage passing is the runtime (van de Laar et al., 2018; Bagaev and De Vries, 2023); no new derivations are needed. The tradeoff is explicit: the practitioner trades arbitrary differentiable operations for closed-form marginal inference. This limitation is mild—the alphabet is a universal approximator—and should diminish as the li-brary of reusable composed subgraphs grows. 
+
+# Acknowledgements 
+
+We gratefully acknowledge financial support by the Dutch Ministry of Economic Affairs (PPS funding), by the Dutch Research Council (NWO) and by hearing aid manufacturer GN Hearing, under contracts TKI-HTSM/21.0161/2112P09 (project: Auto-AR) and KICH3.LTP.20.006 (Project: ROBUST). 
+
+## Bibliography 
+
+D. Bagaev and B. De Vries. Reactive Message Pass-ing for Scalable Bayesian Inference. Scientific Pro-gramming , 2023:1–26, May 2023. ISSN 1875-919X, 1058-9244. doi: 10.1155/2023/6601690. URL https: //www.hindawi.com/journals/sp/2023/6601690/ .R. Bergmann. Manopt.jl: Optimization on Manifolds in Julia. Journal of Open Source Software , 7(70):3866, 2022. doi: 10.21105/joss.03866. W. G. Cochran. Problems arising in the analysis of a series of similar experiments. Supplement to the Journal of the Royal Statistical Society , 4(1):102–118, 1937. G. Cybenko. Approximation by superpositions of a sigmoidal function. Mathematics of Control, Sig-nals and Systems , 2(4):303–314, Dec. 1989. ISSN 1435-568X. doi: 10.1007/BF02551274. URL https: //doi.org/10.1007/BF02551274 .J. Dauwels. On Variational Message Passing on Factor Graphs. In IEEE International Sympo-sium on Information Theory , pages 2546–2550, Nice, France, June 2007. doi: 10.1109/ISIT. 2007.4557602. URL http://ieeexplore.ieee.org/ abstract/document/4557602 .G. Forney. Codes on graphs: normal realizations. 
+
+IEEE Transactions on Information Theory , 47(2): 520–548, Feb. 2001. ISSN 0018-9448. doi: 10.1109/ 18.910573. URL https://ieeexplore.ieee.org/ abstract/document/910573 .J. Ho, A. Jain, and P. Abbeel. Denoising diffusion prob-abilistic models. Advances in neural information pro-cessing systems , 33:6840–6851, 2020. S. Hochreiter and J. Schmidhuber. Long Short-Term Memory. Neural Comput. , 9(8):1735–1780, Nov. 1997. ISSN 0899-7667. doi: 10.1162/neco.1997.9.8. 1735. URL https://doi.org/10.1162/neco.1997. 9.8.1735 .K. Hornik. Approximation capabilities of multi-layer feedforward networks. Neural Networks ,4(2):251–257, 1991. ISSN 0893-6080. doi: https://doi.org/10.1016/0893-6080(91)90009-T. URL https://www.sciencedirect.com/science/ article/pii/089360809190009T .R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton. Adaptive mixtures of local experts. Neural computation , 3(1):79–87, 1991. M. E. Khan. Information Geometry of Variational Bayes. Information Geometry , 8(S1):275–289, Nov. 2025. ISSN 2511-2481, 2511-249X. doi: 10.1007/ s41884-025-00174-3. URL https://link.springer. com/10.1007/s41884-025-00174-3 .M. E. Khan and H. Rue. The Bayesian learning rule. 
+
+Journal of Machine Learning Research , 24(281):1–46, 2023. D. P. Kingma and M. Welling. Auto-Encoding Varia-tional Bayes. arXiv:1312.6114 [cs, stat] , Dec. 2013. URL http://arxiv.org/abs/1312.6114 . arXiv: 1312.6114. F. R. Kschischang, B. J. Frey, and H.-A. Loeliger. Factor graphs and the sum-product algorithm. 
+
+IEEE Transactions on information theory , 47(2): 498–519, 2001. doi: 10.1109/18.910572. URL 
+
+http://ieeexplore.ieee.org/xpls/abs_all. jsp?arnumber=910572 .9Y. LeCun, Y. Bengio, and G. Hinton. Deep learning. 
+
+Nature , 521(7553):436–444, May 2015. ISSN 0028-0836, 1476-4687. doi: 10.1038/nature14539. URL 
+
+https://www.nature.com/articles/nature14539 .H.-A. Loeliger. An introduction to factor graphs. Sig-nal Processing Magazine, IEEE , 21(1):28–41, Jan. 2004. doi: 10.1109/MSP.2004.1267047. URL https: //ieeexplore.ieee.org/document/1267047 .H.-A. Loeliger. Factor Graphs and Message Passing Algorithms – Part 1: Introduction, 2007. URL 
+
+http://www.crm.sns.it/media/course/1524/ Loeliger_A.pdf .I. Loshchilov and F. Hutter. Decoupled Weight De-cay Regularization. In 7th International Conference on Learning Representations, ICLR 2019, New Or-leans, LA, USA, May 6-9, 2019 . OpenReview.net, 2019. URL https://openreview.net/forum?id= Bkg6RiCqY7 .M. Lukashchuk, I. Senöz, and B. de Vries. Q-conjugate message passing for efficient bayesian inference. In In-ternational conference on probabilistic graphical mod-els , pages 295–311. PMLR, 2024. M. Lukashchuk, D. Bagaev, A. Podusenko, İ. Şenöz, and B. de Vries. ExponentialFamilyManifolds.jl: Rep-resenting exponential families as Riemannian man-ifolds. Proceedings of the JuliaCon Conferences , 7 (70):179, 2025. doi: 10.21105/jcon.00179. URL 
+
+https://doi.org/10.21105/jcon.00179 .R. M. Neal. MCMC using Hamiltonian dynamics . May 2011. doi: 10.1201/b10905. URL http://arxiv. org/abs/1206.1901 . arXiv:1206.1901 [physics, stat]. W. W. L. Nuijten, D. Bagaev, and B. de Vries. Graph-PPL.jl: A Probabilistic Programming Language for Graphical Models. Entropy , 26(11), 2024. ISSN 1099-4300. doi: 10.3390/e26110890. URL https: //www.mdpi.com/1099-4300/26/11/890 .R. Ranganath, S. Gerrish, and D. Blei. Black Box Variational Inference. In S. Kaski and J. Corander, editors, Proceedings of the Seventeenth International Conference on Artificial Intelligence and Statistics ,volume 33 of Proceedings of Machine Learning Re-search , pages 814–822, Reykjavik, Iceland, Apr. 2014. PMLR. URL https://proceedings.mlr.press/ v33/ranganath14.html .D. J. Rezende and S. Mohamed. Variational In-ference with Normalizing Flows. arXiv:1505.05770 [cs, stat] , May 2015. URL http://arxiv.org/abs/ 1505.05770 . arXiv: 1505.05770. W. Rudin. Real and complex analysis . McGraw-Hill international editions Mathematics series. McGraw-Hill, New York, NY, 3. ed., internat. ed., [nachdr.] edition, 2013. ISBN 978-0-07-100276-9 978-0-07-054234-1. OCLC: 957461070. I. Senöz, T. van de Laar, D. Bagaev, and B. de Vries. Variational Message Passing and Local Constraint Manipulation in Factor Graphs. Entropy , 23(7): 807, July 2021. ISSN 1099-4300. doi: 10. 3390/e23070807. URL https://www.mdpi.com/ 1099-4300/23/7/807 .A. Smola, S. Vishwanathan, and E. Eskin. Laplace propagation. In Advances in neural infor-mation processing systems , volume 16. MIT Press, 2003. URL https://proceedings. neurips.cc/paper_files/paper/2003/file/ 7fd804295ef7f6a2822bf4c61f9dc4a8-Paper.pdf .A. Trindade. ElectricityLoadDiagrams20112014. UCI Machine Learning Repository , 10:C58C86, 2015. T. van de Laar, M. Cox, I. Senoz, I. Bocharov, and B. de Vries. ForneyLab: A Toolbox for Biologi-cally Plausible Free Energy Minimization in Dynamic Neural Models. In Conference on Complex Systems (CCS) , Thessaloniki, Greece, Sept. 2018. L. A. Weber, P. T. Waade, N. Legrand, A. H. Møller, K. E. Stephan, and C. Mathys. The generalized Hi-erarchical Gaussian Filter. Mar. 2026. doi: 10.7554/ elife.110174.1. URL http://dx.doi.org/10.7554/ eLife.110174.1 .J. Winn and C. M. Bishop. Variational Message Pass-ing. Journal of Machine Learning Research , 6(23): 661–694, 2005. ISSN 1533-7928. URL http://jmlr. org/papers/v6/winn05a.html .J. S. Yedidia, W. Freeman, and Y. Weiss. Con-structing free-energy approximations and general-ized belief propagation algorithms. IEEE Trans-actions on Information Theory , 51(7):2282–2312, July 2005. ISSN 0018-9448. doi: 10.1109/TIT. 2005.850085. URL http://ieeexplore.ieee.org/ abstract/document/1459044 .A. Zeng, M. Chen, L. Zhang, and Q. Xu. Are transform-ers effective for time series forecasting? In Proceed-ings of the AAAI conference on artificial intelligence ,volume 37, pages 11121–11128, 2023. H. Zhou, S. Zhang, J. Peng, S. Zhang, J. Li, H. Xiong, and W. Zhang. Informer: Beyond Efficient Trans-former for Long Sequence Time-Series Forecasting. In The Thirty-Fifth AAAI Conference on Artificial Intelligence, AAAI 2021, Virtual Conference , vol-ume 35, pages 11106–11115. AAAI Press, 2021. 
+
+# A Forney-style Factor Graphs and Message Passing 
+
+This appendix reviews Forney-style factor graphs and shows how message passing algorithms arise from min-imizing the Bethe free energy. We follow the presenta-tion of Senöz et al. (2021), to which we refer for proofs and further details. 
+
+## A.1 Forney-style factor graphs 
+
+A Forney-style factor graph (FFG) is an undirected graph G = ( V, E) with nodes V and edges E ⊆ V × V 
+
+10 (Forney, 2001; Loeliger, 2004). We denote the neigh-boring edges of a node a ∈ V by E(a). Vice versa, for an edge i ∈ E , the notation V(i) collects all neighboring nodes. As a notational convention, we index nodes by 
+
+a, b, c and edges by i, j, k, unless stated otherwise. An FFG represents a factorized positive function 
+
+f (s) = Y
+
+> a∈V
+
+fa(sa), (11) where s is the collection of all variables, sa collects the argument variables of factor fa, and a node a ∈ V cor-responds to a factor fa. The neighboring edges E(a)
+
+correspond to the variables sa that are the arguments of fa.In the FFG representation, a node can be connected to an arbitrary number of edges, while an edge can only be connected to at most two nodes. An edge that connects to only one node (e.g., for an observed variable or a fixed hyperparameter) is called a half-edge . When a variable must be shared among more than two factors, FFGs introduce explicit equality nodes with factor function 
+
+fa(si, sj , sk) = δ(sj − si) δ(sj − sk), (12) which constrain connected edges to carry identical val-ues. 
+
+## A.2 Terminated factor graphs 
+
+If every edge in the FFG has exactly two connected nodes (including equality nodes), we call the graph a 
+
+terminated FFG (TFFG). A half-edge can be closed by an observation factor, e.g. fobs (si) = δ(si − sobs  
+
+> i
+
+), or by a unity factor f1(si) = 1 . The latter leaves the vari-able uninformative; ordinary priors, such as the Gamma factor on γi, are just regular factors in the graph. All FFGs in this paper are assumed to be terminated before inference is run. For the Depth-0 model, the same unnormalized factor product 
+
+f (y, ˆy, γ) = 
+
+> n
+
+Y
+
+> i=1
+
+fG (γi | αi, βi)
+
+> n,m
+
+Y
+
+> i=1
+> j=1
+
+fN (ˆ yi,j | yj , γi)
+
+(13) supports different directed graphical-model readings af-ter termination. In smoothing, yj and ˆyi,j are observed, so the terminated graph defines 
+
+p(γ | y, ˆy) ∝ f (y, ˆy, γ). 
+
+In prediction, only the forecaster predictions are ob-served; y∗ is left latent (closed by a unity factor), giving 
+
+p(y∗, γ | ˆy∗) ∝ Y
+
+> i
+
+fG (γi | αi, βi) Y
+
+> i
+
+fN (ˆ yi,∗ | y∗, γi). 
+
+Thus the FFG fixes the local factorization, while termi-nation specifies which conditional distribution is repre-sented. 
+
+## A.3 Bethe free energy 
+
+Given a TFFG G = ( V, E) for a factorized function 
+
+f (s) = Q 
+
+> a∈V
+
+fa(sa), the Bethe free energy (BFE) is defined as (Yedidia et al., 2005) 
+
+F [q, f ] ≜ X
+
+> a∈V
+
+Z
+
+qa(sa) log qa(sa)
+
+fa(sa) dsa
+
+| {z } 
+
+> F[qa,fa]
+
++ X
+
+> i∈E
+
+Z
+
+qi(si) log 1
+
+qi(si) dsi
+
+| {z }
+
+> H[qi]
+
+, (14) such that the factorized beliefs 
+
+q(s) = Y
+
+> a∈V
+
+qa(sa) Y
+
+> i∈E
+
+qi(si)−1 (15) satisfy the following constraints: 
+
+Z
+
+qa(sa) d sa = 1, for all a ∈ V , (16a) 
+
+Z
+
+qa(sa) d sa\i = qi(si), for all a ∈ V and all i ∈ E (a). 
+
+(16b) The normalization constraint (16a) and marginalization constraint (16b) together imply that the edge marginals 
+
+qi(si) are also normalized. The BFE includes a local free energy term F [qa, fa] for each node a ∈ V and an entropy term H[qi] for each edge i ∈ E . In a TFFG every edge connects exactly two nodes; the edge entropy corrects for the double-counting that would arise from the node-local free energies alone. The Bethe factorization (15) and constraints (16) are summarized by the local polytope 
+
+L(G) = qa for all a ∈ V s.t. (16a) ,
+
+and qi for all i ∈ E (a) s.t. (16b) , (17) which defines the constrained search space for the fac-torized variational distribution. The problem is then to find the beliefs in the local polytope that minimize the BFE: 
+
+q∗(s) = arg min 
+
+> q∈L (G)
+
+F [q, f ]. (18) 
+
+## A.4 Message passing from stationarity con-ditions 
+
+Instead of solving the global optimization problem (18) directly, we employ the factorization of the BFE and the local polytope to subdivide it into interdependent local objectives. The resulting fixed-point equations can be interpreted as messages on the edges of the FFG. We state the two results needed in this paper; proofs can be found in (Kschischang et al., 2001; Yedidia et al., 2005; Dauwels, 2007; Senöz et al., 2021). 
+
+Sum-product message passing (belief propaga-tion). The stationary points of the Lagrangian asso-ciated with (18) yield the sum-product message update. 11 The message from node b to edge j is 
+
+μ(k+1)  
+
+> jb
+
+(sj ) = 
+
+Z
+
+fb(sb) Y
+
+> i∈E (b)
+> i̸=j
+
+μ(k) 
+
+> ib
+
+(si) d sb\j , (19) where k is an iteration index and μib denotes the in-coming message on edge i towards node b. The edge belief is proportional to the product of the two incom-ing messages: 
+
+q∗ 
+
+> j
+
+(sj ) = μ∗
+
+> jb
+
+(sj ) μ∗
+
+> jc
+
+(sj )
+
+R μ∗
+
+> jb
+
+(sj ) μ∗
+
+> jc
+
+(sj ) d sj
+
+. (20) On tree-structured graphs the sum-product algorithm recovers the exact posterior; on graphs with cycles, con-vergence is not guaranteed in general (Yedidia et al., 2005). 
+
+Naive mean-field variational message passing. When a naive mean-field factorization constraint is imposed at node b, i.e., qb(sb) = Q 
+
+> i∈E (b)
+
+qi(si), the local free energy for factor b becomes 
+
+F [qb, fb] = X
+
+> i∈E
+
+Z
+
+qi(si) log qi(si) d si
+
+−
+
+Z n Y 
+
+> i∈E (b)
+
+qi(si)
+
+o
+
+log fb(sb) d sb. (21) The variational message passing update (Winn and Bishop, 2005) from node b towards edge j is then given by 
+
+μ(k+1)  
+
+> jb
+
+(sj ) = exp 
+
+Z n Y 
+
+> i∈E (b)
+> i̸=j
+
+q(k) 
+
+> i
+
+(si)
+
+o
+
+log fb(sb) d sb\j
+
+ ,
+
+(22) which is the exponentiated expected log-factor under the current beliefs of all other edges. We use naive mean-field factorization constraints at all non-conjugate factor boundaries in this paper. 
+
+## A.5 Message rules for the alphabet 
+
+These rules, combined with a valid schedule, are suf-ficient to run inference on any factor graph composed from the alphabet. 
+
+Soft-dot The soft-dot factor node has the form: 
+
+f∗(z | w, ϕ, τ ) = N (z | w⊤ϕ, τ −1) . 
+
+We assume the node’s incoming messages are marginals of the form: 
+
+q(z) = N (z | mz , s2 
+
+> z
+
+)
+
+q(w) = N (w | mw, s2
+
+w)
+
+q(ϕ) = N (ϕ | mϕ, s2
+
+ϕ)
+
+q(τ ) = Γ( τ | ατ , βτ ) . 
+
+The forward message towards z is: 
+
+μ(z) ∝ exp  Eq
+
+ log N (z | w⊤ϕ, τ −1) 
+
+∝ exp  Eq
+
+− τ
+
+2 (z2 −2zw⊤ϕ+w⊤ϕϕ ⊤w) 
+
+∝ exp  − τ
+
+2 (z2 −2zm ⊤
+
+wmϕ +m⊤
+
+wmϕm⊤
+
+ϕmw) 
+
+∝ N (z | m⊤
+
+wmϕ, τ −1)
+
+The backwards message towards w is: 
+
+μ(w) ∝ exp  Eq
+
+ log N (z | w⊤ϕ, τ −1) 
+
+∝ exp  − τ
+
+2 (m2 
+
+> z
+
+−2mz w⊤mϕ +w⊤(mϕm⊤
+
+ϕ +Sϕ)w)
+
+∝ N (w | mw, Sw) , 
+
+(23) whose parameters are 
+
+mw = τ (mϕm⊤
+
+ϕ + Sϕ)( mz mϕ)
+
+Sw = τ −1(mϕm⊤
+
+ϕ + Sϕ)−1 .
+
+The backwards message towards ϕ is: 
+
+μ(ϕ) ∝ exp  Eq
+
+ log N (z | w⊤ϕ, τ −1) 
+
+∝ exp  − τ
+
+2 (m2 
+
+> z
+
+−2mz m⊤
+
+wϕ+ϕ⊤(mwm⊤
+
+w +Sw)ϕ)
+
+∝ N (ϕ | mϕ, Sϕ) , 
+
+whose parameters are 
+
+mϕ = τ (mwm⊤
+
+w + Sw)( mz mw)
+
+Sϕ = τ −1(mwm⊤
+
+w + Sw)−1 .
+
+The backwards message towards τ is: 
+
+μ(τ ) ∝ exp  Eq
+
+ log N (z | w⊤ϕ, τ −1) 
+
+∝ exp  Eq
+
+ 12 log τ − τ
+
+2 (z − w⊤ϕ)2 
+
+∝ τ 1/2 exp 
+
+
+
+− τ
+
+2
+
+ (mz − m⊤
+
+wmϕ)2 + s2
+
+> z
+
++ tr [Sw(mϕm⊤
+
+ϕ + Sϕ)] 
+
+∝ G (τ | ατ , βτ ) , 
+
+(24) whose parameters are: 
+
+ατ = 3 /2
+
+βτ = ( mz −m⊤
+
+wmϕ)2 +s2 
+
+> z
+
++tr [Sw(mϕm⊤
+
+ϕ +Sϕ)]. 
+
+LogGamma The LogGamma distribution is a prob-ability distribution on the real line with density 
+
+LG (x | a, b) = ebx e−ex/a 
+
+abΓ( b) , −∞ < x < ∞, a > 0, b > 0 . 
+
+It arises as the change of variable x = log γ applied to a Gamma-distributed γ.
+
+Exponential The exponential link factor node is: 
+
+fexp (γ | z) = δ γ − exp( z) .
+
+12 The node’s incoming messages are of the form: 
+
+μ(γ) = G(γ | αγ , βγ ) , μ(z) = N (z | mz , s2 
+
+> z
+
+) . 
+
+The forwards message to γ is: 
+
+μ(γ) = 
+
+Z
+
+δ γ − exp( z)μ(z)d z
+
+= | ∂ log( γ)
+
+∂γ |
+
+Z
+
+δ  log( γ) − zN (z | mz , s2 
+
+> z
+
+)d z
+
+= 1
+
+γ N (log( γ) | mz , s2 
+
+> z
+
+)= LN (γ | mz , s22) . 
+
+The backwards message towards z is obtained by an exact change of variable. Substituting γ = exp( z) with Jacobian |∂ exp( z)/∂z | = exp( z):
+
+μ(z) = 
+
+Z
+
+δ γ − exp( z)μ(γ) d γ
+
+= ∂ exp( z)
+
+∂z 
+
+Z
+
+δ  exp( z) − γ G(γ | αγ , βγ ) d γ
+
+= exp( z) · G   exp( z) | αγ , βγ
+
+
+
+= exp( z) · βαγ
+
+> γ
+
+Γ( αγ ) exp( z)αγ −1 exp   − βγ exp( z)
+
+= βαγ
+
+> γ
+
+Γ( αγ ) exp( αγ z) exp   − βγ exp( z)
+
+= LG  z | β−1 
+
+> γ
+
+, αγ
+
+ .
+
+Gamma The Gamma distribution factor node is: 
+
+fG (γ | α, β) = G(γ | α, β) = βα
+
+Γ( α) γα−1 exp( −βγ ) . 
+
+We assume incoming messages of the form: 
+
+q(γ) = G(γ | ηγ , ζγ ) , q(β) = G(β | ηβ , ζβ ) , 
+
+where η is a shape and ζ a rate parameter. The forward message towards γ is: 
+
+μ(γ) ∝ exp  Eq
+
+ log Γ( γ | α, β) 
+
+∝ exp  Eq
+
+(α − 1) log( γ) − βγ  
+
+∝ γα−1 exp   − ηβ
+
+ζβ
+
+γ
+
+∝ G (γ | α, ηβ
+
+ζβ
+
+)
+
+The backwards message towards β is: 
+
+μ(β) ∝ exp  Eq
+
+ log Γ( γ | α, β) 
+
+∝ exp  Eq
+
+α log β − βγ  
+
+∝ βα exp   − β ηγ
+
+ζγ
+
+
+
+∝ G (β | α, ηγ
+
+ζγ
+
+) . 
+
+Normal The Normal factor node has the form: 
+
+fN (y | μ, τ ) = N (y | μ, τ −1) . 
+
+We assume the incoming messages are: 
+
+q(y, μ) = q(y | μ, s2 
+
+> y
+
+)q(μ | mμ, s2
+
+> μ
+
+)= N
+
+ yμ
+
+
+
+|
+
+mμ
+
+mμ
+
+
+
+,
+
+s2 
+
+> y
+
++ s2 
+
+> μ
+
+s2
+
+> μ
+
+s2 
+
+> μ
+
+s2
+
+> μ
+
+ 
+
+q(τ ) = G(τ | ατ , βτ )
+
+Then the forward message to y is: 
+
+μ(y) ∝ exp  Eq
+
+ log N (y | μ, τ −1) 
+
+∝ exp  Eq
+
+ 12 log τ − τ
+
+2 (y2 − 2yμ + μ2) 
+
+∝ exp   − ατ
+
+2βτ
+
+(y2 −2ym μ +m2
+
+> μ
+
+)
+
+∝ N  y | mμ, ατ
+
+βτ
+
+ ,
+
+where ψ(·) is the digamma function. The backwards message towards μ is: 
+
+μ(μ) ∝ exp  Eq
+
+ 12 log τ − τ
+
+2 (y2 − 2yμ + μ2) 
+
+∝ exp   − ατ
+
+2βτ
+
+(m2 
+
+> μ
+
+−2mμμ+μ2)
+
+∝ N  μ | mμ, ατ
+
+βτ
+
+
+
+The backwards message towards τ is: 
+
+μ(τ ) ∝ exp  Eq
+
+ 12 log τ − τ
+
+2 (y2 − 2yμ + μ2) 
+
+∝ τ 1/2 exp   − τ
+
+2 s2
+
+> y
+
+
+
+∝ G (τ | 32 , s2 
+
+> y
+
+) . 
+
+Equality The equality node has the following form: 
+
+f=(x1, x2, x3) = δ x1 − x2
+
+δ x2 − x3
+
+
+
+The forward message to x1 is: 
+
+μ(x1) = 
+
+Z Z 
+
+δ x1 − x2
+
+δ x1 − x3
+
+μx2 (x2)μx3 (x3)d x2dx3
+
+=
+
+Z
+
+δ x1 − x3
+
+μx2 (x1)μx3 (x3)d x3
+
+= μx2 (x1)μx3 (x1) . 
+
+In words, the outgoing message is the product of incom-ing messages. In fact, the equality node is symmetric; the outgoing message towards any edge is the product of incoming messages on other edges (Loeliger, 2007). 
+
+## A.6 Q-conjugacy on the γ edge 
+
+This section derives the closed-form stationarity con-dition for the marginal q(γ) on an edge adjacent to the exponential link, under the Gamma form constraint 
+
+q(γ) = G(γ | α, β). The derivation parallels the Gaus-sian z-edge treatment in the main text but uses the Gamma exponential family structure. 13 Local BFE terms. On the γ edge, two messages ar-rive from the two adjacent factors. From the expo-nential link, the forward message is log-Normal (Sec-tion A.5): 
+
+μγ←exp (γ) = LN (γ | mz , s2 
+
+> z
+
+) , (25) whose log-density is 
+
+log LN (γ | mz , s2 
+
+> z
+
+) = − (log γ − mz )2
+
+2s2
+
+> z
+
+−log γ− 12 log(2 πs 2 
+
+> z
+
+) . 
+
+From the far-side conjugate factor (e.g., the normal or gamma factor), the message is Gamma: 
+
+μγ←far (γ) = G(γ | a, b) , (26) whose log-density is (a−1) log γ −bγ +a log b−log Γ( a).The stationarity target is 
+
+¯ℓ(γ) = log μγ←exp (γ) + log μγ←far (γ) . (27) 
+
+Gamma as exponential family. The Gamma dis-tribution G(γ | α, β) with shape α and rate β is an exponential family with natural parameters 
+
+η =
+
+η1
+
+η2
+
+
+
+=
+
+α − 1
+
+−β
+
+
+
+, η1 > −1, η2 < 0 , (28) sufficient statistics T(γ) = (log γ, γ)⊤, and log-partition function 
+
+A(η) = log Γ( η1 + 1) − (η1 + 1) log( −η2) . (29) 
+
+Closed-form expectations. The expected sufficient statistics under q(γ) = G(γ | α, β) are given by the gradient of the log-partition: 
+
+∇ηA(η) = Eq(γ) [log γ]
+
+Eq(γ) [γ]
+
+!
+
+= ψ(η1 + 1) − log( −η2)
+
+−(η1 + 1) /η 2
+
+!
+
+,
+
+(30) where ψ denotes the digamma function. Both are ana-lytic functions of η.The log-Normal message (25) additionally requires the second moment Eq
+
+(log γ)2. By the variance identity, 
+
+Eq(γ)
+
+(log γ)2 = Var q [log γ] +  Eq(γ) [log γ]2
+
+= ψ′(η1 + 1) +  ψ(η1 + 1) − log( −η2)2,
+
+(31) where ψ′ is the trigamma function. This is again an analytic function of η.Writing ¯g ≜ Eq [log γ], ¯g2 ≜ Eq
+
+(log γ)2, and ¯γ ≜
+
+Eq [γ], the expected energy under q(γ) is 
+
+Eq
+
+−¯ℓ(γ) = 12s2
+
+> z
+
+¯g2 − mz
+
+> s2
+> z
+
+¯g + ¯ g
+
+− (a−1) ¯ g + b ¯γ + const , (32) where every expectation is a closed-form function of 
+
+η via (30)–(31). This is the Q-conjugacy condition: 
+
+Eq
+
+−¯ℓ(γ) and its gradient with respect to η are ana-lytic functions of η.
+
+Fisher information matrix. The Fisher informa-tion matrix of the Gamma distribution in natural pa-rameters is the Hessian of the log-partition (29): 
+
+F(η) = ∇2
+
+ηA(η) = ψ′(η1 + 1) −1/η 2
+
+−1/η 2 (η1 + 1) /η 22
+
+!
+
+. (33) 
+
+Stationarity condition. Setting the gradient of the local BFE contribution at the γ edge to zero and rear-ranging (as in the main text for the z edge) yields the fixed-point equation 
+
+η∗ = F(η∗)−1 ∇η∗ Eq∗(γ)
+
+−¯ℓ(γ) . (34) Since F(η) (33) and ∇ηEq(γ)
+
+−¯ℓ(γ) (32) are both closed-form functions of η, the right-hand side of (34) is a closed-form expression of η∗. This gives a closed-form fixed-point equation for the Gamma marginal q∗(γ),analogous to the Gaussian fixed-point equation for q∗(z)
+
+in the main text. Differentiating (32) with respect to η and writing ¯g =
+
+ψ(η1 +1) − log( −η2) and c1 = 1 − mz /s 2 
+
+> z
+
+− (a−1) , the gradient is 
+
+∇ηEq
+
+−¯ℓ(γ) =
+
+
+
+> ψ′(η1+1)
+> s2
+> z
+
+¯g + ψ′′ (η1+1) 2 ψ′(η1+1) 
+
+ + c1 ψ′(η1 +1)   
+
+> ¯gs2
+> z(−η2)
+
++ c1 
+
+> (−η2)
+
+− bη22
+
+ , (35) where ψ′′ is the polygamma function of order two. Ev-ery term is an analytic function of η. Substituting (33) and (35) into (34) yields a closed-form fixed-point equa-tion for η∗, which we solve by natural gradient descent on the Gamma manifold as described in Section E. 
+
+# B XOR Encoding Parameters 
+
+This appendix gives explicit parameter values that re-alize the XOR encoding of Fig. 6. We use features 
+
+ϕ(x) = ( x1, x2, 1) ⊤ with a bias term and two experts (i ∈ { 1, 2 }) with depth-2 routing, each producing a log-precision mi(x) that feeds into a likelihood y ∼N (ˆ yi, e−mi ). Expert 1 predicts ˆy1=0 and expert 2 pre-dicts ˆy2=1 .
+
+Router weights. Each expert has a routing vector 
+
+vi and shared sub-expert weight vectors wL, wR:
+
+v1 = (14, 0, −7) ⊤, v2 = ( −14, 0, 7) ⊤,
+
+wL = (0, 10, 0) ⊤, wR = (0, −10, 10) ⊤.
+
+The softdot precision is τ = 2000 (approximating the sharp-routing limit). 
+
+Routing mechanism. For expert i at input x, the router score is hi = v⊤ 
+
+> i
+
+ϕ(x). Two switches with clamped weights ±1 produce opposing activations: κRi = exp( hi),
+
+κLi = exp( −hi). The blended log-precision is 
+
+mi(x) ≈ κRi · (wR)⊤ϕ(x) + κLi · (wL)⊤ϕ(x)
+
+κRi + κLi
+
+,
+
+which selects the sub-expert from the active branch. 14 Trace through all four inputs. Table 1 shows the routing scores and resulting log-precisions. Expert 1 achieves high γ1 = em1 (and thus high influence for its prediction ˆy1=0 ) precisely at the XOR =0 inputs; ex-pert 2 achieves high γ2 = em2 (high influence for ˆy2=1 )at the XOR =1 inputs. 
+
+Table 1: XOR encoding trace. For each input, the active branch selects the sub-expert whose output z yields a large log-precision m, giving that expert high influence γ = em.
+
+x1 x2 XOR h1 m1 h2 m2 Dominant 0 0 0 −7 ≈ 10 +7 ≈ 0 Exp. 1 ( ˆy=0 )0 1 1 −7 ≈ 0 +7 ≈ 10 Exp. 2 ( ˆy=1 )1 0 1 +7 ≈ 0 −7 ≈ 10 Exp. 2 ( ˆy=1 )1 1 0 +7 ≈ 10 −7 ≈ 0 Exp. 1 ( ˆy=0 )
+
+# C Comparison with Neural Univer-sal Approximation 
+
+The universal approximation result of Corollary 1 par-allels classical theorems for neural networks. Cybenko (1989) proved that single-hidden-layer networks with sigmoidal activation functions are universal approxima-tors. Hornik (1991) extended this to arbitrary bounded nonconstant activation functions, showing that the mul-tilayer feedforward architecture itself—not the specific choice of activation—is the source of universality (The-orems 1 and 2 therein). The structural analogy with our framework is direct. In the sharp-routing limit ( τ → ∞ ), the split-branch con-struction of Section 3.3 partitions the input space into regions separated by axis-aligned hyperplanes, select-ing a different expert prediction in each region. This is the same piecewise-constant mechanism that underlies the neural proofs: a sufficiently fine partition of the in-put space, combined with a constant approximation in each cell, can approximate any continuous function on a compact domain to arbitrary accuracy. The key difference lies in the inference mechanism: 
+
+• Neural networks are trained via gradient descent on a loss function, producing point estimates of all parameters. 
+
+• Our framework optimizes the Bethe free energy with closed-form message passing, producing marginal posterior distributions over all parameters and la-tent variables. As a consequence, epistemic uncertainty is available at every level of the hierarchy without additional cost—no ensembles-of-ensembles, no MC dropout, no Laplace ap-proximation. Figure 6 illustrates this concretely: the posterior standard deviation reveals where the model is uncertain about its routing decisions, information that is absent from any point-estimate approach. 
+
+# D Models in GraphPPL.jl 
+
+The models from Section 3 can be written directly in GraphPPL.jl (Nuijten et al., 2024), a probabilistic pro-gramming language that compiles model specifications into Forney-style factor graphs for inference in RxIn-fer.jl (Bagaev and De Vries, 2023). In the @model block, each tilde statement creates one factor node. The mapping to the alphabet (1) is as follows: 
+
+GraphPPL Alphabet letter 
+
+NormalMeanPrecision fN (1d) 
+
+GammaShapeRate fG (1c) 
+
+softdot f∗ (1a) 
+
+Log fexp (1b) Equality nodes f= (1e) are inserted automatically when-ever a variable appears in more than two factors. 
+
+## D.1 Depth 0: static ensemble 
+
+The following listing implements the static ensemble model introduced in Section 3.1. The outer loop over 
+
+i corresponds to the · · · in Fig. 2 (repetition over ex-perts), and the inner loop over j corresponds to the ...(repetition over observations). 
+
+> @model function static_ensemble( n_forecasters, X, y, priors ) for i = 1:n_forecasters gamma[i] ~ priors[:gamma][i] end for i = 1:n_forecasters for j = 1:length(y) y[j] ~ NormalMeanPrecision( X[i,j], gamma[i] )end end end
+
+## D.2 Depth 1: Precision-Gated Experts 
+
+The following listing implements the Precision-Gated Experts model introduced in Section 3.2. The loops over i and j carry the same meaning as in Section D.1 (· · · and ... in Fig. 3c).   
+
+> @model function pge(n_forecasters, n_obs, features, predictions, y, priors ) for i = 1:n_forecasters w[i] ~ priors[:w][i] tau[i] ~ priors[:tau][i] beta[i] ~ priors[:beta][i] end for j = 1:n_obs for i = 1:n_forecasters z[i,j] ~ softdot( features[j], w[i], tau[i] )gamma[i,j] ~ GammaShapeRate( 1.0, beta[i] )z[i,j] ~ Log(gamma[i,j]) y[j] ~ NormalMeanPrecision( predictions[i,j], gamma[i,j]
+
+15 )end end end 
+
+The constraints and initialization blocks declare the fac-torization and form constraints from Section 4.1: 
+
+@constraints function pge_constraints() q(w, z, gamma, tau, beta) = q(w)q(z, gamma)q(tau)q(beta) q(z) :: ProjectedTo( NormalMeanVariance) q(gamma) :: ProjectedTo(Gamma) end @initialization function pge_init(priors) q(w) = priors[:w] q(z) = NormalMeanVariance(0.0, 1.0) q(gamma) = GammaShapeScale(1.0, 1.0) q(tau) = priors[:tau] q(beta) = priors[:beta] end 
+
+Given these three blocks, RxInfer.jl constructs the fac-tor graph, derives the message passing schedule, and runs inference automatically — no update equations are written by the user. 
+
+## D.3 Noisy Experts 
+
+The noisy experts model (Fig. 8) augments the Precision-Gated Experts (Section D.2) with an additional noise layer for each expert. Instead of treating each forecaster prediction ˆyi,j as an exact input, the model introduces a latent variable pred i,j connected to the observed pre-diction through a Normal factor with learned precision 
+
+κi.
+
+Training model. During training, y is a data vari-able (observed). The factorization between q(y, pred) 
+
+is not required: since y is observed, the structured de-pendence between y and pred is absorbed by the data and does not affect the variational updates. 
+
+@model function noisy_experts( n_forecasters, n_obs, features, predictions, y, priors ) local w, z, gamma, tau, beta, kappa, pred for i = 1:n_forecasters w[i] ~ priors[:w][i] tau[i] ~ priors[:tau][i] beta[i] ~ priors[:beta][i] kappa[i] ~ priors[:kappa][i] end for j = 1:n_obs for i = 1:n_forecasters z[i,j] ~ softdot( features[j], w[i], tau[i] ) where {meta = LowRankMeta()} gamma[i,j] ~ GammaShapeRate( 1.0, beta[i] )z[i,j] ~ Log(gamma[i,j]) pred[i,j] ~ NormalMeanPrecision( predictions[i,j], kappa[i] )y[j] ~ NormalMeanPrecision( pred[i,j], gamma[i,j] )end end end 
+
+Prediction model. For prediction, y is no longer ob-served but is instead a latent variable with an uninfor-mative prior. In this setting, the choice between mean-field and belief propagation on the pred → y edge be-comes significant. Under the mean-field variational rule the outgoing message towards y from fN (pred, γ) uses only Eq [pred] :
+
+# Mean-field rule: ignores Var(pred) 
+
+@rule NormalMeanPrecision(:out, Marginalisation) ( q_mu::Any, q_tau::Any ) = NormalMeanPrecision( mean(q_mu), mean(q_tau) )
+
+This sets the predictive precision to E[γi,j ] alone, dis-carding the forecaster noise κ−1 
+
+> i
+
+entirely. By contrast, the belief propagation rule propagates the full uncer-tainty in pred :
+
+# BP rule: additive variance 1/kappa + 1/gamma 
+
+@rule NormalMeanPrecision(:out, Marginalisation) ( m_mu::NormalDistributionsFamily, m_tau::PointMass ) = begin m_mu_mean, m_mu_cov = mean_cov(m_mu) NormalMeanPrecision(m_mu_mean, inv(m_mu_cov + inv(mean(m_tau)))) end 
+
+Here Var(pred i,j ) = κ−1 
+
+> i
+
+, so the predictive variance be-comes κ−1 
+
+> i
+
++ γ−1 
+
+> i,j
+
+. The prediction model activates this rule by keeping q(y, pred) in a single structured factor and marking y as uninformative: 
+
+@model function noisy_experts_prediction( n_forecasters, n_obs, features, predictions, priors ) local w, z, gamma, tau, beta, kappa, pred, y for i = 1:n_forecasters w[i] ~ priors[:w][i] tau[i] ~ priors[:tau][i] beta[i] ~ priors[:beta][i] kappa[i] ~ priors[:kappa][i] end for j = 1:n_obs for i = 1:n_forecasters z[i,j] ~ softdot( features[j], w[i], tau[i] ) where {meta = LowRankMeta()} gamma[i,j] ~ GammaShapeRate( 1.0, beta[i] )z[i,j] ~ Log(gamma[i,j]) pred[i,j] ~ NormalMeanPrecision( predictions[i,j], kappa[i] )y[j] ~ NormalMeanPrecision( pred[i,j], gamma[i,j] )end y[j] ~ Uninformative() end end 
+
+The constraints and initialization blocks for both mod-els: 
+
+@constraints function noisy_constraints( priors, prediction ) if prediction q(w, z, gamma, tau, beta, kappa, pred, y) = q(w)q(z, gamma)q(tau) q(beta)q(kappa)q(y, pred) else 
+
+16 N = 
+
+> w1
+
+· · · 
+
+G =
+
+> τ1
+
+· · · 
+
+πϕ(x1) Nγ1,1 
+
+N
+
+> pred 1,1
+> ˆy1,1
+
+G
+
+=
+
+> κ1
+
+· · · 
+
+=
+
+> y1
+> y1
+
+· · · 
+
+Figure 8: Noisy experts factor graph, shown for expert i=1 and observation j=1 . Compared to Depth 1 (Fig. 3c), the clamped prediction ˆy1,1 is replaced by a latent variable pred 1,1 , connected to the observed forecaster output through an additional Nor-mal factor with learned precision κ1. This separates forecaster disagreement from irreducible predictive uncertainty.      
+
+> q(w, z, gamma, tau, beta, kappa, pred) = q(w)q(z, gamma)q(tau) q(beta)q(kappa)q(pred) end q(z) :: ProjectedTo( NormalMeanVariance) q(gamma) :: ProjectedTo(Gamma) end @initialization function noisy_init(priors) q(w) = deepcopy(priors[:w]) q(z) = NormalMeanVariance(0.0, 1.0) q(gamma) = GammaShapeScale(1.0, 1.0) q(tau) = priors[:tau] q(beta) = priors[:beta] q(kappa) = priors[:kappa] q(pred) = NormalMeanVariance(0.0, 1.0) end
+
+# E Experimental Details 
+
+## E.1 Base forecasters 
+
+We train n = 7 forecasters independently using a fixed input sequence length of 96 time steps. 
+
+• DLinear (Zeng et al., 2023): decomposes the in-put series into trend and seasonal components, then applies separate linear layers to forecast each part. Channel-independent. 
+
+• NLinear (Zeng et al., 2023): applies a linear fore-casting layer after normalizing the input sequence. Channel-independent. 
+
+• LSTM (Hochreiter and Schmidhuber, 1997): re-current neural network for temporal dependen-cies. 
+
+• CNN : cross-channel one-dimensional convolutional model applied across time-series channels. 
+
+• NConv : similar to NLinear, but replaces the lin-ear layer with a one-dimensional convolution. 
+
+• Quantile 10 / Quantile 90 : constant forecast-ers corresponding to the 10th and 90th quantiles. All neural networks are trained with the AdamW op-timizer (Loshchilov and Hutter, 2019), learning rate 
+
+0.001 , for 50 epochs; the best checkpoint is selected by validation performance. For ETTh1 and ETTh2, forecasting is performed on a univariate target; for Ex-change Rate, Electricity, and Traffic, all dimensions are predicted. 
+
+## E.2 Feature extraction 
+
+To obtain a compact representation of multivariate time series with input length 96, we train a variational au-toencoder (VAE) (Kingma and Welling, 2013) that re-constructs the input sequence through a latent repre-sentation of dimension 64. 
+
+## E.3 Baseline gating methods 
+
+For comparison we consider two gating variants based on the classical Mixture-of-Experts architecture (Jacobs et al., 1991): MoE , a single-layer neural network with softmax output, and MoE Big , a two-layer fully con-nected neural network with softmax output. Both are trained with early stopping: training halts when the loss decrease falls below δ = 10 −5, with 100 epochs and patience 50. 
+
+NLL computation for the softmax baselines. The softmax gating weights wi = ezi / P 
+
+> j
+
+ezj are positive and sum to one, so the predictive mean is ˆy = P 
+
+> i
+
+wi ˆyi.To obtain a predictive variance we interpret the unnor-malized scores ezi as precisions: setting γi = ezi recov-ers the same weighted average ˆy = P 
+
+> i
+
+γi ˆyi/ P 
+
+> i
+
+γi and yields a predictive precision P 
+
+> j
+
+ezj , giving a Gaussian predictive distribution N (ˆ y, ( P 
+
+> j
+
+ezj )−1) from which NLL is computed. This interpretation is inherently limited: the softmax is shift-invariant, so replacing zi → zi + c leaves the weights (and hence the predictive mean) unchanged but scales the implied precision by ec. No additional term in the training objective can resolve this ambiguity, since the gradient of the softmax output with respect to a global shift is zero. Consequently, the NLL values re-ported for the MoE baselines depend on an unidentified degree of freedom. In PGE, the precisions are explicit random variables equipped with priors, so no such am-biguity arises and the predictive uncertainty is fully de-termined by the model. 
+
+## E.4 Our framework 
+
+All configurations of our framework are trained for 5 variational message passing iterations and use 3 itera-tions during prediction. 
+
+Solving the non-conjugate fixed point. The sta-tionarity condition (8) is a nonlinear fixed-point equa-tion whose right-hand side is available in closed form but whose solution is not. We solve it by casting it as 17 Table 2: Characteristics of the benchmark datasets, including dimensionality, length, split ratio (train:val:test), and sampling frequency. 
+
+Dataset Dims Length Split ratio Frequency ETTh1 7 14307 6:2:2 15 min ETTh2 7 14307 6:2:2 15 min Electricity 321 26211 7:1:2 Hourly Traffic 862 17451 7:1:2 Hourly Exchange 8 7207 7:1:2 Daily 
+
+the minimization of the local free energy Fz [η] (5) over the natural-parameter space of the Gaussian, which car-ries the Fisher information metric and forms a Rieman-nian manifold. Optimization on this manifold is per-formed with Manopt.jl (Bergmann, 2022), using the ex-ponential family manifold interface of Lukashchuk et al. (2025). We use an Armijo line search with initial step size 10 −2 and a bounded-norm update rule (maximum step norm 0.5 ), running up to 50 iterations with a tol-erance of 10 −6.
+
+# F Full Results 
+
+## F.1 Dataset info 
+
+The statistical characteristics of the datasets include the dataset names, the number of input dimensions, corre-sponding to the number of individual time series in each dataset, the length of each time series, the training, vali-dation, and test splits adopted for expert and ensemble training, and the sampling frequency of the temporal index. 
+
+## F.2 Methods parameter count 
+
+Table 3 reports the trainable parameter counts for all considered ensemble methods in the VAE-based feature setting with input dimensionality d = 65 and number of experts K = 7 . Here, d = 65 consists of a 64-dimensional latent representation produced by the VAE together with one additional constant feature. The ta-ble presents both the general formulas and the corre-sponding numerical values for the experimental setup used in this work. As expected, the Static model has the smallest num-ber of parameters, since it only learns global coeffi-cients for each expert. The MoE model is also relatively compact due to its single-layer softmax gating mecha-nism, whereas MoE Big is substantially larger because it employs a deeper gating network. The Dynamic and Noisy variants require the largest number of parameters because they model full covariance structures, whose complexity grows quadratically with d. By contrast, the diagonal variants remain much more parameter-efficient, since they restrict uncertainty modeling to di-agonal terms only. These parameter counts are later used to analyze the trade-off between forecasting performance and model complexity.     
+
+> Table 3: Parameter-count formulas and counts for the VAE-feature setting ( d= 65 ,K= 7 ).
+
+Method Formula for Ntotal Count ( d = 65 )Static 2K 14 
+
+MoE K(d + 1) 462 
+
+MoE Big H(d + 1) + K(H + 1) 14023 
+
+Dyn. Diag. 2K(d + 2) 938 
+
+Noisy Diag. K(2 d + 6) 952 
+
+Dynamic K
+
+
+
+d + d(d+1) 2 + 4 
+
+
+
+15498 
+
+Noisy K
+
+
+
+d + d(d+1) 2 + 6 
+
+
+
+15512 
+
+## F.3 Pareto Frontier 
+
+The Pareto frontier was constructed for the Static, Dy-namic, Dynamic Diagonal, Noisy, and Noisy Diagonal models. It compares the radar-plot area percentage shown in Figures 7a and 7b against the number of train-able parameters used by each model, with parameter counts reported in Table 3. 
+
+## F.4 Experts Performance 
+
+This table presents the MAE and MSE results for each expert model on all datasets described in Table 2, evalu-ated over the forecasting horizons 96, 192, 336, 720 . All experts were trained with an input sequence length of 96. The considered expert models are CNN, DLinear, LSTM, NLinear, NConv, as well as the quantile predic-tors q10 and q90. 
+
+## F.5 Performance of ensembles 
+
+The MSE and NLL values are presented for the Static, Dynamic, Dynamic Diagonal, Noisy, Noisy Diagonal, MoE, and MoE Big ensemble methods. The MoE model is implemented as a single-layer neural network with softmax-based weighting, whereas MoE Big is a two-layer softmax-based neural network with a higher num-ber of trainable parameters, as detailed in Table 3. All ensemble approaches were evaluated on the same five datasets listed in Table 2. In all cases, the ensemble in-put consisted of sequences of length 96, which were com-pressed into a 64-dimensional latent state using a vari-ational autoencoder trained to reconstruct all dataset features over the same input length. 
+
+## F.6 Forecasting Comparison 
+
+Figure 10 presents a comparison of the forecasting per-formance of the Static, Noisy Diagonal, and MoE en-semble models with confidence intervals on the Elec-tricity dataset for the forecasting horizon of 720. For the Static ensemble, the figure shows the contribution values assigned to each expert. For the Noisy Diagonal model, the figure presents the time-varying values as-sociated with each expert together with the Top Share plot, which illustrates the extent to which the model concentrates the forecasting contribution on a single ex-18 Parameter count 10 1 10 2 10 3 10 4Radar area (% of max) 050 100 
+
+MSE Pareto Frontier 
+
+Static Dyn. Dyn. Diag. Noisy Noisy Diag. MoE MoE Big Parameter count 10 1 10 2 10 3 10 4Radar area (% of max) 050 100 
+
+NLL Pareto Frontier 
+
+Static Dyn. Dyn. Diag. Noisy Noisy Diag. MoE MoE Big 
+
+Pareto frontier: model size vs radar-area score Figure 9: Pareto frontier relating model size to radar-chart area. Static and Noisy Diagonal offer the strongest trade-off between complexity and predictive performance. 
+
+pert over time. For the MoE model, the figure shows the gating-layer weights after the softmax activation. Fig-ure 11 also shows, that on some datasets MoE can be overconfident and collapse into one expert, which can be not the best among experts for this data. 19 Table 4: Comparison of MSE and MAE for baseline models and quantile-based predictors with input sequence length 96 .
+
+Dataset H CNN DLinear LSTM NLinear NConv q10 q90 MSE MAE MSE MAE MSE MAE MSE MAE MSE MAE MSE MAE MSE MAE Exchange_rate 96 2.455 1.187 0.157 0.306 1.150 0.881 0.183 0.317 0.180 0.314 1.439 0.958 3.423 1.411 192 3.559 1.448 0.325 0.446 2.589 1.337 0.400 0.478 0.410 0.479 1.379 0.962 3.584 1.447 336 2.295 1.184 0.558 0.606 1.536 1.023 0.804 0.680 0.820 0.680 1.407 0.974 3.751 1.491 720 4.902 1.706 1.495 0.984 1.982 1.147 2.187 1.166 2.426 1.225 2.269 1.262 2.313 1.125 Avg 3.303 1.381 0.634 0.585 1.814 1.097 0.894 0.660 0.959 0.674 1.623 1.039 3.268 1.368 ETTh1 96 0.456 0.586 0.156 0.312 0.412 0.536 0.147 0.301 0.181 0.333 0.611 0.680 0.601 0.675 192 0.248 0.398 0.162 0.318 0.278 0.419 0.137 0.295 0.178 0.323 0.538 0.630 0.647 0.708 336 0.298 0.449 0.137 0.309 0.231 0.377 0.135 0.291 0.174 0.328 0.501 0.605 0.708 0.750 720 1.006 0.905 0.290 0.462 0.275 0.409 0.216 0.361 0.310 0.440 0.465 0.583 0.799 0.809 Avg 0.502 0.585 0.187 0.350 0.299 0.435 0.159 0.312 0.211 0.356 0.529 0.624 0.689 0.736 ETTh2 96 1.796 1.114 0.313 0.448 0.851 0.752 0.339 0.465 0.427 0.505 3.160 1.561 1.086 0.825 192 1.017 0.772 0.270 0.414 0.855 0.751 0.320 0.455 0.414 0.504 2.943 1.496 1.081 0.823 336 1.109 0.853 0.269 0.413 0.848 0.715 0.345 0.470 0.423 0.508 2.787 1.449 1.081 0.824 720 1.957 1.228 0.385 0.516 1.232 0.966 0.681 0.661 0.685 0.655 2.683 1.420 1.198 0.875 Avg 1.470 0.992 0.309 0.448 0.947 0.796 0.421 0.513 0.487 0.543 2.893 1.482 1.111 0.837 Electricity 96 0.350 0.432 0.176 0.267 0.396 0.443 0.178 0.266 0.348 0.363 2.778 1.335 1.838 1.095 192 0.388 0.462 0.251 0.326 0.335 0.403 0.260 0.324 0.307 0.345 2.786 1.337 1.872 1.105 336 0.364 0.434 0.223 0.314 0.337 0.407 0.229 0.310 0.248 0.319 2.800 1.340 1.922 1.119 720 0.418 0.462 0.344 0.404 0.425 0.462 0.370 0.407 0.462 0.449 2.832 1.347 2.049 1.155 Avg 0.380 0.448 0.249 0.336 0.373 0.429 0.259 0.341 0.341 0.369 2.799 1.340 1.920 1.119 Traffic 96 0.743 0.422 0.475 0.308 0.845 0.469 0.478 0.305 1.205 0.596 2.738 1.139 3.308 1.442 192 0.737 0.423 0.710 0.431 0.817 0.443 0.716 0.430 0.831 0.453 2.746 1.140 3.161 1.425 336 0.730 0.403 0.547 0.345 0.740 0.407 0.556 0.337 0.622 0.344 2.752 1.141 3.109 1.437 720 0.800 0.447 0.814 0.473 1.055 0.576 0.820 0.466 1.191 0.588 2.772 1.144 3.073 1.426 Avg 0.753 0.424 0.637 0.389 0.864 0.474 0.643 0.385 0.962 0.496 2.752 1.141 3.163 1.433 
+
+20 Table 5: MSE / NLL for Static, Dynamic (Dyn.), Dynamic Diagonal (Dyn. Diag.), Noisy Experts (Noisy), Noisy Diagonal (Noisy Diag.), Mixture of Experts (MoE), and MoE Big ensembles, compared against the best baseline model selected by lowest baseline MSE for each dataset and horizon. Rows are organized by dataset, horizon, and metric; models remain as columns. An average block is included for each dataset. Bold indicates the best result; blue underlined indicates the second best. Non-finite values are treated as missing. The ± values denote 95% confidence intervals for each metric. 
+
+Dataset H Metric Static Dyn. Dyn. Diag. Noisy Noisy Diag. MoE MoE Big Best 
+
+ETTh1 
+
+96 MSE 0.132 ± 0.01 0.128 ± 0.01 0.123 ± 0.01 0.131 ± 0.01 0.129 ± 0.01 0.147 ± 0.01 0.156 ± 0.01 0.147 NLL 1.138 ± 0.10 0.412 ± 0.02 0.451 ± 0.01 0.447 ± 0.02 0.468 ± 0.01 (2.1 ± 1.7) ×10 25 (2.3 ± 1.3) ×10 24 ×
+
+192 MSE 0.114 ± 0.01 0.115 ± 0.01 0.112 ± 0.01 0.116 ± 0.01 0.115 ± 0.01 0.137 ± 0.01 0.137 ± 0.01 0.137 NLL 0.759 ± 0.08 0.370 ± 0.02 0.425 ± 0.01 0.408 ± 0.02 0.433 ± 0.01 (1.1 ± 1.1) ×10 22 (1.2 ± 0.9) ×10 19 ×
+
+336 MSE 0.105 ± 0.01 0.096 ± 0.00 0.095 ± 0.00 0.098 ± 0.01 0.097 ± 0.00 0.172 ± 0.01 0.231 ± 0.01 0.135 NLL 0.610 ± 0.07 0.314 ± 0.01 0.384 ± 0.01 0.362 ± 0.01 0.393 ± 0.01 (1.1 ± 0.7) ×10 22 (2.5 ± 1.9) ×10 14 ×
+
+720 MSE 0.145 ± 0.01 0.112 ± 0.01 0.113 ± 0.01 0.115 ± 0.01 0.116 ± 0.01 0.215 ± 0.01 0.216 ± 0.01 0.216 NLL 0.801 ± 0.07 0.376 ± 0.02 0.439 ± 0.01 0.424 ± 0.01 0.454 ± 0.01 (9.1 ± 6.9) ×10 11 (1.5 ± 1.1) ×10 17 ×
+
+Avg MSE 0.124 ± 0.01 0.113 ± 0.01 0.111 ± 0.01 0.115 ± 0.01 0.114 ± 0.01 0.168 ± 0.01 0.185 ± 0.01 0.159 NLL 0.827 ± 0.08 0.368 ± 0.02 0.424 ± 0.01 0.410 ± 0.01 0.437 ± 0.01 (5.1 ± 4.3) ×10 24 (5.7 ± 3.3) ×10 23 ×
+
+ETTh2 
+
+96 MSE 0.325 ± 0.02 0.346 ± 0.02 0.344 ± 0.02 0.340 ± 0.02 0.337 ± 0.02 0.339 ± 0.02 0.313 ± 0.02 0.313 NLL 2.333 ± 0.14 0.934 ± 0.03 0.885 ± 0.02 0.897 ± 0.03 0.874 ± 0.02 (3.1 ± 2.5) ×10 23 (1.1 ± 1.1) ×10 31 ×
+
+192 MSE 0.296 ± 0.02 0.336 ± 0.02 0.332 ± 0.02 0.327 ± 0.02 0.321 ± 0.02 0.320 ± 0.02 0.320 ± 0.02 0.270 
+
+NLL 1.736 ± 0.12 0.924 ± 0.04 0.872 ± 0.02 0.882 ± 0.03 0.856 ± 0.02 (2.9 ± 2.7) ×10 23 (7.1 ± 6.6) ×10 24 ×
+
+336 MSE 0.304 ± 0.02 0.353 ± 0.02 0.350 ± 0.02 0.337 ± 0.02 0.333 ± 0.02 0.269 ± 0.01 0.269 ± 0.01 0.269 
+
+NLL 1.661 ± 0.11 0.961 ± 0.04 0.902 ± 0.02 0.904 ± 0.03 0.878 ± 0.02 (5.8 ± 4.1) ×10 19 (1.4 ± 1.3) ×10 23 ×
+
+720 MSE 0.480 ± 0.02 0.321 ± 0.02 0.323 ± 0.02 0.326 ± 0.02 0.322 ± 0.02 0.385 ± 0.02 0.385 ± 0.02 0.385 NLL 1.976 ± 0.11 0.870 ± 0.03 0.857 ± 0.02 0.863 ± 0.03 0.854 ± 0.02 (2.1 ± 1.5) ×10 19 × ×
+
+Avg MSE 0.351 ± 0.02 0.339 ± 0.02 0.337 ± 0.02 0.333 ± 0.02 0.328 ± 0.02 0.328 ± 0.02 0.322 ± 0.02 0.309 
+
+NLL 1.926 ± 0.12 0.922 ± 0.03 0.879 ± 0.02 0.886 ± 0.03 0.866 ± 0.02 (1.5 ± 1.3) ×10 23 (3.8 ± 3.6) ×10 30 ×
+
+Exchange rate 
+
+96 MSE 0.326 ± 0.01 0.398 ± 0.01 0.239 ± 0.01 0.306 ± 0.01 0.262 ± 0.01 2.455 ± 0.03 0.183 ± 0.01 0.157 
+
+NLL 18.757 ± 0.68 (1.7 ± 0.1) ×10 2 (6.2 ± 0.5) ×10 2 10.912 ± 0.33 9.705 ± 0.32 (2.5 ± 0.2) ×10 19 (1.5 ± 0.2) ×10 13 ×
+
+192 MSE 0.820 ± 0.03 0.821 ± 0.03 0.521 ± 0.02 0.509 ± 0.02 0.453 ± 0.02 3.559 ± 0.11 3.559 ± 0.11 0.325 
+
+NLL 40.131 ± 1.35 (1.7 ± 0.1) ×10 2 (1.6 ± 0.1) ×10 3 17.519 ± 0.73 16.568 ± 0.63 (2.3 ± 0.2) ×10 14 × ×
+
+336 MSE 1.161 ± 0.03 1.420 ± 0.03 1.071 ± 0.02 0.854 ± 0.02 0.749 ± 0.02 2.295 ± 0.07 2.295 ± 0.07 0.558 
+
+NLL 43.942 ± 1.04 (2.4 ± 0.1) ×10 2 (1.9 ± 0.1) ×10 3 27.064 ± 0.65 25.050 ± 0.56 (5.9 ± 1.3) ×10 20 (1.1 ± 0.2) ×10 21 ×
+
+720 MSE 1.675 ± 0.04 1.754 ± 0.03 1.140 ± 0.01 1.515 ± 0.03 1.472 ± 0.03 1.982 ± 0.05 1.982 ± 0.05 1.495 NLL 36.109 ± 0.78 (1.3 ± 0.0) ×10 2 (8.6 ± 0.5) ×10 2 36.573 ± 0.61 35.816 ± 0.72 (4.3 ± 1.1) ×10 21 (2.8 ± 0.8) ×10 32 ×
+
+Avg MSE 0.995 ± 0.02 1.098 ± 0.03 0.743 ± 0.01 0.796 ± 0.02 0.734 ± 0.02 2.573 ± 0.07 2.005 ± 0.06 0.634 
+
+NLL 34.735 ± 0.96 (1.8 ± 0.1) ×10 2 (1.2 ± 0.1) ×10 3 23.017 ± 0.58 21.785 ± 0.56 (1.2 ± 0.3) ×10 21 (9.4 ± 2.8) ×10 31 ×
+
+Electricity 
+
+96 MSE 0.182 ± 0.01 0.197 ± 0.01 0.198 ± 0.01 0.188 ± 0.01 0.188 ± 0.01 0.176 ± 0.01 0.176 ± 0.01 0.176 NLL (5.2 ± 0.2) ×10 2 (3.1 ± 0.1) ×10 2 (1.4 ± 0.1) ×10 3 (3.3 ± 0.1) ×10 2 (3.3 ± 0.1) ×10 2 (6.5 ± 5.4) ×10 14 (5.7 ± 4.3) ×10 19 ×
+
+192 MSE 0.225 ± 0.01 0.232 ± 0.01 0.248 ± 0.01 0.228 ± 0.01 0.228 ± 0.01 0.251 ± 0.01 0.251 ± 0.01 0.251 NLL (5.6 ± 0.2) ×10 2 (3.6 ± 0.1) ×10 2 (1.3 ± 0.0) ×10 3 (4.2 ± 0.1) ×10 2 (4.2 ± 0.1) ×10 2 (1.1 ± 0.3) ×10 13 (1.4 ± 1.3) ×10 22 ×
+
+336 MSE 0.207 ± 0.01 0.216 ± 0.01 0.229 ± 0.01 0.210 ± 0.01 0.209 ± 0.01 0.224 ± 0.01 0.230 ± 0.01 0.223 NLL (5.8 ± 0.2) ×10 2 (3.6 ± 0.1) ×10 2 (1.3 ± 0.0) ×10 3 (4.0 ± 0.2) ×10 2 (4.0 ± 0.2) ×10 2 (4.3 ± 1.5) ×10 10 (4.7 ± 1.4) ×10 12 ×
+
+720 MSE 0.308 ± 0.01 0.321 ± 0.01 0.320 ± 0.01 0.311 ± 0.01 0.311 ± 0.01 0.340 ± 0.01 0.370 ± 0.01 0.344 NLL (7.0 ± 0.2) ×10 2 (4.6 ± 0.1) ×10 2 (1.9 ± 0.0) ×10 3 (5.7 ± 0.1) ×10 2 (5.7 ± 0.1) ×10 2 (1.6 ± 0.2) ×10 5 (3.5 ± 2.2) ×10 23 ×
+
+Avg MSE 0.231 ± 0.01 0.242 ± 0.01 0.249 ± 0.01 0.234 ± 0.01 0.234 ± 0.01 0.248 ± 0.01 0.257 ± 0.01 0.248 NLL (5.9 ± 0.2) ×10 2 (3.7 ± 0.1) ×10 2 (1.5 ± 0.0) ×10 3 (4.3 ± 0.1) ×10 2 (4.3 ± 0.1) ×10 2 (1.7 ± 1.4) ×10 14 (9.2 ± 5.7) ×10 22 ×
+
+Traffic 
+
+96 MSE 0.503 ± 0.02 0.528 ± 0.02 0.556 ± 0.03 0.540 ± 0.03 0.540 ± 0.03 0.472 ± 0.02 0.477 ± 0.02 0.475 NLL (1.9 ± 0.1) ×10 3 (2.5 ± 0.1) ×10 3 (6.3 ± 0.6) ×10 4 (2.9 ± 0.1) ×10 3 (2.9 ± 0.1) ×10 3 (9.7 ± 7.1) ×10 13 × ×
+
+192 MSE 0.629 ± 0.03 0.648 ± 0.03 0.684 ± 0.03 0.622 ± 0.03 0.622 ± 0.03 0.677 ± 0.03 0.690 ± 0.03 0.710 NLL (2.2 ± 0.1) ×10 3 (3.0 ± 0.2) ×10 3 (6.8 ± 0.8) ×10 4 (4.3 ± 0.2) ×10 3 (4.3 ± 0.2) ×10 3 (1.4 ± 1.1) ×10 21 × ×
+
+336 MSE 0.515 ± 0.02 0.528 ± 0.03 0.567 ± 0.03 0.517 ± 0.02 0.517 ± 0.02 0.552 ± 0.02 0.556 ± 0.03 0.547 NLL (2.1 ± 0.1) ×10 3 (2.7 ± 0.2) ×10 3 (5.1 ± 0.5) ×10 4 (3.4 ± 0.2) ×10 3 (3.4 ± 0.2) ×10 3 (5.5 ± 2.2) ×10 14 (9.9 ± 4.2) ×10 21 ×
+
+720 MSE 0.748 ± 0.03 0.757 ± 0.04 0.782 ± 0.04 0.741 ± 0.03 0.741 ± 0.03 0.766 ± 0.03 1.036 ± 0.04 0.800 NLL (2.3 ± 0.1) ×10 3 (3.2 ± 0.2) ×10 3 (8.0 ± 0.9) ×10 4 (4.8 ± 0.2) ×10 3 (4.8 ± 0.2) ×10 3 (2.9 ± 0.9) ×10 12 × ×
+
+Avg MSE 0.599 ± 0.03 0.615 ± 0.03 0.647 ± 0.03 0.605 ± 0.03 0.605 ± 0.03 0.617 ± 0.03 0.690 ± 0.03 0.633 NLL (2.2 ± 0.1) ×10 3 (2.9 ± 0.2) ×10 3 (6.6 ± 0.7) ×10 4 (3.8 ± 0.2) ×10 3 (3.8 ± 0.2) ×10 3 (3.5 ± 2.6) ×10 20 (9.9 ± 4.2) ×10 21 ×
+
+21 Figure 10: Comparison of forecasting with confidence interval of Static, Noisy Diagonal and MoE ensembles on electricity dataset and horizon 720. With values of each ensemble method for it’s experts. 
+
+22 Figure 11: Comparison of forecasting with confidence interval of Static, Noisy Diagonal and MoE ensembles on exchange rate dataset and horizon 192. This example shows how classic neural network can collapse into one expert, which is not the best for this task. 
+
+23
