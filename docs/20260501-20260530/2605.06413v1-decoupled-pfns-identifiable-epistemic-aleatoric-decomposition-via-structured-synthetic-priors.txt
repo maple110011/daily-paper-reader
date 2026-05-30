@@ -1,0 +1,2276 @@
+Title: Decoupled PFNs: Identifiable Epistemic-Aleatoric Decomposition via Structured Synthetic Priors
+
+URL Source: https://arxiv.org/pdf/2605.06413v1
+
+Published Time: Fri, 08 May 2026 01:26:51 GMT
+
+Number of Pages: 33
+
+Markdown Content:
+# Decoupled PFNs: Identifiable Epistemic–Aleatoric Decomposition via Structured Synthetic Priors 
+
+Richard Bergna 1 Stefan Depeweg 2 Jose Miguel Hernández-Lobato 11University of Cambridge 2Siemens AG 
+
+## Abstract 
+
+Prior-Fitted Networks (PFNs) amortize Bayesian prediction by meta-learning over a synthetic task prior, but their standard output is a posterior predictive distri-bution over noisy observations. For sequential decision-making, such as active learning and Bayesian optimization, acquisition should prioritize epistemic uncer-tainty about the latent signal rather than irreducible aleatoric observation noise. We show that this epistemic–aleatoric split is not identifiable in general from the posterior predictive distribution alone, even when that distribution is known ex-actly. We then exploit a distinctive advantage of PFNs: because the synthetic data-generating process is under our control, each task can contain an explicit la-tent signal and noise function, and the generator can provide query-level labels for both the noiseless target and the observation-noise variance. We use these la-bels to train a decoupled PFN with separate latent-signal and aleatoric heads. The observation-level predictive is induced by convolving the latent signal distribution with the learned noise model. Empirically, epistemic-only acquisition mitigates the failure mode of total-variance exploration in noisy and heteroscedastic set-tings. In matched comparisons, decoupled models usually improve over tuned observation-level baselines, with the clearest gains in HPO; in broader sweeps, a decoupled model obtains the best average rank in both HPO and synthetic BO. 
+
+## 1 Introduction 
+
+In sequential decision-making, not all uncertainty is equally useful. Active learning, Bayesian op-timization, and experimental design benefit from querying points that reduce uncertainty about the latent signal of interest [MacKay, 1992, Houlsby et al., 2011, Jones et al., 1998, Srinivas et al., 2009]. By contrast, querying a point only because its observations are intrinsically noisy can waste budget: repeated measurements may reveal little about the underlying function. This motivates ac-quisition functions that distinguish epistemic uncertainty, which is reducible by data, from aleatoric 
+
+uncertainty due to irreducible observation noise [Kendall and Gal, 2017, Depeweg et al., 2018]. Prior-Fitted Networks (PFNs) are an attractive foundation for such problems. By meta-learning over synthetic task priors, they amortize Bayesian prediction: a single forward pass maps a context dataset and query input to a posterior predictive distribution [Müller et al., 2021, Nagler, 2023]. Recent systems such as TabPFN, TabPFN v2, and TabICL demonstrate that this yields strong in-context predictors for tabular data without per-task optimization, ensembling, or extensive hyperparameter tuning [Hollmann et al., 2022, 2025, Qu et al., 2025]. However, the standard PFN objective trains the model to predict the noisy target y∗, so its output is an observation-level predictive p(y∗ | x∗, D)
+
+that combines uncertainty about the latent function with observation noise. The consequence for acquisition is direct: a posterior predictive may be excellent for forecasting future observations while exposing the wrong uncertainty object for decision-making. Acquisition rules based on total predictive variance can confuse ignorance with noise and repeatedly select high-noise regions [Depeweg et al., 2018]. We show that this is not merely a modelling imperfection:                                   
+
+> Preprint.
+> arXiv:2605.06413v1 [stat.ML] 7 May 2026 432101234
+> input x
+> 1.5
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> target  y
+> selected by
+> total LCB
+> mixed predictive
+> uncertainty
+> 432101234
+> input x
+> selected by
+> epistemic LCB
+> Epistemic
+> uncertainty
+> Aleatoric
+> uncertainty
+> Standard PFN Decoupled PFN (ours)
+> observations true latent signal f(x)predictive mean
+> epistemic 90% interval aleatoric 90% interval total predictive 90% interval
+> Synthetic prior PFN q(y*)Structured
+> synthetic prior PFN (f*)
+> 2
+
+Figure 1: Why decoupling matters for acquisition. In a heteroscedastic 1D task with an un-supported region (grey), total predictive uncertainty can draw a standard PFN toward high-noise observations. By separating latent-signal uncertainty from observation noise, our decoupled PFN enables epistemic-LCB to target the unsupported region instead. Stars mark selected queries. the epistemic–aleatoric split is not identifiable from the marginal predictive distribution alone, even when that distribution is known exactly (Proposition 1). A standard PFN trained only on noisy-target likelihood therefore has no objective-level reason to learn a unique decomposition. Our key observation is that PFNs have access to a source of supervision unavailable in ordinary supervised learning. Since pretraining tasks are generated synthetically, we can augment the task prior so that each task contains an explicit noiseless signal fτ and observation-noise function σ2 
+
+> τ
+
+,with observations generated as 
+
+y = fτ (x) + ε, ε ∼ N (0 , σ 2 
+
+> τ
+
+(x)) .
+
+The generator provides query-level labels for both fτ (x∗) and σ2 
+
+> τ
+
+(x∗) as privileged auxiliary targets during pretraining; at test time the model receives only (D, x ∗), exactly as a standard PFN. We use these labels to train a decoupled binned PFN whose latent-signal head predicts a distribution over the noiseless target and whose aleatoric head predicts the observation-noise variance. The observation-level predictive is then induced by convolving the latent distribution with the learned noise model, preserving the standard PFN interface while exposing a decision-relevant epistemic signal for downstream acquisition. Figure 1 illustrates the effect: the latent head assigns uncertainty to unsupported regions while the aleatoric head tracks input-dependent noise. 
+
+Key idea 
+
+A standard PFN is trained to predict noisy observations, so its posterior predictive does not uniquely determine how uncertainty should be split into latent-signal uncertainty and observation noise. We make this split supervised during PFN pretraining: the synthetic generator defines both fτ (x) and σ2 
+
+> τ
+
+(x), and provides them as privileged training targets. In summary, our contributions are: • We show that the posterior predictive learned by a standard PFN does not, in general, identify an epistemic–aleatoric decomposition, even when the predictive distribution is learned perfectly (Proposition 1). • We introduce a decoupled PFN trained with privileged latent-signal and noise-level labels from an augmented synthetic task prior, with separate latent-signal and aleatoric heads whose convolution induces the observation-level predictive. • We use the resulting latent posterior to define epistemic-only acquisition functions for active learn-ing and Bayesian optimization, showing that they mitigate the failure mode of total-variance ex-ploration in noisy and heteroscedastic settings. 22 Standard PFN Predictives Do Not Identify the Epistemic–Aleatoric Split 
+
+We now formalize the Bayesian object learned by a standard PFN and show why it does not deter-mine a unique epistemic–aleatoric split. Prior-Fitted Networks (PFNs) approximate Bayesian prediction under a synthetic task prior. A task 
+
+τ ∼ p(τ ) specifies a conditional distribution pτ (y | x) over noisy observations. Given a context dataset D = {(xi, y i)}ni=1 , and conditioning on the observed inputs, Bayesian inference under this prior induces a posterior over tasks 
+
+p(τ | D ) ∝ p(τ )
+
+> n
+
+Y
+
+> i=1
+
+pτ (yi | xi).
+
+The corresponding posterior predictive distribution is 
+
+p(y∗ | x∗, D) = 
+
+Z
+
+pτ (y∗ | x∗) p(τ | D ) dτ. (1) A PFN amortizes this computation by training a parametric predictor qθ (· | x∗, D) on synthetic tasks: 
+
+min  
+
+> θ
+
+Eτ ∼p(τ )ED∼ pτ E(x∗,y ∗)∼pτ [− log qθ (y∗ | x∗, D)] . (2) Since log loss is a strictly proper scoring rule, the population optimum is the Bayes posterior predic-tive in (1), assuming sufficient model capacity and successful optimization. Thus, a standard PFN is best understood as an amortized approximation to the Bayes posterior predictive under the synthetic task prior. For sequential decision-making, however, the posterior predictive is not always the desired uncer-tainty object. It mixes uncertainty about the latent task with irreducible observation noise. To see this, define 
+
+mτ (x) := E[Y | x, τ ], s2 
+
+> τ
+
+(x) := Var( Y | x, τ ).
+
+Applying the law of total variance with respect to the posterior over tasks gives 
+
+Var( Y∗ | x∗, D) = Var τ |D (mτ (x∗)) 
+
+| {z }
+
+> epistemic
+
++ Eτ |D 
+
+s2 
+
+> τ
+
+(x∗)| {z }
+
+> aleatoric
+
+. (3) The first term captures uncertainty over plausible latent tasks and is reducible by additional data. The second captures residual variability that remains even if the task were known. Equation (3) shows that the full task prior can define an epistemic–aleatoric decomposition. Standard PFN training, however, constrains only the marginal predictive distribution over y∗, not these two components separately. This creates the ambiguity formalized below. 
+
+Proposition 1 (Non-identifiability of an additive signal–noise split) . Fix a query–context pair 
+
+(x∗, D), and suppose the marginal predictive distribution is 
+
+p(y∗ | x∗, D) = N (m, s 2), s2 > 0.
+
+For every a ∈ (0 , s 2), there exist independent random variables 
+
+F∗ | x∗, D ∼ N (m, a ), ε∗ ∼ N (0 , s 2 − a), Y∗ = F∗ + ε∗,
+
+such that 
+
+Y∗ | x∗, D ∼ N (m, s 2).
+
+Consequently, even in this Gaussian additive setting, the same marginal predictive distribution is compatible with a continuum of additive decompositions into latent-signal variance a and residual-noise variance s2 − a. Thus, the marginal predictive distribution alone does not identify a unique epistemic–aleatoric variance split. Proof. For any a ∈ (0 , s 2), define F∗ and ε∗ as above. Since the sum of independent Gaussian variables is Gaussian, 
+
+F∗ + ε∗ ∼ N (m + 0 , a + ( s2 − a)) = N (m, s 2).
+
+3However, the corresponding variance decomposition is 
+
+Var( F∗ | x∗, D) = a, Var( ε∗) = s2 − a. 
+
+Different choices of a therefore induce different signal/noise variance splits while yielding exactly the same marginal predictive distribution over Y∗. Hence the map from additive signal–noise decom-positions to marginal predictive laws is many-to-one, so the marginal predictive distribution alone cannot identify the decomposition. Proposition 1 is pointwise and deliberately minimal: it does not rule out identifying a decomposition from additional assumptions, from structure tying the signal and noise processes across inputs, or from direct supervision. Rather, it shows that a PFN trained only to match p(y∗ | x∗, D) has no objective-level requirement to expose the reducible and irreducible components separately. Our method supplies the missing structure by defining the signal–noise split in the synthetic generator and supervising both components during pretraining. 
+
+## 3 Method 
+
+Motivated by Proposition 1, we modify the PFN synthetic task prior so that the signal–noise decom-position is specified explicitly during pretraining. We sample augmented tasks 
+
+τ = ( pxτ , f τ , σ 2 
+
+> τ
+
+),
+
+where pxτ is an input distribution, fτ is a noiseless latent signal, and σ2 
+
+> τ
+
+is an observation-noise function. Observed targets are generated as 
+
+y = fτ (x) + ε, ε ∼ N (0 , σ 2 
+
+> τ
+
+(x)) . (4) Thus, the observation-level distribution pτ (y | x) is a derived quantity, while the signal–noise de-composition is part of the generative model itself. The decomposition is therefore not recovered post hoc from the posterior predictive distribution. Instead, the synthetic generator provides query-level labels for the clean signal fτ (x∗) and the noise variance σ2 
+
+> τ
+
+(x∗), which are used as privileged auxiliary targets during pretraining. The model itself receives only the noisy context D = {(xi, y i)}ni=1 and the query input x∗, both during training and at test time. Before defining the binned architecture, we briefly specify the synthetic prior used to instantiate this supervised decomposition. 
+
+Synthetic heteroscedastic task prior. Tasks are sampled online during fine-tuning from an aug-mented prior that separates the clean latent signal from observation noise. For each task, we first sample a noiseless function fτ from a mixture of GP-style and structural-causal priors, and then generate observations by adding Gaussian noise according to Eq. (4). The noise process is het-eroscedastic with high probability and homoscedastic otherwise. The resulting clean query targets 
+
+fτ (x∗) and noise variances σ2 
+
+> τ
+
+(x∗) are retained only as auxiliary training targets for the decoupled models. Tuned and decoupled models are fine-tuned on the same online-sampled task prior; exact sampler and optimization details are given in Appendix B. 
+
+3.1 Decoupled binned PFN 
+
+We use fixed target bins 
+
+a0 < a 1 < · · · < a K
+
+with centers 
+
+cj = 12 (aj−1 + aj ), j = 1 , . . . , K. 
+
+A standard PFN directly predicts observation-bin masses. Instead, we predict a latent distribution over the noiseless signal and a separate aleatoric variance. The epistemic head is formally a latent-signal head: it outputs logits ℓ(f ) ∈ RK , defining 
+
+π(f ) 
+
+> θ,j
+
+(x∗, D) = qθ (f∗ = cj | x∗, D) = softmax( ℓ(f ))j . (5) The uncertainty represented by this distribution is epistemic: it reflects posterior uncertainty about the noiseless signal f∗, rather than observation noise. 4The observation-level predictive distribution is obtained by passing the latent signal distribution through the Gaussian noise model: 
+
+p(y) 
+
+> k
+
+=
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> θ,j
+
+(x∗, D)Tk|j
+
+ ˆσ2 
+
+> θ
+
+(x∗, D) , (6) where, writing ˆσθ = pˆσ2 
+
+> θ
+
+(x∗, D),
+
+Tk|j (ˆ σ2 
+
+> θ
+
+) = Φ 
+
+ ak − cj
+
+ˆσθ
+
+
+
+− Φ
+
+ ak−1 − cj
+
+ˆσθ
+
+
+
+. (7) Here Tk|j is the probability that a Gaussian centered at cj with variance ˆσ2 
+
+> θ
+
+falls in observation bin 
+
+k, so the transition matrix implements the binned analogue of convolving the latent signal distribu-tion with a Gaussian observation-noise model. In implementation, the transition probabilities are computed over the finite bin range, clamped for numerical stability, and renormalized to sum to one. This gives a truncated binned-Gaussian approximation to the convolution while preserving the standard binned PFN predictive interface and making the latent epistemic distribution explicit. 
+
+3.2 Training objective 
+
+For each synthetic query point, the generator provides the observed target y∗, the latent signal f∗ =
+
+fτ (x∗), and the noise variance σ2 
+
+> ∗
+
+= σ2 
+
+> τ
+
+(x∗). We train with three losses. The induced observation distribution is trained with the usual binned negative log-likelihood: 
+
+Lbar  
+
+> y
+
+(θ) = − log p(y) 
+
+> b(y∗)
+
++ log wb(y∗), (8) where b(y∗) is the bin containing y∗ and wk = ak − ak−1. The latent head is supervised using the bin containing the noiseless target: 
+
+Lcat  
+
+> f
+
+(θ) = − log π(f )
+
+> θ,b (f∗)
+
+(x∗, D). (9) The aleatoric head is supervised in log-variance space: 
+
+Lσ (θ) =  log ˆ σ2 
+
+> θ
+
+(x∗, D) − log σ2
+
+> ∗
+
+2 . (10) The full objective is 
+
+Ltotal (θ) = Eτ, D,(x∗,y ∗)
+
+
+
+Lbar 
+
+> y
+
+|{z} 
+
+> predictive loss
+
++λf Lcat 
+
+> f
+
+|{z} 
+
+> epistemic loss
+
++λσ Lσ
+
+|{z} 
+
+> aleatoric loss
+
+
+
+. (11) The three losses play distinct roles. The latent and aleatoric auxiliary losses give the two heads their intended generator-defined semantics: the latent head is trained to predict the clean signal, and the aleatoric head is trained to predict the noise level. The observation loss is retained to ensure that the distribution induced by convolving the latent head with the noise head remains a good predictive distribution for the observed target y∗, preserving the standard PFN predictive interface. For the auxiliary terms, the population minimizers have a simple interpretation. The latent auxiliary loss recovers the conditional distribution of the discretized clean signal B(fτ (x∗)) given (x∗, D).Since Lσ is a squared loss in log-variance space, the aleatoric head recovers the Bayes-optimal point predictor of log-variance, equivalently the conditional geometric-mean summary 
+
+ˆσ2 
+
+> θ
+
+(x∗, D) = exp  E[log σ2 
+
+> τ
+
+(x∗) | x∗, D] .
+
+Thus, when there is posterior uncertainty over the noise function, the induced observation-level pre-dictive should be understood as a structured approximation to the full Bayes predictive, rather than an exact marginalization over all possible noise functions. Appendix A formalizes this population-risk argument. At test time, epistemic uncertainty is computed from π(f ) 
+
+> θ
+
+, for example using 
+
+Var θ (f∗) = 
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> θ,j
+
+c2 
+
+> j
+
+−
+
+
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> θ,j
+
+cj
+
+
+
+> 2
+
+.
+
+Aleatoric uncertainty is given by the predicted noise variance ˆσ2 
+
+> θ
+
+(x∗, D). Observation-level sum-maries, such as means and intervals, are computed from the induced predictive distribution p(y).5Instantiation. We instantiate the method by adapting two public pretrained tabular foundation models: TabICL [Qu et al., 2025] and TabPFN v2.5 [Hollmann et al., 2025]. This gives four matched models. Decoupled-ICL ( Dec-ICL ) and Decoupled-PFN ( Dec-PFN ) use the proposed latent-signal and aleatoric heads, while Tuned-ICL and Tuned-PFN are observation-level tuned baselines with the same pretrained backbones and 999-bin output discretization. The tuned baselines are fine-tuned on the same synthetic task prior and optimization protocol, but are trained only with the standard observation-level bar loss. Thus, matched comparisons isolate the effect of the additional laten-t/noise supervision and the resulting epistemic acquisition signal. Architecture, partial-unfreezing, and loss-weight details are given in Appendix B. 
+
+Acquisition. For BO and HPO, decoupled and tuned models use the same acquisition families, differing only in the uncertainty distribution used for acquisition. The main comparison uses log-Expected Improvement (LogEI): decoupled models compute it from the latent-signal moments 
+
+(μf , v epi ), while tuned baselines compute it from the total observation-level predictive moments 
+
+(μy , v tot ), since they do not expose a separate epistemic–aleatoric decomposition. Full acquisition details, including the closed-form Expected Improvement (EI) expression, lower confidence bound (LCB), and marginal Thompson-sampling (TS) ablations, are given in Appendix C. 
+
+## 4 Related Work 
+
+Prior-fitted and tabular in-context predictors. We build on Prior-Fitted Networks (PFNs) and tabular in-context learning [Müller et al., 2021, Nagler, 2023, Hollmann et al., 2022, 2025, Qu et al., 2025], and in particular PFN-based BO/HPO surrogates such as PFNs4BO and freeze-thaw PFN methods [Müller et al., 2023, Rakotoarison et al., 2024]. These works use PFNs as posterior-predictive surrogates over observed targets. Our contribution is orthogonal: we modify the synthetic pretraining objective and output architecture so that the PFN exposes a latent-signal posterior sepa-rately from observation noise. 
+
+Epistemic–aleatoric uncertainty and noisy acquisition. Separating epistemic from aleatoric un-certainty is standard in Bayesian deep learning [Gal and Ghahramani, 2016, Kendall and Gal, 2017, Lakshminarayanan et al., 2017, Depeweg et al., 2018] and central to acquisition in active learning and Bayesian optimization [MacKay, 1992, Houlsby et al., 2011, Jones et al., 1998, Srinivas et al., 2009]. Heteroscedastic GP and noisy BO methods model input-dependent noise explicitly [Kersting et al., 2007, Binois et al., 2018, Cowen-Rivers et al., 2022]; we achieve an analogous signal–noise separation inside a PFN via privileged supervision from the synthetic generator. 
+
+BO/HPO baselines. We compare against standard BO/HPO baselines, including GP-EI, BoTorch GP baselines, TPE, and random search [Jones et al., 1998, Balandat et al., 2020, Bergstra et al., 2011, 2013, Akiba et al., 2019]. These baselines provide practical points of comparison. The matched comparisons between Dec-ICL and Tuned-ICL, and between Dec-PFN and Tuned-PFN, serve a different purpose: they isolate whether acquisition improves when the surrogate exposes a latent epistemic posterior rather than only an observation-level predictive, while holding fixed the pretrained backbone, synthetic task prior, and acquisition family. 
+
+## 5 Results 
+
+We evaluate whether the decoupled latent-signal posterior provides a more useful uncertainty signal for sequential decision-making. Our experiments cover three settings: hyperparameter optimisation, synthetic Bayesian optimisation, and active learning. The main text focuses on settings where the choice of uncertainty signal directly affects the selected evaluations; observation-level regression performance is reported in Appendix F. 
+
+Main comparison and extended sweeps. The main text reports a compact comparison over eight core methods: Dec-ICL and Dec-PFN, their matched observation-level tuned counterparts, Tuned-ICL and Tuned-PFN, and four external baselines: a Gaussian-process surrogate with expected im-provement (GP-EI), a BoTorch GP baseline, TPE through Optuna, and random search. For the PFN/ICL variants, the main sequential-optimisation comparison uses log-Expected Improvement 6(LogEI). Decoupled models compute LogEI from the latent-signal posterior, while tuned models compute LogEI from the total observation-level predictive because they do not expose a separate epistemic component. Appendix C defines the acquisition functions for binned PFN outputs. The extended results in Appendices E.3 and E.5 report the full sweep over 22 method/acquisition variants listed in Appendix E.1, including TS, LCB, EI/LogEI variants, total-variance ablations, multiple GP variants, TPE, and random search. Figure 2 summarises the average-rank comparison. The strongest gains from decoupling appear in hyperparameter optimisation, where noisy and structured evaluations make the epistemic–aleatoric distinction especially consequential. On synthetic benchmarks the decoupled methods remain com-petitive, but the margins are smaller. 0 1 2 3 4 5 6 7 8      
+
+> Average rank (lower is better)
+> Dec-PFN (Ours)
+> Tuned-PFN
+> GP (BoTorch)
+> Dec-ICL (Ours)
+> GP-EI
+> Tuned-ICL
+> TPE (Optuna)
+> Random
+> 2.60
+> 2.80
+> 3.50
+> 3.60
+> 3.80
+> 4.60
+> 6.50
+> 7.60
+> Bayesian Optimisation (5 benchmarks)
+> 0123456
+> Average rank (lower is better)
+> Dec-ICL (Ours)
+> Tuned-ICL
+> TPE (Optuna)
+> Tuned-PFN
+> Dec-PFN (Ours)
+> GP-EI
+> Random
+> GP (BoTorch)
+> 2.50
+> 3.62
+> 3.88
+> 4.62
+> 5.00
+> 5.25
+> 5.25
+> 5.88
+> Hyperparameter Optimisation (8 benchmarks)
+> Average-Rank Summary (lower is better)
+
+Figure 2: Average-rank summary across sequential optimisation benchmarks. Left : synthetic Bayesian optimisation (5 benchmarks). Right : hyperparameter optimisation (8 core benchmarks). Ranks are computed among the eight core methods from the median final simple regret over 10 seeds, with lower being better. Decoupled methods use epistemic-only LogEI, while tuned counter-parts use total-predictive LogEI. Bold labels indicate our proposed methods. 
+
+5.1 Hyperparameter Optimisation 
+
+Table 1: Matched hyperparameter optimisation results on the 8 core HPO benchmarks. Values are mean ± std of final simple regret after 100 BO steps over 10 seeds. Lower is better. TabICL Backbone TabPFN Backbone Family Benchmark Decoupled (Ours) Tuned Decoupled (Ours) Tuned LightGBM California 0.0191 ± 0.0067 0.0171 ± 0.0056 0.0204 ± 0.0120 0.0220 ± 0.0095 Kin8nm 0.0091 ± 0.0029 0.0103 ± 0.0021 0.0106 ± 0.0039 0.0098 ± 0.0030 
+
+Airlines 0.0120 ± 0.0035 0.0136 ± 0.0023 0.0150 ± 0.0021 0.0132 ± 0.0035 
+
+XGBoost California 0.0286 ± 0.0123 0.0301 ± 0.0126 0.0373 ± 0.0114 0.0305 ± 0.0110 
+
+Kin8nm 0.0086 ± 0.0030 0.0073 ± 0.0023 0.0079 ± 0.0029 0.0090 ± 0.0048 Airlines 0.0221 ± 0.0047 0.0273 ± 0.0110 0.0264 ± 0.0055 0.0289 ± 0.0104 Random Forest Diabetes 1.0648 ± 0.4062 1.4968 ± 0.6464 1.4025 ± 0.4586 1.3891 ± 0.7633 
+
+RBF-SVM Breast Cancer 0.0081 ± 0.0035 0.0063 ± 0.0027 0.0081 ± 0.0020 0.0088 ± 0.0025 
+
+Setup. We construct 8 HPO benchmarks across four model families. LightGBM and XGBoost are tuned on California Housing, Kin8nm, and Airlines; Random Forest is tuned on Diabetes; and an RBF-SVM is tuned on Breast Cancer. The tree-based benchmarks are deliberately noisy: configura-tions are evaluated under stochastic train/validation splits, and the LightGBM/XGBoost objectives include input-dependent evaluation noise coupled to the subsampling parameter. This makes the setting suitable for testing whether acquisition benefits from separating reducible signal uncertainty from irreducible evaluation noise. The search spaces range from 2 to 4 dimensions and include learning rates, tree-complexity parameters, subsampling rates, regularization parameters, and kernel 7parameters. Each run performs 100 sequential evaluations under a common-seed protocol with up to 
+
+10 seeds per benchmark. Performance is measured by final simple regret and aggregated by average rank across benchmarks. Full search-space, noise-model, and evaluation-protocol details are given in Appendix D, and per-benchmark regret curves are given in Appendix E.2. We also include TPE through Optuna [Akiba et al., 2019], a strong practical baseline for HPO. 
+
+Results. Figure 2 (right) summarises the HPO rankings among the eight core methods in the main comparison. Dec-ICL achieves the best average rank ( 2.50 ), substantially outperforming its tuned counterpart ( 3.62 ) despite sharing the same pretrained backbone. This supports the central claim that, in noisy and structured HPO landscapes, acquisition functions benefit from using the latent-signal posterior rather than the total observation-level predictive uncertainty. Table 1 gives the matched LogEI comparison. Within the TabICL backbone, the decoupled model outperforms the tuned counterpart on 5 of the 8 benchmarks, with the largest gains on XGBoost/Air-lines and Random Forest/Diabetes. These are settings where evaluation noise and train/validation variability can make total predictive uncertainty a less reliable guide for acquisition. TPE is compet-itive ( 3.88 ), as expected for a practical HPO baseline, but is still outranked on average by Dec-ICL. GP baselines rank lower overall (GP-EI: 5.25 ; GP (BoTorch): 5.88 ). Backbone choice also interacts with task structure. TabICL dominates on HPO, likely because its inductive bias is better matched to structured, often mixed-type search spaces. By contrast, PFN-backbone variants are less consistent on HPO, but perform more strongly on the smooth synthetic benchmarks in Section 5.2. 
+
+5.2 Synthetic Bayesian Optimisation Setup. We evaluate on five standard synthetic benchmarks: Branin (2D), Hartmann (4D and 6D), and Ackley (2D, noiseless and noisy), running 100 BO steps from a shared initial design across 
+
+10 random seeds. PFN/ICL variants use log-Expected Improvement with gradient optimisation (LogEI): decoupled models compute EI from the latent f -posterior, while tuned models use the total observation-level predictive. GP baselines use EI-based acquisition where applicable, while TPE and random search use their standard policies. Baselines include GP-EI [Jones et al., 1998], GP-EI via BoTorch [Balandat et al., 2020], TPE [Bergstra et al., 2011], and random search. Per-benchmark regret curves and a full method comparison are given in Appendix E.4 and E.5. 
+
+Results. Figure 2 (left) summarises the synthetic BO rankings. Dec-PFN achieves the best aver-age rank ( 2.60 ), with Tuned-PFN close behind ( 2.80 ). The margins between the top methods are tighter than on HPO, consistent with smooth, low-dimensional functions being driven as much by ac-quisition optimisation quality as by the uncertainty decomposition itself. Nonetheless, within each backbone the decoupled variant edges out its tuned counterpart: Dec-PFN ( 2.60 ) vs. Tuned-PFN (2.80 ), and Dec-ICL ( 3.60 ) vs. Tuned-ICL ( 4.60 ). GP (BoTorch) is competitive ( 3.50 ), as expected on smooth functions, while TPE ( 6.50 ) and Random ( 7.60 ) confirm that these benchmarks reward sample-efficient model-based search. As noted in Section 5.1, the backbone ranking reverses rela-tive to HPO: the PFN backbone is strongest on smooth continuous functions, while TabICL leads on the structured HPO landscapes. Notably, Dec-PFN ( 2.60 ) outranks both GP-BoTorch ( 3.50 ) and TPE ( 6.50 ), showing that the decoupled PFN is competitive with dedicated BO surrogates even on the smooth, low-dimensional functions where GPs are traditionally strongest. The matched gains over tuned baselines are smaller than on HPO, consistent with these benchmarks being driven as much by acquisition optimisation quality as by the uncertainty decomposition. 
+
+5.3 Active Learning Setup. We evaluate pool-based active learning on five regression datasets. For each dataset, we sample an initial labelled set of size n0 = 1024 and an unlabelled pool of size 5000 , then acquire 
+
+1024 additional points sequentially, one at a time. We report test performance after all acquisitions, averaged over seeds. All methods use the same variance-based acquisition rule and differ only in the uncertainty signal: decoupled models use the latent f -posterior variance, while tuned baselines use total predictive variance. Full protocol details, including the fixed pool/test splits, seed counts, and acquisition definitions, are given in Appendix G. 8Table 2: Active learning results on real datasets after the final acquisition step. Entries are mean ±
+
+std over dataset-specific seeds; lower is better. All methods use the same variance-based acquisition rule. Boldface compares methods within each backbone family.                                                                                                                                                                                            
+
+> TabICL Backbone TabPFN Backbone Dataset Metric ↓Decoupled (Ours) Tuned Decoupled (Ours) Tuned California RMSE 0.4772 ±0.0035 0.4783 ±0.0033 0.4788 ±0.0042 0.4795 ±0.0048 NLL 0.435 ±0.027 0.437 ±0.028 0.442 ±0.030 0.446 ±0.031 MAE 0.3055 ±0.0025 0.3064 ±0.0029 0.3061 ±0.0028 0.3068 ±0.0031 Kin8nm RMSE 0.0796 ±0.0010 0.0805 ±0.0012 0.0802 ±0.0012 0.0810 ±0.0014 NLL -1.125 ±0.016 -1.112 ±0.020 -1.118 ±0.018 -1.105 ±0.021 MAE 0.0626 ±0.0008 0.0632 ±0.0010 0.0630 ±0.0009 0.0637 ±0.0011 NYC Taxi RMSE 3.128 ±0.014 3.130 ±0.016 3.18 ±0.03 3.20 ±0.04 NLL 1.939 ±0.020 1.930 ±0.016 1.965 ±0.025 1.980 ±0.030 MAE 1.4261 ±0.0075 1.4285 ±0.0061 1.438 ±0.010 1.445 ±0.012 Airlines RMSE 1.9046 ±0.0028 1.9040 ±0.0037 1.9075 ±0.0038 1.9082 ±0.0042 NLL 2.0571 ±0.0027 2.0569 ±0.0030 2.0585 ±0.0035 2.0592 ±0.0038 MAE 1.6078 ±0.0082 1.607 ±0.011 1.613 ±0.009 1.614 ±0.010 Year RMSE 9.415 ±0.031 9.413 ±0.031 9.430 ±0.040 9.425 ±0.042
+> NLL 3.541 ±0.010 3.5405 ±0.0089 3.548 ±0.013 3.546 ±0.014
+> MAE 6.499 ±0.055 6.494 ±0.059 6.520 ±0.060 6.515 ±0.062
+
+Results. Table 2 shows a consistent matched advantage for the decoupled acquisition signal. Across both backbone families, decoupled models improve over their tuned counterparts in 7/10 
+
+RMSE comparisons and 20 /30 metric-level comparisons. The effect is strongest for the TabPFN backbone, where decoupling wins on four of five datasets across all reported metrics. Because these comparisons share the same backbone family, synthetic prior, and acquisition rule, the results sup-port using latent epistemic uncertainty rather than total predictive variance for noisy active learning. 
+
+When does decoupling help most? Across the three settings, epistemic-only acquisition helps most when observation or evaluation noise is substantial relative to signal uncertainty, as in noisy HPO and active learning on real regression datasets. The gains are smaller on smooth, low-noise synthetic functions, where total and epistemic uncertainty are more closely aligned. This matches the motivation of the method: the decomposition matters most when total predictive variance is a poor proxy for reducible uncertainty. The same pattern holds in the broader sweeps reported in Appendices E.3 and E.5, where Dec-ICL-LogEI ranks first among 22 HPO methods and Dec-PFN-LogEI ranks first among 22 synthetic BO methods. 
+
+## 6 Conclusion 
+
+We showed that a standard PFN posterior predictive does not, by itself, identify an epistemic– aleatoric decomposition. We address this within PFN pretraining by exploiting its synthetic task prior: the augmented generator provides privileged labels for both the noiseless signal and obser-vation noise, yielding a generator-defined decomposition that transfers to real tasks as an inductive bias. Empirically, epistemic-only acquisition mitigates the failure mode of total-variance exploration in noisy settings. In matched comparisons, decoupled models usually improve over tuned counter-parts, with the clearest gains in HPO; in broader sweeps over 22 method/acquisition variants, a decoupled model achieves the best average rank in both HPO (Dec-ICL-LogEI) and synthetic BO (Dec-PFN-LogEI). Gains are largest when observation noise is substantial relative to signal un-certainty and smaller on smooth low-noise functions; active-learning results are more modest but support the same pattern. Important directions include characterizing when synthetic-prior noise assumptions transfer reliably to real tasks, studying sensitivity to auxiliary loss weights and noise-prior design, and extending the framework beyond Gaussian observation noise to non-Gaussian like-lihoods and structured observation models. More broadly, our results suggest that PFNs should be viewed not only as fast posterior-predictive approximators, but also as vehicles for learning decision-relevant uncertainty representations through the design of synthetic pretraining. 9References 
+
+Takuya Akiba, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori Koyama. Optuna: A next-generation hyperparameter optimization framework. In Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining , pages 2623–2631, 2019. Maximilian Balandat, Brian Karrer, Daniel Jiang, Samuel Daulton, Ben Letham, Andrew G Wilson, and Ey-tan Bakshy. Botorch: A framework for efficient monte-carlo bayesian optimization. Advances in neural information processing systems , 33:21524–21538, 2020. James Bergstra, Rémi Bardenet, Yoshua Bengio, and Balázs Kégl. Algorithms for hyper-parameter optimiza-tion. Advances in neural information processing systems , 24, 2011. James Bergstra, Daniel Yamins, and David Cox. Making a science of model search: Hyperparameter optimiza-tion in hundreds of dimensions for vision architectures. In International conference on machine learning ,pages 115–123. PMLR, 2013. Mickael Binois, Robert B Gramacy, and Mike Ludkovski. Practical heteroscedastic gaussian process modeling for large simulation experiments. Journal of Computational and Graphical Statistics , 27(4):808–821, 2018. Alexander I Cowen-Rivers, Wenlong Lyu, Rasul Tutunov, Zhi Wang, Antoine Grosnit, Ryan Rhys Griffiths, Alexandre Max Maraval, Hao Jianye, Jun Wang, Jan Peters, et al. Hebo: Pushing the limits of sample-efficient hyper-parameter optimisation. Journal of Artificial Intelligence Research , 74:1269–1349, 2022. Stefan Depeweg, Jose-Miguel Hernandez-Lobato, Finale Doshi-Velez, and Steffen Udluft. Decomposition of uncertainty in bayesian deep learning for efficient and risk-sensitive learning. In International conference on machine learning , pages 1184–1193. PMLR, 2018. Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. In international conference on machine learning , pages 1050–1059. PMLR, 2016. Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. Tabpfn: A transformer that solves small tabular classification problems in a second. arXiv preprint arXiv:2207.01848 , 2022. Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Ti-bor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. 
+
+Nature , 637(8045):319–326, 2025. Neil Houlsby, Ferenc Huszár, Zoubin Ghahramani, and Máté Lengyel. Bayesian active learning for classifica-tion and preference learning. arXiv preprint arXiv:1112.5745 , 2011. Donald R Jones, Matthias Schonlau, and William J Welch. Efficient global optimization of expensive black-box functions. Journal of Global optimization , 13(4):455–492, 1998. Alex Kendall and Yarin Gal. What uncertainties do we need in bayesian deep learning for computer vision? 
+
+Advances in neural information processing systems , 30, 2017. Kristian Kersting, Christian Plagemann, Patrick Pfaff, and Wolfram Burgard. Most likely heteroscedastic gaus-sian process regression. In Proceedings of the 24th international conference on Machine learning , pages 393–400, 2007. Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncertainty estimation using deep ensembles. Advances in neural information processing systems , 30, 2017. David JC MacKay. Information-based objective functions for active data selection. Neural computation , 4(4): 590–604, 1992. Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Transformers can do bayesian inference. arXiv preprint arXiv:2112.10510 , 2021. Samuel Müller, Matthias Feurer, Noah Hollmann, and Frank Hutter. Pfns4bo: In-context learning for bayesian optimization. In International Conference on Machine Learning , pages 25444–25470. PMLR, 2023. Thomas Nagler. Statistical foundations of prior-data fitted networks. In International Conference on Machine Learning , pages 25660–25676. PMLR, 2023. Jingang Qu, David HolzmÃžller, GaÃTl Varoquaux, and Marine Le Morvan. Tabicl: A tabular foundation model for in-context learning on large data. arXiv preprint arXiv:2502.05564 , 2025. 
+
+10 Herilalaina Rakotoarison, Steven Adriaensen, Neeratyoy Mallik, Samir Garibov, Edward Bergman, and Frank Hutter. In-context freeze-thaw bayesian optimization for hyperparameter optimization. arXiv preprint arXiv:2404.16795 , 2024. Niranjan Srinivas, Andreas Krause, Sham M Kakade, and Matthias Seeger. Gaussian process optimization in the bandit setting: No regret and experimental design. arXiv preprint arXiv:0912.3995 , 2009. 
+
+11 Appendix Table of Contents Contents 
+
+A Population consistency under squared log-variance loss 13 B Synthetic Pretraining and Implementation Details 14 
+
+B.1 Synthetic task prior . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 B.2 Shared fine-tuning protocol . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 B.3 Optimization details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 
+
+C Acquisition Functions for Binned PFN Surrogates 15 
+
+C.1 Moment summaries from the binned outputs . . . . . . . . . . . . . . . . . . . . . 15 C.2 Candidate-set marginal Thompson sampling and LCB . . . . . . . . . . . . . . . . 16 C.3 Gradient-based LogEI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 
+
+D HPO Benchmark Details 18 E Extended Sequential Optimisation Results 18 
+
+E.1 Method variants included in the extended sweeps . . . . . . . . . . . . . . . . . . 19 E.2 HPO: Per-Benchmark Regret Curves . . . . . . . . . . . . . . . . . . . . . . . . . 19 E.3 HPO: Full Method Comparison and LCB Ablation . . . . . . . . . . . . . . . . . 19 E.4 Synthetic BO: Per-Benchmark Regret Curves . . . . . . . . . . . . . . . . . . . . 21 E.5 Synthetic BO: Full Method Comparison . . . . . . . . . . . . . . . . . . . . . . . 21 
+
+F Additional Regression Results 21 G Additional Active Learning Details 21 
+
+G.1 Protocol . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 G.2 Acquisition Scores . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 G.3 Additional Real-Data Acquisition Comparison . . . . . . . . . . . . . . . . . . . . 25 G.4 Learning Curves . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 G.5 Reproducibility Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 
+
+H Limitations, Broader Impact, and Reproducibility Notes 25 
+
+12 A Population consistency under squared log-variance loss 
+
+We show that, under the squared log-variance loss in Eq. (10), the auxiliary losses recover the Bayes-optimal latent and noise targets under the augmented synthetic task prior. The result concerns the auxiliary heads themselves; the observation-level loss in (11) additionally encourages the induced noisy-target predictive distribution to match the standard PFN predictive interface. Let 
+
+F∗ := fτ (x∗), S∗ := σ2 
+
+> τ
+
+(x∗),
+
+and let B(F∗) ∈ { 1, . . . , K } denote the bin containing the noiseless latent target F∗. The model predicts a categorical distribution π(f ) 
+
+> θ
+
+(x∗, D) over latent bins and a positive variance ˆσ2 
+
+> θ
+
+(x∗, D).
+
+Proposition 2 (Population consistency of the auxiliary heads) . Assume S∗ > 0 almost surely and 
+
+E[(log S∗)2] < ∞. Assume also that the model class is rich enough to represent arbitrary condi-tional categorical distributions over B(F∗) and arbitrary measurable positive functions of (x∗, D).For any λf , λ σ > 0, every population minimizer of the auxiliary objective 
+
+E
+
+h
+
+λf
+
+
+
+− log π(f )
+
+> θ,B (F∗)
+
+(x∗, D)
+
+
+
++ λσ
+
+ log ˆ σ2 
+
+> θ
+
+(x∗, D) − log S∗
+
+2i
+
+satisfies, for almost every (x∗, D),
+
+π(f ) 
+
+> θ,j
+
+(x∗, D) = P(B(F∗) = j | x∗, D), j = 1 , . . . , K, 
+
+and 
+
+log ˆ σ2 
+
+> θ
+
+(x∗, D) = E[log S∗ | x∗, D].
+
+Equivalently, 
+
+ˆσ2 
+
+> θ
+
+(x∗, D) = exp ( E[log S∗ | x∗, D]) .
+
+Thus, the latent head recovers the posterior distribution of the discretized noiseless signal, while the aleatoric head recovers the Bayes-optimal log-variance predictor under the augmented synthetic task prior. Proof. Condition on a fixed pair (x∗, D). Since λf , λ σ > 0, the positive weights do not change the pointwise minimizers of the two auxiliary risks. First consider the latent head. The conditional latent auxiliary risk is 
+
+E
+
+h
+
+− log π(f ) 
+
+> B(F∗)
+
+| x∗, D
+
+i
+
+.
+
+This is the cross-entropy between the true conditional distribution of B(F∗) and the model distri-bution π(f ). Cross-entropy is minimized when the model distribution equals the true conditional distribution. Hence, for each bin j,
+
+π(f ) 
+
+> θ,j
+
+(x∗, D) = P(B(F∗) = j | x∗, D).
+
+For the aleatoric head, write 
+
+hθ (x∗, D) := log ˆ σ2 
+
+> θ
+
+(x∗, D).
+
+The conditional log-variance risk is 
+
+E
+
+h
+
+(hθ (x∗, D) − log S∗)2 | x∗, D
+
+i
+
+.
+
+The squared-error risk is minimized by the conditional mean of the target. Therefore, 
+
+hθ (x∗, D) = E[log S∗ | x∗, D],
+
+which gives 
+
+ˆσ2 
+
+> θ
+
+(x∗, D) = exp ( E[log S∗ | x∗, D]) .
+
+Since the argument holds pointwise for almost every (x∗, D), it holds at the population optimum. 13 Corollary 1 (Epistemic uncertainty from the latent head) . Let eF∗ := cB(F∗) be the discretized latent signal obtained by replacing each latent value by the center of its bin. Under Proposition 2, the variance computed from the latent categorical distribution, 
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> θ,j
+
+c2 
+
+> j
+
+−
+
+
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> θ,j
+
+cj
+
+
+
+> 2
+
+,
+
+equals 
+
+Var( eF∗ | x∗, D).
+
+As the maximum bin width tends to zero, this quantity converges to 
+
+Var( F∗ | x∗, D)
+
+under standard integrability assumptions and ignoring boundary truncation effects. 
+
+## B Synthetic Pretraining and Implementation Details 
+
+B.1 Synthetic task prior 
+
+All four models are fine-tuned on synthetic tasks sampled online. There is no fixed finite synthetic dataset; instead, each optimization step draws a fresh batch of tasks from the same underlying prior. Thus, if a model is fine-tuned for T gradient steps with batch size B, it sees BT synthetic tasks, each with 24 query targets and a variable-size context set. For each synthetic task, we sample: • an input dimension d ∈ { 1, . . . , 16 },• a total sequence length n ∈ { 25 , . . . , 256 },• a split in which the final 24 points are treated as queries and the remaining n − 24 points form the context set. We then sample a noiseless latent function f from a mixture prior. With probability 0.2, f is drawn from an RBF Gaussian-process prior approximated by random Fourier features. With the remaining probability 0.8, f is drawn from a structural-causal-model prior. Within this SCM branch, an MLP-SCM is chosen with probability 0.7 and a Tree-SCM with probability 0.3. Equivalently, the overall latent-function mixture is 20% GP, 56% MLP-SCM, and 24% Tree-SCM. For the SCM branch, we use the same sampled-hyperparameter mechanism as the TabICL synthetic prior, but force the latent function itself to be noise-free at generation time. In particular, the SCM prior generates only the clean latent signal f (x); observation noise is introduced afterward by our separate noise model. This is the key augmentation relative to standard PFN training. After sampling f , we normalize the input features independently within the task. We then sample a base observation-noise standard deviation 
+
+s0 ∼ Unif(0 .03 , 0.12) .
+
+With probability 0.8, the task is heteroscedastic. In that case, we choose a single input coordinate and construct a smooth positive modulation of s0 using a random combination of: • a sigmoidal trend term, • a local Gaussian bump term, • a sinusoidal variation term, • and a positive floor. This yields an input-dependent noise scale σ(x), which is clipped below by a small positive constant for numerical stability. With probability 0.2, the task is homoscedastic and σ(x) ≡ s0.Noisy observations are then generated as 
+
+y = f (x) + ε, ε ∼ N (0 , σ 2(x)) .
+
+14 After generating y, we normalize the observed targets using the mean and standard deviation of the context targets. The same affine transformation is applied to the latent clean targets, and the variances are rescaled by the square of the context standard deviation. This yields the normalized privileged query targets fτ (x∗) and σ2 
+
+> τ
+
+(x∗) used during training. The tuned baselines and the decoupled models are trained on exactly the same online-sampled syn-thetic tasks. The only difference is that the decoupled models add the auxiliary latent-signal and noise-level supervision, whereas the tuned baselines optimize only the standard observation-level predictive loss. 
+
+B.2 Shared fine-tuning protocol 
+
+All four checkpoints used in the paper—Dec-ICL, Tuned-ICL, Dec-PFN, and Tuned-PFN—are obtained by fine-tuning public pretrained backbones rather than by training new transformers from scratch. Dec-ICL and Tuned-ICL start from the public TabICL regression checkpoint [Qu et al., 2025], while Dec-PFN and Tuned-PFN start from the public TabPFN regressor v2.5 check-point [Hollmann et al., 2025]. In every case, we keep the backbone frozen except for the final two transformer layers, which are unfrozen during fine-tuning. The tuned baselines are matched to the decoupled models at the level of architecture adaptation and optimization protocol. In particu-lar, they use the same 999-bin output discretization, the same synthetic task sampler, and the same partial-unfreezing strategy. The only architectural difference is that the decoupled models add a latent head and a noise head, whereas the tuned baselines replace the original decoder with a single observation-level 999-bin head and optimize only the standard bar-distribution likelihood. 
+
+B.3 Optimization details 
+
+For all models we use AdamW with separate learning rates for the output head(s) and the unfrozen backbone layers. The head learning rate is 3 × 10 −4, the backbone learning rate is 10 −5, the weight decay is 10 −5, and the gradient norm is clipped at 5.0. We use a short warmup followed by a cosine schedule. For TabICL-based models we use batch size 32 ; for TabPFN-based models we use batch size 16 .For the decoupled models, the training objective is 
+
+L = λy Lbar  
+
+> y
+
++ λf Lcat  
+
+> f
+
++ λσ Lσ ,
+
+with λy = 1 , λf = 1 , and λσ = 0 .1. For the tuned baselines, we optimize only the standard observation-level bar loss Lbar  
+
+> y
+
+.
+
+## C Acquisition Functions for Binned PFN Surrogates 
+
+This appendix specifies how we construct acquisition functions from the binned PFN outputs used in our experiments. The main-text BO and HPO results use the gradient-based LogEI variant described below. Marginal candidate-set Thompson sampling (TS) and lower confidence bound (LCB) are included for completeness and correspond to the additional ablations reported in the appendix. 
+
+C.1 Moment summaries from the binned outputs 
+
+Our decoupled model outputs a latent categorical distribution π(f )(x∗, D) over the clean signal and a separate aleatoric variance ˆσ2(x∗, D). The tuned single-head model outputs only observation-level bin masses p(y)(x∗, D). In both cases, acquisition is based on moment summaries of these binned distributions. For the decoupled model, the latent posterior mean and epistemic variance are 
+
+μf (x∗) = 
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> j
+
+(x∗, D) cj , (12) 
+
+vepi (x∗) = 
+
+> K
+
+X
+
+> j=1
+
+π(f ) 
+
+> j
+
+(x∗, D) c2 
+
+> j
+
+− μf (x∗)2, (13) 15 where cj denotes the center of bin j. The induced observation-level distribution p(y) is obtained by convolving π(f ) with the predicted Gaussian noise model, as in Eq. (6). Its mean can be written as 
+
+μy (x∗) = 
+
+> K
+
+X
+
+> k=1
+
+p(y) 
+
+> k
+
+(x∗, D) ck. (14) In our implementation, the total predictive variance used for total-uncertainty logging and ablations is 
+
+vtot (x∗) = vepi (x∗) + ˆ σ2(x∗, D), (15) up to small numerical floors used for stability. This is the natural signal-plus-noise variance decom-position induced by the decoupled model, ignoring small boundary effects from finite bin truncation. For the tuned single-head model, only the observation-level moments are available: 
+
+μy (x∗) = 
+
+> K
+
+X
+
+> k=1
+
+p(y) 
+
+> k
+
+(x∗, D) ck, (16) 
+
+vtot (x∗) = 
+
+> K
+
+X
+
+> k=1
+
+p(y) 
+
+> k
+
+(x∗, D) c2 
+
+> k
+
+− μy (x∗)2. (17) Thus, the decoupled model exposes both a latent epistemic summary (μf , v epi ) and an observation-level summary (μy , v tot ), whereas the tuned model exposes only the latter. 
+
+Practical approximation. Although the underlying PFN output is binned rather than Gaussian, we construct the BO and HPO acquisitions from the first two moments above. In other words, we use a Gaussian moment-matched approximation to either the latent posterior (decoupled) or the observation-level predictive distribution (tuned). This keeps the acquisition rules simple and places tuned and decoupled models on the same footing. 
+
+C.2 Candidate-set marginal Thompson sampling and LCB 
+
+For candidate-set methods, we first construct a finite candidate set X cand  
+
+> t
+
+at BO step t, and then evaluate the acquisition on each unqueried candidate. Since all our objectives are minimization problems, the next query is chosen as 
+
+xt+1 ∈ arg min  
+
+> x∈X cand
+> t
+
+αt(x).
+
+Epistemic marginal Thompson sampling. For the decoupled model we define a candidate-set Thompson-style score by drawing 
+
+eft(x) ∼ N  μf (x), v epi (x),
+
+independently for each candidate x, and selecting 
+
+xt+1 ∈ arg min  
+
+> x∈X cand
+> t
+
+eft(x).
+
+This uses only reducible uncertainty about the latent signal. Since the PFN outputs marginal pre-dictive distributions at queried candidates rather than an explicit joint posterior over functions, this should be understood as a marginal Thompson-sampling approximation rather than a coherent global function draw. 
+
+Total marginal Thompson sampling. For the tuned model, and for total-uncertainty ablations, we instead draw 
+
+eyt(x) ∼ N  μy (x), v tot (x),
+
+independently for each candidate x, and choose the candidate with the smallest sampled value. 16 Lower confidence bound. The corresponding LCB rules are 
+
+αepi LCB (x) = μf (x) − β
+
+q
+
+max {vepi (x), ϵ v }, (18) 
+
+αtot LCB (x) = μy (x) − βpmax {vtot (x), ϵ v }, (19) with β > 0 and a small numerical floor ϵv > 0. The decoupled version uses the latent epistemic moments, while the tuned version uses the total predictive moments. 
+
+C.3 Gradient-based LogEI 
+
+The main BO and HPO comparisons in the paper use a gradient-based log-expected-improvement acquisition. Since the PFN outputs binned predictive distributions, we first form a Gaussian moment-matched approximation using the means and variances in Appendix C.1. We then compute the standard closed-form expected improvement under this Gaussian approximation. For continuous or relaxed search spaces, the resulting differentiable acquisition is optimized with multi-start gradient-based optimization. 
+
+Decoupled epistemic LogEI. For the decoupled model, we define the incumbent in latent space as the best latent posterior mean among the already evaluated points, 
+
+τ epi  
+
+> t
+
+= min  
+
+> 1≤i≤t
+
+μf (xi). (20) We then approximate the latent posterior at a candidate x by 
+
+F (x) | D t ≈ N  μf (x), v epi (x).
+
+Let 
+
+sepi (x) = 
+
+q
+
+max {vepi (x), ϵ v },
+
+where ϵv > 0 is a small numerical floor. The resulting epistemic expected improvement is 
+
+EI epi  
+
+> t
+
+(x) = E
+
+h
+
+(τ epi  
+
+> t
+
+− F (x)) + | D t
+
+i
+
+, (21) which has the Gaussian closed form 
+
+EI epi  
+
+> t
+
+(x) = ( τ epi  
+
+> t
+
+− μf (x)) Φ( zt(x)) + sepi (x) ϕ(zt(x)) , (22) where 
+
+zt(x) = τ epi  
+
+> t
+
+− μf (x)
+
+sepi (x) . (23) In practice we optimize 
+
+log 
+
+
+
+EI epi  
+
+> t
+
+(x) + ϵEI 
+
+
+
+instead of EI epi  
+
+> t
+
+(x) directly, with ϵEI > 0 used for numerical stability. 
+
+Tuned total LogEI. For the tuned model, the same construction is applied to the observation-level predictive moments: 
+
+τ tot  
+
+> t
+
+= min  
+
+> 1≤i≤t
+
+μy (xi), (24) 
+
+Y (x) | D t ≈ N  μy (x), v tot (x). (25) Let 
+
+stot (x) = pmax {vtot (x), ϵ v }.
+
+Then 
+
+˜zt(x) = τ tot  
+
+> t
+
+− μy (x)
+
+stot (x)
+
+and 
+
+EI tot  
+
+> t
+
+(x) = ( τ tot  
+
+> t
+
+− μy (x)) Φ(˜ zt(x)) + stot (x) ϕ(˜ zt(x)) . (26) Again, we optimize 
+
+log  EI tot  
+
+> t
+
+(x) + ϵEI 
+
+ .
+
+17 Optimization details. For the gradient-based variants, we keep input normalization fixed to the context statistics during the inner acquisition optimization. This avoids introducing artificial gradi-ents through a query-dependent normalization map. We first score a Sobol set of raw candidates, keep the best few starting points, and then refine them with multi-start L-BFGS-B. For bounded continuous variables, the optimizer is constrained to the search domain. For integer or discrete hyperparameters, optimization is performed in the relaxed representation and the selected point is mapped back to a valid configuration before evaluation. The selected query is the point with the largest LogEI value after local optimization. 
+
+Interpretation. The key distinction is therefore simple: • the decoupled acquisition rules operate on the latent epistemic summary (μf , v epi ), ignoring aleatoric noise during query selection; • the tuned acquisition rules operate on the total predictive summary (μy , v tot ), since no separate epistemic–aleatoric split is available. This is exactly the comparison studied in the main BO and HPO experiments. 
+
+## D HPO Benchmark Details 
+
+Table 3 summarises the 8 core HPO benchmarks. Each evaluation uses a random 80 /20 train/-validation split (5-fold CV for SVM), making observations inherently noisy. For LightGBM and XGBoost the noise level is heteroscedastic and coupled to the subsampling parameter: σ =0.02 + c · max(0 , (0 .65 − s)/0.35) , with c = 0 .12 (LightGBM, s = bagging fraction) and c = 0 .15 
+
+(XGBoost, s = subsample). All tabular datasets are subsetted to at most 3,000 examples and stan-dardised. Table 3: Core HPO benchmarks and search spaces. 
+
+Model Dataset Dim Objective Noise 
+
+LightGBM California Housing 4 RMSE heteroscedastic Kin8nm 4 RMSE heteroscedastic Airlines 4 RMSE heteroscedastic XGBoost California Housing 4 RMSE heteroscedastic Kin8nm 4 RMSE heteroscedastic Airlines 4 RMSE heteroscedastic Random Forest Diabetes 2 RMSE split noise RBF-SVM Breast Cancer 2 1 − Acc CV noise                                         
+
+> Model Search space
+> LightGBM learning rate ∈[2 −6,1] ; num_leaves ∈[8 ,256] ; bagging_frac ∈
+> [0 .3,1] ; min_child_samples ∈[5 ,100] .XGBoost learning rate ∈[2 −4,1] ; max_depth ∈[2 ,10] ; n_estimators ∈
+> [16 ,512] ; subsample ∈[0 .3,1] .Random Forest n_estimators ∈[16 ,512] ; max_depth ∈[2 ,20] .RBF-SVM C∈[2 −5,215 ];γ∈[2 −15 ,23].
+
+## E Extended Sequential Optimisation Results 
+
+This section provides the full per-benchmark regret curves and complete method comparisons that complement the summary figures in the main text. All results use the 10 -seed protocol (seeds 0–9)described in Section 5.2. 18 Table 4: Core HPO appendix results for all method/acquisition variants in the extended sweep. Methods are ordered by average rank. 
+
+Family Method LGBM Cal. LGBM Kin8nm LGBM Airlines XGB Cal. XGB Kin8nm XGB Airlines RF Diabetes SVM Breast Avg. rank Dec-ICL Dec-ICL-LogEI 0.0191 
+
+± 0.0067 0.0091 
+
+± 0.0029 0.0120 
+
+± 0.0035 0.0286 
+
+± 0.0123 0.0086 
+
+± 0.0030 0.0221 
+
+± 0.0047 1.0648 
+
+± 0.4062 0.0081 
+
+± 0.0035 7.00 
+
+Dec-ICL Dec-ICL-TS 0.0186 
+
+± 0.0055 0.0101 
+
+± 0.0043 
+
+0.0117 
+
+± 0.0034 
+
+0.0347 
+
+± 0.0201 0.0085 
+
+± 0.0021 0.0217 
+
+± 0.0057 1.5115 
+
+± 0.8921 0.0082 
+
+± 0.0029 8.00 Dec-ICL Dec-ICL-TS-Total 0.0192 
+
+± 0.0082 0.0084 
+
+± 0.0046 0.0145 
+
+± 0.0058 0.0262 
+
+± 0.0072 0.0087 
+
+± 0.0033 0.0218 
+
+± 0.0058 1.7430 
+
+± 1.0586 0.0081 
+
+± 0.0022 8.88 Tuned-ICL Tuned-ICL-LCB 0.0222 
+
+± 0.0074 0.0097 
+
+± 0.0040 0.0134 
+
+± 0.0025 0.0299 
+
+± 0.0147 0.0099 
+
+± 0.0040 0.0380 
+
+± 0.0370 1.2671 
+
+± 0.5609 0.0075 
+
+± 0.0022 9.00 Tuned-ICL Tuned-ICL-LogEI 0.0171 
+
+± 0.0056 
+
+0.0103 
+
+± 0.0021 0.0136 
+
+± 0.0023 0.0301 
+
+± 0.0126 
+
+0.0073 
+
+± 0.0023 
+
+0.0273 
+
+± 0.0110 1.4968 
+
+± 0.6464 0.0063 
+
+± 0.0027 9.25 Tuned-PFN Tuned-PFN-LCB 0.0203 
+
+± 0.0076 0.0087 
+
+± 0.0022 0.0129 
+
+± 0.0040 0.0333 
+
+± 0.0112 0.0091 
+
+± 0.0040 0.0253 
+
+± 0.0094 1.2025 
+
+± 0.5797 0.0065 
+
+± 0.0027 9.38 Baseline TPE (Optuna) 0.0188 
+
+± 0.0048 0.0101 
+
+± 0.0042 0.0130 
+
+± 0.0040 0.0282 
+
+± 0.0100 0.0089 
+
+± 0.0031 0.0253 
+
+± 0.0059 1.3137 
+
+± 0.9038 0.0068 
+
+± 0.0028 9.62 Tuned-PFN Tuned-PFN-TS 0.0204 
+
+± 0.0066 0.0097 
+
+± 0.0038 0.0204 
+
+± 0.0203 0.0347 
+
+± 0.0129 0.0108 
+
+± 0.0031 0.0217 
+
+± 0.0089 1.4316 
+
+± 0.6628 0.0075 
+
+± 0.0026 10.38 Dec-ICL Dec-ICL-LCB 0.0258 
+
+± 0.0058 0.0106 
+
+± 0.0043 0.0168 
+
+± 0.0087 
+
+0.0225 
+
+± 0.0086 
+
+0.0099 
+
+± 0.0028 0.0209 
+
+± 0.0071 1.6019 
+
+± 0.7942 0.0079 
+
+± 0.0023 11.38 Baseline GP-TS-Epi 0.0260 
+
+± 0.0073 0.0099 
+
+± 0.0033 0.0176 
+
+± 0.0084 0.0263 
+
+± 0.0074 0.0093 
+
+± 0.0034 0.0281 
+
+± 0.0140 1.2368 
+
+± 0.6693 0.0068 
+
+± 0.0035 11.38 Baseline GP-EI (BoTorch) 0.0192 
+
+± 0.0060 0.0093 
+
+± 0.0035 0.0169 
+
+± 0.0071 0.0300 
+
+± 0.0112 0.0079 
+
+± 0.0033 0.0282 
+
+± 0.0095 
+
+0.8926 
+
+± 0.3882 
+
+0.0070 
+
+± 0.0036 11.75 Tuned-PFN Tuned-PFN-LogEI 0.0220 
+
+± 0.0095 0.0098 
+
+± 0.0030 0.0132 
+
+± 0.0035 0.0305 
+
+± 0.0110 0.0090 
+
+± 0.0048 0.0289 
+
+± 0.0104 1.3891 
+
+± 0.7633 0.0088 
+
+± 0.0025 11.88 Dec-PFN Dec-PFN-LCB 0.0234 
+
+± 0.0077 
+
+0.0078 
+
+± 0.0019 
+
+0.0146 
+
+± 0.0034 0.0333 
+
+± 0.0109 0.0093 
+
+± 0.0020 0.0242 
+
+± 0.0072 0.9243 
+
+± 0.3335 0.0065 
+
+± 0.0031 12.00 Dec-PFN Dec-PFN-TS 0.0210 
+
+± 0.0084 0.0112 
+
+± 0.0032 0.0162 
+
+± 0.0046 0.0278 
+
+± 0.0123 0.0098 
+
+± 0.0018 0.0280 
+
+± 0.0135 1.7807 
+
+± 1.1852 
+
+0.0061 
+
+± 0.0026 12.50 Dec-ICL Dec-ICL-EI 0.0222 
+
+± 0.0080 0.0089 
+
+± 0.0052 0.0174 
+
+± 0.0103 0.0390 
+
+± 0.0208 0.0083 
+
+± 0.0031 
+
+0.0209 
+
+± 0.0042 
+
+1.9498 
+
+± 0.9903 0.0093 
+
+± 0.0030 12.75 Tuned-ICL Tuned-ICL-TS 0.0216 
+
+± 0.0105 0.0107 
+
+± 0.0029 0.0144 
+
+± 0.0055 0.0281 
+
+± 0.0136 0.0130 
+
+± 0.0079 0.0239 
+
+± 0.0093 1.3450 
+
+± 0.3746 0.0074 
+
+± 0.0020 12.88 Dec-PFN Dec-PFN-LogEI 0.0204 
+
+± 0.0120 0.0106 
+
+± 0.0039 0.0150 
+
+± 0.0021 0.0373 
+
+± 0.0114 0.0079 
+
+± 0.0029 0.0264 
+
+± 0.0055 1.4025 
+
+± 0.4586 0.0081 
+
+± 0.0020 13.38 Dec-ICL Dec-ICL-LCB-Total 0.0243 
+
+± 0.0087 0.0089 
+
+± 0.0019 0.0210 
+
+± 0.0160 0.0273 
+
+± 0.0139 0.0092 
+
+± 0.0032 0.0240 
+
+± 0.0133 1.1822 
+
+± 0.3794 0.0081 
+
+± 0.0030 13.50 Baseline Random 0.0202 
+
+± 0.0106 0.0112 
+
+± 0.0045 0.0142 
+
+± 0.0051 0.0339 
+
+± 0.0084 0.0145 
+
+± 0.0049 0.0260 
+
+± 0.0126 1.5443 
+
+± 0.9417 0.0086 
+
+± 0.0035 13.62 Baseline GP-EI 0.0201 
+
+± 0.0043 0.0103 
+
+± 0.0026 0.0140 
+
+± 0.0048 0.0291 
+
+± 0.0099 0.0104 
+
+± 0.0019 0.0236 
+
+± 0.0027 1.5944 
+
+± 0.6797 0.0074 
+
+± 0.0019 14.62 Baseline GP-TS 0.0214 
+
+± 0.0092 0.0105 
+
+± 0.0026 0.0144 
+
+± 0.0069 0.0287 
+
+± 0.0079 0.0113 
+
+± 0.0034 0.0361 
+
+± 0.0208 1.6671 
+
+± 0.9655 0.0070 
+
+± 0.0034 14.62 Baseline GP (BoTorch) 0.0244 
+
+± 0.0090 0.0095 
+
+± 0.0019 0.0210 
+
+± 0.0069 0.0287 
+
+± 0.0096 0.0108 
+
+± 0.0039 0.0271 
+
+± 0.0059 1.4880 
+
+± 0.7358 0.0079 
+
+± 0.0032 15.25 
+
+Entries report mean ± std final simple regret over 10 seeds. Bold cells indicate the best mean final regret within a benchmark column. 
+
+E.1 Method variants included in the extended sweeps 
+
+The main text reports a compact comparison over eight core methods for readability. The extended HPO and synthetic BO summaries include the full sweep over 22 method/acquisition variants, cov-ering LogEI, EI, TS, LCB, total-variance ablations, multiple GP variants, TPE, and random search. Tables 4 and 5 report the corresponding final simple regret values and average ranks for the HPO and synthetic BO sweeps, respectively. Method names indicate the surrogate family and acquisition rule; suffixes such as “Total” denote ablations that use total predictive uncertainty rather than the latent epistemic signal. 
+
+E.2 HPO: Per-Benchmark Regret Curves E.3 HPO: Full Method Comparison and LCB Ablation 
+
+Figure 4 extends the main-text summary to include all LCB and ablation variants. Several observa-tions are worth noting. 
+
+LCB ablation. Dec-ICL-LCB ranks 11 .38 on average across the 8 HPO benchmarks, notably weaker than Dec-ICL-LogEI ( 7.00 ) and Dec-ICL-TS ( 8.00 ) despite using the same epistemic signal. 19 Table 5: Synthetic BO appendix results for all method/acquisition variants in the extended sweep. Methods are ordered by average rank. 
+
+Family Method Branin Hart-4D Hart-6D Ackley Noisy Ackley Avg. rank Dec-PFN Dec-PFN-LogEI 0.0454 
+
+± 0.0518 
+
+0.0000 
+
+± 0.0000 
+
+0.2931 
+
+± 0.4564 
+
+0.0570 
+
+± 0.0295 
+
+0.0774 
+
+± 0.0495 3.80 
+
+Dec-ICL Dec-ICL-LogEI 0.0493 
+
+± 0.0530 
+
+0.0000 
+
+± 0.0000 
+
+0.4159 
+
+± 0.1030 0.1211 
+
+± 0.0758 0.1080 
+
+± 0.0770 4.40 Tuned-PFN Tuned-PFN-LogEI 0.0661 
+
+± 0.0656 
+
+0.0000 
+
+± 0.0000 
+
+0.2331 
+
+± 0.3099 0.0607 
+
+± 0.0521 
+
+0.0373 
+
+± 0.0325 4.40 Baseline GP (BoTorch) 0.0384 
+
+± 0.0448 
+
+0.0000 
+
+± 0.0000 0.1718 
+
+± 0.1010 – 0.1381 
+
+± 0.1947 5.00 Tuned-ICL Tuned-ICL-LogEI 0.0217 
+
+± 0.0251 0.0000 
+
+± 0.0000 
+
+0.3840 
+
+± 0.0876 0.1211 
+
+± 0.0758 0.1080 
+
+± 0.0770 6.00 Baseline GP-EI (BoTorch) 0.0244 
+
+± 0.0258 
+
+0.0000 
+
+± 0.0000 
+
+0.3619 
+
+± 0.6948 0.1691 
+
+± 0.1003 0.3216 
+
+± 0.2031 9.20 Baseline GP-EI 0.0222 
+
+± 0.0229 
+
+0.0000 
+
+± 0.0000 
+
+0.1948 
+
+± 0.2133 0.3709 
+
+± 0.2515 0.5974 
+
+± 0.3809 9.60 Dec-PFN Dec-PFN-TS 0.0655 
+
+± 0.0247 
+
+0.0000 
+
+± 0.0000 
+
+0.4448 
+
+± 0.1367 0.2489 
+
+± 0.1354 0.2436 
+
+± 0.1301 10.20 Dec-ICL Dec-ICL-EI 0.0539 
+
+± 0.0539 
+
+0.0000 
+
+± 0.0000 
+
+0.4490 
+
+± 0.1096 0.2640 
+
+± 0.1494 0.2389 
+
+± 0.1357 10.60 Dec-ICL Dec-ICL-LCB 0.0425 
+
+± 0.0482 
+
+0.0000 
+
+± 0.0000 
+
+0.4336 
+
+± 0.1088 0.2636 
+
+± 0.1456 0.2377 
+
+± 0.1331 11.00 Tuned-PFN Tuned-PFN-TS 0.0368 
+
+± 0.0255 
+
+0.0000 
+
+± 0.0000 
+
+0.4070 
+
+± 0.1513 0.2595 
+
+± 0.1252 0.2486 
+
+± 0.1317 11.60 Tuned-ICL Tuned-ICL-TS 0.0935 
+
+± 0.0524 
+
+0.0000 
+
+± 0.0000 
+
+0.3513 
+
+± 0.1727 0.2551 
+
+± 0.1220 0.2460 
+
+± 0.1300 12.00 Tuned-PFN Tuned-PFN-LCB 0.0459 
+
+± 0.0421 
+
+0.0000 
+
+± 0.0000 
+
+0.4064 
+
+± 0.1549 0.2456 
+
+± 0.1335 0.2360 
+
+± 0.1301 12.20 Dec-ICL Dec-ICL-TS 0.0473 
+
+± 0.0353 
+
+0.0000 
+
+± 0.0000 
+
+0.4023 
+
+± 0.1672 0.2929 
+
+± 0.1265 0.2490 
+
+± 0.1296 12.60 Dec-PFN Dec-PFN-LCB 0.0548 
+
+± 0.0392 
+
+0.0000 
+
+± 0.0000 
+
+0.4111 
+
+± 0.1599 0.2427 
+
+± 0.1350 0.2489 
+
+± 0.1354 13.20 Dec-ICL Dec-ICL-TS-Total 0.0632 
+
+± 0.0567 
+
+0.0000 
+
+± 0.0000 
+
+0.4101 
+
+± 0.1846 0.2705 
+
+± 0.1383 0.2490 
+
+± 0.1296 13.60 Dec-ICL Dec-ICL-LCB-Total 0.0586 
+
+± 0.0449 
+
+0.0000 
+
+± 0.0000 
+
+0.4346 
+
+± 0.1576 0.2533 
+
+± 0.1464 0.2371 
+
+± 0.1336 13.80 Tuned-ICL Tuned-ICL-LCB 0.0569 
+
+± 0.0304 
+
+0.0000 
+
+± 0.0000 
+
+0.4507 
+
+± 0.1137 0.2421 
+
+± 0.1366 0.2367 
+
+± 0.1298 13.80 Baseline TPE (Optuna) 0.1103 
+
+± 0.1000 
+
+0.0000 
+
+± 0.0000 
+
+0.4510 
+
+± 0.1883 – 0.8044 
+
+± 0.6889 14.25 Baseline GP-TS-Epi 0.0524 
+
+± 0.0468 
+
+0.0000 
+
+± 0.0000 
+
+0.6015 
+
+± 0.3297 – – 16.67 Baseline Random 0.3535 
+
+± 0.4968 0.0342 
+
+± 0.0979 1.0019 
+
+± 0.4135 2.0359 
+
+± 0.8740 2.0359 
+
+± 0.8740 19.20 Baseline GP-TS 0.0680 
+
+± 0.0452 
+
+0.0000 
+
+± 0.0000 
+
+0.5966 
+
+± 0.2847 0.6457 
+
+± 0.3547 0.6380 
+
+± 0.3471 19.40 
+
+Entries report mean ± std final simple regret over 10 seeds (0–9). Cells with fewer than 5 available seeds are shown as “–” and are excluded from the average-rank computation. Bold cells indicate the best mean final regret within a benchmark column. 
+
+This is consistent with LCB being sensitive to its β parameter in high-dimensional or structured spaces where the confidence bound is harder to calibrate. The epistemic signal nonetheless matters: its total-variance counterpart Dec-ICL-LCB-Total ranks 13 .50 , more than two places worse, and Dec-ICL-TS-Total ( 8.88 ) similarly trails Dec-ICL-TS ( 8.00 ). 
+
+Tuned vs. decoupled. For the ICL backbone, the decoupled models occupy the top two positions (Dec-ICL-LogEI 7.00 , Dec-ICL-TS 8.00 ) while the tuned counterparts rank 9.25 and 12 .88 respec-tively. 20 0 50 100                                            
+
+> BO step
+> 10 2
+> 2×10 2
+> 2×10 2
+> 2×10 2
+> 5×10 2
+> 5×10 2
+> Simple regret
+> LGBM / California
+> 050 100
+> BO step
+> 5×10 3
+> 10 2
+> 10 2
+> 10 2
+> 2×10 2
+> 2×10 2LGBM / Kin8nm
+> 050 100
+> BO step
+> 10 2
+> 2×10 2
+> LGBM / Airlines
+> 050 100
+> BO step
+> 2×10 2
+> 2×10 2
+> 5×10 2
+> 5×10 2
+> 5×10 2
+> 5×10 2
+> 5×10 2XGB / California
+> 050 100
+> BO step
+> 10 2
+> 2×10 2
+> Simple regret
+> XGB / Kin8nm
+> 050 100
+> BO step
+> 2×10 2
+> 5×10 2
+> XGB / Airlines
+> 050 100
+> BO step
+> 10 0
+> 2×10 0
+> RF / Diabetes
+> 050 100
+> BO step
+> 5×10 3
+> 10 2
+> SVM / Breast Cancer
+
+HPO Plots 
+
+> Dec-ICL-TS
+> Dec-ICL-LogEI
+> Dec-PFN-TS
+> Dec-PFN-LogEI
+> Tuned-PFN-TS
+> Tuned-PFN-LogEI
+> Tuned-ICL-TS
+> Tuned-ICL-LogEI
+> GP-EI
+> GP (BoTorch)
+> TPE (Optuna)
+> Random
+
+Figure 3: Simple regret over 100 BO steps on all 8 core HPO benchmarks, mean ± SE over 10 
+
+seeds. Dec-ICL variants (red family, solid) consistently place among the top methods across LGBM and XGBoost tasks. The RF/Diabetes benchmark is visibly noisier due to its small dataset ( 442 
+
+examples) and stochastic train/val splits; most methods converge to similar final regret, making av-erage rank a more reliable summary than individual curves. SVM/Breast Cancer shows the clearest separation, with Dec-ICL-LCB achieving the lowest final regret. 
+
+Baselines. TPE ( 9.62 ) is the strongest baseline on HPO by average rank, ahead of all GP variants (11 .38 –15 .25 ). This is expected: TPE is specifically designed for HPO-style discrete/mixed spaces and does not require a differentiable surrogate. 
+
+E.4 Synthetic BO: Per-Benchmark Regret Curves E.5 Synthetic BO: Full Method Comparison 
+
+Figure 6 shows the complete ranking over the 5 synthetic benchmarks. The LogEI acquisition is the dominant factor: the top three methods (Dec-PFN-LogEI 3.80 , Dec-ICL-LogEI 4.40 , Tuned-PFN-LogEI 4.40 ) all use gradient-based inner-loop optimisation, and the gap to the next group (GP (BoTorch) 5.00 ) is larger than any within-group difference. By contrast, TS and LCB variants rank in the 10 –13 range regardless of backbone, confirming that acquisition optimisation quality, not model quality, is the bottleneck on smooth low-dimensional functions. The total-variance ablations rank near the bottom of the field (Dec-ICL-TS-Total 13 .60 , Dec-ICL-LCB-Total 13 .80 ), well below their epistemic counterparts, which isolates the contribution of the decomposition even within the gradient-based regime. 
+
+## F Additional Regression Results 
+
+Table 6 reports the observation-level regression results for the decoupled and tuned models. Across datasets, the two variants are broadly similar, with tuned models sometimes holding a small ad-vantage in NLL, which is expected because they are optimized solely for the noisy-target predic-tive objective. These results suggest that the auxiliary decomposition losses do not substantially harm predictive performance, but that the main benefit of the proposed method lies in downstream decision-making rather than in observation-only regression accuracy. 
+
+## G Additional Active Learning Details 
+
+G.1 Protocol 
+
+We evaluate pool-based active learning on five real regression datasets: California Housing, Kin8nm, NYC Taxi, Airlines, and YearPredictionMSD. For each dataset, we construct a fixed unlabeled pool 21 0 1 2         
+
+> Benchmarks won
+> Dec-ICL-LogEI
+> Dec-ICL-TS
+> Dec-ICL-TS-Total
+> Tuned-ICL-LCB
+> Tuned-ICL-LogEI
+> Tuned-PFN-LCB
+> TPE (Optuna)
+> Tuned-PFN-TS
+> Dec-ICL-LCB
+> GP-TS-Epi
+> GP-EI (BoTorch)
+> Tuned-PFN-LogEI
+> Dec-PFN-LCB
+> Dec-PFN-TS
+> Dec-ICL-EI
+> Tuned-ICL-TS
+> Dec-PFN-LogEI
+> Dec-ICL-LCB-Total
+> Random
+> GP-EI
+> GP-TS
+> GP (BoTorch)
+> 0
+> 1
+> 0
+> 0
+> 2
+> 0
+> 0
+> 0
+> 1
+> 0
+> 1
+> 0
+> 1
+> 1
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> Wins by mean
+> 012
+> Benchmarks won
+> 0
+> 1
+> 0
+> 0
+> 1
+> 0
+> 0
+> 0
+> 2
+> 1
+> 0
+> 0
+> 1
+> 0
+> 1
+> 0
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> Wins by median
+> 0246810 12 14
+> Average rank (1 = best)
+> 7.00
+> 8.00
+> 8.88
+> 9.00
+> 9.25
+> 9.38
+> 9.62
+> 10.38
+> 11.38
+> 11.38
+> 11.75
+> 11.88
+> 12.00
+> 12.50
+> 12.75
+> 12.88
+> 13.38
+> 13.50
+> 13.62
+> 14.62
+> 14.62
+> 15.25
+
+Average rank (lower is better) 
+
+Hyperparameter Optimisation Summary (8 benchmarks) Figure 4: Full HPO summary including all acquisition variants. Methods are sorted by average rank (right panel). Bold labels indicate our proposed decoupled models. and a fixed held-out test set, and then run sequential active learning. Specifically, we begin from an initial labelled context set of size n0 = 1024 , and then acquire nq = 1024 additional points one at a time . Thus, the final reported performance corresponds to 1024 sequential acquisitions rather than a single 1024-point batch selection. For all real-data runs, the unlabeled pool size is 5000 and the test set size is 3000. For a given dataset and seed, the pool/test split is fixed across acquisition methods, and the same warm-start indices are reused across methods. This ensures that differences between acquisition rules are not confounded by different data splits or different initial labelled sets. The active-learning runner stores the pool/test split, per-step trajectories, and per-run summaries for reproducibility. Table 7 summarises the exact protocol used for the real-data experiments reported in the paper. 
+
+Evaluation metrics. At each acquisition step we record test RMSE, MAE, Gaussian NLL, CRPS, mean epistemic / aleatoric / total variance, and empirical coverage and interval widths at 50%, 80%, 90%, and 95%. The summary tables in the main text report the final-step metrics after all nq
+
+sequential acquisitions have been made. 
+
+G.2 Acquisition Scores 
+
+The main-text matched comparison isolates the effect of the uncertainty signal: decoupled mod-els acquire using the latent epistemic variance, whereas tuned baselines acquire using total predic-tive variance. In the broader appendix ablation below, we additionally compare several acquisition heuristics on the decoupled TabICL backbone. For a candidate point x, let vepi (x) denote the latent epistemic variance, vtot (x) the total predictive variance, and p(y)(x) the induced observation-level binned predictive distribution. 22 0 50 100              
+
+> BO step
+> 10 1
+> 10 1
+> Simple regret  Branin (2D)
+> 050 100
+> BO step
+> 10 3
+> 10 1
+> Hartmann (4D)
+> 050 100
+> BO step
+> 10 0
+> Hartmann (6D)
+> 050 100
+> BO step
+> 10 1
+> 10 0
+> Simple regret  Ackley (2D)
+> 050 100
+> BO step
+> 10 1
+> 10 0
+> Noisy Ackley (2D)
+
+Bayesian Optimisation 
+
+> Dec-ICL-TS
+> Dec-ICL-LogEI
+> Dec-PFN-TS
+> Dec-PFN-LogEI
+> Tuned-PFN-TS
+> Tuned-PFN-LogEI
+> Tuned-ICL-TS
+> Tuned-ICL-LogEI
+> GP-EI
+> GP (BoTorch)
+> TPE (Optuna)
+> Random
+
+Figure 5: Simple regret over 100 BO steps on the 5 synthetic benchmarks, mean ± SE over 10 seeds. LogEI variants (thicker solid lines) converge faster on all smooth benchmarks. Table 6: Local regression results for the four tuned models. Each entry is mean ± std over 10 random train/test splits. We use ntrain = 1024 and ntest = 3000 . Lower is better. Within each row, bold indicates the better method within the same backbone pair : Decoupled vs Tuned for TabICL, and Decoupled vs Tuned for TabPFN. 
+
+TabICL Backbone TabPFN Backbone Dataset Metric ↓ Decoupled (Ours) Tuned Decoupled (Ours) Tuned California RMSE 0.5049 ± 0.0160 0.5047 ± 0.0155 0.5082 ± 0.0139 0.5077 ± 0.0150 NLL 0.488 ± 0.042 0.480 ± 0.040 0.515 ± 0.037 0.505 ± 0.040 Kin8nm RMSE 0.0879 ± 0.0024 0.0878 ± 0.0025 0.1014 ± 0.0037 0.0989 ± 0.0038 NLL -1.050 ± 0.027 -1.051 ± 0.027 -0.938 ± 0.036 -0.961 ± 0.034 Airlines RMSE 1.9512 ± 0.0170 1.9521 ± 0.0161 1.9622 ± 0.0211 1.9469 ± 0.0170 NLL 2.085 ± 0.011 2.082 ± 0.009 2.093 ± 0.012 2.087 ± 0.015 Year RMSE 9.3594 ± 0.1155 9.4008 ± 0.1302 9.4035 ± 0.1337 9.3967 ± 0.0963 NLL 3.537 ± 0.016 3.537 ± 0.017 3.547 ± 0.028 3.546 ± 0.023 Wine RMSE 0.6967 ± 0.0078 0.6982 ± 0.0071 0.7457 ± 0.0156 0.7440 ± 0.0158 NLL 1.288 ± 0.225 1.263 ± 0.222 1.207 ± 0.081 1.295 ± 0.099 
+
+NLL denotes Gaussian negative log-likelihood computed from the predicted mean and total predictive variance. 
+
+Epistemic uncertainty sampling. The epistemic acquisition score is 
+
+αepi (x) = vepi (x),
+
+so points with the largest latent epistemic variance are selected. 
+
+Total uncertainty sampling. The total-variance acquisition score is 
+
+αtot (x) = vtot (x),
+
+which corresponds to standard predictive-variance sampling. 23 0 1 2
+
+> Benchmarks won
+> Dec-PFN-LogEI
+> Dec-ICL-LogEI
+> Tuned-PFN-LogEI
+> GP (BoTorch)
+> Tuned-ICL-LogEI
+> GP-EI (BoTorch)
+> GP-EI
+> Dec-PFN-TS
+> Dec-ICL-EI
+> Dec-ICL-LCB
+> Tuned-PFN-TS
+> Tuned-ICL-TS
+> Tuned-PFN-LCB
+> Dec-ICL-TS
+> Dec-PFN-LCB
+> Dec-ICL-TS-Total
+> Dec-ICL-LCB-Total
+> Tuned-ICL-LCB
+> TPE (Optuna)
+> GP-TS-Epi
+> Random
+> GP-TS
+> 1
+> 0
+> 1
+> 1
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+
+Wins by mean   
+
+> 012
+> Benchmarks won
+> 0
+> 0
+> 2
+> 0
+> 0
+> 1
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+> 0
+
+Wins by median        
+
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+> Average rank (1 = best)
+> 3.80
+> 4.40
+> 4.40
+> 5.00
+> 6.00
+> 9.20
+> 9.60
+> 10.20
+> 10.60
+> 11.00
+> 11.60
+> 12.00
+> 12.20
+> 12.60
+> 13.20
+> 13.60
+> 13.80
+> 13.80
+> 14.25
+> 16.67
+> 19.20
+> 19.40
+
+Average rank (lower is better) 
+
+Bayesian Optimisation Summary (5 benchmarks) Figure 6: Full synthetic BO summary including all acquisition variants, sorted by average rank. 
+
+Bold labels indicate our proposed decoupled models. Table 7: Protocol for the real-data active-learning experiments. 
+
+Dataset Dim n0 nq Pool Test Seeds California Housing 8 1024 1024 5000 3000 16 Kin8nm 8 1024 1024 5000 3000 20 NYC Taxi 7 1024 1024 5000 3000 19 Airlines 5 1024 1024 5000 3000 20 YearPredictionMSD 90 1024 1024 5000 3000 20 
+
+BALD. For the decoupled binned model, BALD is computed from the induced predictive distri-bution and the latent-noise transition model. Writing 
+
+p(y)
+
+k (x) = 
+
+KX
+
+j=1 
+
+π(f )
+
+j (x) Tk|j (x),
+
+the score is 
+
+αBALD (x) = H p(y)(x) −
+
+KX
+
+j=1 
+
+π(f )
+
+j (x) H T·| j (x),
+
+where H(·) denotes entropy. This is the mutual-information-style score implemented in the active-learning runner. 
+
+EPIG proxy. For EPIG we use a representation-based proxy. Let r(x) denote the normalized final representation of candidate x, and define the epistemic fraction 
+
+η(x) = vepi (x)
+
+vtot (x) .
+
+24 Table 8: Additional active-learning acquisition comparison on the real datasets using the decoupled TabICL backbone. Values are mean ± std final RMSE over the seeds listed in Table 7. Lower is better. Boldface marks the best acquisition score within each dataset.                                                                                 
+
+> Dataset Random Tuned-ICL BALD (ours) EPIG (ours) Epistemic (ours)
+> California Housing 0.4793 ±0.0059 0.4783 ±0.0033 0.4787 ±0.0044 0.4752 ±0.0058 0.4772 ±0.0035 Kin8nm 0.0787 ±0.0013 0.0805 ±0.0012 0.0790 ±0.0011 0.0784 ±0.0011 0.0796 ±0.0010 NYC Taxi 3.3588 ±0.1177 3.1296 ±0.0157 3.1208 ±0.0257 3.2786 ±0.0868 3.1275 ±0.0140 Airlines 1.9124 ±0.0059 1.9040 ±0.0037 1.9042 ±0.0034 1.9064 ±0.0044 1.9046 ±0.0028 YearPredictionMSD 9.3926 ±0.0693 9.4125 ±0.0306 9.3693 ±0.0441 9.4272 ±0.0493 9.4150 ±0.0310
+
+Given a target subset Xtar drawn from the test distribution, we define 
+
+ρ2(x, x ′) =  r(x)⊤r(x′)2 η(x) η(x′),
+
+and score each candidate by 
+
+αEPIG (x) = 1
+
+|X tar |
+
+X
+
+> x′∈X tar
+
+
+
+− 12 log(1 − ρ2(x, x ′)) 
+
+
+
+.
+
+In the real-data runs reported here, the target subset size is 2028 points, sampled from the 3000-point test set for each seed. 
+
+Random. The random baseline samples uniformly from the remaining pool. 
+
+G.3 Additional Real-Data Acquisition Comparison 
+
+Table 8 complements the main-text matched comparison by evaluating several acquisition heuristics on the same decoupled TabICL model. This ablation addresses a different question from the main text: rather than comparing decoupled and tuned uncertainty signals within the same matched setup, it compares several acquisition objectives on a fixed decoupled model. As a result, the conclusions are naturally more heterogeneous. 
+
+Interpretation. The broader acquisition ablation is mixed, which is typical in active learning: no single heuristic dominates on every dataset. Nevertheless, epistemic acquisition remains consistently competitive and improves substantially over the random baseline on California, NYC Taxi, and Airlines. The matched comparison in the main text should therefore be interpreted as isolating the value of the decoupled uncertainty signal relative to a tuned total-uncertainty baseline, while Table 8 provides a wider acquisition-level context. 
+
+G.4 Learning Curves 
+
+The final-step comparisons in the main text do not show when an acquisition rule begins to separate from the alternatives. We therefore also inspect the full RMSE trajectories over the 1024 sequential acquisitions. 
+
+G.5 Reproducibility Details 
+
+For each dataset and seed, the active-learning pipeline stores: (i) the fixed pool/test split, (ii) the warm-start indices, (iii) per-step acquisition trajectories in JSONL format, (iv) per-run summary files containing the final metrics, and (v) curve arrays containing RMSE, NLL, MAE, and calibration summaries across acquisition steps. These saved artifacts make it possible to regenerate the appendix plots and to recompute alternative summaries without rerunning the full active-learning experiments. 
+
+## H Limitations, Broader Impact, and Reproducibility Notes 
+
+Limitations. Our method relies on a synthetic task prior that explicitly defines a latent signal and an observation-noise process. Its effectiveness therefore depends on how well this synthetic 25 1000 1200 1400 1600 1800 2000                         
+
+> Number of labelled points
+> 0.47
+> 0.48
+> 0.49
+> 0.50
+> 0.51
+> 0.52
+> Test RMSE
+> California
+> 1000 1200 1400 1600 1800 2000
+> Number of labelled points
+> 0.078
+> 0.080
+> 0.082
+> 0.084
+> 0.086
+> 0.088
+> Kin8nm
+> 1000 1200 1400 1600 1800 2000
+> Number of labelled points
+> 3.2
+> 3.4
+> 3.6
+> NYC Taxi
+> 1000 1200 1400 1600 1800 2000
+> Number of labelled points
+> 1.900
+> 1.905
+> 1.910
+> 1.915
+> 1.920
+> Test RMSE
+> Airlines
+> 1000 1200 1400 1600 1800 2000
+> Number of labelled points
+> 9.35
+> 9.40
+> 9.45
+> 9.50
+> 9.55
+> 9.60
+> 9.65
+> Year
+> Active Learning on Real Datasets
+> Random (ours) Tuned-ICL BALD (ours) EPIG proxy (ours) Epistemic (ours)
+
+Figure 7: Test RMSE as a function of the number of labelled points for the real-data active-learning experiments. Curves show mean ± std over seeds. The trajectories complement the final-step tables by showing whether the gains from a given acquisition rule appear early, late, or only after many sequential acquisitions. decomposition transfers to real downstream tasks. The experiments cover several BO, HPO, and active-learning settings, but they do not exhaustively characterize sensitivity to the synthetic prior, auxiliary loss weights, bin discretization, or non-Gaussian noise models. The current implementa-tion also uses moment-matched Gaussian acquisition functions for binned PFN outputs, which is a practical approximation rather than an exact acquisition rule for the full binned predictive distribu-tion. 
+
+Broader impact. This work is foundational research on uncertainty estimation and sequential decision-making. Potential positive impacts include more sample-efficient optimization and active learning in settings where evaluations are expensive or noisy. Potential negative impacts arise if uncertainty estimates are over-trusted in high-stakes applications, or if more efficient optimization is used to accelerate undesirable model development. We do not deploy the method in sensitive decision-making domains, and our empirical evaluation is limited to standard tabular, synthetic BO, and HPO benchmarks. 
+
+Compute resources. Experiments were run on GPU compute nodes using public pretrained TabPFN and TabICL checkpoints, with additional CPU-based evaluations for classical baselines and HPO objective evaluations. The main cost comes from fine-tuning the four PFN/ICL variants and running the sequential BO, HPO, and active-learning loops over multiple seeds. Exact hardware details, wall-clock times, and total GPU-hour estimates should be reported in the released code or supplementary material. 
+
+Existing assets. The work uses public pretrained TabPFN and TabICL checkpoints, public bench-mark datasets, and standard open-source packages including BoTorch and Optuna. These assets are cited in the paper. License and terms-of-use information should be checked against the correspond-ing public repositories or dataset sources before final submission. 26 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes]. Justification: The abstract and introduction state the main theoretical claim, namely non-identifiability of the epistemic–aleatoric split from the marginal predictive alone, and the main methodological contribution, namely a decoupled PFN trained with privileged latent-signal and noise supervision. The experimental claims are stated with appropriate scope, emphasizing matched comparisons, broader sweeps, and the settings where gains are clear-est. Guidelines: • The answer [N/A] means that the abstract and introduction do not include the claims made in the paper. • The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A [No] or [N/A] answer to this question will not be perceived well by the reviewers. • The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. • It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes]. Justification: The conclusion and Appendix H discuss limitations, including dependence on the synthetic task prior, sensitivity to auxiliary losses and binning, the use of Gaus-sian moment-matched acquisitions, and the limited coverage of possible real-world noise processes. Guidelines: • The answer [N/A] means that the paper has no limitation while the answer [No] means that the paper has limitations, but those are not discussed in the paper. • The authors are encouraged to create a separate “Limitations” section in their paper. • The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The au-thors should reflect on how these assumptions might be violated in practice and what the implications would be. • The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated. • The authors should reflect on the factors that influence the performance of the ap-proach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon. • The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size. • If applicable, the authors should discuss possible limitations of their approach to ad-dress problems of privacy and fairness. • While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best 27 judgment and recognize that individual actions in favor of transparency play an impor-tant role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes]. Justification: Proposition 1 states the assumptions for the Gaussian additive non-identifiability result and provides a proof in the main text. Proposition 2 and Corollary 1 state the assumptions for the population-risk interpretation of the auxiliary heads and pro-vide proofs in Appendix A. Guidelines: • The answer [N/A] means that the paper does not include theoretical results. • All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced. • All assumptions should be clearly stated or referenced in the statement of any theo-rems. • The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition. • Inversely, any informal proof provided in the core of the paper should be comple-mented by formal proofs provided in appendix or supplemental material. • Theorems and Lemmas that the proof relies upon should be properly referenced. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclu-sions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes]. Justification: The paper describes the synthetic task prior, model fine-tuning protocol, loss functions, acquisition functions, benchmark definitions, search spaces, active-learning pro-tocol, seeds, and evaluation metrics in Sections 3–5.3 and Appendices B–G. These details specify the main ingredients needed to reproduce the reported comparisons. Guidelines: • The answer [N/A] means that the paper does not include experiments. • If the paper includes experiments, a [No] answer to this question will not be per-ceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not. • If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable. • Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed. • While NeurIPS does not require releasing code, the conference does require all sub-missions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example (a) If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm. 28 (b) If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully. (c) If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to re-produce the model (e.g., with an open-source dataset or instructions for how to construct the dataset). (d) We recognize that reproducibility may be tricky in some cases, in which case au-thors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [No]. Justification: The paper provides detailed methodological and experimental descriptions, but the current submission does not include a public anonymized code release with full reproduction scripts. We plan to release code and instructions after review, in the camera-ready. Guidelines: • The answer [N/A] means that paper does not include experiments requiring code. • Please see the NeurIPS code and data submission guidelines ( https://neurips. cc/public/guides/CodeSubmissionPolicy ) for more details. • While we encourage the release of code and data, we understand that this might not be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark). • The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https: //neurips.cc/public/guides/CodeSubmissionPolicy ) for more details. • The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc. • The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why. • At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable). • Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes]. Justification: The main text and appendices specify the fine-tuning setup, optimizer, learn-ing rates, batch sizes, loss weights, binning scheme, partial-unfreezing protocol, benchmark search spaces, dataset sizes, seed counts, acquisition rules, and evaluation metrics. Further details are provided in Appendices B, D, C, and G. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them. • The full details can be provided either with the code, in appendix, or as supplemental material. 29 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropri-ate information about the statistical significance of the experiments? Answer: [Yes]. Justification: The main and appendix tables report mean ± standard deviation over seeds or data splits, and the learning-curve figures report mean trajectories with uncertainty bands. The captions specify whether variability is computed over seeds, random train/test splits, or dataset-specific active-learning runs. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The authors should answer [Yes] if the results are accompanied by error bars, confi-dence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper. • The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions). • The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.) • The assumptions made should be given (e.g., Normally distributed errors). • It should be clear whether the error bar is the standard deviation or the standard error of the mean. • It is OK to report 1-sigma error bars, but one should state it. The authors should prefer-ably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified. • For asymmetric distributions, the authors should be careful not to show in tables or fig-ures symmetric error bars that would yield results that are out of range (e.g., negative error rates). • If error bars are reported in tables or plots, the authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [No]. Justification: The paper describes the experimental protocol and optimization details, but it does not yet provide exact hardware types, memory, wall-clock time, or total GPU-hour es-timates for each experiment. Appendix H gives a high-level compute description, and exact compute information will be included in the released reproduction package if available. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage. • The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute. • The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper). 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes]. 30 Justification: The work uses standard public datasets, public pretrained model checkpoints, and synthetic benchmarks, and does not involve human-subject experiments, private data, or deployment in sensitive domains. The paper also discusses limitations and possible broader impacts in Appendix H. Guidelines: • The answer [N/A] means that the authors have not reviewed the NeurIPS Code of Ethics. • If the authors answer [No], they should explain the special circumstances that require a deviation from the Code of Ethics. • The authors should make sure to preserve anonymity (e.g., if there is a special consid-eration due to laws or regulations in their jurisdiction). 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes]. Justification: Appendix H discusses potential positive impacts, such as more sample-efficient optimization and active learning, as well as potential negative impacts from over-trusting uncertainty estimates or accelerating undesirable model development. The work is foundational and is not deployed in high-stakes applications. Guidelines: • The answer [N/A] means that there is no societal impact of the work performed. • If the authors answer [N/A] or [No], they should explain why their work has no soci-etal impact or why the paper does not address societal impact. • Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact spe-cific groups), privacy considerations, and security considerations. • The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate Deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster. • The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology. • If there are negative societal impacts, the authors could also discuss possible mitiga-tion strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML). 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pre-trained language models, image generators, or scraped datasets)? Answer: [N/A]. Justification: The paper does not release high-risk models such as large language models, image generators, or scraped datasets. The method is evaluated on synthetic, tabular, BO, HPO, and active-learning benchmarks, and does not introduce a high-risk dual-use artifact. Guidelines: • The answer [N/A] means that the paper poses no such risks. 31 • Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by re-quiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters. • Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images. • We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [No]. Justification: The paper cites the public pretrained TabPFN and TabICL checkpoints, public benchmark datasets, and software packages such as BoTorch and Optuna. However, the current draft does not explicitly list all corresponding licenses and terms of use, so these should be checked and added before final submission. Guidelines: • The answer [N/A] means that the paper does not use existing assets. • The authors should cite the original paper that produced the code package or dataset. • The authors should state which version of the asset is used and, if possible, include a URL. • The name of the license (e.g., CC-BY 4.0) should be included for each asset. • For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided. • If assets are released, the license, copyright information, and terms of use in the pack-age should be provided. For popular datasets, paperswithcode.com/datasets has curated licenses for some datasets. Their licensing guide can help determine the li-cense of a dataset. • For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided. • If this information is not available online, the authors are encouraged to reach out to the asset’s creators. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documenta-tion provided alongside the assets? Answer: [N/A]. Justification: The current submission introduces a method and trained variants used for experiments, but it does not release a new dataset, benchmark suite, or public model asset as a primary contribution. If code or checkpoints are released, they should be accompanied by documentation, usage instructions, and license information. Guidelines: • The answer [N/A] means that the paper does not release new assets. • Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc. • The paper should discuss whether and how consent was obtained from people whose asset is used. • At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file. 14. Crowdsourcing and research with human subjects 
+
+32 Question: For crowdsourcing experiments and research with human subjects, does the pa-per include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A]. Justification: The paper does not involve crowdsourcing, user studies, human-subject ex-periments, or participant compensation. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Including this information in the supplemental material is fine, but if the main contri-bution of the paper involves human subjects, then as much detail as possible should be included in the main paper. • According to the NeurIPS Code of Ethics, workers involved in data collection, cura-tion, or other labor should be paid at least the minimum wage in the country of the data collector. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A]. Justification: The paper does not involve crowdsourcing or human-subject research, so IRB approval or equivalent review is not applicable. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Depending on the country in which research is conducted, IRB approval (or equiva-lent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper. • We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution. • For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [N/A]. Justification: The core method, experiments, and scientific claims do not rely on LLMs as an important, original, or non-standard component. Any use of language tools for writing, editing, or formatting does not affect the methodology, experimental results, or originality of the research. Guidelines: • The answer [N/A] means that the core method development in this research does not involve LLMs as any important, original, or non-standard components. • Please refer to our LLM policy in the NeurIPS handbook for what should or should not be described. 33

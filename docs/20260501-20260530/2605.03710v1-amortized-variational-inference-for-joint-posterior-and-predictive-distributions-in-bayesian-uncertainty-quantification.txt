@@ -1,0 +1,1073 @@
+Title: Amortized Variational Inference for Joint Posterior and Predictive Distributions in Bayesian Uncertainty Quantification
+
+URL Source: https://arxiv.org/pdf/2605.03710v1
+
+Published Time: Wed, 06 May 2026 00:56:48 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# Amortized Variational Inference for Joint Posterior and Predictive Distributions in Bayesian Uncertainty Quantification 
+
+Nan Feng a and Xun Huan a
+
+> aDepartment of Mechanical Engineering, University of Michigan, Ann Arbor, Michigan, United States
+
+Abstract 
+
+Bayesian predictive inference propagates parameter uncertainty to quantities of interest through the posterior-predictive distribution. In practice, this is typically performed using a two-stage procedure: first approximating the posterior distribution of model parameters, and then propagating posterior samples through the predictive model via Monte Carlo simulation. This sequential workflow can be computationally demanding, particularly for high-fidelity models such as those governed by partial differential equations. We propose a variational Bayesian framework that directly targets the posterior-predictive distribution and jointly learns variational approximations of both the posterior and the cor-responding predictive distribution. The formulation introduces a variational upper bound on the Kullback–Leibler divergence together with moment-based regularization terms. The variational distributions are trained in an amortized manner, shifting computational effort to an offline stage and enabling efficient online inference. Numerical experiments ranging from analytical benchmarks to a finite-element solid mechanics problem demonstrate that the pro-posed method achieves more accurate predictive distributions than conventional two-stage variational inference, while substantially reducing the cost of online predictive inference. 
+
+Keywords: 
+
+Variational inference, Posterior-predictive distributions, Computational mechanics 
+
+1. Introduction 
+
+High-fidelity computational models, often governed by partial differential equations (PDEs), play a central role in scientific and engineering analysis, prediction, and design across disci-plines such as structural mechanics, fluid dynamics, and materials science [1, 2, 3]. While these models have become increasingly sophisticated, single deterministic simulations are generally insufficient to support reliable decision-making. Real-world systems are inevitably affected by uncertainty arising from stochastic environments, variability in material prop-erties, manufacturing tolerances, and incomplete or noisy measurements. Neglecting such uncertainties can lead to misleading predictions and potentially unsafe designs or decisions. These challenges have motivated the development of uncertainty quantification (UQ) [4, 5, 6], which seeks to represent, propagate, and reduce uncertainty in computational mod-els. A central task in UQ is inverse UQ , which aims to infer uncertain model parameters from observational data that are often sparse and noisy. Within this setting, the Bayesian paradigm [7, 8] provides a principled probabilistic framework for updating prior knowledge 
+
+> arXiv:2605.03710v1 [stat.ML] 5 May 2026
+
+of uncertain parameters, denoted θ, in light of observed data y. Bayes’ theorem defines the posterior distribution 1 as 
+
+p(θ|y) = p(y|θ)p(θ)
+
+p(y) ,
+
+where p(θ) denotes the prior distribution, p(y|θ) is the likelihood whose evaluation typically requires solving a forward model, and p(y) is the marginal likelihood (model evidence). The objective of inverse UQ is therefore to characterize the posterior distribution p(θ|y). For nonlinear models, this posterior distribution is generally analytically intractable. Markov chain Monte Carlo (MCMC) methods [9] have long been the dominant numerical tools for approximating Bayesian posteriors. Modern variants such as Hamiltonian Monte Carlo and the No-U-Turn Sampler exploit gradient information to improve sampling effi-ciency [10, 11, 12, 13]. Although MCMC methods are asymptotically exact, their practical use is often limited by slow convergence, challenging diagnostics, and high computational cost, particularly when each likelihood evaluation requires solving a high-fidelity PDE-based model. To address these scalability challenges, variational inference (VI) has emerged as a compelling alternative [14, 15, 16]. VI reformulates Bayesian inference as an optimization problem by approximating the posterior distribution p(θ|y) with a tractable, parameterized family of distributions qλ(θ|y). Common choices include Gaussian variational families, such as mean-field or structured Gaussian approximations, as well as particle-based representations obtained through Stein variational methods [17, 18, 19]. In many scientific and engineering applications, however, inference of the parameters θ
+
+is not the ultimate objective. Instead, the primary goal is prediction: after inferring θ,one seeks to quantify the resulting uncertainty in unobserved quantities of interest (QoIs), denoted z. The Bayesian framework addresses this objective through the posterior-predictive distribution 
+
+p(z|y) = 
+
+Z
+
+p(z|θ)p(θ|y) d θ, 
+
+which naturally accounts for uncertainty in the inferred parameters. In practice, approx-imating this integral typically relies on Monte Carlo sampling [20, 21] from the posterior distribution, followed by forward propagation through the predictive model. As a result, predictive inference in Bayesian UQ is typically performed through a two-stage procedure: 1. an inverse problem is first solved to approximate the posterior distribution of the model parameters and generate posterior samples, and 2. these samples are then propagated through the predictive model via an additional, often comparably expensive, Monte Carlo procedure to obtain samples from the posterior-predictive distribution. This sequential separation between posterior inference and predictive uncertainty propagation 
+
+> 1For clarity of presentation, we restrict attention to continuous random variables with associated proba-bility densities; analogous formulations apply to discrete random variables with probability mass functions.
+
+2constitutes a major computational bottleneck in large-scale Bayesian UQ. Moreover, both stages can only be performed after the observational data y become available, which can hinder rapid inference and prediction in time-sensitive settings such as real-time or online decision-making. In this work, we introduce a variational Bayesian framework that circumvents the conven-tional two-stage procedure by directly targeting the posterior-predictive distribution. Rather than treating prediction as a post-processing step, the proposed approach formulates a single variational optimization problem that jointly learns approximations to both the posterior and the corresponding predictive distribution. Importantly, the variational distributions are constructed offline in an amortized manner, prior to observing any data y, allowing the com-putationally intensive training phase to be performed ahead of deployment. During online operation, newly observed data can be incorporated by simply evaluating the learned dis-tributions at y, yielding the corresponding variational distributions with minimal additional cost. The main contributions of this work are summarized as follows. 
+
+• We propose a composite loss function that combines a variational upper bound on the Kullback–Leibler divergence between approximate and true posterior-predictive distri-butions with moment-based regularization that encourages agreement in key statistics (e.g., mean and variance). 
+
+• We employ deep neural networks to parameterize flexible variational distributions for both the posterior and posterior-predictive distributions, enabling amortized inference in which the learned distributions can be evaluated for new observations y without retraining. 
+
+• We validate the proposed framework through a hierarchy of numerical examples, rang-ing from low-dimensional linear and nonlinear benchmarks to a PDE-governed contin-uum solid mechanics problem. In the numerical examples considered, the proposed method yields more accurate posterior-predictive estimates than the conventional ap-proach, while substantially reducing the cost of online predictive inference. The remainder of this paper is organized as follows. Section 2 introduces the Bayesian predictive formulation and summarizes the conventional two-stage posterior-predictive proce-dure under VI. Section 3 presents the proposed joint variational formulation and the resulting algorithm. Section 4 provides numerical results and comparative studies. Finally, Section 5 summarizes the main findings and discusses directions for future research. 
+
+2. Background 
+
+2.1. Problem formulation 
+
+Consider an observation forward model G : Rdθ → Rdy that maps model parameters 
+
+θ ∈ Rdθ to observable quantities. In many scientific and engineering applications, G is defined implicitly through the solution of a system of PDEs. Observations are assumed to be contaminated by additive noise, leading to the observation model 
+
+y = G(θ) + ϵ, (1) 3where ϵ ∼ N (0 , Σϵ) represents Gaussian measurement noise. This induces the likelihood 
+
+p(y|θ) = N  y; G(θ), Σϵ
+
+. (2) In addition to observable quantities, we are interested in predicting QoIs z ∈ Rdz through a predictive forward model 
+
+z = H(θ) + η, (3) where H denotes the deterministic predictive map and η ∼ N (0 , Ση) represents predictive or process noise. This formulation induces the conditional predictive distribution 
+
+p(z|θ) = N (z; H(θ), Ση). (4) Although some predictive models may be fully deterministic, such cases lead to degenerate conditional distributions. To ensure that all probability densities and variational objectives remain well-defined, we adopt formulation (3) with a (possibly small) noise term, so that deterministic models are recovered in the vanishing-noise limit. We further endow the parameters with a prior distribution p(θ). From Bayes’ rule, the posterior distribution of the parameters and the posterior-predictive distribution of the QoIs are given by 
+
+p(θ|y) = p(y|θ)p(θ)
+
+p(y) , (5) 
+
+p(z|y) = 
+
+Z
+
+p(z|θ)p(θ|y) d θ. (6) The goal of this work is to efficiently approximate both the posterior distribution p(θ|y) and the posterior-predictive distribution p(z|y).
+
+2.2. Conventional two-stage variational inference after observing y
+
+Once observational data y becomes available, the conventional approach to Bayesian predictive inference proceeds in two stages. The first stage consists of approximating the posterior distribution p(θ|y) and generating samples from it. Within a VI framework, this is achieved by introducing a tractable family of distributions qλ(θ|y), parameterized by varia-tional parameters λ, to approximate the true posterior. The variational parameters are obtained by minimizing the Kullback–Leibler (KL) diver-gence between the variational approximation and the true posterior: 
+
+λ∗ = argmin 
+
+> λ
+
+DKL (qλ(θ|y) ∥ p(θ|y)) = argmin 
+
+> λ
+
+Eqλ(θ|y)
+
+
+
+log qλ(θ|y) − log 
+
+p(y|θ)p(θ)
+
+p(y)
+
+ 
+
+= argmin 
+
+> λ
+
+Eqλ(θ|y) [log qλ(θ|y) − log p(y|θ) − log p(θ)] , (7) which corresponds to minimizing the negative evidence lower bound (ELBO). The marginal 4likelihood p(y) does not appear in the final optimization since it is independent of λ. In practice, the expectation in (7) is estimated using Monte Carlo sampling, and the resulting optimization problem is solved using gradient-based methods. Once the optimal variational approximation qλ∗ (θ|y) is obtained, posterior samples {θ(i)}Nc
+
+> i=1
+
+can be drawn from qλ∗ (θ|y). These samples are then propagated through the predictive model to generate posterior-predictive samples. Specifically, together with samples of the predictive noise η(i), evaluations of 
+
+z(i) = H(θ(i)) + η(i)
+
+produce samples from the posterior-predictive distribution p(z|y).This sequential procedure illustrates the separation between posterior inference and pre-dictive uncertainty propagation. The next section develops a variational framework that learns approximations to both distributions simultaneously. 
+
+3. Joint posterior and predictive variational inference 
+
+3.1. Upper-bound variational formulation and amortized training 
+
+We first present the variational formulation for a fixed observation y, which clarifies the structure of the objective function. We then extend this formulation to an amortized setting that enables offline training prior to observing any data. Our approach constructs variational approximations to both the posterior and posterior-predictive distributions: 
+
+p(θ|y) ≈ qλ(θ|y), p(z|y) ≈ rγ (z|y), (8) where qλ(θ|y) and rγ (z|y) are parameterized by variational parameters λ and γ, respectively. 
+
+Conditional variational objective. For a fixed observation y, the parameters {λ, γ } can be learned by minimizing discrepancies between the variational distributions and their corre-sponding targets. In principle this can be achieved by minimizing the KL divergences 
+
+DKL (qλ(θ|y) ∥ p(θ|y)) , DKL (rγ (z|y) ∥ p(z|y)) .
+
+To improve numerical stability and guide learning of the posterior-predictive approxima-tion, we further introduce moment-based regularization. The resulting optimization problem can be written as 
+
+{λ∗, γ ∗} = argmin 
+
+> λ,γ
+
+h
+
+DKL (qλ(θ|y) ∥ p(θ|y)) + α1DKL (rγ (z|y) ∥ p(z|y)) + moment-based regularization 
+
+i
+
+, (9) where α1 > 0 is a scalar hyperparameter that controls the relative emphasis on match-ing the posterior-predictive distribution compared to the posterior. Specifically, we employ lightweight moment-based regularization that encourages matching of the mean and variance 5of the posterior-predictive distribution: 
+
+α2 Erγ (z|y)[z] − Ep(z|y)[z] 22 + α3 Erγ (z|y)
+
+(z − Erγ (z|y)[z]) 2 − Ep(z|y)
+
+(z − Ep(z|y)[z]) 2 22 ,
+
+(10) where α2, α 3 ≥ 0 are scalar hyperparameters that control the strength of the moment-matching regularization. The moments of the variational distribution can often be obtained directly from its parameters, or estimated via Monte Carlo sampling when closed-form ex-pressions are unavailable. In all experiments, we set α1 = α2 = α3 = 1 for simplicity, and do not perform additional hyperparameter tuning. 
+
+Upper-bound reformulation. We now derive tractable expressions for the KL terms. The first KL divergence admits the standard variational form following (7): 
+
+DKL (qλ(θ|y) ∥ p(θ|y)) = Eqλ(θ|y)[log qλ(θ|y) − log p(y|θ) − log p(θ)] + log p(y), (11) where the marginal likelihood log p(y) is independent of λ and γ and therefore can be omitted during optimization. The second KL divergence involves the intractable posterior-predictive distribution: 
+
+DKL (rγ (z|y) ∥ p(z|y)) = Erγ (z|y)[log rγ (z|y) − log p(z|y)] = Erγ (z|y)
+
+log rγ (z|y) − log Ep(θ|y)[p(z|θ)] 
+
+≤ Erγ (z|y)
+
+log rγ (z|y) − Ep(θ|y)[log p(z|θ)] 
+
+≈ Erγ (z|y)
+
+log rγ (z|y) − Eqλ(θ|y)[log p(z|θ)]  . (12) The inequality follows from Jensen’s inequality, which provides an upper bound that avoids direct evaluation of the intractable quantity log Ep(θ|y)[p(z|θ)] . While this term could in principle be approximated using Monte Carlo together with numerically stabilized log-sum-exp computations [15, 22], such estimators typically lead to biased or high-variance gradients when used within stochastic optimization. The Jensen bound replaces the logarithm of an expectation with an expectation of log-likelihoods, yielding a tractable and more stable objective for learning the variational posterior-predictive distribution rγ (z|y). The bound becomes tight when p(z|θ) varies weakly over the posterior mass (e.g., when the posterior is concentrated or the predictive model is locally linear). In practice, the expectation with respect to the posterior is further approximated using the variational distribution qλ(θ|y).Combining the above results yields the conditional upper-bound objective 
+
+L(λ, γ ; y) = Eqλ(θ|y)[log qλ(θ|y) − log p(y|θ) − log p(θ)] + α1Erγ (z|y)
+
+log rγ (z|y) − Eqλ(θ|y)[log p(z|θ)] 
+
++ moment-based regularization . (13) 
+
+Amortized training formulation. The objective above assumes that y is fixed and known dur-ing optimization, which means that the variational problem cannot be set up until the obser-vation becomes available. To enable deployment on yet unseen data, we adopt an amortized formulation in which the variational distributions are trained across possible observations by 6minimizing the expected loss 
+
+{λ∗, γ ∗} = argmin 
+
+> λ,γ
+
+Ey[L(λ, γ ; y)] . (14) This amortized objective can be optimized offline, after which evaluating the posterior and posterior-predictive approximations for a new observation requires only a forward pass through the trained variational distributions. The result is amortized variational approxi-mations qλ(θ|y) and rγ (z|y) that can be evaluated for new observation y encountered during deployment. 
+
+3.2. Evaluation of the upper-bound variational objective 
+
+All terms in the variational objective (14) can be estimated using Monte Carlo sampling. The outer amortization expectation can be approximated as 
+
+{λ∗, γ ∗} ≈ argmin 
+
+> λ,γ
+
+1
+
+N0
+
+> N0
+
+X
+
+> i=1
+
+L(λ, γ ; y(i)), (15) where y(i) ∼ p(y). These samples can be generated by first drawing θ(i) ∼ p(θ) from the prior and then propagating them through the observation model (1). If generating such samples is computationally expensive, domain knowledge or approximations may be used instead to construct representative values of y for amortization. The loss for each observation can then be estimated as 
+
+L(λ, γ ; y(i)) ≈ 1
+
+N1
+
+> N1
+
+X
+
+> j1=1
+
+log qλ(θ(j1)|y(i)) − log p(y(i)|θ(j1)) − log p(θ(j1))
+
++ α1
+
+N2
+
+> N2
+
+X
+
+> j2=1
+
+"
+
+log rγ (z(j2)|y(i)) − 1
+
+N3
+
+> N3
+
+X
+
+> k=1
+
+log p(z(j2)|θ(k))
+
+#
+
++ moment-based regularization , (16) where θ(j1) ∼ qλ(θ|y(i)), z(j2) ∼ rγ (z|y(i)), and θ(k) ∼ qλ(θ|y(i)). These samples are straightfor-ward to generate since they only require sampling from the variational distributions and do not involve evaluations of the forward models. The computational cost of forward model eval-uations arises primarily from the likelihood terms log p(y(i)|θ(j1)) and log p(z(j2)|θ(k)), which require evaluating the forward models G and H, respectively. The moment-based regularization terms can be estimated using standard Monte Carlo estimators 
+
+α2
+
+1
+
+LrLrX 
+
+> lr=1
+
+z(lr ) − 1
+
+LpLp
+
+X
+
+> lp=1
+
+z(lp)
+
+> 22
+
++ α3
+
+1
+
+LrLrX 
+
+> lr=1
+
+ z(lr ) − ¯zr
+
+2 − 1
+
+LpLp
+
+X
+
+> lp=1
+
+ z(lp) − ¯zp
+
+2
+
+> 22
+
+, (17) where z(lr ) ∼ rγ (z|y(i)) and z(lp) ∼ p(z|y(i)), and ¯zr and ¯zp denote the corresponding Monte Carlo empirical means. Since samples from rγ are inexpensive to generate, Lr can be chosen 7large. In contrast, generating z(lp) requires evaluating the predictive model H and may therefore be computationally expensive, so Lp is typically chosen to be relatively small. 
+
+Special case: Independent Gaussian models. For common choices of variational families and prior distributions, several terms in the objective admit closed-form expressions. We sum-marize these computations for independent Gaussian variational approximations: 
+
+qλ(θ|y) = N  θ; μθ(λ; y), diag( σ2 
+
+> θ
+
+(λ; y))  , (18) 
+
+rγ (z|y) = N  z; μz (γ; y), diag( σ2 
+
+> z
+
+(γ; y))  . (19) For these distributions the entropy terms admit closed-form expressions 
+
+Eqλ [log qλ] = −dθ
+
+2 (1 + log 2 π) − 12
+
+> dθ
+
+X
+
+> i=1
+
+log σ2
+
+> θ,i
+
+, (20) 
+
+Erγ [log rγ ] = −dz
+
+2 (1 + log 2 π) − 12
+
+> dz
+
+X
+
+> i=1
+
+log σ2
+
+> z,i
+
+. (21) If the prior is Gaussian p(θ) = N (θ; μ0, Σ0), the prior expectation becomes 
+
+Eqλ [log p(θ)] = −dθ
+
+2 log(2 π) − 12 log det(Σ 0)
+
+− 12
+
+
+
+tr(Σ −10 diag( σ2 
+
+> θ
+
+)) + ( μθ − μ0)⊤Σ−10 (μθ − μ0)
+
+
+
+. (22) 
+
+Special case: Log-normal posterior-predictive distributions. For predictive quantities known to be strictly positive, we alternatively consider a log-normal variational model 
+
+rγ (z|y) = LogNormal  z; μz (y; γ), diag( σ2 
+
+> z
+
+(y; γ))  , (23) where μz and σz correspond to the mean and standard deviation of the underlying Gaussian distribution in log-space. In this case the only modification in the variational objective is the entropy term 
+
+Erγ [log rγ ] = −
+
+> dz
+
+X
+
+> i=1
+
+
+
+μz,i + 12 + 12 log(2 πσ 2
+
+> z,i
+
+)
+
+
+
+, (24) while all remaining expectations are computed using the same Monte Carlo estimators as in the Gaussian case. 
+
+3.3. Optimization and training 
+
+The variational parameters {λ, γ } are optimized using stochastic gradient-based methods. We employ the Adam optimizer [23] together with mini-batch stochastic gradients. Gradients are computed using automatic differentiation in TensorFlow [24]. Expectations appearing in the objective are evaluated either analytically when possible, or approximated using Monte Carlo sampling, as described above. 8To enable gradient-based optimization through stochastic sampling, we employ the stan-dard reparameterization trick. For example, 
+
+θ = μθ(λ; y) + σθ(λ; y) ⊙ ϵ, ϵ ∼ N (0 , I ), (25) which allows gradients to propagate through the sampling operation. Network parameters are initialized using He initialization [25]. Training proceeds for a fixed number of epochs until convergence. 
+
+Algorithm 1 Amortized joint posterior and predictive VI.  
+
+> 1:
+
+Initialize variational parameters λ, γ and Monte Carlo sample sizes.  
+
+> 2:
+
+Draw amortization observations {y(i)}N0 
+
+> i=1
+
+∼ p(y). 
+
+> 3:
+
+for l = 1 , . . . , L do  
+
+> 4:
+
+Shuffle observations and form mini-batches.  
+
+> 5:
+
+for each mini-batch do  
+
+> 6:
+
+Estimate stochastic gradients of the loss (16) via Monte Carlo sampling and au-tomatic differentiation.  
+
+> 7:
+
+Update (λ, γ ) using Adam.  
+
+> 8:
+
+end for  
+
+> 9:
+
+end for  
+
+> 10:
+
+Return trained amortized distributions qλ(θ|y) and rγ (z|y).
+
+4. Numerical examples 
+
+We evaluate the performance of the proposed method through a sequence of numerical examples of increasing complexity, ranging from analytical benchmarks to high-fidelity en-gineering models. Case 1 considers two one-dimensional (1D) benchmarks. Case 1a is a linear-Gaussian problem for which both the posterior and posterior-predictive distributions admit closed-form expressions, enabling direct verification of the method. Case 1b intro-duces nonlinear observation and prediction models, leading to non-Gaussian posterior and posterior-predictive distributions. Case 2 extends the problem to a two-dimensional (2D) parameter and observation space with nonlinear models. Case 3 further examines scalability in higher-dimensional linear settings, with dimensions up to 20. Finally, Case 4 considers a finite-element solid mechanics problem governed by a PDE, representing a realistic high-fidelity engineering application. For each case, we compare the posterior-predictive distributions produced by the pro-posed method with those obtained from the conventional two-stage VI procedure described in Section 2.2. Both approaches are further compared against reference solutions obtained ei-ther analytically when available or otherwise using high-quality Monte Carlo estimates based on MCMC posterior samples. To quantify the accuracy of the posterior-predictive distributions, we estimate the KL divergence between the approximate and reference distributions using Monte Carlo sampling. Additionally, we report relative errors in the predictive mean and variance to assess moment-level accuracy. 9Sampling configuration. Sampling configuration. Unless otherwise stated, the following sam-pling settings are used throughout the numerical experiments. For the proposed method, amortized training uses N0 = 10 5 samples of y, while the internal Monte Carlo estimators use N1 = N2 = Lr = 10 4 and N3 = Lp = 10 3. For the conventional two-stage VI approach, 
+
+Nc = 10 5 posterior samples are used for predictive propagation. Reference solutions are computed using 10 5 MCMC posterior samples. Table 1 summarizes the number of G and H evaluations required by the conventional and proposed methods, separated into offline and online phases. These counts should be interpreted as an offline–online cost profile rather than a direct measure of total computa-tional efficiency. The proposed method learns amortized predictive distributions over possible observations and therefore incurs additional offline evaluations of H. In contrast, the con-ventional two-stage method performs inference only after a specific observation y is available and requires predictive model evaluations during online inference. Thus, the main computa-tional benefit of the proposed method is that, after offline training, posterior and posterior-predictive inference for a new observation can be obtained without additional evaluations of 
+
+G or H.      
+
+> Table 1. Number of Gand Hfunction evaluations per optimization iteration for the conventional and proposed methods, separated into offline and online phases. Both methods are run for 3,200 optimization iterations. The table illustrates the offline–online cost allocation rather than a direct total-cost comparison.
+
+Conventional method Proposed method 
+
+G H G H
+
+Offline 6.4 × 10 5 0 6.4 × 10 5 6.4 × 10 8
+
+Online 0 10 5 for Cases 1–2; 10 4 for Case 3–4 0 0
+
+Variational distribution architecture. The neural network architectures used to parameterize the variational distributions are summarized in Table 2. Independent Gaussian variational distributions are employed in Cases 1–3. For Case 4, which involves strictly positive physical quantities, a log-normal predictive distribution is adopted. In all cases, the neural networks output the corresponding distribution parameters (mean and standard deviation), following (18), (19), and (23). All experiments are implemented in Python using the TensorFlow framework [24]. Com-putations are performed on the University of Michigan Great Lakes High Performance Com-puting Cluster and Google Cloud Compute Engine nodes equipped with NVIDIA A40 or Tesla V100 GPUs. 
+
+> Table 2. Neural network hyperparameters used to parameterize the variational distributions in the numerical experiments.
+
+Case 1a, 3 Cases 1b, 2, 4 
+
+# of hidden layers 1 3# of neurons per hidden layer 20 Activation ReLU 10 4.1. Case 1: 1D linear and nonlinear benchmarks 
+
+We first consider two 1D benchmark problems to evaluate the proposed method in both linear-Gaussian and nonlinear settings. The linear case admits closed-form posterior and posterior-predictive distributions and therefore provides a baseline for verifying the correct-ness of the proposed approach. The nonlinear case then assesses performance when analytical solutions are no longer available. 
+
+Case 1a: Linear benchmark. We begin with a linear-Gaussian problem defined by the obser-vation and predictive models 
+
+y = 2 θ + ϵ, z = 3 θ + η, (26) where ϵ ∼ N (0 , σ 2 
+
+> ϵ
+
+= 10 −4) and η ∼ N (0 , σ 2 
+
+> η
+
+= 10 −3) denote observation and predictive noise, respectively. Assuming a standard Gaussian prior θ ∼ N (0 , 1) , the posterior distribution can be obtained analytically as 
+
+p(θ|y) = N
+
+
+
+θ; 2y
+
+4 + σ2
+
+> ϵ
+
+, (1 + 4 σ−2 
+
+> ϵ
+
+)−1
+
+
+
+, (27) and the corresponding posterior-predictive distribution is 
+
+p(z|y) = N
+
+
+
+z; 6y
+
+4 + σ2
+
+> ϵ
+
+, 9(1 + 4 σ−2 
+
+> ϵ
+
+)−1 + σ2
+
+> η
+
+
+
+. (28) These closed-form expressions provide reference solutions for evaluating the accuracy of the conventional and proposed methods. Figure 1 reports the KL divergence between the approximate posterior-predictive dis-tributions and the analytical reference solution. The proposed method yields consistently smaller and near-zero KL divergence values across the tested values of y, indicating a highly accurate predictive approximation. Figures 2 and 3 further compare the predicted mean and variance of the posterior-predictive distribution with the analytical reference values. The proposed method exhibits closer agreement with the reference solutions and achieves smaller relative errors than the conventional approach. In addition, due to the amortized formulation, the proposed method requires only a single offline training stage. After training, predictive inference can be obtained by directly eval-uating the learned variational distributions at the observed y. In contrast, the conventional two-stage approach must conduct the inference only after y is observed. 
+
+Case 1b: Nonlinear benchmark. Next, we consider a nonlinear and non-Gaussian problem defined by 
+
+y = 0 .2θ2 + 0 .1 + ϵ, z = eθ + 0 .2 + η, (29) where ϵ ∼ N (0 , σ 2 
+
+> ϵ
+
+= 10 −2) and η ∼ N (0 , σ 2 
+
+> η
+
+= 10 −3).Figure 4 shows the KL divergence between the approximate and reference predictive distributions across different observations y. The proposed method again yields substantially smaller KL divergence values than the conventional approach. Figures 5 and 6 compare 11 10.0 7.5 5.0 2.5 0.0 2.5 5.0 7.5 10.0 
+
+> y
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> KL divergence
+> Conventional method
+> Proposed method
+
+Figure 1. Case 1a: KL divergence between the approximate and reference posterior-predictive distributions for the conventional and proposed methods. 
+
+Figure 2. Case 1a: (left) Mean of the approximate posterior-predictive distributions; (right) corresponding relative errors for the conventional and proposed methods. 10 5 0 5 10 
+
+y
+
+0.00105 
+
+0.00110 
+
+0.00115 
+
+0.00120 
+
+> Variance
+> Conventional method
+> Proposed method
+> Reference
+
+10 5 0 5 10 
+
+y
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+> Relative error
+> Conventional method
+> Proposed method
+
+Figure 3. Case 1a: (left) Variance of the approximate posterior-predictive distributions; (right) corresponding relative errors for the conventional and proposed methods. 
+
+12 the predicted mean and variance of the posterior-predictive distributions with the reference values. The proposed method demonstrates improved agreement with the reference solutions and consistently smaller relative errors than the conventional method. 0.2 0.0 0.2 0.4 0.6 0.8 
+
+> y
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> KL divergence
+> Conventional method
+> Proposed method
+
+Figure 4. Case 1b: KL divergence between the approximate and reference posterior-predictive distributions for the conventional and proposed methods. 0.2 0.0 0.2 0.4 0.6 0.8 
+
+> y
+> 0
+> 2
+> 4
+> 6
+> Mean
+> Conventional method
+> Proposed method
+> Reference
+
+Figure 5. Case 1b: (left) Mean of the approximate posterior-predictive distributions; (right) corresponding relative errors for the conventional and proposed methods. 
+
+4.2. Case 2: 2D nonlinear and non-Gaussian problem 
+
+We next consider a 2D nonlinear problem to evaluate the method in a higher-dimensional setting. The observation and predictive models are defined as 
+
+y1
+
+y2
+
+
+
+=
+
+ 2θ21 + θ2 + 2 
+
+θ2 + θ42 + θ1 + 1 
+
+
+
++
+
+ϵ1
+
+ϵ2
+
+
+
+,
+
+z1
+
+z2
+
+
+
+=
+
+eθ1 + θ2 + 0 .2
+
+eθ2 + θ1 + 0 .1
+
+
+
++
+
+η1
+
+η2
+
+
+
+, (30) where ϵ1, ϵ 2 ∼ N (0 , σ 2 
+
+> ϵ
+
+= 10 −1) and η1, η 2 ∼ N (0 , σ 2 
+
+> η
+
+= 10 −2).Figure 7 shows the KL divergence between the approximate and reference predictive dis-tributions. The proposed method consistently produces smaller KL divergence values across 13 0.50 0.25 0.00 0.25 0.50 0.75 
+
+> y
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Variance
+> Conventional method
+> Proposed method
+> Reference
+
+Figure 6. Case 1b: (left) Variance of the approximate posterior-predictive distributions; (right) corresponding relative errors for the conventional and proposed methods. 
+
+different observations y. In particular, the maximum KL divergence for the conventional method exceeds 40, whereas the proposed method maintains values below 5. Figures 8 and 9 compare the predicted means and their relative errors. The proposed method achieves significantly better agreement with the reference solution, with maximum relative errors below 10% , compared with over 30% for the conventional approach. Similarly, Figures 10 and 11 present the predicted variances and their corresponding relative errors. The proposed method again demonstrates improved accuracy, maintaining relative errors below 10% , whereas the conventional variational method exhibits errors exceeding 100% .Figure 12 and 13 illustrate representative posterior and posterior-predictive distributions for different values of y. Overall, the proposed method achieves closer agreement with the reference solutions than the conventional method, particularly in regions of high probability density. 0 1 2 3 4    
+
+> y1
+> 0
+> 1
+> 2
+> 3
+> 4
+> y2
+> 0
+> 10
+> 20
+> 30
+> 40 01234
+> y1
+> 0
+> 1
+> 2
+> 3
+> 4
+> y2
+> 0
+> 10
+> 20
+> 30
+> 40
+
+Figure 7. Case 2: KL divergence between the approximate and reference posterior-predictive distributions for the (left) conventional and (right) proposed methods. 
+
+14 Proposed method Conventional method Reference 
+
+𝔼 𝑧 !|𝑦 
+
+𝔼 𝑧 "|𝑦 Figure 8. Case 2: Mean of the posterior-predictive distributions. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional, proposed, and reference solutions. Proposed method Conventional method 
+
+𝔼 𝑧 !|𝑦 
+
+𝔼 𝑧 "|𝑦 
+
+Figure 9. Case 2: Relative errors of the posterior-predictive mean. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional and proposed methods. 
+
+15 Var 𝑧 !|𝑦 
+
+Var 𝑧 "|𝑦 
+
+Proposed method Conventional method Reference Figure 10. Case 2: Variance of the posterior-predictive distributions. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional, proposed, and reference solutions. Var 𝑧 !|𝑦 
+
+Var 𝑧 "|𝑦 
+
+Proposed method Conventional method 
+
+Figure 11. Case 2: Relative errors of the posterior-predictive variance. Rows correspond to the two compo-nents z1 and z2, and columns show the conventional and proposed methods. 
+
+16 Proposed method Conventional method Reference 
+
+𝑦 = 2.64 
+
+2.23 
+
+𝑦 = 6.17 
+
+1.85 
+
+𝑦 = 4.58 
+
+7.27 Figure 12. Case 2: Examples of posterior distributions for different values of y. Rows correspond to the two components θ1 and θ2, and columns show the conventional, proposed, and reference methods. 
+
+17 Proposed method Conventional method Reference 
+
+𝑦 = 2.64 
+
+2.23 
+
+𝑦 = 6.17 
+
+1.85 
+
+𝑦 = 4.58 
+
+7.27 Figure 13. Case 2: Examples of posterior-predictive distributions for different values of y. Rows correspond to the two components z1 and z2, and columns show the conventional, proposed, and reference methods. 
+
+18 4.3. Case 3: High-dimensional linear problems 
+
+We extend the proposed method to higher-dimensional linear problems with dθ ∈ { 5, 10 , 15 , 20 }.The observation and predictive models are defined as 
+
+y = Aθ + ϵ, z = Bθ + η, (31) where ϵ ∼ N (0 , σ 2 
+
+> ϵ
+
+= 10 −4) and η ∼ N (0 , σ 2 
+
+> η
+
+= 10 −3). The matrices A, B ∈ Rd×d have entries independently sampled from the uniform distribution on [0 , 2] .For this linear-Gaussian setting, both the posterior and posterior-predictive distributions admit closed-form expressions. The posterior distribution is given by 
+
+p(θ|y) = N  θ; σ−2 
+
+> ϵ
+
+Σ1A⊤y, Σ1
+
+ , Σ1 =  I + σ−2 
+
+> ϵ
+
+A⊤A−1 , (32) and the corresponding posterior-predictive distribution is 
+
+p(z|y) = N  z; σ−2 
+
+> ϵ
+
+BΣ1A⊤y, σ 2 
+
+> η
+
+I + BΣ1B⊤ . (33) These analytical expressions provide reference solutions for evaluating the accuracy of the conventional and proposed methods. Table 3 reports the average KL divergence and relative errors of the posterior-predictive mean and variance across different observations y. Across all problem dimensions, the pro-posed method consistently achieves smaller KL divergence and lower relative errors compared to the conventional method, demonstrating its ability to maintain accuracy as the problem dimension increases in linear settings.      
+
+> Table 3. Case 3: Average KL divergence and relative errors of the posterior-predictive mean and variance for the conventional and proposed methods across measurement data in dθ∈ { 5,10 ,15 ,20 }-dimensional settings.
+
+dθ Method KL divergence Relative error of mean Relative error of variance 
+
+5 Proposed 0.693 0.015 0.048 Conventional 3.852 0.146 0.275 10 Proposed 1.912 0.031 0.057 Conventional 3.895 0.149 0.282 15 Proposed 5.445 0.081 0.117 Conventional 11.294 0.187 0.352 20 Proposed 8.158 0.125 0.158 Conventional 30.956 0.330 0.472 
+
+4.4. Case 4: Solid mechanics problem 
+
+We next demonstrate the proposed method on a more realistic engineering problem in-volving a finite element model from computational solid mechanics. 19 4.4.1. Finite element forward model 
+
+Consider a continuum body occupying the domain Ω ⊂ R3, where x ∈ Ω denotes the spatial coordinate. The deformation of the body is described by the displacement field 
+
+u(x) : Ω → R3.
+
+Under the assumptions of small deformation and linear elasticity, the static equilibrium problem is to find the displacement field u(x) satisfying 
+
+
+
+∇x · σstress = 0 in Ω,u = ¯ u on ∂Ωu,σstress · n = ¯ t on ∂Ωσ,
+
+(34) where ∂Ω = ∂Ωu ∪ ∂Ωσ and ∂Ωu ∩ ∂Ωσ = ∅. Here ¯u and ¯t denote prescribed displacements and tractions, and n is the outward unit normal. The Cauchy stress tensor σstress is related to the infinitesimal strain tensor 
+
+ε = 12 (∇xu + ∇⊤ 
+
+> x
+
+u)
+
+through the constitutive relation 
+
+σstress = C : ε, 
+
+where C is the fourth-order isotropic elasticity tensor. For isotropic materials 
+
+C = 3 κP vol + 2 μP dev ,
+
+where κ = E 
+
+> 3(1 −2ν)
+
+and μ = E 
+
+> 2(1+ ν)
+
+are the bulk and shear moduli, with E and ν denoting Young’s modulus and Poisson’s ratio, respectively [26]. Using the standard Galerkin finite element method [1], the weak form of the equilibrium equations is discretized on a conforming mesh. The resulting finite element system can be written as 
+
+R(u) = Ku − Gext = 0 , (35) where u ∈ Rndof is the vector of nodal displacements and ndof denotes the number of dis-placement degrees of freedom. The global stiffness matrix is assembled from element contributions 
+
+K = Anele 
+
+> e=1
+
+Ke, Ke =
+
+Z
+
+> Ωe
+
+B⊤[C]B dv, 
+
+while the external force vector is 
+
+Gext = Ae∈Sσ Ge
+
+> ext
+
+, Ge 
+
+> ext
+
+=
+
+Z
+
+> ∂Ωeσ
+
+N ⊤t ds, 
+
+where N and B denote the shape function and strain-displacement matrices, respectively. 20 4.4.2. Inference and prediction setup 
+
+We consider the classical Cook’s membrane benchmark problem, whose geometry and finite element mesh are shown in Figure 14. The mesh consists of 200 four-node quadrilateral elements. ! !"#$ 
+
+## %& 
+
+> %%  '(
+> "
+> "
+> "
+> "
+
+# A
+
+# B
+
+# C
+
+> Figure 14. Case 4: Geometry and finite element mesh of the Cook’s membrane problem.
+
+The uncertain parameters in this problem are Young’s modulus E and Poisson’s ratio ν.To ensure physical constraints on these parameters, we introduce latent variables 
+
+θ =
+
+θ1
+
+θ2
+
+
+
+, θ1, θ 2 ∼ N (0 , 1) ,
+
+and define the parameter transformation 
+
+g(θ) = 
+
+Eν
+
+
+
+=
+
+" eθ1
+
+0.51 + e−θ2
+
+#
+
+. (36) This construction ensures that E > 0 and ν ∈ (0 , 0.5) , which are the physically admissible ranges for isotropic elastic materials. 
+
+Observation model. The observable quantities are the horizontal and vertical displacements at point A in the structure (see Figure 14). Let uA denote these two displacement components. The observation model is defined as 
+
+y = uA = GFEM (E, ν ) + ϵ, (37) where ϵ ∼ N (0 , σ 2 
+
+> ϵ
+
+= 10 −1) represents measurement noise. The mapping GFEM (E, ν ) cor-responds to solving the finite element equilibrium equations in (35) and extracting the dis-21 placement components at node A:
+
+GFEM (E, ν ) = IAu, (38) where IA ∈ R2×ndof is a selection matrix that extracts the horizontal and vertical displacement degrees of freedom at node A.
+
+Prediction model. The predictive QoI in this example is the von Mises stress at two integra-tion points B and C located within a selected element (see Figure 14). The predictive model is defined as 
+
+z = σBC = HFEM (E, ν ) + η, (39) where η ∼ N (0 , σ 2 
+
+> η
+
+= 3 × 10 −3) represents predictive noise. The mapping HFEM (E, ν )
+
+computes the von Mises stresses at the two integration points: 
+
+HFEM (E, ν ) = 
+
+q32 s(xB ) : s(xB )
+
+q32 s(xC ) : s(xC )
+
+ , (40) where s = Pdev : σstress denotes the deviatoric part of the Cauchy stress tensor. In summary, the observation variable is the displacement vector y = uA, while the pre-dictive QoI is the stress vector z = σBC .
+
+4.4.3. Results 
+
+Due to the higher computational cost for the finite element forward solves, the conven-tional approach now uses Nc = 10 4. For the reference solution, 10 4 MCMC samples are generated to produce the same number of von Mises stress samples. To illustrate the offline–online computational tradeoff, we report in Table 4 the online time required to predict p(z|y) for a representative observation y = [0 .1, 0.1] ⊤. This timing study was performed on a MacBook Pro with an Apple M2 Max chip, 12 CPU cores, and 38 GPU cores. The results show that the proposed method has substantially lower online prediction time than the conventional variational and reference methods. This speedup reflects the amortized formulation: the computationally intensive training has already been performed offline. For this online query, the proposed method is more than two orders of magnitude faster than the conventional variational method and more than three orders of magnitude faster than the reference method. This comparison concerns online prediction time only; the proposed method also requires an offline training stage, which took 111617.2 seconds in this example.       
+
+> Table 4. Case 4: Computational time (in seconds) for predicting p(z|y)with y= [0 .1,0.1] ⊤from proposed, conventional, and reference methods.
+
+Proposed method Conventional method Reference 
+
+0.2 86.0 281.8 22 Figure 15 highlights the proposed method’s superior accuracy, revealing a consistently lower KL divergence between its estimated posterior-predictive distribution and the refer-ence solution compared to the conventional approach. This indicates a significantly better distributional fit. The improved accuracy is further confirmed by the distribution’s moments, where the proposed method’s estimated mean and variance align more closely with the refer-ence solutions (Figures 16 and 18). Consequently, the relative errors for both the mean and variance are consistently smaller for the proposed method across the varying measurements (Figures 17 and 19). Additionally, the proposed method achieves posterior estimates com-parable to those of the conventional method across different observations (Figure 20). For the posterior-predictive distribution, the proposed method accurately captures the regions of high probability density in the reference solutions, whereas the conventional method fails to reproduce these features (Figure 21). 7 6 5 4 3    
+
+> y1
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> y2
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0 76543
+> y1
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> y2
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Figure 15. Case 4: KL divergence between the approximate and reference posterior-predictive distributions for the (left) conventional and (right) proposed methods.
+
+5. Conclusions 
+
+This work presents a VI framework for approximating posterior and posterior-predictive distributions in Bayesian UQ. In contrast to the conventional two-stage approach that first infers the posterior distribution of model parameters and then propagates samples through a predictive model, the proposed method directly learns variational approximations of both the posterior and posterior-predictive distributions through a unified optimization problem. The framework incorporates a variational upper bound on the predictive KL divergence together with moment-based regularization, in order to achieve stable and accurate learning of predictive distributions. The proposed method accommodates different variational parameterizations. Indepen-dent Gaussian variational distributions are used when predictive QoIs are unbounded, while log-normal predictive distributions are employed when physical quantities are constrained to be positive. The resulting variational distributions are trained in an amortized manner, allowing the computationally intensive training phase to be performed offline. After training, predictive inference can be obtained through a simple evaluation of the learned variational distributions. 23 𝔼 𝑧 !|𝑦 
+
+𝔼 𝑧 "|𝑦 
+
+Proposed method Conventional method Reference Figure 16. Case 4: Mean of the posterior-predictive distributions. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional, proposed, and reference solutions. 𝔼 𝑧 !|𝑦 
+
+𝔼 𝑧 "|𝑦 
+
+Proposed method Conventional method 
+
+Figure 17. Case 4: Relative errors of the posterior-predictive mean. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional and proposed methods. 
+
+24 Var 𝑧 !|𝑦 
+
+Var 𝑧 "|𝑦 
+
+Proposed method Conventional method Reference Figure 18. Case 4: Variance of the posterior-predictive distributions. Rows correspond to the two components 
+
+z1 and z2, and columns show the conventional, proposed, and reference solutions. Var 𝑧 !|𝑦 
+
+Var 𝑧 "|𝑦 
+
+Proposed method Conventional method 
+
+Figure 19. Case 4: Relative errors of the posterior-predictive variance. Rows correspond to the two compo-nents z1 and z2, and columns show the conventional and proposed methods. 
+
+25 Proposed method Conventional method Reference 
+
+𝑦 = −3.67 
+
+4.65 
+
+𝑦 = −5.01 
+
+6.40 
+
+𝑦 = −4.33 
+
+5.80 Figure 20. Case 4: Examples of posterior distributions for different values of y. Rows correspond to the two components θ1 and θ2, and columns show the conventional, proposed, and reference methods. 
+
+26 Proposed method Conventional method Reference 
+
+𝑦 = −3.67 
+
+4.65 
+
+𝑦 = −5.01 
+
+6.40 
+
+𝑦 = −4.33 
+
+5.80 Figure 21. Case 4: Examples of posterior-predictive distributions for different values of y. Rows correspond to the two components z1 and z2, and columns show the conventional, proposed, and reference methods. 
+
+27 The performance of the proposed framework is demonstrated through a series of numerical examples of increasing complexity, including linear and nonlinear benchmark problems and a finite-element solid mechanics model governed by a PDE. Across all examples, the proposed method consistently produces more accurate approximations of the posterior-predictive dis-tribution than the conventional two-stage VI approach, as measured by KL divergence and moment-based error metrics. Furthermore, the proposed method enables substantially re-duced online computational cost for predictive inference by shifting computation to an offline training stage. Despite these promising results, several limitations remain. First, while the method is demonstrated in linear settings across a range of dimensions, its performance in nonlinear, high-dimensional parameter and observation spaces requires further investigation. Second, the tightness of the variational upper bound used in the predictive objective remains an open question and warrants additional theoretical analysis. Third, the current variational parameterizations, based primarily on independent Gaussian and log-normal distributions, may struggle to capture strongly multi-modal predictive distributions. Future work will focus on extending the framework to more expressive variational families capable of representing complex and higher-dimensional distributions. Potential directions include transport maps [27, 28, 29] and normalizing flows [30, 31]. These approaches offer promising avenues for improving the flexibility and accuracy of predictive UQ often needed in complex scientific and engineering applications. 
+
+Acknowledgments 
+
+This research is supported in part through computational resources and services provided by the Google Cloud Research Credits program and Advanced Research Computing at the University of Michigan, Ann Arbor. 
+
+References 
+
+[1] T. J. Hughes, The Finite Element Method: Linear Static and Dynamic Finite Element Analysis, Courier Corporation, 2012. [2] J. H. Ferziger, M. Perić, R. L. Street, Computational methods for fluid dynamics, Springer, 2019. doi:10.1007/978-3-642-56026-2 .[3] E. A. de Souza Neto, D. Peric, D. R. Owen, Computational Methods for Plasticity: Theory and Applications, John Wiley & Sons, 2011. doi:10.1002/9780470694626 .[4] R. C. Smith, Uncertainty Quantification: Theory, Implementation, and Applications, SIAM, 2013. doi:10.1137/1.9781611973228 .[5] C. Soize, Uncertainty Quantification: An accelerated Course with Advanced Applications in Computational Engineering, Springer, 2017. doi:10.1007/ 978-3-319-54339-0 .[6] R. Ghanem, D. Higdon, H. Owhadi, Handbook of Uncertainty Quantification, Springer International Publishing, Cham, 2017. doi:10.1007/978-3-319-12385-1 .28 [7] A. Gelman, J. B. Carlin, H. S. Stern, D. B. Dunson, A. Vehtari, D. B. Rubin, Bayesian Data Analysis, CRC press, 2013. doi:10.1201/b16018 .[8] D. S. Sivia, J. Skilling, Data Analysis: A Bayesian Tutorial, Oxford University Press, 2006. doi:10.1093/oso/9780198568315.001.0001 .[9] S. Brooks, A. Gelman, G. L. Jones, X.-L. Meng, Handbook of Markov Chain Monte Carlo, CRC Press, 2011. doi:10.1201/b10905 .[10] S. Duane, A. D. Kennedy, B. J. Pendleton, D. Roweth, Hybrid Monte Carlo, Physics letters B 195 (2) (1987) 216–222. doi:10.1016/0370-2693(87)91197-X .[11] R. M. Neal, MCMC using Hamiltonian dynamics, in: Handbook of Markov Chain Monte Carlo, Chapman and Hall/CRC, 2011, pp. 47–95. [12] M. Betancourt, A conceptual introduction to Hamiltonian Monte Carlo, arXiv preprint arXiv:1701.02434 (2017). arXiv:1701.02434 .[13] M. D. Hoffman, A. Gelman, The No-U-Turn Sampler: adaptively setting path lengths in Hamiltonian Monte Carlo, Journal of Machine Learning Research 15 (1) (2014) 1593– 1623. [14] M. I. Jordan, Z. Ghahramani, T. S. Jaakkola, L. K. Saul, An introduction to variational methods for graphical models, Machine Learning 37 (2) (1999) 183–233. doi:10.1023/ A:1007665907178 .[15] D. M. Blei, A. Kucukelbir, J. D. McAuliffe, Variational inference: A review for statis-ticians, Journal of the American Statistical Association 112 (518) (2017) 859–877. 
+
+doi:10.1080/01621459.2017.1285773 .[16] C. Zhang, J. Bütepage, H. Kjellström, S. Mandt, Advances in variational inference, IEEE Transactions on Pattern Analysis and Machine Intelligence 41 (8) (2018) 2008– 2026. doi:10.1109/TPAMI.2018.2889774 .[17] Q. Liu, D. Wang, Stein variational gradient descent: A general purpose bayesian infer-ence algorithm, in: D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, R. Garnett (Eds.), Advances in Neural Information Processing Systems, Vol. 29, Curran Associates, Inc., 2016. [18] G. Detommaso, T. Cui, Y. Marzouk, A. Spantini, R. Scheichl, A stein variational new-ton method, in: S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, R. Garnett (Eds.), Advances in Neural Information Processing Systems, Vol. 31, Curran Associates, Inc., 2018. [19] P. Chen, O. Ghattas, Projected stein variational gradient descent, in: H. Larochelle, M. Ranzato, R. Hadsell, M. Balcan, H. Lin (Eds.), Advances in Neural Information Processing Systems, Vol. 33, Curran Associates, Inc., 2020, pp. 1947–1958. [20] C. Robert, G. Casella, Monte Carlo Statistical Methods, Springer, 2004. doi:10.1007/ 978-1-4757-4145-2 .29 [21] R. Y. Rubinstein, D. P. Kroese, Simulation and the Monte Carlo Method, John Wiley & Sons, 2016. doi:10.1002/9781118631980 .[22] P. Blanchard, D. J. Higham, N. J. Higham, Accurately computing the log-sum-exp and softmax functions, IMA Journal of Numerical Analysis 41 (4) (2020) 2311–2330. 
+
+doi:10.1093/imanum/draa038 .[23] D. P. Kingma, J. Ba, Adam: A method for stochastic optimization, in: Proceedings of the 3rd International Conference on Learning Representations (ICLR), 2015. arXiv: 1412.6980 .[24] M. Abadi, A. Agarwal, P. Barham, E. Brevdo, Z. Chen, C. Citro, G. S. Corrado, A. Davis, J. Dean, M. Devin, S. Ghemawat, I. Goodfellow, A. Harp, G. Irving, M. Is-ard, Y. Jia, R. Jozefowicz, L. Kaiser, M. Kudlur, J. Levenberg, D. Mané, R. Monga, S. Moore, D. Murray, C. Olah, M. Schuster, J. Shlens, B. Steiner, I. Sutskever, K. Talwar, P. Tucker, V. Vanhoucke, V. Vasudevan, F. Viégas, O. Vinyals, P. Warden, M. Watten-berg, M. Wicke, Y. Yu, X. Zheng, TensorFlow: Large-scale machine learning on hetero-geneous systems, software available from tensorflow.org (2015). arXiv:1603.04467 .[25] K. He, X. Zhang, S. Ren, J. Sun, Delving deep into rectifiers: Surpassing human-level performance on imageNet classification, in: IEEE International Conference on Computer Vision (ICCV), 2015, pp. 1026–1034. doi:10.1109/ICCV.2015.123 .[26] G. Holzapfel, Nonlinear Solid Mechanics: A Continuum Approach for Engineering, sec-ond print Edition, John Wiley & Sons, 2001. [27] T. A. El Moselhy, Y. M. Marzouk, Bayesian inference with optimal maps, Journal of Computational Physics 231 (23) (2012) 7815–7850. doi:10.1016/j.jcp.2012.07.022 .[28] Y. Marzouk, T. Moselhy, M. Parno, A. Spantini, Sampling via measure transport: An introduction, in: Handbook of Uncertainty Quantification, Springer International Pub-lishing, Cham, 2016, pp. 1–41. doi:10.1007/978-3-319-11259-6_23-1 .[29] Z. O. Wang, R. Baptista, Y. Marzouk, L. Ruthotto, D. Verma, Efficient neural net-work approaches for conditional optimal transport with applications in Bayesian in-ference, SIAM Journal on Scientific Computing 47 (4) (2025) C979–C1005. doi: 10.1137/24m1678659 .[30] I. Kobyzev, S. J. Prince, M. A. Brubaker, Normalizing flows: An introduction and review of current methods, IEEE Transactions on Pattern Analysis and Machine Intelligence 43 (11) (2020) 3964–3979. doi:10.1109/TPAMI.2020.2992934 .[31] G. Papamakarios, E. Nalisnick, D. J. Rezende, S. Mohamed, B. Lakshminarayanan, Normalizing flows for probabilistic modeling and inference, Journal of Machine Learning Research 22 (57) (2021) 1–64. 30

@@ -1,0 +1,692 @@
+Title: Architecture-agnostic Lipschitz-constant Bayesian header and its application to resolve semantically proximal classification errors with vision transformers
+
+URL Source: https://arxiv.org/pdf/2605.05908v1
+
+Published Time: Fri, 08 May 2026 01:02:36 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Architecture-agnostic Lipschitz-constant Bayesian header and its application to resolve semantically proximal classification errors with vision transformers 
+
+Frederik Schäfer 
+
+Institute of Structural Mechanics and Dynamics in Aerospace Engineering, University of Stuttgart Rockwell Collins Deutschland GmbH 
+
+frederik.schaefer@isd.uni-stuttgart.de 
+
+Luis Mandl 
+
+Institute of Structural Mechanics and Dynamics in Aerospace Engineering, University of Stuttgart; Department of Hepatobiliary Surgery and Visceral Transplantation, University of Leipzig Medical Center 
+
+luis.mandl@isd.uni-stuttgart.de 
+
+Lars Kälber 
+
+Institute of Structural Mechanics and Dynamics in Aerospace Engineering, University of Stuttgart; 
+
+lars.kaelber@isd.uni-stuttgart.de 
+
+Tim Ricken 
+
+Institute of Structural Mechanics and Dynamics in Aerospace Engineering, University of Stuttgart 
+
+tim.ricken@isd.uni-stuttgart.de 
+
+Abstract 
+
+Label noise remains a critical bottleneck for the generalization of supervised deep learning models, particularly when errors are structured rather than ran-dom. Standard robust training methods often fail in the presence of such semanti-cally proximal classification errors. This work presents an architecture-agnostic Lipschitz-constant Bayesian header that can be integrated into feature extractors such as vision transformers, yielding the bi-Lipschitz-constrained Bayesian Vision Transformer (LipB - ViT). In contrast to conventional Bayesian layers, our approach enforces spectral normalization on both the mean and log-variance of the variational weights, which promotes calibrated predictive uncertainty and mitigates noise am-plification. We further propose a novel metric to jointly capture uncertainty and confidence across misclassification rates, as well as an adaptive arithmetic-mean fusion scheme that combines feature-space proximity with predictive uncertainty to detect corrupted labels outperforming the state of the art k-nearest neighbor based identification methods by more than 7% reaching a recall of more than 0.93 at 15% semantically misclassified labels. Although computational costs increase due to Monte Carlo sampling, the method offers plug-and-play compatibility with pre-trained backbones and consistent hyperparameters across domains, suggesting strong utility for high-stakes applications with variable annotation reliability. The stabilized confidence estimates serve as the foundation for an analysis pipeline that jointly assesses dataset quality and label noise, yielding a second novel metric for their combined quantification. Lastly, we systematically evaluate LipB -ViT under both structured (adversarial) and unstructured noise at inference time, demonstrat-ing its robustness in realistic high-noise and attack scenarios. We compare its performance against state-of-the-art baseline methods. 
+
+> Preprint.
+> arXiv:2605.05908v1 [cs.CV] 7 May 2026
+
+1 Introduction 
+
+Although data quality is crucial for learning representations that generalize to real-world settings, the role of label noise has received comparatively little attention [ 1– 3 ]. In particular, label noise can induce optimization instabilities and significantly degrade generalization capabilities [ 4– 6]. Correction of noisy labels typically proceeds via three routes: (i) additional human effort to clean labels before training [ 7– 9 ], (ii) adaptations of the training pipeline to explicitly model annotator disagreement [ 10 , 11 ], or (iii) algorithmic robustness during training [ 12 – 16 ]. Human-in-the-loop label cleaning has been shown to incur substantial annotation costs. Moreover, it often remains inconclusive, since even experts disagree and may label space to accommodate edge cases, introducing downstream issues such as class imbalance. Annotator-aware architectures still require additional human effort in the form of multiple annotations, but can explicitly leverage disagreements in the labels. Robust-training approaches tolerate label noise without extra annotation cost by encoding ambiguity in the learning process, for example through loss correction [ 12 , 13 ], noise-adaptation layers [ 14 ], sample selection based e.g. on co-teaching [ 15 ], or meta-learning [ 16 ]. However, these robust methods have a structural limitation: the guarantees typically only hold under symmetric and randomly distributed label noise. Nevertheless, empirical robustness is maintained even at noise rates as high as 80% [ 17 ]. Once noise becomes structured, either class-dependent or concentrated near decision boundaries, the performance degrades significantly even at low noise rates, with existing mitigation methods providing little additional protection [ 18 ]. In this work, we refer to this type of noise as semantically proximal classification error ( SPCE ). One approach to modelling uncertainty in neural networks is the use of Bayesian neural networks ( BNN s), which have been shown to improve the robustness and reliability of computer vision tasks in the context of uncertainty-aware segmentation and detection [ 19 –21 ]. While several Bayesian approaches to neural networks exist, including dropout [ 20 ], and (pseudo-)Bayesian deep ensembles [ 22 ], one prominent route is variational inference [ 21 ]. This approach places a distribution over each weight, rather than a single point estimate, and learns it by minimizing an objective that combines a data-likelihood term with a Kullback-Leibler ( KL )-divergence regularizer [ 21 ]. Moreover, using only partial stochasticity in the network can retain useful uncertainty quantification while improving computational efficiency compared to fully Bayesian neural networks [ 23 ], motivating architectures that employ Bayesian heads instead of fully Bayesian models. Furthermore, Lipschitz-constrained architectures that explicitly bound the rate of change in neural networks have been proposed to enhance stability and robustness by limiting output variation under small input perturbations [ 24 ]. Spectral normalization and related spectral bounding techniques have also been combined with BNN to defend against adversarial test-time perturbations by softly regularizing an upper bound on the Lipschitz constant [ 25 ]. This is achieved by adding an additional regularization term to the loss. We did not pursue this strategy further because we seek to avoid imposing Lipschitz constraints on the pre-trained feature extractor. Existing methods have so far mainly been demonstrated on comparatively small, fully Bayesian models trained from scratch, whereas the widespread use of Vision Transformer ( ViT ) [ 26 ] and large pre-trained backbones would require a fully Bayesian treatment of all weights, which defeats the practical benefit of (re-)using pre-trained (deterministic) representations. In this work, we address the problem of detecting noise on both sides of training: corrupted labels in the dataset that drive the well-known “garbage-in, garbage-out” failure mode, and corrupted or shifted inputs at inference time that erode a model’s reliability. The key contributions of this work are 1. the introduction of an architecture-agnostic Lipschitz-constant header , that applies a hard spectral normalization to both the mean and log-variance of variational weights. 2. a novel misclassification severity metric that quantifies uncertainty in the training dataset induced by label noise, enabling a universally applicable, cross-dataset metric to estimate the amount of label noise present. 3. a method to identify incorrect labels in the dataset outperforming previous k - nearest neighbor (kNN) based methods. 4. a thorough empirical analysis of LipB -Headers on Vision Transformers on four open source datasets, comparing their robustness to SPCE against state -of - the - art baselines on label noise and post-training structured and unstructured noise. Beyond these core contributions, we analyze the effect of SPCE compared to random misclassification on (i) model accuracy and uncertainty and (ii) incorrect label identification. 22 Methods 
+
+The Lipschitz-constant Bayesian header for vision transformer ( LipB-ViT ) is added on top of a pre-trained ViT backbone and replaces its classification head with two stacked Bayesian linear layers, separated by a rectified linear unit ( ReLU ) activation function. The weights for these layers are sampled from learned Gaussian distributions parameterized by a mean and log-standard deviation, with a configurable prior [ 26 ]. We focus on ViT -16 for two reasons: widely used in both academic and industrial settings, and (ii) it has been reported to exhibit superior stability compared to traditional image classifiers [ 27 , 26 ]. This work establishes a set of hyperparameters, which have been found to facilitate the use of the architecture as a plug-and-play replacement for a wide variety of models and data sets. In this work, the focus is exclusively on image classification, with the architecture under scrutiny. Given an input image x ∈ R3×H×W and a pre-trained ViT -small 16 backbone 
+
+fθ : R3×H×W → Rd, with height H, width W, and extracted feature space z with dimension d. The added Bayesian header gϕ then maps z to logits o ∈ RC through two stochastic linear layers with weight matrices W (1) , W (2) ∈ Rm×n separated by a ReLU , i.e., o = gϕ(z) = W (2) ReLU( W (1) z).We chose a two-layer BNN header because it exhibited the most stable behavior across hyperpa-rameters and uncertainty estimates. This header is then parameterized by the variational parameters 
+
+ϕ = {μ(ℓ), ρ (ℓ)}ℓ=1 ,2. In contrast to traditional neural networks layers there is no bias as affine offsets do not affect the spectral norm ( SN ). The BNN layer treats its weight matrix as a random variable with fully-factorized Gaussian variational posterior 
+
+qϕ(W ) = Y
+
+> i,j
+
+N Wij μij , σ 2
+
+> ij
+
+, σij = exp( ρij ), (1) where ρij is unconstrained to enable σij > 0 automatically. We use the standard reparameterization trick to enable gradient-based optimization [ 28 ]. For the Gaussian prior, we place on every weight, ensuring an initial symmetric distribution around zero. We choose a small prior standard deviation of 0.01 for stability. At inference time, we draw 50 Monte-Carlo ( MC ) samples and compute predictive uncertainty as the standard-deviation ( STD ) of the predicted class probabilities. We train the model by maximizing the standard evidence lower bound ( ELBO ), or equivalently, by minimizing the negative ELBO . For a dataset D = {(xn, y n)}Nn=1 with mini-batch B ⊂ D the loss function can then be defined as 
+
+L(ϕ) = 1
+
+|B| 
+
+X
+
+> n∈B
+
+Eqϕ
+
+CE  gϕ(zn), y n
+
+ | {z }
+
+> data term
+
++β X
+
+> i,j
+
+h
+
+− ρij + log s0 + 12s20
+
+  exp 2 ρij + μ2
+
+> ij
+
+ − 12
+
+i| {z }
+
+> regularizer
+
+, (2) where β = 10 −4 controls the trade-off between fit and regularization with cross-entropy CE ,expectation under the variational distribution Eqϕ , and regularization factor s0 as hyperparameter. The key novelty of the BNN layer architecture is the use of spectral normalization over the entire weight distribution, which enforces a global upper bound on the Lipschitz constant of the header. This “hard” spectral bound mitigates outliers during MC sampling by preventing high-norm weight realizations, while the spectral normalization in each ˜W (ℓ) enforces an upper bound on the Lipschitz constant of gϕ.The deterministic version of the SN is defined as 
+
+∥W ∥2 ≡ σmax (W ) = max  
+
+> v̸=0
+
+∥W v∥2
+
+∥v∥2
+
+q
+
+λmax (W SN W ), (3) with matrix W ∈ Rm×n and where v 7 → W v is a linear map on ∥W ∥2,Lipschitz . Since computing 
+
+σmax via singular value decomposition ( SVD ) is too expensive at every step, the layer keeps a persistent left singular vector buffer u ∈ Rm and refines it with SN power iterations per forward call. While multiple iterations improve convergence, empirical results suggest that one iteration per step, often suffices due to batch-wise refinement along the same Krylov subspace. Unlike standard spectral normalization, which constrains a single weight matrix, our approach keeps the entire variational distribution spectrally bounded. The implementation does this by re-scaling both μ and σ by the same factor ˆσ
+
+fW ˜μ + ˜ σ ⊙ ε 1ˆσ + ε
+
+ μ + eρ ⊙ ε W
+
+ˆσ + ε , (4) 3where ˜(·) denotes quantities prior to normalization, and all remaining quantities are estimated via power iterations. This then leads to a shape invariance as the same scalar divides μ and σ, where the entire variational distribution is just isotropically shrunk and relative uncertainty is preserved. Here ∥ ˜W ∥2 ≈ 1 for stable ˆσ ensures an approximate 1-Lipschitz constraint on the layer. With both layers spectral normalized, the header is approximately 1-Lipschitz. The header here only strictly enforces the Lipschitz upper bound on the head, not full bi-Lipschitzness end-to-end [ 29 ]. Bi-Lipschitzness ensures a distance-preserving mapping up to constant factors, ruling out both unbounded expansion and degenerative contraction of distances. The lower Lipschitz bound is implicitly provided by the ViT backbone, assumed to be non -collapsing due to pre-training, together with a hidden layer in the header. In practice, the estimator becomes distance-aware as the spectral norm caps the growth of logit variance, while the variational posterior in combination with a weak prior preserves epistemic uncertainty in unconstrained directions. Consequently, the MC variance tracks the distance from the training data manifold rather than being arbitrarily amplified by deep-net nonlinearities. Spectral normalization is applied to the entire weight distribution, thereby enforcing a global Lipschitz bound. In contrast, post-hoc normalization of individual MC samples leaves the distribution’s support unbounded and susceptible to sporadic high-norm realizations induced by uncontrolled weight-norm fluctuations. The proposed scheme preserves the Gaussian form required by the variational KL -divergence, maintains a scale-invariant signal-to-noise ratio, and leads to stable gradients as well as more efficient inference. 
+
+2.1 Training methods 
+
+We compare two training methods for handling label noise: (i) standard training with a single network, and (ii) a co-teaching approach [ 15 ]. Co-teaching utilizes two neural networks in parallel, where each selects instances with a small loss, which are considered clean, from its mini-batch. These instances are then exchanged with the peer network for parameter updates. The objective of this method is to mitigate confirmation bias by decoupling the selection of clean samples from model updates, using a dynamic, dropout-like mechanism that retains only the most reliable training samples. To achieve this, an important hyperparameter is the assumed noise rate τ ≈ ϵ. For a deterministic, epoch-scheduled forget rate R(t) = 1 − τ · min( t/t k, 1) that starts at 0 and linearly ramps up over the first tk epochs to the assumed noise rate τ ≈ ϵ. However, in the absence of prior knowledge about the dataset’s label-noise rate, this strategy proved to be suboptimal, motivating the incorporation of an adaptive forget rate. The forget rate is determined on a per-mini-batch basis as a function of the number of samples for which the two networks yield discordant predictions. Per mini-batch B, the forget rate is set adaptively using the predictions ˆyf and ˆyg of the peer networks as 
+
+Rforget (B) = min R0 + α · 1
+
+|B| 
+
+X
+
+> x∈B
+
+[ˆ yf (x)̸ = ˆ yg (x)] , R max 
+
+!
+
+, (5) with R0 = 0 .1, α = 0 .2, and Rmax = 0 .5.
+
+2.2 Metric to evaluate model uncertainty determinability and stability over misclassification 
+
+A tailored metric is needed to evaluate the reliability and stability of uncertainty and confidence estimates under miscalibration. To accurately assess uncertainty and confidence in the misclassifica-tion rate, a simple averaging over random seeds and datasets is insufficient, as it ignores variability across runs. Both changes in the mean and the associated standard deviation or broader dispersion measures must be taken into account. Consequently, we designed a metric that explicitly accounts for both mean trends and variability across runs. The emphasis is on obtaining a robust estimate of dataset quality from uncertainty and confidence values. The extent to which an estimate of the quality of the dataset is both reliable and precise is a pivotal consideration. In order to achieve this objective, a Gaussian response model is fitted to the repeated measurements over the seeds at each misclassification rate, yielding a posterior distribution for each observation. This results in two performance metrics: (i) the soft confidence defined as the posterior probability mass within a range of ±2% of the actual misclassification averaged over all misclassification rates; and (ii) the soft accuracy, defined as the proportion of observations for which the maximum a posteriori estimate fell within the same neighborhood of ±2% . Together, these metrics quantify both probabilistic certainty and discrete prediction reliability under a tolerance for near-miss assignments. 42.3 Feature extractor and suspicion score 
+
+For the kNN -based suspicion score, we employed a residual network ( ResNet )-50 model pre-trained on ImageNet, with its classification head removed, as a feature extractor [ 30 ]. From this network, we extracted 2048-dimensional feature vectors and computed suspicion scores directly within this feature space using kNN s. The model was used in its pre-trained state without fine-tuning [ 29 , 31 ]. For each sample i with ResNet -50 feature zi ∈ R2048 and assigned label yi, the K=10 cosine-nearest neighbors NK (i) with distances di,k and labels yji,k are calculated. Using the distance agreement (wi,k ∝ 1/(di,k + ϵ), P 
+
+> k
+
+wi,k = 1 ), we obtain ai = PKk=1 wi,k {yji,k = yi} ∈ [0 , 1] . These values are then normalized to [0 , 1] and the suspicion score is calculated as skNN  
+
+> i
+
+= 1 − ˆai .
+
+2.4 Uncertainty based suspicion score 
+
+Predictive uncertainty is quantified via MC sampling (50 forward passes through the LipB-ViT ). For each sample, the uncertainty score is defined as the variance σs of the predicted-class c probability p
+
+with ui =
+
+q
+
+σ2 
+
+> s
+
+p(s)ˆci with number of MC samples s, and subsequently min-max normalized to [0 , 1] .The resulting quantity can be interpreted as an uncertainty-based suspicion score. 
+
+2.5 Adaptive arithmetic-mean fusion 
+
+A naive fusion strategy would be to take the unweighted arithmetic mean of both scores, which leaves threshold-independent metrics unchanged. However, to facilitate threshold selection, this is converted into an unsupervised method with a user-supplied class prior in the form of an expected misclassification rate within the dataset. To achieve this, each rank distribution is scored using Sarle’s bimodality coefficient [ 32 ] using a slope of β = 8 . With the expected misclassification rate, acting only a calibration factor. We furhter clip the weights at ( ∈ [0 .2, 0.8] ) ensure a balanced fusion by preventing either signal from dominating completely or being ignored. 
+
+2.6 Semantically proximal classification errors 
+
+The notion of semantic misclassification is based on the assumption that visually similar pairs of samples have a substantially higher probability of being confused by the classifier. Conversely, samples that are clearly distinct are expected to show markedly lower misclassification rates. We use ResNet-50 as a feature extractor, by removing the final classification layer and taking the 2048 -dimensional output after the global average pooling layer to extract the image features. Utilizing the extracted features, we apply kNN to identify samples that are closely related in the feature, but belong to different classes. Then their labels are swapped, achieving synthetically generated SPCE sby changing the labels of samples that lie closer to other class clusters so that they are relabeled according to these neighboring clusters. 
+
+3 Datasets and experimental setup 
+
+To evaluate the performance of LipB-ViT and the baseline methods, we employ four publicly available benchmark datasets, summarized in Table 1. These datasets comprise two medical imaging tasks, based on magnetic resonance imaging (MRI) and histopathology, and two industrial inspection tasks involving magnetic tiles and steel surfaces. In all four scenarios, human experts routinely perform the visual assessment, yet misclassifications can occur and may entail substantial clinical or economic consequences, underscoring the need for reliable and precise automated decision support. We evaluate the models under both pre-training and post-training structured and unstructured noise. To study the impact of structured and unstructured label noise during pre-training, classifiers are evaluated on four image-classification benchmarks under two label-corruption regimes (random and semantic) with corruption rates η ∈ [1% , 15%] . Each setting (dataset, regime, η, model) is instantiated with five random seeds, and performance is always measured on a clean validation set to ensure fair comparison. In the post-training evaluation phase, individual noise types are added to the images with gradually increasing intensity. The considered corruptions include Gaussian noise, shot noise, read noise, thermal and sensor noise, Gaussian and motion blur, brightness variation, and demosaicing artifacts. Structured noise is modeled via adversarial attacks. Specifically, we repeat the steps 5Table 1: Datasets used for comparison with number of classes C, number of images used in training 
+
+Ntrain , number of images used in testing Ntest , and image size in pixels. 
+
+Dataset C Ntrain Ntest Size Source 
+
+Brain Tumor MRI 4 5,712 1,311 224 2 Nickparvar [33] Colorectal Histology 8 4,001 1,002 224 2 Kather et al. [34] Magnetic Tile Defects 6 1,069 276 224 2 Huang et al. [35] Steel Surface Defects 6 1,440 360 224 2 Cao [36] described above, but instead of applying different noise sources, we generate adversarial perturbations with gradually increasing strength. For a fair and effective evaluation, we use a ResNet - 50 model fine - tuned on the respective dataset as the base (attacker) model when crafting adversarial examples, since attacks are generally more effective when the target model closely matches the attacker model. A categorization of attacks can be made into two types: fast gradient sign method ( FGSM ) [ 37 ]and projected gradient descent ( PGD ) [ 38 ]. The experiments benchmark LipB-ViT against (i) a standard ViT (deterministic baseline) and (ii) a Bayesian Header for Vision Transformer ( B-ViT )with identical architecture but without spectral normalization. A fully BNN was excluded due to inferior performance on pre-training-dependent datasets. 
+
+4 Results 
+
+The uncertainty framework is evaluated against state-of-the-art methods across four primary dimen-sions: (i) robustness to label noise during training, (ii) capability to provide an estimate on the data quality, (iii) capability to identify incorrect labels (misclassification detection), and (iv) robustness to input perturbations and adversarial attacks at inference. 
+
+4.1 Robustness to label noise 
+
+We evaluate three model types ViT , B-ViT and LipB-ViT with two different training approaches. Furthermore we evaluate the LipB-ViT for SN = 1 and SN = 5 number of power iterations. As 0 2 4 6 8 10 12 14 16                   
+
+> 84
+> 86
+> 88
+> 90
+> 92
+> 94
+> 96
+> 98
+> 100
+> Misclassification rate ηin %
+> Mean clean val. accuracy in %
+> B-ViT CoTeaching ViT LipB-ViTSN1 LipB-ViTSN5
+> LipB-ViT CoTeaching Standard ViT 2σmean acc.
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> 2σ clean val. accuracy in %
+> 0246810 12 14 16
+> 84
+> 86
+> 88
+> 90
+> 92
+> 94
+> 96
+> 98
+> 100
+> Misclassification rate ηin %
+> Mean clean val. accuracy in %
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> 2σ clean val. accuracy in %
+
+Figure 1: Training accuracy over misclassification rate for all compared models. The solid lines represent the accuracies, while the dotted lines indicate the ±2σ standard deviation. On the left are the results for SPCE, and on the right are those for random label noise. shown in Figure 1, the accuracy degradation for a random misclassification is on average only 1.46% across all models, with a negligible performance difference of less than one percent between models. In contrast, the average accuracy drop over all models for the SPCE is 6.2%. Table 2 summarizes the relative accuracy drop and the stability across all four datasets and the five random seeds per dataset. The standard ViT model demonstrates the highest initial performance, with an accuracy of 
+
+98 .5% ± 1.8% . However, it also exhibits the lowest accuracy, with a misclassification rate at η = 15% 
+
+6Table 2: Model robustness comparison under increasing SPCE . Reported are the initial performance at η = 0% , final performance at η = 15% , and the relative drop in accuracy. 
+
+Model η = 0% η = 15% Drop (%) 
+
+B-ViT 97 .7 ± 1.7 90 .7 ± 3.2 7.2 CoTeaching ViT 97 .3 ± 1.8 92 .3 ± 2.6 5.2 LipB-ViTSN1 97 .7 ± 1.7 91 .2 ± 3.1 6.7 LipB-ViTSN5 97 .5 ± 2 91 .3 ± 3.2 6.3 LipB-ViT_CoTeaching 94 .7 ± 2.9 91 .1 ± 3.8 3.8 
+
+Standard ViT 98 .5 ± 1.8 90 .5 ± 2.2 8.1 of 90 .5% ± 2.2% that is a drop of about 8%. The highest accuracy at η = 15% misclassification was achieved by the ViT with our adaptive coaching approach at 92 .3% ± 2.6% and an average accuracy drop of 5%. Concerning the mean accuracy decline when employing conventional training methods, the LipB-ViT demonstrates marginal inferiority, exhibiting an accuracy decline of 6.3% across all datasets. The lowest accuracy drop but also lowest initial performance is shown by the LipB-ViT_CoTeaching model. 
+
+4.2 Data quality metric 
+
+Based on confidence- and uncertainty-weighted misclassification rates, we propose a novel data-quality metric that estimates the number of potential misclassifications in a dataset. We compare this metric against radius-based uncertainty measures in the ViT feature space. To assess how accurately and robustly model uncertainty reflects true errors, we introduce a dedicated evaluation metric that quantifies both the correctness of uncertainty estimates and their stability with respect to misclassifications. This metric P (|ˆx − xtrue | ≤ 2) ≈ soft_accuracy_ w = 2 captures the accuracy and confidence of predicting the data quality metric for a new sample. The corresponding results are reported in Table 3. We compare the fitted data quality metric with respect to its ability to Table 3: Soft accuracy and confidence metrics under uncertainty- and confidence-based weighting. 
+
+Model Soft Acc. Soft Conf. (Unc.) (Conf.) (Unc.) (Conf.) 
+
+B-ViT 0.47 0.46 0.41 0.37 LipB-ViTSN1 0.43 0.53 0.40 0.42 
+
+LipB-ViT_CoTeaching 0.32 0.40 0.34 0.34 LipB-ViTSN5 0.40 0.49 0.39 0.41 Radius Based 0.26 – 0.34 –Standard ViT – 0.42 – 0.38 determine unambiguity and stability under misclassification. Specifically, we evaluate both 1 −
+
+prediction confidence and the uncertainty. Among the approaches considered, the radius-based uncertainty yielded the lowest performance, followed by the Standard ViT . The best results are obtained with the LipB-ViT SN1, which interestingly shows higher performance in terms of confidence over misclassification than uncertainty over misclassification. This finding indicates that the Bayesian spectrally bounded head not only regularizes uncertainty estimates but also stabilizes prediction confidence, which is defined as the predictive mean over 50 MC samples. 
+
+4.3 Capability to identify incorrect labels 
+
+The comparison of suspicion scores in Table 4 illustrates the necessity of fusing multiple signals. The adaptive arithmetic-mean fusion method consistently outperforms the standalone kNN and uncertainty method. For the adaptive arithmetic-mean fusion-based suspicion score, we did not pre-train the feature extractor; for further details, see the appendix. The Adaptive arithmetic-mean fusion method demonstrates improved separability in density scores, facilitating a more defined data cutoff line as shown Figure 2b compared to Figure 2a. Adaptive arithmetic-mean fusion combines 7Table 4: Performance comparison under different misclassification types using are under the curve ( AUC )-precision-recall ( PR ) and AUC -receiver operating characteristic ( ROC ) metrics (mean ±
+
+standard deviation). 
+
+Misclassification Type Method AUC-PR Mean ± Std AUC-ROC Mean ± Std 
+
+Random kNN 0.83 ± 0.19 0.99 ± 0.04 
+
+Random uncertainty 0.26 ± 0.08 0.81 ± 0.06 
+
+Random Bayes 0.88 ± 0.14 0.99 ± 0.03 
+
+SPCE kNN 0.51 ± 0.25 0.92 ± 0.05 
+
+SPCE uncertainty 0.28 ± 0.10 0.84 ± 0.06 
+
+SPCE Bayes 0.55 ± 0.20 0.94 ± 0.04 0.0 0.2 0.4 0.6 0.8 1.0           
+
+> 1.0
+> 2.0
+> 3.0
+> 4.0
+> suspicion score
+> density
+> mean: 0.215
+> median: 0.084
+> threshold: 0.400
+> 0.00.20.40.60.81.0
+> 1.0
+> 2.0
+> 3.0
+> 4.0
+> 5.0
+> suspicion score
+> density
+> correct (4856)
+> mislabeled (856)
+> mean (correct): 0.150
+> mean (misl.): 0.584
+> threshold: 0.400
+
+(a) kNN-based method. 0.0 0.2 0.4 0.6 0.8 1.0            
+
+> 1.0
+> 3.0
+> 5.0
+> 7.0
+> suspicion score
+> density
+> mean: 0.138
+> median: 0.033
+> threshold: 0.400
+> 0.00.20.40.60.81.0
+> 1.0
+> 3.0
+> 5.0
+> 7.0
+> 9.0
+> suspicion score
+> density
+> correct (4856)
+> mislabeled (856)
+> mean (correct): 0.090
+> mean (misl.): 0.408
+> threshold: 0.400
+
+(b) Adaptive arithmetic-mean fusion method. 
+
+Figure 2: Suspicion-score densities for the two methods. Each panel shows on the left the blind marginal density p(s) over all samples, and on the right the ground-truth-conditional densities 
+
+p(s | correct ) and p(s | mislabeled ), whose separation indicates how well the score discriminates label noise. the structural information of the feature space with the sampled based uncertainty of the LipB-ViT .This fusion yields a higher AUC - PR , indicating that the method more effectively separates correctly and incorrectly labeled instances. 
+
+4.4 Robustness to input perturbations and adversarial attacks at inference 
+
+Figure 3 summarizes the averaged results: unstructured corruptions are shown in the top row, while FGSM and PGD attacks appear in the middle and bottom rows, respectively. The ViT s accuracy is the least affected, with a decrease of only approximately 18%. The strongest decrease is observed in the ResNet . The discrepancies in accuracy between the Bayesian models for the three noise types are found to be negligible. For unstructured noise, the accuracy drops by about 27%. The results for all noise types for the B-ViT compared to the LipB-ViT are negligible in terms of accuracy and confidence. The main difference is that the Lipschitz regularization substantially reduces inter-seed and inter-dataset uncertainty STD under corruption. 
+
+5 Discussion 
+
+Despite improvements, some constraints of the Bayesian header remain. The main issue is the significant computational overhead compared to standard deterministic models, which arises from the need for MC sampling and multiple power iterations. While synthetic label swaps effectively model class confusion, real-world noise includes additional complexities, such as inconsistent annotation criteria or multi-modal errors, that our approach does not replicate. This limits the generalizability of our findings to practical settings. Moreover, the experiments were conducted on relatively small datasets with a fixed input resolution of 224 2; the scalability of the Lipschitz constraint to very large-scale, ImageNet-sized datasets remains to be verified, as the memory footprint of storing singular vectors for spectral normalization could become a bottleneck. The misclassification severity metric shows dataset-dependent horizontal shifts, likely due to variations in noise distributions or baseline label accuracy. Robust validation would require evaluation on larger, expert-annotated datasets to disentangle these effects. This concern is supported by our Bayesian posterior fusion analysis, which identified a mislabeled sample in the brain tumor dataset that was subsequently confirmed by an expert: the same image appeared in both its original and mirrored form, but the two versions were 80 20 40 60 80 100                                   
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Normalised attack severity in %
+> Accuracy in %
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 2σ std in % of mean
+> 020 40 60 80 100
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> Normalised attack severity in %
+> Prediction Confidence
+> 0
+> 4
+> 8
+> 12
+> 16
+> 20
+> 24
+> 2σ std in % of mean
+> 020 40 60 80 100
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Normalised attack severity in %
+> Prediction Uncertainty  ×10 −3
+> 10
+> 30
+> 50
+> 70
+> 90
+> 110
+> 130
+> 150
+> 2σ std in % of mean
+> 020 40 60
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Normalised attack severity in %
+> Accuracy in %
+> 0
+> 12
+> 24
+> 36
+> 48
+> 60
+> 2σ std in % of mean
+> 020 40 60
+> 0.60
+> 0.70
+> 0.80
+> 0.90
+> 1.00
+> 1.10
+> Normalised attack severity in %
+> Prediction Confidence
+> 0
+> 6
+> 12
+> 18
+> 24
+> 30
+> 2σ std in % of mean
+> 020 40 60
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Normalised attack severity in %
+> Prediction Uncertainty  ×10 −3
+> 10
+> 30
+> 50
+> 70
+> 90
+> 110
+> 130
+> 150
+> 2σ std in % of mean
+> 020 40 60
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Normalised attack severity in %
+> Accuracy in %
+> ResNet-18 Standard ViT B-ViT LipB-ViTSN1
+> LipB-ViTSN5 LipB-ViTSN10 2σmean acc.
+> 0
+> 80
+> 160
+> 240
+> 320
+> 400
+> 2σ std in % of mean
+> 020 40 60
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> 1.10
+> Normalised attack severity in %
+> Prediction Confidence
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 2σ std in % of mean
+> 020 40 60
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Normalised attack severity in %
+> Prediction Uncertainty  ×10 −3
+> 10
+> 30
+> 50
+> 70
+> 90
+> 110
+> 130
+> 150
+> 2σ std in % of mean
+
+Figure 3: Accuracy, prediction confidence, and predictive uncertainty ( ×10 −3) under unstructured image corruptions (top), FGSM (middle), and PGD (bottom) transfer attacks sourced from ResNet -18, pooled across four datasets and five seeds. Solid lines denote mean performance; dashed lines indicate 
+
+2σ inter-seed STD as a percentage of the mean (right y-axis). assigned to different classes (see appendix). Consequently, residual label errors in the baselines used for evaluation may have introduced a small shift in our metric and an artificial widening of the standard deviation, making the misclassification severity appear less sharp than it actually is. Additionally, our kNN -based suspicion score relies on a non-tuned feature extractor. Although the literature predominantly advises against fine-tuning under label noise, some studies suggest that fine-tuning a model for a few epochs can improve the feature structure before learning the noise, which could, in principle, enhance the kNN -based suspicion score. However, for a new dataset, it is unclear how to choose an appropriate limit for “a few” epochs. A more detailed analysis of feature extractors fine-tuned on noisy datasets is provided in the appendix; in our experiments, fine-tuning the feature extractor decreased the performance of the kNN -based suspicion score by an average of about 14%. The “plug-and-play” nature of the proposed header is a significant advantage. As shown in our results, the architecture is agnostic to the backbone (here tested on ViT- 16, but in principle applicable to other architectures). The fact that the same hyperparameters yielded similar results across medical and industrial datasets suggests that the method is robust across domains, making LipB-ViT a strong candidate for scenarios in which data collection is expensive and expert annotation is prone to error. 
+
+6 Conclusion 
+
+In this work, we addressed the dual challenges of label noise during training and input corruption during inference in ViT-based models. While random label noise is known to degrade performance, our experiments demonstrate that SPCE induce a substantially sharper decline in accuracy, dropping model performance by over 6% on average compared to roughly 1.5% for random corruption. By integrating a Lipschitz-constrained Bayesian head, LipB-ViT not only mitigated the accuracy drop under SPCE but also produced more consistent uncertainty estimates across all datasets. Leveraging this knowledge, we introduced a novel metric derived from the predictive uncertainty to quantify data quality. This approach allows for a cross-dataset estimate of label noise levels. We further introduced 9a pipeline based on Bayesian fusion of feature-based kNN scores and model-derived uncertainty to isolate mislabeled instances. This pipeline demonstrated a marked improvement in performance when compared with the kNN -based label-noise detection method. It reliably identified and isolated incorrect labels in the dataset for both the random and SPCE cases. Lipschitz regularization enhanced robustness to post-hoc perturbations, preserving the utility of uncertainty estimates under both random and adversarial input corruptions during inference. 
+
+References 
+
+[1] Daochen Zha, Zaid Pervaiz Bhat, Kwei-Herng Lai, Fan Yang, Zhimeng Jiang, Shaochen Zhong, and Xia Hu. Data-centric artificial intelligence: A survey. ACM Computing Surveys , 57(5): 1–42, Jan 2025. ISSN 1557-7341. doi: 10.1145/3711118. [2] Jialin Shi, Kailai Zhang, Chenyi Guo, Youquan Yang, Yali Xu, and Ji Wu. A survey of label-noise deep learning for medical image analysis. Medical Image Analysis , 95:103166, 2024. ISSN 1361-8415. doi: 10.1016/j.media.2024.103166. [3] Nithya Sambasivan, Shivani Kapania, Hannah Highfill, Diana Akrong, Praveen Paritosh, and Lora M Aroyo. "everyone wants to do the model work, not the data work": Data cascades in high-stakes ai. In Proceedings of the 2021 CHI Conference on Human Factors in Computing Systems , CHI ’21, pages 1–15. ACM, May 2021. doi: 10.1145/3411764.3445518. [4] Chiyuan Zhang, Samy Bengio, Moritz Hardt, Benjamin Recht, and Oriol Vinyals. Understanding deep learning requires rethinking generalization. In 5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24–26, 2017, Conference Track Proceedings ,2017. URL https://openreview.net/forum?id=Sy8gdB9xx .[5] Curtis G. Northcutt, Anish Athalye, and Jonas Mueller. Pervasive label er-rors in test sets destabilize machine learning benchmarks. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks ,2021. URL https://datasets-benchmarks-proceedings.neurips.cc//paper/ 2021/hash/f2217062e9a397a1dca429e7d70bc6ca-Abstract-round1.html .[6] R. Stuart Geiger, Dominique Cope, Jamie Ip, Marsha Lotosh, Aayush Shah, Jenny Weng, and Rebekah Tang. "garbage in, garbage out" revisited: What do machine learning application papers report about human-labeled training data? Quantitative Science Studies , 2(3):795–827, 2021. ISSN 2641-3337. doi: 10.1162/qss_a_00144. [7] Mélanie Bernhardt, Daniel C. Castro, Ryutaro Tanno, Anton Schwaighofer, Kerem C. Tezcan, Miguel Monteiro, Shruthi Bannur, Matthew P. Lungren, Aditya Nori, Ben Glocker, Javier Alvarez-Valle, and Ozan Oktay. Active label cleaning for improved dataset quality under resource constraints. Nature Communications , 13(1):1037, Mar 2022. ISSN 2041-1723. doi: 10.1038/s41467-022-28818-3. [8] Curtis Northcutt, Lu Jiang, and Isaac Chuang. Confident learning: Estimating uncertainty in dataset labels. Journal of Artificial Intelligence Research , 70:1373–1411, Apr 2021. ISSN 1076-9757. doi: 10.1613/jair.1.12125. [9] Rahul Pandey, Hemant Purohit, Carlos Castillo, and Valerie L. Shalin. Modeling and mitigating human annotation errors to design efficient stream processing systems with human-in-the-loop machine learning. International Journal of Human-Computer Studies , 160:102772, Apr 2022. ISSN 1071-5819. doi: 10.1016/j.ijhcs.2022.102772. [10] Filipe Rodrigues and Francisco Pereira. Deep learning from crowds. Proceedings of the AAAI Conference on Artificial Intelligence , 32(1), Apr 2018. ISSN 2159-5399. doi: 10.1609/aaai. v32i1.11506. [11] Melody Guan, Varun Gulshan, Andrew Dai, and Geoffrey Hinton. Who said what: Modeling individual labelers improves classification. Proceedings of the AAAI Conference on Artificial Intelligence , 32(1), Apr 2018. ISSN 2159-5399. doi: 10.1609/aaai.v32i1.11756. 10 [12] Giorgio Patrini, Alessandro Rozza, Aditya Krishna Menon, Richard Nock, and Lizhen Qu. Making deep neural networks robust to label noise: A loss correction approach. In 2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 2233–2241. IEEE, 2017. doi: 10.1109/cvpr.2017.240. [13] Rafael Müller, Simon Kornblith, and Geoffrey E. Hinton. When does label smooth-ing help? In Advances in Neural Information Processing Systems (NeurIPS) , vol-ume 32, 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/ file/f1748d6b0fd9d439f71450117eba2725-Paper.pdf .[14] Jacob Goldberger and Ehud Ben-Reuven. Training deep neural-networks using a noise adaptation layer. In International Conference on Learning Representations , 2017. URL 
+
+https://openreview.net/forum?id=H12GRgcxg .[15] Bo Han, Quanming Yao, Xingrui Yu, Gang Niu, Miao Xu, Weihua Hu, Ivor Tsang, and Masashi Sugiyama. Co-teaching: Robust training of deep neural networks with extremely noisy labels. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 31. Curran Associates, Inc., 2018. URL https://proceedings.neurips.cc/paper_files/paper/2018/file/ a19744e268754fb0148b017647355b7b-Paper.pdf .[16] Mengye Ren, Wenyuan Zeng, Bin Yang, and Raquel Urtasun. Learning to reweight examples for robust deep learning. In Proceedings of the 35th International Conference on Machine Learning (ICML) , pages 4334–4343, 2018. URL https://proceedings.mlr.press/v80/ ren18a.html .[17] Aritra Ghosh, Himanshu Kumar, and P. S. Sastry. Robust loss functions under label noise for deep neural networks. Proceedings of the AAAI Conference on Artificial Intelligence , 31(1), Feb 2017. ISSN 2159-5399. doi: 10.1609/aaai.v31i1.10894. [18] Diane Oyen, Michal Kucer, Nick Hengartner, and Har Simrat Singh. Robustness to label noise depends on the shape of the noise distribution in feature space. In Advances in Neural Information Processing Systems (NeurIPS) , volume 35, 2022. URL https://openreview. net/pdf?id=AlpR6dzKjfy .[19] Alex Kendall and Yarin Gal. What uncertainties do we need in bayesian deep learning for com-puter vision? In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/ 2017/file/2650d6089a6d640c5e85b2b88265dc2b-Paper.pdf .[20] Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. In Maria Florina Balcan and Kilian Q. Weinberger, editors, Proceedings of The 33rd International Conference on Machine Learning , volume 48 of 
+
+Proceedings of Machine Learning Research , pages 1050–1059, New York, New York, USA, 2016. PMLR. URL https://proceedings.mlr.press/v48/gal16.html .[21] Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in neural networks. In Proceedings of the 32nd International Conference on Machine Learning (ICML) , volume 37, pages 1613–1622, 2015. URL https://proceedings.mlr.press/ v37/blundell15.pdf .[22] Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scal-able predictive uncertainty estimation using deep ensembles. In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, edi-tors, Advances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ 9ef2ed4b7fd2c810847ffa5fa85bce38-Paper.pdf .[23] Mrinank Sharma, Sebastian Farquhar, Eric Nalisnick, and Tom Rainforth. Do bayesian neural networks need to be fully stochastic? In Francisco Ruiz, Jennifer Dy, and Jan-Willem van de Meent, editors, Proceedings of The 26th International Conference on Artificial Intelligence and Statistics , volume 206 of Proceedings of Machine Learning Research , pages 7694–7722, 2023. URL https://proceedings.mlr.press/v206/sharma23a.html .11 [24] Moustapha Cisse, Piotr Bojanowski, Edouard Grave, Yann Dauphin, and Nicolas Usunier. Parseval networks: Improving robustness to adversarial examples. In Doina Precup and Yee Whye Teh, editors, Proceedings of the 34th International Conference on Machine Learning ,volume 70 of Proceedings of Machine Learning Research , pages 854–863. PMLR, 2017. URL 
+
+https://proceedings.mlr.press/v70/cisse17a.html .[25] Jiaru Zhang, Yang Hua, Zhengui Xue, Tao Song, Chengyu Zheng, Ruhui Ma, and Haibing Guan. Robust bayesian neural networks by spectral expectation bound regularization. In 2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 3814–3823, 2021. doi: 10.1109/CVPR46437.2021.00381. [26] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In International Conference on Learning Representations , 2021. URL 
+
+https://openreview.net/forum?id=YicbFdNTTy .[27] Kavya Gupta. Certvit: Certified robustness of pre-trained vision transformers. February 2023. URL https://arxiv.org/abs/2302.10287 .[28] Durk P Kingma, Tim Salimans, and Max Welling. Variational dropout and the local repa-rameterization trick. In C. Cortes, N. Lawrence, D. Lee, M. Sugiyama, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 28. Curran Associates, Inc., 2015. URL https://proceedings.neurips.cc/paper_files/paper/2015/file/ bc7316929fe1545bf0b98d114ee3ecb8-Paper.pdf .[29] Jeremiah Liu, Zi Lin, Shreyas Padhy, Dustin Tran, Tania Bedrax Weiss, and Balaji Lakshmi-narayanan. Simple and principled uncertainty estimation with deterministic deep learning via distance awareness. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, 
+
+Advances in Neural Information Processing Systems , volume 33, pages 7498–7512. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/ 2020/file/543e83748234f7cbab21aa0ade66565f-Paper.pdf .[30] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for im-age recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 770–778, 2016. doi: 10.1109/CVPR.2016.90. [31] Nicolas Papernot and Patrick McDaniel. Deep k-nearest neighbors: Towards confident, inter-pretable and robust deep learning. In NDSS Workshop on the Usable Security (USEC) , 2018. URL https://arxiv.org/abs/1803.04765 .[32] Warren S. Sarle. The MODECLUS procedure. In SAS/STAT User’s Guide, Release 6.03 , pages 6250–6320. SAS Institute Inc., Cary, NC, 1985. [33] Msoud Nickparvar. Brain tumor mri dataset, 2026. URL https://doi.org/10.34740/ KAGGLE/DSV/14832123 .[34] Jakob Nikolas Kather, Cleo-Aron Weis, Francesco Bianconi, Susanne M. Melchers, Lothar R. Schad, Timo Gaiser, Alexander Marx, and Frank Gerrit Zöllner. Multi-class texture analysis in colorectal cancer histology. Scientific Reports , 6(1):27988, 2016. ISSN 2045-2322. doi: 10.1038/srep27988. [35] Yibin Huang, Congying Qiu, and Kui Yuan. Surface defect saliency of magnetic tile. The Visual Computer , 36(1):85–96, 2020. doi: 10.1007/s00371-018-1588-5. [36] Weilin Cao. NEU-CLS: Northeastern university surface defect database. Figshare Dataset, 2025. URL https://doi.org/10.6084/m9.figshare.28903550 .[37] Ian J. Goodfellow, Jonathon Shlens, and Christian Szegedy. Explaining and harnessing adver-sarial examples. In 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings , 2015. 12 [38] Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu. Towards deep learning models resistant to adversarial attacks. In International Conference on Learning Representations (ICLR) , 2018. URL https://openreview.net/forum?id= rJzIBfZAb .13 A Software and Hardware 
+
+Experiments were conducted with Python 3.11.11 (CPython) on a Linux system (6.8.0-106-generic) using PyTorch 2.5.1 (CUDA 12.4, cuDNN 90100) and key libraries: NumPy 2.2.1, SciPy 1.15.1, scikit-learn 1.6.1, and TIMM 1.0.14. The hardware setup included a 48-core/96-thread AMD EPYC 9474F CPU with 755 GB RAM and two NVIDIA RTX 6000 Ada GPUs (47.4 GB VRAM each, compute capability 8.9). The average per epoch training time depending on the dataset ranges from 14-32 seconds. The optimizer used was AdamW from PyTorch. 
+
+B Supplementary plots 
+
+14 1a 1b    
+
+> t-SNE dimension 1
+> t-SNE dimension 2
+> 2a 2b
+> t-SNE dimension 1
+> t-SNE dimension 2
+> 3a 3b
+> t-SNE dimension 1
+> t-SNE dimension 2
+> 4a 4b
+> t-SNE dimension 1
+> t-SNE dimension 2
+> glioma
+> meningioma
+> notumor
+> pituitary
+> blowhole
+> break
+> crack
+> fray
+> free
+> uneven
+> crazing
+> inclusion
+> patches
+> pitted surface
+> rolled-in scale
+> scratches
+> 01 TUMOR
+> 02 STROMA
+> 03 COMPLEX
+> 04 LYMPHO
+> 05 DEBRIS
+> 06 MUCOSA
+> 07 ADIPOSE
+> 08 EMPTY
+
+Figure 4: This plot shows semantically close samples from each dataset with different classes, introducing what it is easier to miscategorize samples that are similar than those with obvious differences. On the left side, the images are always shown first, and on the right side, a t-distributed stochastic neighbor embedding ( t-SNE ) plot of the ResNet reduced features is displayed, with the samples shown in the images marked. Row 1: Dataset - Brain tumor 1a: No tumor, 1b: Glioma. Row 2: Dataset - Magnetic tile surface defects 2a: Free, 2b: Uneven. Row 3: Dataset - Steel surface defects 3a: Scratches, 3b: Inclusions. Row 4: Dataset - Colorectal 4a: Complex, 4b: Mucosa. This visualization highlights how semantically similar samples can lead to easier mislabeling. 15 t-SNE dimension 1 
+
+> t-SNE dimension 2
+> t-SNE dimension 1
+> 01 TUMOR
+> 02 STROMA
+> 03 COMPLEX
+> 04 LYMPHO
+> 05 DEBRIS
+> 06 MUCOSA
+> 07 ADIPOSE
+> 08 EMPTY
+> mislabeled
+
+Figure 5: This plot displays the reduced features from ResNet , further reduced via t-SNE . The ResNet was trained for 40 epochs, achieving the highest accuracy on a clean validation set. The training data contained semantically miscslassefied samples. On the left, the t-SNE features are shown with their original (not miscslassefied) classes, clearly showing label noise merging into the class clusters. On the right, the miscslassefied samples are marked, showing a near-perfect alignment between cluster noise and miscslassefied samples. This demonstrates that even when validation accuracy on a clean set is optimal, the feature extractor learns the miscslassefied patterns. 0 2 4 6 8 10 12 14 16 
+
+0
+
+0.1
+
+0.2
+
+0.3
+
+misclassification rate η in % 
+
+> signal value
+
+mean 4%: 0.044 
+
+mean 8%: 0.060 
+
+mean 12%: 0.086 
+
+0.0 0.1 0.2 0.3
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+signal value 
+
+> density
+
+η = 4% 
+
+η = 8% 
+
+η = 12% 
+
+mean 4%: 0.044 
+
+mean 8%: 0.060 
+
+mean 12%: 0.086 
+
+Figure 6: This figure shows on the left the inverse confidence of the LipB-ViT over the misclas-sification rate. The plot on the left combines, as an interquartile range bar plot, the information from all 5 seeds and over all 4 datasets, considering both random and SPCE methods. Furthermore, the dotted lines represent cross-sections at 4%, 8%, and 12%, where each line intersects the mean, demonstrating the possibility of identifying a new value and tracing it back to a misclassification in the dataset. On the right, the distributions at given means are shown. 16 1a 1b               
+
+> 2a 2b 2c
+> 0.4·10 −2
+> 0.6·10 −2
+> 0.8·10 −2
+> 1.0·10 −2
+> 1.2·10 −2
+> 1.4·10 −2
+
+Figure 7: This plot shows an example where our pipeline actually marked an expert-verified false label in the original dataset. On the top row, the original images are shown: 1a is defined as class meningioma, and 1b is pituitary. On the second row, the first image (2a) is the same as 1a (1a = 2a). However, 2b is the mirrored version of 1b (1b mirrored = 2b). The mean absolute error between the pixel values in the images is shown, and the difference is nearly within machine precision. Therefore, the same image, when mirrored, was assigned to two classes. This demonstrates the effectiveness and necessity of our pipeline. 17 0% 1% 2% 3% 4% 5% 6% 8% 9% 10% 11% 12% 13% 14% 15% 
+
+Misclassification rate η (%) 
+
+> 0.97 0.90 0.83 0.77 0.70 0.63 0.57 0.50 0.43 0.37 0.30 0.23 0.17 0.10 0.03
+> Normalised signal value (0 = min, 1 = max)
+
+nan nan nan nan nan nan 1.00 nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan nan nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan 1.00 nan nan nan nan nan 
+
+nan nan nan nan nan nan nan nan nan 0.33 nan nan 0.33 0.33 nan 
+
+nan nan nan nan nan nan nan 0.07 nan nan 0.07 0.14 0.21 0.29 0.21 
+
+nan nan nan nan nan 0.08 0.04 nan 0.04 0.08 0.17 0.12 0.12 0.12 0.21 
+
+nan nan nan 0.05 0.05 0.05 0.02 0.02 0.09 0.09 0.14 0.05 0.16 0.09 0.20 
+
+0.02 0.01 nan nan 0.05 0.02 0.05 0.11 0.11 0.15 0.10 0.15 0.08 0.10 0.04 
+
+0.01 0.06 0.13 0.15 0.07 0.17 0.17 0.13 0.08 nan 0.01 0.01 nan nan nan 
+
+0.27 0.24 0.18 0.11 0.15 0.03 0.02 nan nan nan nan nan nan nan nan 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> P(η | signal)
+
+Figure 8: This plot shows the via LipB-ViT SN1 sampled 1 − conf idence values over the entire experiment as row-normalised 2-D histogram of (signal, η): given a normalised signal value, each row gives the probability of each misclassification rate. Providing a direct lookup. 18

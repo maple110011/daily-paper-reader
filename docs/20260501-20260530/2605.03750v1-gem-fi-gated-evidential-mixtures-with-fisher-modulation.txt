@@ -1,0 +1,2167 @@
+Title: GEM-FI: Gated Evidential Mixtures with Fisher Modulation
+
+URL Source: https://arxiv.org/pdf/2605.03750v1
+
+Published Time: Wed, 06 May 2026 01:00:54 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Marco Mustafa Mohammed 1 Fatemeh Daneshfar 1 Pietro Liò 2
+
+Abstract 
+
+Evidential Deep Learning (EDL) enables single-pass uncertainty estimation by predicting Dirich-let evidence, but it can remain overconfident and poorly calibrated, and it often fails to represent multi-modal epistemic uncertainty. We intro-duce Gated Evidential Mixtures (GEM), a fam-ily of models that learns an in-model energy sig-nal and uses it to gate evidential outputs end-to-end in a distance-informed manner. GEM-CORE learns a feature-level energy and maps it to a bounded gate that smoothly suppresses evidence when support is low. To capture epistemic multi-modality without multi-pass ensembling, GEM-MIX adds a lightweight mixture of evidential heads with learned routing weights while preserv-ing single-pass inference. Finally, GEM-FI sta-bilizes mixture allocations via a Fisher-informed regularizer, reducing head collapse and producing smoother boundary uncertainty. Across image classification and OOD detection benchmarks, GEM improves calibration and ID/OOD sepa-ration with single-pass inference. On CIFAR-10, GEM-FI vs. DAEDL improves Acc. from 91.11 to 93.75 (+2.64 pp), reduces Brier ×100 from 14.27 to 6.81 ( −7.46 ), and also improves misclassification-detection (AUPR) from 99.08 to 99.94 (+0.86). For epistemic OOD detection, GEM-FI achieves AUPR/AUROC of 92.59/95.09 on CIFAR-10 →SVHN and 90.20/89.06 on CIFAR-10 →CIFAR-100 (vs. 85.54/89.30 and 88.19/86.10 for DAEDL). 
+
+1. Introduction 
+
+Reliable predictive uncertainty is essential when models op-erate beyond their training distribution or in safety-critical 
+
+> 1
+
+Department of Computer Engineering, Faculty of Engineering, University of Kurdistan, Sanandaj, Iran 2Department of Com-puter Science and Technology, University of Cambridge, Cam-bridge, United Kingdom. Correspondence to: Fatemeh Daneshfar <Daneshfarshadi@gmail.com>. 
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+settings (Ovadia et al., 2019). A calibrated model should be confident only on well-supported regions and defer else-where. Bayesian neural networks (BNN S) offer a principled route by placing distributions over weights (Blundell et al., 2015), but deployments often face prohibitive training or in-ference costs. Popular approximations such as Monte Carlo dropout (MC-DROPOUT ) (Gal & Ghahramani, 2016) and deep ensembles (Lakshminarayanan et al., 2017) improve robustness, yet require multiple forward passes, which can be at odds with tight latency or energy budgets. EDL (Sensoy et al., 2018) provides a single-pass alterna-tive by predicting Dirichlet parameters and interpreting their concentration as “evidence.” While competitive on in-distribution (ID), networks may still be overconfident under distribution shift or for out-of-distribution (OOD) inputs (Ovadia et al., 2019; Minderer et al., 2021). Density-aware variants (e.g., Density-Aware Evidential Deep Learn-ing (DAEDL) (Yoon & Kim, 2024)) rescale evidential out-puts using an offline feature-space likelihood, such as Gaus-sian Discriminant Analysis (GDA) (Murphy, 2012). This improves calibration, but keeps the density cue static and 
+
+decoupled from end-to-end learning. This decoupling cre-ates several gaps that motivate our approach: (i) the offline density is not optimized jointly with the evidential mecha-nism, so the network cannot learn to shape evidence where support is weak; (ii) the density surrogate is brittle to rep-resentation shift: when features drift, the pre-fit likelihood can systematically mis-rank near-boundary or near-OOD inputs; and (iii) DAEDL does not address epistemic multi-modality near complex class boundaries, where a single evidential head may collapse to overconfident allocations unless explicitly regularized. Energy-based views (Liu et al., 2020) often yield stronger ID/OOD separability than softmax confidence, yet they are typically used post hoc : thresholds and temperatures are tuned after training and do not intervene where evi-dential confidence is produced (Guo et al., 2017). As a result, energy signals rarely enforce local smoothness (e.g., via Lipschitz-oriented regularization such as Parseval con-straints (Cissé et al., 2017) or spectral normalization (Miy-ato et al., 2018)) or distance-aware monotonicity of evi-dence during learning, and can exhibit dataset-specific sen-sitivity (Ovadia et al., 2019; Minderer et al., 2021). More broadly, many single-pass pipelines either rely on static, decoupled density surrogates (e.g., DAEDL (Yoon & Kim, 1
+
+> arXiv:2605.03750v1 [cs.LG] 5 May 2026
+
+GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+(a) EDL (b) DAEDL (c) GEM-FI (ours) 
+
+Figure 1. Two-moons setup with an additional OOD cluster. Panels show predictive entropy (brighter = higher uncertainty). 
+
+2024)) or apply post hoc score adjustments (e.g., tempera-ture scaling (TS), energy scoring) (Guo et al., 2017; Romero et al., 2024). Consequently, there is a need for an in-model, learnable support signal that (i) directly gates evidential out-puts, (ii) preserves single-pass inference, and (iii) captures epistemic multi-modality without multi-pass ensembles. This paper asks a simple question: Can we integrate a data-dependent notion of representation “support” directly into the evidential mechanism, while retaining single-pass in-ference? We answer in the affirmative with GEM. GEM-CORE learns a feature-level energy and maps it to a bounded in-model gate that smoothly scales evidence. The mapping from energy to the final integration gate is learned; em-pirically, off-support inputs yield smaller gates and thus more conservative predictions. To capture multi-modal epis-temic structure near complex decision boundaries without multi-pass ensembling, Mixture of Beliefs (GEM-MIX) augments EDL with a single-pass mixture of evidential heads and learned mixture weights. Finally, GEM-FI intro-duces an Fisher-informed (FI) regularizer that stabilizes al-locations and discourages head collapse, yielding smoother boundary uncertainty and stronger suppression off-support. On a synthetic two-moons setup, Figure 1 compares EDL, DAEDL, and GEM-FI on the same data. EDL (Fig. 1a) concentrates uncertainty in a narrow band near the decision boundary while remaining overconfident far from support. DAEDL (Fig. 1b) improves distance awareness and cali-bration, but its density cue is static and decoupled from end-to-end learning, and it can still underestimate uncer-tainty near the curved boundary and in parts of the OOD region. In contrast, GEM-FI (Fig. 1c) yields smoother un-certainty near decision boundaries and more consistently lower confidence on OOD inputs. In a corresponding one-dimensional example, Figure 2 contrasts a single-head DAEDL model (Fig. 2a) with the FI-regularized multi-head GEM-FI (Fig. 2b), illustrating how our mixture retains un-certainty across modes instead of collapsing to overconfi-dent allocations. Our design follows two principles. (i) Distance-informed confidence: we learn a representation-level energy E(x)
+
+and pass it through a bounded gate that directly scales evi-dential outputs, so higher energy yields a smaller gate and more conservative evidence. This creates a smooth link be-tween feature-space support and confidence, reduces abrupt overconfidence under shift, and keeps the support signal Dirichlet head 
+
+> overconfident
+> Class A
+> Class B
+> Complex class Boundary
+
+(a) DAEDL Dirichlet head 1   
+
+> Dirichlet head 2
+> Dirichlet head 3
+> Explicit regularization
+> Class A
+> Class B
+> Complex class Boundary
+> Uncertainty band
+
+(b) GEM-FI (ours) 
+
+Figure 2. One-dimensional toy example in a non-convex bound-ary region. (a) DAEDL single-head model: tends to miss epis-temic multi-modality and can yield overconfident allocations. (b) FI-regularized multi-head GEM-FI in the same region: retains uncertainty across modes and avoids overconfident collapse. 
+
+learnable and end-to-end (rather than a static, offline den-sity). (ii) Single-pass epistemics: we recover ensemble-like diversity with a lightweight mixture of evidential heads trained jointly on a shared backbone. Learned mixture weights provide soft specialization near complex decision boundaries, while FI stabilization discourages head domi-nance and improves calibration and OOD separability—all with single-pass inference and modest overhead. Empiri-cally, across standard image-classification and OOD detec-tion benchmarks, GEM improves calibration and strength-ens ID/OOD separation relative to EDL and strong density-aware baselines. Our main contributions are summarized as follows: • We learn a feature-level energy and map it to a bounded, in-model gate that directly modulates Dirichlet evidence, reducing overconfidence for atypical features while pre-serving confident ID predictions. • We introduce a lightweight mixture of evidential heads with learned routing weights, capturing multi-modal epis-temic structure without ensembles or extra forward passes. • We add a FI-informed regularizer to stabilize mixture allocations and prevent head collapse, yielding smoother boundary uncertainty. • We demonstrate improvements in calibration and OOD separation on standard benchmarks, and provide ablations isolating the roles of the energy gate, mixture size, and FI regularization. We defer the related-work discussion and a compact com-parison with the closest single-pass evidential and density-aware methods to Appendix C (Table 5). 
+
+2. Method 
+
+Figure 3 summarizes the architectures considered in this work. Figure 3a presents the density-aware DAEDL base-line, while Figure 3b illustrates the proposed GEM-FI ar-chitecture and its main components. The added modules 2GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+in GEM—the energy head, integration gate, router, and evidential heads—are lightweight attachments on top of a backbone that produces fixed-dimensional features, so the design is compatible with standard CNN or Transformer-style feature extractors with minimal architectural assump-tions. GEM-C ORE augments a spectrally normalized back-bone with a learned feature-level energy and a bounded gate that modulates the predictive distribution via probability-space gating (Sec. 2.1). GEM-MIX introduces a single-pass mixture of evidential heads with learned mixing weights (Sec. 2.2). GEM-FI adds an FI-informed regularizer, to-gether with FI-based modulation of mixture weights, to stabilize allocations (Sec. 2.3). 
+
+Notation. Let x ∈ X and y ∈ { 1, . . . , C } denote an input and its class label, where C is the number of classes. A spectrally normalized backbone fθ : X → Rd produces features z = fθ (x).
+
+Evidential parameterization. An evidential head gϕ :
+
+Rd → RC maps these features to logits: 
+
+u1: C (x) = gϕ(z). (1) Dirichlet distributions are denoted by Dir( α) for α ∈ RC>0,with total concentration α0 = P 
+
+> c
+
+αc and expectations Eα[·]
+
+taken with respect to Dir( α). Throughout, we parameterize 
+
+α directly from (clipped) logits and use a small ϵ > 0 for numerical stability: 
+
+˜uc(x) = clip  uc(x), −τ, τ ,αc(x) = exp  ˜uc(x) + ϵ, ϵ = 10 −8. (2) Unless stated otherwise, uc(x) and αc(x) denote the single-head logits and concentrations used by EDL/GEM-C ORE .For mixture models, we write u(k) 
+
+> c
+
+(x), α(k) 
+
+> c
+
+(x), and p(k) 
+
+> c
+
+(x)
+
+for the corresponding quantities of head k. We reserve 
+
+ˆs(x) for the intermediate scalar energy-derived gate signal, 
+
+sc(x) for the final class-wise integration gates, and πk(x)
+
+for router-produced mixture weights. 
+
+DAEDL baseline. For reference, DAEDL (Yoon & Kim, 2024) keeps the same backbone fθ and evidential head gϕ
+
+as above, and therefore uses the same logits uc(x). It ad-ditionally fits an offline feature-space density model (e.g., class-conditional GDA) on the features z = fθ (x), and uses its normalized likelihood to modulate these logits (Fig-ure 3a). The Dirichlet parameters and predictive mean in DAEDL are: 
+
+αDAEDL  
+
+> c
+
+(x) = exp  λ(x) uc(x),pDAEDL  
+
+> c
+
+(x) = αDAEDL  
+
+> c
+
+(x)
+
+P 
+
+> j
+
+αDAEDL  
+
+> j
+
+(x) . (3) The first line scales the logit uc(x) by the density-dependent factor λ(x) to form the Dirichlet concentration αDAEDL  
+
+> c
+
+(x),and the second line normalizes these concentrations to ob-tain the predictive probability pDAEDL  
+
+> c
+
+(x). The density term 
+
+λ(x) is computed once from the offline surrogate q(z) and kept fixed during training; in contrast, our GEM-C ORE uses a learnable, in-model gate s(x) that is trained jointly with the backbone and evidential heads. 
+
+2.1. GEM-C ORE : Energy-to-Gate Evidential Learning Density Scaling. In addition to the learned gate, we em-ploy a lightweight density scaler ρ(z) to modulate eviden-tial concentrations based on feature density. We estimate 
+
+ρ(z) = σ(log p(z)) γ , where p(z) is the log-likelihood from a Gaussian Mixture Model (GMM) fit to ID training fea-tures, σ is the sigmoid function, and γ = 1 .2 is a fixed exponent. This density score is used purely as a multiplica-tive scaler on the evidence: αc(x) = ρ(z) · exp(˜ uc(x)) + ϵ.In mixture variants, the same shared feature-density score is applied per head before normalization, yielding α(k) 
+
+> c
+
+(x) = 
+
+ρ(z) · exp(clip( u(k) 
+
+> c
+
+(x), −τ, τ )) + ϵ unless otherwise noted. This supplementary component acts as a "hard" safety guardrail to suppress evidence in regions of extremely low density, while the learned gate s(x) remains the primary, task-adaptive support signal responsible for fine-grained modulation. 
+
+Energy convention and gate direction. We define en-ergy E(x) such that higher energy corresponds to lower representation-level support (anti-correlated with feature density). The intermediate scalar ˆs(x) = σ(E(x)) ∈ (0 , 1) 
+
+increases with energy by construction. However, the inte-gration gate network Gη takes [z, ˆs(x)] as input and learns to output per-class gates s(x) ∈ [smin , s max ]C . Crucially, 
+
+Gη can learn either positive or negative correlation with ˆs;empirically, we observe an inverse-like mapping : higher ˆs
+
+(indicating lower support) leads to smaller final gates s(x),thereby suppressing evidence for OOD inputs. This corre-spondence is a learned outcome of end-to-end training, not an architectural constraint. GEM-C ORE learns a feature-level energy Eψ : Rd →
+
+R and maps it to a bounded (class-wise) gate s(x) ∈
+
+[smin , s max ]C ⊂ (0 , 1) C that directly modulates class prob-abilities via probability-space gating. Eψ is a lightweight MLP on z. The scalar energy E(x) is first squashed with a sigmoid to obtain an intermediate scalar gate ˆs(x) = 
+
+σ(E(x)) ∈ (0 , 1) . This scalar is then concatenated with 
+
+z and fed into a small “integration gate” network Gη that outputs per-class gates, with:           
+
+> ˜uc(x) = clip  uc(x),−τ, τ ,αc(x) = ρ(z)·exp  ˜uc(x)+ϵ, pc(x) = αc(x)
+> α0(x).
+> (4)
+
+Probability-space gating (implementation). The final class-wise gate is denoted by s(x) = ( s1(x), . . . , s C (x)) 
+
+to distinguish it from the intermediate scalar signal ˆs(x).This per-class gate is applied to the predictive distribution in probability space and then renormalized:        
+
+> ˆp(x) = p(x)⊙s(x)
+> 1⊤ p(x)⊙s(x).(5)
+
+In this block, p(x) denotes the predictive mean in probabil-ity space (either a single-head evidential predictive mean or the mixture predictive mean). The per-class gate s(x)
+
+3GEM-FI: Gated Evidential Mixtures with Fisher Modulation Dirichlet     
+
+> GDA Normalization
+> 𝓮 𝟎
+> 𝓮 𝟏
+> 𝓮 𝑪
+> Dir = 𝜶 𝒄 =𝒆 𝔃 𝒄
+> Evidence
+
+(a) DAEDL Router                 
+
+> Fisher ෢𝑭𝑰
+> Mixture
+> Dirichlet
+> Integration gate 𝑮 𝒏
+> OOD example OOD
+> 1
+> k
+> GEM -Core GEM -Mix
+> GEM -FI
+> Mixture weights (𝝅 )
+> FFN
+> 𝝅 (𝔁 )𝔁 ො𝒔 𝔁 =𝝈 (𝜠 (𝔁 ))
+> 𝓮 𝑪
+> 𝓮 𝟏
+> 𝓮 𝟎
+> 𝔃
+> 𝒇 𝜽 X
+> X𝝅 𝟏
+> 𝝅 𝒌
+> 𝔃
+> 𝒖 𝑪 𝔁
+> 𝒈 𝝓
+> Evidence
+> 𝒔 𝔁
+> Energy head 𝑬 𝝍 𝔃
+> ො𝒔 𝔁
+> exp
+
+(b) GEM-FI (ours) 
+
+Figure 3. Architecture of the proposed method. (a) DAEDL: a spectrally normalized backbone with a single evidential head that outputs Dirichlet evidence, augmented with an offline feature-space density model (GDA) whose normalized likelihood rescales evidential outputs before computing uncertainty. (b) GEM-FI: extends the same backbone with an energy head Eψ that maps features z to a scalar energy 
+
+E(x) and a bounded class-wise gate s(x) (GEM-C ORE ), and adds a router that produces mixture weights over multiple Dirichlet heads together with a FI-based regularizer. 
+
+is applied multiplicatively to p(x) and the result is renor-malized to obtain ˆp(x) in (5) , matching the implementation (probability-level gating). Training minimizes a standard evidential target-matching loss with a Kullback–Leibler (KL) prior to the uniform Dirichlet: 
+
+Lcore = E(x,y )
+
+h
+
+ey − ˆp(x) 22 + λKL KL Dir( α(x)) ∥ Dir( 1)i
+
+.
+
+(6) 
+
+Here, the core loss combines a squared error term that matches the gated predictive mean ˆp(x) to the one-hot label 
+
+ey with a KL regularizer that keeps the concentration vector 
+
+α close to the non-informative prior Dir( 1). Since ˆp(x) de-pends on both the energy head Eψ (via s(x) = Gη (Eψ (z)) )and the gate network Gη , gradients flow back through both components during training, enabling end-to-end learning of the density-aware gating mechanism. 
+
+Inference (single-pass, no gradients). At inference time, the model performs a single forward pass through the frozen network: we compute features z = fθ (x), energy E(x),gates s(x), and mixture weights π(x) via the router–all with-out any gradient computation. The predictive mean is Eα[π];proxies include α0 (epistemic), max c Eα[πc] (aleatoric), entropy/MI, and an energy-derived score (reported as an auxiliary single-pass baseline for shift/OOD scoring; not used beyond the gating pipeline). Importantly, the FI-based modulation of mixture weights (17) and the FI regularizer (13) are applied only during training; at inference, mixture weights are computed directly from the router output. In our implementation, the final tanh nonlinearity on the en-ergy head output is optional and disabled by default; we found that removing it (i.e., using an identity mapping) im-proves OOD separation, particularly when combined with energy-based-model (EBM) negative sampling using Vir-tual Outlier Synthesis (VOS). When tanh is enabled, a mild “desaturation” can be applied at evaluation time by scaling the pre-activation by 0.5 to avoid hard saturation. 
+
+Complexity. GEM-C ORE adds only the energy head Eψ
+
+and the integration gate Gη ; inference remains single-pass with no gradient computation required. 
+
+2.2. GEM-MIX: Mixture of Beliefs (Single-Pass) 
+
+To capture multi-modal epistemic structure near com-plex decision boundaries without multi-pass ensembling, GEM-MIX extends GEM-C ORE with K evidential heads 
+
+{gϕ(k) }Kk=1 that share backbone features z = fθ (x). Each head outputs class-wise logits u(k)(x) ∈ RC , which are mapped to Dirichlet concentrations as: 
+
+α(k)(x) = exp   clip( u(k)(x), −τ, τ ) + ε, ε = 10 −8. (7) 
+
+For readability, we write α(k)(x) for the full concentration vector of head k and α(k) 
+
+> c
+
+(x) for its class-c entry; likewise, 
+
+p(k)(x) denotes the per-head predictive mean vector and 
+
+p(k) 
+
+> c
+
+(x) its class-c component. The predictive mean for head k is 
+
+p(k) 
+
+> c
+
+(x) = α(k) 
+
+> c
+
+(x)
+
+P 
+
+> j
+
+α(k) 
+
+> j
+
+(x) . (8) 
+
+A learnable router hω takes the shared features along with the scalar energy gate and produces mixture weights: 
+
+π(x) = softmax  hω ([ z, ˆs(x)])  ∈ ∆K−1. (9) 
+
+The mixture predictive mean (before per-class probability gating) is then 4GEM-FI: Gated Evidential Mixtures with Fisher Modulation           
+
+> pmix (y=c|x) =
+> KX
+> k=1
+> πk(x)p(k)
+> c(x),(10)
+> α0,mix (x) =
+> KX
+> k=1
+> πk(x)α(k)0(x),(11)
+
+where α(k)0 (x) = P 
+
+> c
+
+α(k) 
+
+> c
+
+(x). The final predictive distri-bution is obtained by applying the shared per-class gate in probability space and renormalizing as in (5) : ˆp(x) = Normalize  pmix (x) ⊙ s(x).We train GEM-MIX using a negative log-likelihood term on ˆp together with per-head KL priors:         
+
+> Lmix =E(x,y )
+> h
+> −log ˆ py(x)+λKL
+> KX
+> k=1
+> πk(x) KL Dir( α(k)(x)) ∥Dir( 1)i
+> .
+> (12)
+
+2.3. GEM-FI: FI-Informed Regularization and Modulation 
+
+To further stabilize mixture behavior and discourage head collapse, GEM-FI augments GEM-MIX with an FI-informed regularizer and an FI-based modulation of the mixture weights. 
+
+FI proxy computation. We compute a lightweight per-head proxy cFI k(x) using the squared gradient norm of the log-likelihood with respect to the logits. Here πk(x) always denotes the normalized router weight assigned to head k (af-ter any training-time FI modulation), whereas ˜πk(x) denotes the raw pre-modulation router score used only internally in Eq. (17). We then penalize high-sensitivity allocations via        
+
+> LFI =Ex
+> "KX
+> k=1
+> πk(x)cFI k(x)
+> #
+> .(13)
+
+This Fisher-informed regularizer averages per-head proxies under the mixture weights πk(x), so heads that are both fre-quently selected and highly sensitive incur a larger penalty. We further add two auxiliary regularizers: an energy-based term that discourages excessively large positive energies, and an uncertainty term that shapes predictive entropy:                
+
+> LEBM =Ex
+> h
+> softplus  clip( Eψ(fθ(x)) ,−τ, τ )i
+> +Lneg EBM ,
+> (14)
+> LUNC =βid Ex
+> H ˆp(x) −βood Exood
+> H ˆp(xood ) ,(15)
+
+where H( ·) denotes the (Shannon) entropy of the predictive distribution. The uncertainty loss LUNC is contrastive: it encourages low entropy for ID samples (first term) and high entropy for OOD samples (second term, subtracted). We use VOS only for GEM-FI: Lneg EBM pushes synthetically generated negative samples toward high-energy regions via a margin-based softplus penalty softplus( m − Eneg ) on VOS-synthesized negatives. We treat VOS as an auxiliary boundary-sharpening mechanism within the full GEM-FI pipeline rather than as the core architectural contribution. The same clipping threshold τ is reused in (14) to prevent energy values from reaching numerically unstable magni-tudes. Baselines are trained following their standard proto-cols without VOS. Putting these components together, the overall training objective for GEM-FI is:            
+
+> LGEM -FI =Lmix +λFI LFI +λEBM LEBM +λUNC LUNC .
+> (16)
+
+Beyond this loss-level regularization, we also use the Fisher proxy to modulate mixture weights during training. Specifi-cally, we compute a per-head proxy cFI k(x) as the squared 
+
+L2 norm of the gradient of the log-likelihood with re-spect to the logits. To ensure bounded and stable mod-ulation, we normalize the proxies across heads to obtain relative sensitivity scores in [0 , 1] . Let ˜π(x) denote the raw softmax output of the router hω , and define ¯FI k(x) = 
+
+cFI k(x)  P  
+
+> j
+
+cFI j (x)+ ϵ. During training, we reweight the mixture scores as          
+
+> ˜πmod
+> k(x)∝˜πk(x) exp  λFI (1 −¯FI k(x)) ,(17)
+
+and renormalize to the simplex using a small smooth-ing constant for numerical stability: πk(x) =  ˜πmod  
+
+> k
+
+(x) + 
+
+ϵ′ P 
+
+> j
+
+ ˜πmod  
+
+> j
+
+(x) + ϵ′, where ϵ′ is set to a small value in all experiments (e.g., 10 −4). This FI-aware modulation upweights heads with lower 
+
+Fisher sensitivity (i.e., more stable predictions) and is ap-plied only during training ; at inference, mixture weights are computed directly from the router without FI modulation. Empirically, this design stabilizes mixture allocations and reduces head dominance on challenging OOD examples. Intuitively, the regularizer P 
+
+> k
+
+πk(x)cFI k(x) discourages al-locating high weight to locally sensitive heads, while (17) enforces the same preference directly at the mixture level during training. For implementation details and pseudocode aligned with our training pipeline, see Appendix D. 
+
+3. Theoretical Insights 
+
+We sketch why the proposed components—the bounded, learnable gate in GEM-C ORE and the FI-aware mixture in GEM-MIX/GEM-FI—can smooth confidence, encourage distance-informed behavior, and stabilize mixture alloca-tions. 
+
+3.1. Confidence smoothing via bounded energy-to-gate mapping 
+
+Intuitively, if the backbone, energy head, and integration gate are smooth and the final gate is bounded away from 0
+
+and 1, then the evidential outputs inherit this smoothness: nearby inputs cannot induce arbitrarily large changes in evidence or predictive confidence. 
+
+Assumption 3.1 (Lipschitz components) . Assume: • The backbone fθ is Lf -Lipschitz: ∥fθ (x) − fθ (x′)∥ ≤ 
+
+Lf ∥x − x′∥.• The classifier head gϕ is Lg -Lipschitz. • The energy head Eψ is LE -Lipschitz. • The integration gate Gη ([ z, ˆs]) is LG-Lipschitz in (z, ˆs)
+
+and outputs gates in [smin , s max ] with 0 < smin <smax < 1.• The mixture router hω and density scaler ρ(z) are Lips-chitz continuous. 5GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+In practice, these smoothness assumptions are supported by the use of spectral normalization throughout the main convolutional and linear mappings in the backbone and the auxiliary gating pathway. Since spectral normalization con-trols the operator norm of each layer, the growth of the composed mapping is correspondingly constrained, mak-ing Assumption 3.1 a practically motivated approximation rather than a purely abstract idealization. We do not claim that spectral normalization alone proves all global smooth-ness properties of the full network, but it provides an explicit architectural mechanism that supports the intended bounded-growth behavior used in this analysis. Since ˆs(x) = σ(Eψ (z)) is a smooth bounded mapping and σ is 1-Lipschitz, ˆs is LE -Lipschitz by composition. Combining this with Gη yields an Ls-Lipschitz gate s(x)
+
+for some finite Ls.
+
+Proposition 3.2 (Smoothness of probability-level gat-ing) . Under Assumption 3.1, suppose pmix (x) ∈ ∆C−1
+
+is locally Lipschitz in x and the per-class gate satis-fies s(x) ∈ [smin , s max ]C with 0 < smin ≤ smax ≤
+
+1. Then the probability-level gated prediction ˆp(x) =Normalize  pmix (x) ⊙ s(x) is locally Lipschitz. In par-ticular, there exists Lˆp > 0 such that for sufficiently close 
+
+x, x ′,
+
+∥ˆp(x) − ˆp(x′)∥ ≤ Lˆp ∥x − x′∥. (18) 
+
+Sketch. Both pmix (x) and s(x) are locally Lipschitz by as-sumption and construction, hence their elementwise prod-uct is locally Lipschitz. The normalization map v 7 →
+
+v/ (1⊤v) is smooth wherever 1⊤v is bounded away from zero. Here, for v(x) = pmix (x) ⊙ s(x) we have 1⊤v(x) = P 
+
+> c
+
+pmix ,c (x)sc(x) ≥ smin 
+
+P 
+
+> c
+
+pmix ,c (x) = smin , so the denominator is uniformly positive in a neighborhood. There-fore, ˆp(x) is locally Lipschitz as a composition of locally Lipschitz maps with a smooth normalization. 
+
+3.2. Distance-informed monotonicity (qualitative calibration) 
+
+Beyond local smoothness, we would like confidence to de-cay as we move away from high-support regions in repre-sentation space. Our design couples evidence to a learned energy, which can serve as a lightweight control signal cor-related with representation-level support. While we do not impose hard monotonicity constraints or assume an explicit density model, the following idealized picture clarifies the role of the gate. Additional support-conditioned diagnostics are provided in Appendix G.5 (Figs. 16–19). 
+
+Assumption 3.3 (Energy–support alignment (empirical)) .
+
+There exists a representation-level support surrogate ρ(z)
+
+such that, on average, higher energy Eψ (z) is associated with lower support ρ(z) (empirical anti-correlation). We treat ρ(z) as a generic support indicator; the analysis re-quires only that it is monotonically related to feature sup-port and does not rely on ρ being a calibrated density model. In our implementation, we use a GMM-based es-timator ρ(z) = σ(log pGMM (z)) γ , where pGMM is fit to ID training features. We introduce an energy pre-gate 
+
+ˆsE (x) = σ(Eψ (z)) , which is monotonically increasing in energy, as an intermediate summary of the energy signal. The integration network Gη maps [z, ˆsE (x)] to per-class gates s(x) ∈ [smin , s max ]C . We do not enforce a hard monotonic relationship between Eψ and the final gates; in-stead, the model learns end-to-end to suppress evidence in lower-support regions. This behavior is a learned outcome of training, not an architectural constraint. In a simplified single-head setting with logits u(x) and gate s(x), define the top-class margin m(z) = uy (z) −
+
+max c̸=y uc(z).
+
+Proposition 3.4 (Monotone suppression away from the sup-port (idealized)) . Under Assumption 3.3, as we move away from the support, (i) the total evidence α0(x) weakly de-creases due to decay of the density scaler ρ(z), and (ii) if the logit margin m(z) does not increase fast enough to com-pensate for the shrinking gate s(x), the top-class confidence 
+
+py (x) also weakly decreases. Sketch. The total evidence is α0(x) = P
+
+> c
+
+(ρ(z) exp(˜ uc) + 
+
+ϵ) ≈ ρ(z) P 
+
+> c
+
+exp(˜ uc). Under Assumption 3.3, as we move away from the support, the density proxy ρ(z) decays to-ward zero. If the logit terms exp(˜ uc) do not grow exponen-tially faster than ρ(z) decays, then ρ(z) exp(˜ uc) vanishes, leading to α0(x) → Cϵ (minimal evidence). Thus, total evidence decreases in low-support regions. We emphasize that Proposition 3.4 provides only a condi-tional guarantee under the stated assumptions; the empirical energy–support alignment should therefore be interpreted as a consistent empirical regularity rather than an architectural invariant. Full details of the experimental setup are provided in Sec-tion E. 
+
+4. Experiments 
+
+We evaluate the GEM family on classification, calibration, OOD detection, and robustness under distribution shift. Our experiments are designed to answer the following questions: 
+
+Q1. How do GEM models compare to EDL and DAEDL in terms of OOD detection? 
+
+Q2. Do GEM-MIX and GEM-FI preserve or improve ID accuracy and confidence calibration? 
+
+Q3. What is the contribution of the energy gate, mixture-of-beliefs, and FI regularization? We first evaluate OOD detection performance (Q1) and report AUPR scores for aleatoric and epistemic uncertainty across common ID →OOD shifts (Table 1). Next, we assess ID accuracy, confidence calibration, and misclassification 6GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+detection (Q2) on CIFAR-10 (Table 2). Finally, to verify the necessity of each design choice, we provide ablations over gating, mixture, and FI stabilization (Q3; Table 3). Unless otherwise stated, all results are averaged over five random seeds (0, 1, 2, 3, 42) and reported as mean ± stan-dard deviation. 
+
+4.1. OOD Detection 
+
+To address Q1, we evaluate OOD detection on four benchmark pairs: MNIST →KMNIST, MNIST →FMNIST, CIFAR-10 →SVHN, and CIFAR-10 →CIFAR-100. These cover digit-domain grayscale shifts and natural-image shifts, from cross-domain (CIFAR-10 →SVHN) to fine-grained, near-OOD settings (CIFAR-10 →CIFAR-100). Table 1 summarizes OOD detection AUPR under several scoring rules, including a simple aleatoric score (maximum softmax probability (M AX P)) and epistemic-leaning scores for evidential models. Across digit-domain shifts, all GEM variants achieve near-ceiling AUPR and slightly improve over DAEDL and ear-lier baselines, with GEM-MIX and GEM-FI yielding the strongest epistemic scores. On natural-image benchmarks, GEM-FI attains the best AUPR on CIFAR-10 →SVHN, surpassing both DAEDL and Re-EDL. CIFAR-10 →CIFAR-100 remains the most challenging set-ting: GEM-FI achieves 90.30% aleatoric AUPR, outper-forming DAEDL (88.16%) and Re-EDL (87.57%). This near-OOD shift shares low-level statistics and semantic structure with ID, so density cues can remain high and un-certainty separation is harder than in far-OOD shifts (e.g., SVHN), which have distinct textures and color distributions. Thus, GEM performs well in both far-OOD detection and challenging near-OOD scenarios. Additional results, including AUROC, are reported in Ap-pendix F.1. We also report AUPR based on total evidence 
+
+α0 and mixture-aware proxies such as MI, with energy and predictive entropy as reference metrics. Results for CIFAR-10 →TinyImageNet are provided in Appendix F.11 (Table 12). 
+
+Precision–Recall and ROC curves. Figure 4 compares PR and ROC curves for OOD detection (CIFAR-10 as ID, SVHN as OOD). In the PR view, GEM variants achieve markedly higher precision at moderate-to-high recall than evidential baselines, indicating fewer false alarms at higher coverage: EDL reaches AUPR 78.87, while GEM-CORE and GEM-MIX improve to 93.87 and 93.72, respectively (GEM-FI: 92.59). The ROC curves show a similar trend, with GEM dominating in the low-FPR regime: AUROC in-creases from 81.06 (EDL) and 89.24 (DAEDL) to 93.65 (GEM-CORE/GEM-FI) and 93.08 (GEM-MIX). These gains are consistent with the separation induced by learned gating (and mixture heads), enabling high-precision detec-tion while preserving single-pass inference compared to multi-pass ensembling. Extended versions of Figure 4 are 0.0 0.2 0.4 0.6 0.8 1.0      
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 78.87
+> I-EDL AUPR = 86.32
+> DAEDL AUPR = 85.50
+> R-EDL AUPR = 85.00
+> Re-EDL AUPR = 87.84
+> GEM-CORE AUPR = 89.87
+> GEM-MIX AUPR = 88.80
+> GEM-FI AUPR = 91.27
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 81.06
+> I-EDL AUROC = 86.79
+> DAEDL AUROC = 89.24
+> R-EDL AUROC = 86.78
+> Re-EDL AUROC = 89.72
+> GEM-CORE AUROC = 94.75
+> GEM-MIX AUROC = 93.05
+> GEM-FI AUROC = 93.65
+
+(a) PR curve 0.0 0.2 0.4 0.6 0.8 1.0       
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 78.87
+> I-EDL AUPR = 86.32
+> DAEDL AUPR = 85.50
+> R-EDL AUPR = 85.00
+> Re-EDL AUPR = 87.84
+> GEM-CORE AUPR = 89.87
+> GEM-MIX AUPR = 88.80
+> GEM-FI AUPR = 91.27
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 81.06
+> I-EDL AUROC = 86.79
+> DAEDL AUROC = 89.24
+> R-EDL AUROC = 86.78
+> Re-EDL AUROC = 89.72
+> GEM-CORE AUROC = 94.75
+> GEM-MIX AUROC = 93.05
+> GEM-FI AUROC = 93.65
+
+(b) ROC curve 
+
+Figure 4. PR and ROC curves for OOD detection on CIFAR-10 (ID) vs. SVHN (OOD). 
+
+provided in Appendix F.2 and F.3. As an additional stress test, we evaluate GEM under com-mon distribution-shift and corruption benchmarks (Sec-tion F.4). 
+
+4.2. Image Classification and Confidence Calibration 
+
+To address Q2, we report ID test accuracy, misclassification-detection AUPR, and the Brier score on CIFAR-10. Ta-ble 2 summarizes these metrics for posterior-network and evidential baselines, along with our GEM-based models. Among prior methods, DAEDL provides the strongest accuracy–calibration trade-off. Compared to DAEDL, GEM-FI improves test accuracy from 91 .11% to 93 .75% ,reduces the Brier score from 14 .27 to 6.81 , and increases misclassification-detection AUPR from 99 .08 to 99 .93 , in-dicating more accurate predictions with better-calibrated confidence. For reference, a well-calibrated softmax ResNet-18 on CIFAR-10 (without evidential training) typically yields Brier ×100 ≈ 15 –20 . Our GEM-C ORE attains an unusually low Brier × 100 ≈ 1.27 because probability-space gating produces extremely sharp predictions (near-deterministic when correct), which substantially lowers the squared-error term in the Brier score. In contrast, the mixture variants (GEM-MIX, GEM-FI) are less sharp due to mixture av-eraging, resulting in Brier values closer to typical ranges; this behavior reflects the gating mechanism rather than a calculation issue. Additional comparisons against classical TS are provided in Appendix F.5. 
+
+4.3. Ablation Study 
+
+Finally, Q3 examines the contribution of each GEM-FI com-ponent on CIFAR-10 and its standard OOD pairs. Table 3 re-ports an ablation over seven switches: (i) spectral normaliza-tion (SN); (ii) the energy-gated evidential module (CORE); (iii) the mixture of evidential heads (MIX, i.e., GEM-MIX); (iv) FI regularization (FI-Reg); (v) Fisher-based modulation of mixture weights (FI-Mod); (vi) the energy-based module (EBM); and (vii) uncertainty decomposition (UNC). SN alone improves over the baseline, highlighting its stabiliz-ing role for training and calibration. CORE on top of SN yields a further gain, indicating complementary benefits be-7GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 1. AUPR scores of OOD detection based on aleatoric and epistemic uncertainty. A → B denotes that A is used as the ID dataset and B as the OOD dataset.                                                                                                                                                                                                                                                                                                                                                                
+
+> MNIST →KMNIST MNIST →FMNIST CIFAR-10 →SVHN CIFAR-10 →CIFAR-100 Method Venue Alea. ↑Epis. ↑Alea. ↑Epis. ↑Alea. ↑Epis. ↑Alea. ↑Epis. ↑
+> DROPOUT ICML16 94.00 ±0.10 –96.56 ±0.20 –51.39 ±0.10 –45.57 ±1.00 –KL-PN NeurIPS18 92.97 ±1.20 93.39 ±1.00 98.14 ±0.80 98.16 ±0.00 43.96 ±1.90 43.23 ±2.30 61.41 ±2.80 61.53 ±3.40 EDL NeurIPS18 97.02 ±0.80 96.31 ±2.00 98.10 ±0.40 97.84 ±0.40 78.87 ±3.50 79.32 ±1.70 84.30 ±0.70 84.80 ±1.00 RKL-PN NeurIPS19 60.76 ±2.90 53.76 ±3.40 78.45 ±3.10 72.18 ±3.60 53.61 ±1.10 49.37 ±0.80 55.42 ±2.60 54.74 ±2.80 POSTNET NeurIPS20 95.75 ±0.20 94.59 ±0.30 97.72 ±0.20 97.24 ±0.20 80.21 ±0.20 77.71 ±0.40 81.96 ±0.80 82.06 ±0.80
+> I-EDL ICML23 98.34 ±0.20 98.33 ±0.20 98.86 ±0.30 98.86 ±0.30 86.32 ±2.40 85.92 ±2.30 85.55 ±0.70 84.84 ±0.60 DAEDL ICML24 99.90 ±0.00 99.92 ±0.00 99.83 ±0.00 99.87 ±0.00 85.50 ±1.40 85.54 ±1.40 88.16 ±0.10 88.19 ±0.10 R-EDL ICLR24 –98.69 ±0.20 –99.29 ±0.12 85.00 ±1.22 85.00 ±1.22 87.72 ±0.31 87.73 ±0.31 CEDL+ ESWA25 99.88 ±0.07 99.89 ±0.07 98.17 ±0.01 98.10 ±0.01 89.30 ±0.34 89.16 ±0.65 79.57 ±0.57 77.16 ±0.52 LTS MVA25 98.17 ±0.85 99.94 ±0.03 99.65 ±0.12 99.80 ±0.12 78.63 ±0.96 80.64 ±0.88 71.23 ±0.79 85.33 ±0.65 Re-EDL TPAMI25 –99.03 ±0.28 –99.65 ±0.09 87.84 ±0.96 89.89 ±1.39 87.57 ±0.23 88.30 ±0.16 GEM-CORE 99.93 ±0.01 99.90 ±0.03 99.99 ±0.00 99.97 ±0.01 89.87 ±0.33 87.80 ±0.15 89.35 ±0.23 84.00 ±0.40 GEM-MIX 99.94 ±0.01 99.94 ±0.02 99.99 ±0.00 99.96 ±0.04 88.80 ±0.24 90.60 ±0.23 84.98 ±0.10 84.46 ±0.20 GEM-FI 99.95 ±0.00 99.96 ±0.01 99.99 ±0.00 99.99 ±0.00 91.27 ±0.29 92.59 ±0.31 90.30 ±0.06 90.20 ±0.06
+
+Table 2. Image classification and confidence calibration on CIFAR-10.                                                                                                                                  
+
+> Method Test Acc. ↑AUPR ↑Brier ( ×100 )↓
+> Dropout 82.84 ±0.10 97.15 ±0.00 27.15 ±0.20 KL-PN 27.46 ±1.70 50.61 ±4.00 87.28 ±1.00 RKL-PN 64.76 ±0.30 86.11 ±0.40 54.73 ±0.40 PostNet 84.85 ±0.00 97.76 ±0.20 22.84 ±0.00 EDL 83.55 ±0.60 97.86 ±0.30 23.38 ±0.20
+> I-EDL 89.20 ±0.30 98.72 ±0.10 35.20 ±0.80 DAEDL 91.11 ±0.20 99.08 ±0.00 14.27 ±0.20 CEDL+ 93.07 ±0.06 98.82 ±0.01 15.02 ±0.03 LTS 93.13 ±0.10 98.87 ±0.01 14.97 ±0.03 R-EDL 90.09 ±0.31 98.98 ±0.05 18.15 ±0.50 RE-EDL 90.13 ±0.21 98.81 ±0.01 14.95 ±0.47 GEM-CORE 93.34 ±0.10 99.87 ±0.01 1.27 ±0.02
+> GEM-MIX 93.27 ±0.31 99.93 ±0.02 6.97 ±0.03 GEM-FI 93.75 ±0.36 99.94 ±0.01 6.81 ±0.01
+
+yond SN. MIX further improves OOD detection, supporting single-pass mixtures for multi-modal epistemic uncertainty. Alone, FI-Reg or FI-Mod can reduce OOD AUPR, suggest-ing Fisher shaping is most effective with the energy-based mechanism and uncertainty decomposition. This pattern clarifies the intended FI–EBM synergy in our design: the FI-based regularization and modulation terms are not meant to operate as standalone mechanisms, but rather to refine routing once the energy-based components have already shaped a meaningful support signal. Without EBM/UNC, the learned energy landscape can remain comparatively weak or noisy, in which case FI-based routing may amplify unstable head assignments instead of improving epistemic separation. Once the energy-based mechanism provides a clearer notion of support, however, FI modulation becomes substantially more effective at preventing head collapse and stabilizing mixture allocation. With EBM and UNC enabled, the full GEM-FI configuration achieves the strongest over-all performance, including improved aleatoric/epistemic sep-aration on CIFAR-10 →SVHN (91.27/92.59) and CIFAR-10 →CIFAR-100 (90.30/90.20). Removing SN from the full model degrades both accuracy and uncertainty quality, em-phasizing its stabilizing role during training. Additional controlled comparisons covering fair VOS exposure, replac-ing VOS with simple feature-space noise, removing the supplementary density scaler ρ(z), and head-diversity diag-nostics are reported in Appendix G.6, Appendix G.7, and Appendix G.9. 
+
+Qualitative evidence geometry. Figure 5 compares how different evidential formulations can yield distinct uncer-tainty structures even when they produce identical class predictions. GEM-CORE concentrates evidence sharply around a single mode, resulting in high confidence but lim-ited representation of epistemic alternatives. In contrast, GEM-MIX distributes evidence across multiple mixture components, enabling a multi-modal representation of un-certainty. Finally, GEM-FI regularizes mixture allocations using Fisher information, balancing concentration and di-versity to yield smoother Dirichlet geometries and more stable uncertainty estimates. Figure 6 visualizes the feature embeddings learned by GEM-FI. Compact clustering of ID classes and clear separation from OOD data highlight the effect of Fisher-informed regularization in shaping the latent space. Additional parameter-sensitivity analyses are provided in Appendix G. 
+
+5. Conclusion 
+
+We presented GEM, a family of single-pass, distance-informed evidential models. GEM-C ORE learns an in-model energy-to-gate mapping that directly modulates class probabilities via probability-space gating; GEM-MIX ex-tends this design with a lightweight belief mixture to capture multi-modal epistemic structure; and GEM-FI stabilizes mi-xture allocations via a FI-informed regularizer and FI-based modulation of mixture weights. Across MNIST/CIFAR-10, common OOD pairs, and corruption suites, GEM-based models consistently improve calibration and strengthen OOD separation relative to a DAEDL-style baseline, while preserving single-pass inference. 8GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 3. Ablation on CIFAR-10. ✓ indicates an enabled component.                                                                                                                                                                                                                                                                      
+
+> CIFAR-10 →SVHN CIFAR-10 →CIFAR-100 SN CORE MIX FI-Reg FI-Mod EBM UNC Test Acc. ↑AUPR ↑Alea. ↑Epis. ↑Alea. ↑Epis. ↑
+> ✗✗✗✗✗✗✗83.55 ±0.60 97.86 ±0.20 78.87 ±3.50 79.12 ±3.70 84.30 ±0.70 84.18 ±0.70
+> ✓✗✗✗✗✗✗91.00 ±0.40 99.20 ±0.10 85.50 ±1.50 85.20 ±1.60 87.00 ±0.50 86.50 ±0.55
+> ✓✓✗✗✗✗✗93.34 ±0.10 99.87 ±0.01 89.87 ±0.33 87.80 ±0.15 89.35 ±0.23 84.00 ±0.40
+> ✓✓✓✗✗✗✗93.27 ±0.31 99.93 ±0.02 88.80 ±0.24 90.60 ±0.23 84.98 ±0.10 84.46 ±0.20
+> ✓✓✓✓✗✗✗93.40 ±0.15 89.68 ±0.30 93.09 ±0.40 87.78 ±0.50 85.01 ±0.35 80.14 ±0.45
+> ✓✓✓✗✓✗✗93.50 ±0.12 87.35 ±0.25 90.60 ±0.35 75.38 ±0.55 84.25 ±0.40 71.77 ±0.50
+> ✓✓✓✓✓✗✗93.60 ±0.10 84.42 ±0.20 90.50 ±0.30 75.01 ±0.45 84.11 ±0.30 72.03 ±0.40
+> ✓✓✓✓✓✓✗93.70 ±0.08 91.16 ±0.15 93.95 ±0.35 94.93 ±0.40 86.26 ±0.25 87.37 ±0.35
+> ✓✓✓✓✓✓✓93.75 ±0.36 99.93 ±0.01 91.27 ±0.29 92.59 ±0.31 90.30 ±0.08 90.20 ±0.07
+> ✗✓✓✓✓✓✓92.10 ±0.25 85.92 ±0.20 92.23 ±0.40 78.64 ±0.50 83.80 ±0.35 72.44 ±0.45 GT: Airplane
+> S = 21.0, Vac = 0.476
+> GT: Bird
+> S = 20.5, Vac = 0.482
+> GT: Dog
+> S = 21.9, Vac = 0.437
+> Preds: Airplane, Cat, Auto Preds: Bird, Cat, Deer Preds: Dog, Cat, Horse
+> GEM-CORE GEM-MIX GEM-FI
+
+Figure 5. Comparison of three GEM variants on CIFAR-10 test images. The input is shown at the top of each column, and the in-duced Dirichlet distribution is visualized on the probability simplex below. Annotations S (total evidence) and Vac (vacuity) summa-rize the resulting uncertainty geometry. 
+
+(a) Before Norm. (b) After Norm. ID  
+
+> Far-OOD
+> Near-OOD
+
+(c) ID vs OOD 
+
+Figure 6. t-SNE visualization of feature embeddings for GEM-FI. 
+
+Limitations and future work. GEM uses learned en-ergy as an internal control signal for evidence gating, not as a calibrated estimator of representation-level support. Accordingly, alignment between energy and any support proxy (e.g., kNN distance) is empirical and may vary across regimes, architectures, and datasets; we provide no mono-tonicity guarantee. This limits interpreting energy as a direct support measure and suggests that stronger guarantees may require explicit support modeling or additional regulariza-tion. Near-OOD shifts with high semantic/visual overlap are intrinsically harder and often yield weaker uncertainty separability, leaving less headroom for any method. Finally, mixture routing introduces hyperparameter sensitivity and modest compute overhead, motivating more robust routing and tighter calibration guarantees (see Appendix H). Our empirical evidence is currently concentrated on standard MNIST/CIFAR-style benchmarks and associated corrup-tion/OOD protocols, so our claims are intentionally scoped to those settings rather than to ImageNet-scale evaluation. 
+
+Impact Statement 
+
+This paper studies uncertainty estimation for deep classi-fication via single-pass evidential models. Improved cali-bration and more reliable OOD detection can positively impact safety-critical deployments by helping systems ab-stain or defer when inputs are unsupported by the training data, thereby reducing overconfident failures. Potential risks include inappropriate over-reliance on uncertainty scores as a substitute for domain-specific validation, as well as misuse in high-stakes settings (e.g., surveillance or auto-mated decision-making) where errors or dataset biases can cause harm. To mitigate these risks, we recommend re-porting calibration and OOD metrics under multiple shifts, auditing performance across relevant subpopulations, and communicating uncertainty as one component in a broader human-in-the-loop decision process. 
+
+References 
+
+Bishop, C. M. Pattern Recognition and Machine Learning .Springer, New York, 2006. ISBN 978-0387310732. Blundell, C., Cornebise, J., Kavukcuoglu, K., and Wierstra, D. Weight uncertainty in neural networks. In ICML , 2015. Charpentier, B. et al. Posterior network: Uncertainty estima-tion without OOD samples via Dirichlet parameterization. In 
+
+NeurIPS , 2020. Chen, M., Gao, J., and Xu, C. R-edl: Relaxing nonessential settings of evidential deep learning. In International Conference on Learning Representations , 2024. Chen, M., Gao, J., and Xu, C. Revisiting essential and nonessential settings of evidential deep learning. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2025. to appear; also available as arXiv:2410.00393. Cheng, Z. et al. Semi-supervised prior networks for OOD-robust calibration. arXiv , 2024. Cissé, M., Bojanowski, P., Grave, E., Dauphin, Y., and Usunier, N. Parseval networks: Improving robustness to adversarial examples. In ICML , 2017. 
+
+9GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Clanuwat, T., Bober-Irizar, M., Kitamoto, A., Lamb, A., Ya-mamoto, K., and Ha, D. Deep learning for classical japanese literature. arXiv , 2018. Deng, D., Chen, G., Yu, Y., Liu, F., and Heng, P.-A. Uncertainty estimation by fisher information-based evidential deep learning. In ICML , volume 202 of Proceedings of Machine Learning Research , pp. 7596–7616. PMLR, 2023. URL https:// proceedings.mlr.press/v202/deng23b.html .Gal, Y. and Ghahramani, Z. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. In ICML ,2016. Grathwohl, W. et al. Your classifier is secretly an energy based model. In ICLR , 2020. Guo, C., Pleiss, G., Sun, Y., and Weinberger, K. Q. On calibration of modern neural networks. In ICML , 2017. He, J. et al. Masked energy models for improved OOD. arXiv ,2023. Hendrycks, D. and Dietterich, T. Benchmarking neural network robustness to common corruptions and perturbations. In ICLR ,2019. Hendrycks, D. and Gimpel, K. A baseline for detecting misclas-sified and Out-of-distribution examples in neural networks. In 
+
+ICLR , 2017. Huang, K. et al. Dissecting energy-based OOD detection under representation shift. arXiv , 2024. Kim, J. et al. Dirichlet calibration revisited for modern networks. In ICML , 2024. Krizhevsky, A. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Lakshminarayanan, B., Pritzel, A., and Blundell, C. Simple and scalable predictive uncertainty estimation using deep ensembles. In NeurIPS , 2017. LeCun, Y., Bottou, L., Bengio, Y., and Haffner, P. Gradient-based learning applied to document recognition. Proceedings of the IEEE , 86(11):2278–2324, 1998. Lee, K., Lee, K., Lee, H., and Shin, J. A simple unified framework for detecting out-of-distribution samples and adversarial attacks. In NeurIPS , 2018. Liang, S., Li, Y., and Srikant, R. ODIN: Out-of-distribution detec-tor for neural networks. In ICLR Workshop , 2018. Liu, W., Wang, X., Owens, J., et al. Energy-based Out-of-distribution detection. In NeurIPS , 2020. Malinin, A. and Gales, M. Prior networks for detection of out-of-distribution samples. In UAI , 2019. Minderer, M. et al. Revisiting the calibration of modern neural networks. In NeurIPS , 2021. Miyato, T., Kataoka, T., Koyama, M., and Yoshida, Y. Spectral normalization for generative adversarial networks. In ICLR ,2018. Morteza, P. and Li, Y. Provable guarantees for OOD detection with energy-based models. In NeurIPS , 2022. Mu, N. and Gilmer, J. Mnist-c: A robustness benchmark for computer vision. arXiv , 2019. Murphy, K. P. Machine Learning: A Probabilistic Perspective .MIT Press, Cambridge, MA, 2012. ISBN 978-0262018029. Netzer, Y., Wang, T., Coates, A., Bissacco, A., Wu, B., and Ng, A. Y. Reading digits in natural images with unsupervised feature learning. In NIPS Workshop on Deep Learning and Unsuper-vised Feature Learning , 2011. Ovadia, Y. et al. Can you trust your model’s uncertainty? eval-uating predictive uncertainty under dataset shift. In NeurIPS ,2019. Romero, D. et al. Post-hoc calibration under shift: A unified view and new baselines. In NeurIPS , 2024. Ryu, H., Shen, Z., Ghosh, A., et al. Improved evidential deep learning via a mixture of Dirichlet distributions. arXiv , 2024. Sehwag, V. et al. Ssd: A unified framework for calibration under distribution shift. In NeurIPS , 2024. Sensoy, M., Kaplan, L., and Kandemir, M. Evidential deep learning to quantify classification uncertainty. In NeurIPS , 2018. Xiao, H., Rasul, K., and Vollgraf, R. Fashion-MNIST: a novel image dataset for benchmarking machine learning algorithms. 
+
+arXiv , 2017. Yang, J., Zhou, K., Li, Y., and Liu, Z. Generalized out-of-distribution detection: A survey. International Journal of Com-puter Vision , 132:5635–5662, 2024. doi: 10.1007/s11263-024-02117-4. Yoon, T. and Kim, H. Uncertainty estimation by density aware evi-dential deep learning. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pp. 57217–57243. PMLR, 2024. Zhang, R. et al. Gated evidential learning for robust calibration. 
+
+arXiv , 2024. Zhou, X. et al. Energy calibration for reliable OOD detection. In 
+
+ICML , 2024. 
+
+A. Code and Reproducibility 
+
+Code and reproduction instructions are available at: https: //github.com/Marcorazhan/GEM-FI .
+
+B. Notation Summary 
+
+Table 4 collects the main symbols used in Sections 2.1– 2.3 and fixes the distinction between single-head, per-head, gating, and routing quantities. 10 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 4. Notation summary for the main method sections. Single-head quantities are used by EDL/GEM-C ORE ; superscript (k) denotes the corresponding quantity for mixture head k in GEM-MIX/GEM-FI. Symbol Meaning 
+
+x, y, C input, class label, and number of classes 
+
+fθ (x) = z ∈ Rd shared backbone and resulting feature embedding 
+
+uc(x), α c(x), p c(x) single-head logit, Dirichlet concentration, and predictive mean for class cu(k) 
+
+> c
+
+(x), α (k) 
+
+> c
+
+(x), p (k) 
+
+> c
+
+(x) per-head counterparts for mixture component kα0(x), α (k)0 (x) total concentration (single-head / head k)
+
+Eψ (z), E (x) learned energy head and resulting scalar energy 
+
+ˆs(x) intermediate scalar gate signal obtained from energy 
+
+sc(x) final class-wise integration gate for class cρ(z) auxiliary feature-density scaling term applied to concentrations 
+
+πk (x) normalized router weight for head k
+
+˜πk (x) raw pre-modulation router score before FI-based reweighting 
+
+pmix (x) mixture predictive mean before class-wise probability gating 
+
+ˆp(x) final gated and renormalized predictive distribution 
+
+cFI k (x) Fisher-sensitivity proxy for head k
+
+C. Related Work 
+
+C.1. Single-Pass Evidential Models and Density-Aware Extensions 
+
+EDL provides single-pass predictive uncertainty by param-eterizing a Dirichlet distribution and interpreting its con-centration as evidence (Sensoy et al., 2018). Large-scale evaluations caution that modern networks can remain mis-calibrated under distribution shift (Ovadia et al., 2019). To encode data support more explicitly, Prior Networks (Ma-linin & Gales, 2019) shape Dirichlet targets with priors, and Posterior Networks (Charpentier et al., 2020) parameterize target Dirichlet distributions. Density-aware variants rescale evidential outputs using feature-space likelihoods; DAEDL employs an offline Gaussian surrogate such as GDA (Mur-phy, 2012; Bishop, 2006), which improves calibration under shift but leaves the density term decoupled from end-to-end learning. Mixture-style evidential models (Ryu et al., 2024) capture ambiguity via multiple Dirichlet components with learned mixing. Beyond architecture, Dirichlet calibration (Kim et al., 2024) for modern networks has been revisited, semi-supervised signals (Cheng et al., 2024) have been used to improve shift-aware confidence, and gated evidential for-mulations (Zhang et al., 2024) report calibration gains by explicitly modulating evidential outputs. FI-informed evi-dential training has also been explored (Deng et al., 2023). Table 5 summarizes how GEM-FI differs from closely related single-pass evidential and density-aware methods along key architectural and algorithmic dimensions. GEM-FI integrates in-model support gating, multi-modal epis-temic mixtures, and Fisher-inspired stabilization for routing in a unified single-pass evidential framework. 
+
+C.2. OOD Baselines and Post hoc Energy Methods 
+
+Non-energy baselines remain standard references for OOD detection: M AX P (M AX P) (Hendrycks & Gimpel, 2017), ODIN (Liang et al., 2018) with input perturbations and 
+
+Table 5. Comparison of GEM-FI with closely related single-pass evidential and density-aware methods. Method End-to-end density Single-pass Multi-modal epistemic In-model gating FI for routing DAEDL (Yoon & Kim, 2024) ✗ ✓ ✗ ✗ ✗                    
+
+> Ryu et al. (Ryu et al., 2024) ✓✓✓✗✗
+> Deng et al. (Deng et al., 2023) ✓✓✗✗✓
+> Zhang et al. (Zhang et al., 2024) ✓✓✗✓✗
+> GEM-FI ✓✓✓✓✓
+
+TS, and Mahalanobis scoring (Lee et al., 2018) in feature space. Energy-based views (Grathwohl et al., 2020; Liu et al., 2020) reinterpret discriminative classifiers as implicit energy models and have reported improved separability in some settings between ID and OOD examples than softmax confidence. Follow-ups analyze theoretical conditions for energy-based separability (Morteza & Li, 2022), explore ar-chitectural variants such as masked energy models (He et al., 2023), and study calibration and representation-shift effects for energy scores (Zhou et al., 2024; Huang et al., 2024). Unified, post-hoc calibration frameworks under distribution shift have also been proposed (Sehwag et al., 2024; Romero et al., 2024). For broader overviews of OOD detection, see the survey by Yang et al. (2024). 
+
+D. Implementation-Aligned Pseudocode and Notes 
+
+Implementation vs. theory. Our implementation follows the GEM-FI design in Figure 3b but makes two choices that we state explicitly to avoid ambiguity. First, the learned integration gate is applied after mixture aggregation, i.e., we form a mixture predictive mean and then apply a per-class gate in probability space, followed by renormalization. Second, each evidential head parameterizes Dirichlet con-centrations directly as αk = exp(clip( uk)) + ε (no explicit “+1 ” offset), matching the code path used for all GEM-FI results. The Fisher-inspired quantity used by GEM-FI is a tractable sensitivity proxy computed from per-sample gra-11 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+dients of the component log-probability with respect to the component logits; it is used both to (i) modulate mixture weights during the forward pass and (ii) regularize training via an additional loss term. Finally, the implementation multiplies each component concentration by a per-sample feature-density score before forming expectations, which sharpens or suppresses evidence depending on feature sup-port. 
+
+Virtual Outlier Synthesis (VOS). For GEM-FI, we em-ploy VOS to generate synthetic OOD samples near the de-cision boundary. We sample ϵ ∼ N (0 , 1) and generate virtual outliers vk by sampling from the class-conditional Gaussian estimates in the feature space. We train with a VOS regularization weight of 0.1, a warmup of 10 epochs, and synthesize outcomes to enforce low evidence on these virtual points. This auxiliary loss is used only in the full GEM-FI configuration as a boundary-sharpening mecha-nism to improve OOD separability; it is not the primary source of the core gating or mixture behavior. 
+
+Energy signal and robust calibration. We compute a learned energy head Eψ (z) and, for reference, a density-based GMM energy Egmm (z) = − log P 
+
+> k
+
+exp(log p(z |
+
+k)) . For evaluation-time scaling we select the energy source with the larger robust dynamic range (1–99% quantile span), which is typically the learned energy head in our runs. For GEM-FI with VOS-EBM enabled, we disable the final tanh 
+
+on the energy head; when VOS is not used, enabling tanh 
+
+can help prevent sigmoid-gate saturation. When an energy-to-confidence scalar is needed (e.g., for reporting an energy-based shift score), we use s = clip 
+
+
+
+1 − E−Emin  
+
+> Emax −Emin
+
+, 0, 1
+
+
+
+with (Emin , E max ) taken from 1–99% quantiles; if the range is numerically tight, we fall back to a logits-based energy 
+
+− log P 
+
+> c
+
+exp( uc).
+
+Implementation alignment with DAEDL. While the canonical EDL formulation often uses α = e + 1 to en-code an explicit Dirichlet(1) base concentration, our imple-mentation follows DAEDL and parameterizes α directly via exponentiated (clipped) logits. Concretely, we use 
+
+α = exp(˜ u) + ϵ with ϵ = 10 −8. This ensures α > 0 and stable training while matching the DAEDL-style evidential parameterization. Accordingly, all uncertainty quantities that depend on α (e.g., α0 = P 
+
+> c
+
+αc and vacuity-like mea-sures) are computed using (2) without adding an extra +1 .
+
+Training objective (implementation-aligned). Given 
+
+ˆp from Algorithm 1, the predictive loss is Lpred =
+
+− log ˆ py . We regularize each component with a Dirich-let prior via a mixture-weighted KL term LKL =PKk=1 Eπk KL(Dir(¯ αk) ∥ Dir( 1)) . When Fisher modu-lation is enabled, we add LFI = E P Kk=1 πk F I k
+
+ and an additional expected-trace penalty β E[F I ] as implemented. The total loss is L = Lpred +λKL LKL +λFI LFI +β E[F I ].
+
+Algorithm 1 GEM-FI forward pass and training losses (implementation-aligned). 
+
+Require: minibatch (x, y ); backbone fθ ; features z =
+
+fθ (x); K Dirichlet heads hk; mixture router gϕ; en-ergy network eψ ; integration gate qω ; temperature T ;density scaler d(·); Fisher-modulation strength λFI ; KL strength λKL . 
+
+> 1:
+
+z ← fθ (x) 
+
+> 2:
+
+E ← eψ (z); s ← σ(E) {scalar gate signal}  
+
+> 3:
+
+for k = 1 , . . . , K do  
+
+> 4:
+
+uk ← hk(z)/T  
+
+> 5:
+
+αk ← exp(clip( uk, −10 , 10)) + ε 
+
+> 6:
+
+end for  
+
+> 7:
+
+˜π ← gϕ([ z; s]) {K-way softmax}  
+
+> 8:
+
+if training and Fisher modulation enabled and gradients enabled then  
+
+> 9:
+
+if y is not provided then  
+
+> 10:
+
+ˆy ← arg max c 1
+
+> K
+
+PKk=1 uk,c ; y ← ˆy 
+
+> 11:
+
+end if  
+
+> 12:
+
+for k = 1 , . . . , K do  
+
+> 13:
+
+F I k ← P
+
+> c
+
+ ∇uk,c log pk(y | x)2 {logit-sensitivity proxy via autograd}  
+
+> 14:
+
+end for  
+
+> 15:
+
+¯F I ← Normalize( F I ) across components  
+
+> 16:
+
+π ← Normalize  ˜π ⊙ exp( λFI (1 − ¯F I ))  
+
+> 17:
+
+else {Inference: no gradient computation, no Fisher modulation}  
+
+> 18:
+
+π ← ˜π {mixture weights directly from router}  
+
+> 19:
+
+end if  
+
+> 20:
+
+ρ ← d(z) {per-sample density score}  
+
+> 21:
+
+for k = 1 , . . . , K do  
+
+> 22:
+
+¯αk ← ρ · αk + ε 
+
+> 23:
+
+end for  
+
+> 24:
+
+pmix ← PKk=1 πk · E[Dir(¯ αk)] {E[Dir( α)] = α/α 0} 
+
+> 25:
+
+g ← qω (s, z ) {per-class gates}  
+
+> 26:
+
+ˆp ← Normalize( pmix ⊙ g) 
+
+> 27:
+
+return ˆp (and optional diagnostics: 
+
+E, g, π, {¯αk}, F I, α 0)
+
+E. Experimental Setup 
+
+Datasets. We evaluate ID classification on MNIST (Le-Cun et al., 1998) and CIFAR-10 (Krizhevsky, 2009). MNIST contains 60,000 training and 10,000 test grayscale images of size 28 × 28 , and CIFAR-10 consists of 50,000 training and 10,000 test RGB images of size 32 × 32 . For OOD evaluation, we use FashionMNIST (Xiao et al., 2017) and KMNIST (Clanuwat et al., 2018) as OOD datasets for MNIST, and SVHN (Netzer et al., 2011) and CIFAR-100 (Krizhevsky, 2009) as OOD datasets for CIFAR-10. To assess robustness under distributional shift, we addi-tionally evaluate on MNIST-C (Mu & Gilmer, 2019) and CIFAR-10-C (Hendrycks & Dietterich, 2019). MNIST-C consists of 15 corruption types with a fixed (tuned) severity 12 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 6. Comparison of the per-component Dirichlet concentration 
+
+α(k) 
+
+> c
+
+and final predictive mean ˆpc between the DAEDL baseline and the proposed GEM-FI method. Here uc and u(k) 
+
+> c
+
+denote the logits of a single head and mixture component k, respectively, and 
+
+wk are the learned mixing weights.                   
+
+> DAEDL GEM-FI
+> α(k)
+> cexp( λ(x)uc)exp  clip( u(k)
+> c,−τ, τ )+ε
+> Predictive mean ˆpc
+> exp( λ(x)uc)
+> PCc′=1 exp( λ(x)uc′)
+> KX
+> k=1
+> wk·α(k)
+> c
+> P
+> c′α(k)
+> c′
+> FI regularization Not used λFI LFI
+
+for each corruption, while CIFAR-10-C applies 19 corrup-tion types to the test set across 5 severity levels. 
+
+Backbones and models. For MNIST we use a small CNN; for CIFAR-10 we use a ResNet-18 backbone. Spec-tral normalization is applied to all convolutional and linear layers. Our main variants are: • GEM-C ORE : a single evidential head with learned energy 
+
+Eψ (z) and bounded gate s(x) that modulates Dirichlet evidence (Sec. 2.1). • GEM-MIX: a mixture of K evidential heads with learned mixture weights π(x) on shared features (Sec. 2.2). • GEM-FI: the full model with FI-informed regularization to stabilize mixture allocations (Sec. 2.3). We compare against DROPOUT, M AX P (Hendrycks & Gim-pel, 2017), KL-PN and EDL (Sensoy et al., 2018), ODIN (Liang et al., 2018), Mahalanobis scoring (Lee et al., 2018), RKL-PN and POSTNET (Charpentier et al., 2020), I-EDL (Deng et al., 2023), density-aware DAEDL (Yoon & Kim, 2024), R-EDL (Chen et al., 2024), the recent CEDL+ and LTS models, and finally Re-EDL (Chen et al., 2025). 
+
+DAEDL vs. GEM-FI Dirichlet parameterization. Ta-ble 6 summarizes how the DAEDL baseline and our GEM-FI model instantiate the Dirichlet concentration α(k) 
+
+> c
+
+and the corresponding final predictive mean ˆpc during training. DAEDL uses a single-head softmax with αc = exp( λ(x)uc)
+
+so that the predictive mean coincides with the standard softmax predictor. (Note: This matches our implementa-tion form where density scaling is applied directly to the log-potential before exponentiation). In contrast, GEM-FI maintains K separate Dirichlet heads, each with con-centration α(k) 
+
+> c
+
+= exp(clip( u(k) 
+
+> c
+
+, −τ, τ )) + ε. The final predictive mean is computed as a weighted average of per-component expectations : ˆpc = P 
+
+> k
+
+wk · α(k)
+
+> c
+> α(k)0
+
+. This mixture-of-expectations form (rather than a sum of weighted concen-trations) matches our implementation. The last row high-lights the additional FI regularization term λFI LFI specific to GEM-FI, which modulates mixture allocations without changing the predictive mean. 
+
+Training protocol. All models are trained with AdamW, cosine learning-rate decay, and gradient clipping with norm 
+
+1.0. Batch size and other key hyperparameters are reported in Table 7. The evidential objective consists of a regression-to-target term plus a KL penalty to the uniform Dirich-let, with optional mixture and FI terms for GEM-MIX and GEM-FI. For the gated models, we clamp the gate to 
+
+(smin , s max ) = (0 .1, 0.9) ; when the optional tanh nonlin-earity is enabled on the energy head, eval-time desaturation (scaling by 0.5) can be applied. The gated evidential core uses an energy head Eψ (MLP on z; tanh disabled by de-fault) followed by a scalar sigmoid ˆs(x) and a small integra-tion gate Gη that takes [z, ˆs(x)] to produce per-class gates 
+
+sc(x) ∈ [0 .1, 0.9] , which then scale the predictive distribu-tion in probability space and are renormalized (5). For the mixture variant, K heads are used with mixture weights π =softmax( hω ([ z, ˆs(x)])) ; this is enabled via -use_mob and sized by -num_components = K. All mixture calibra-tion and MI metrics use the mixture predictive. FI regu-larization is enabled via -use_fi_regularization ;the weight -fi_lambda sets λFI for the loss term and also controls the strength of FI-based modulation of mi-xture weights. The FI proxy is bounded and computed per head, and an optional small penalty is added on the mean FI across heads. Specifically, the per-head FI proxy is computed as cFI k(x) = ∥∇ uk log pk(y | x)∥22, and the normalized version used for modulation is: 
+
+¯FI k(x) = cFI k(x)
+
+P 
+
+> j
+
+cFI j (x) + ϵ , (19) where uk = hk(z)/T are the component logits (Algo-rithm 1), and pk(y | x) is the per-head predictive mean. In the absence of ground truth labels during training (e.g., semi-supervised settings or specific loss evaluations), we use the model’s predicted pseudo-label ˆy = arg max P 
+
+> k
+
+uk
+
+to compute the gradient proxy. Similarly, the uncertainty loss LUNC (15) incorporates a contrastive OOD term that encourages low entropy for in-distribution samples and high entropy for OOD samples. 
+
+Metrics. On ID test sets we report accuracy, NLL, Brier score (defined as 1
+
+> N
+
+PNi=1 
+
+PCc=1 (ˆ pic − yic )2, reported as 
+
+×100 for readability; note that our implementation uses the standard multi-class Brier score without an additional 
+
+1/C normalization factor), and ECE with 15 equal-width bins. For OOD and distribution-shift detection we report AUROC and AUPR (positive = OOD or corrupted), using several scores: maximum predictive probability, Dirichlet total evidence α0, predictive entropy, MI (for mixtures), and an energy-based score derived from the learned energy. 
+
+F. Additional Experiments 
+
+F.1. OOD detection performance (AUROC) 
+
+Table 8 reports AUROC results for standard ID →OOD benchmarks, using both aleatoric and epistemic uncertainty 13 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 7. Hyperparameters. λFI used only for GEM-FI. ∗Dropout in the backbone/classifier head; GEM’s internal components (en-ergy network, integration gate) use lower dropout (0.01–0.03) for stability. 
+
+Parameter MNIST CIFAR-10 Learning rate 5 × 10 −4 10 −3
+
+Batch size 64 128 Epochs 50 100 
+
+λKL 10 −3 10 −4
+
+λFI 0.3 0.1 
+
+K (heads) 3 3Dropout ∗ 0.05 0.1 
+
+βid 0.1 0.1 
+
+βood 0.1 0.1 Weight decay 10 −4 10 −4
+
+Scheduler Cosine Cosine Gate bounds (0.1, 0.9) (0.1, 0.9) Logit clip τ 10 10 scores. Here, A → B denotes that A is the ID dataset and 
+
+B the OOD dataset. AUROC is threshold-independent, and higher values indicate better OOD detection perfor-mance. Across MNIST-based benchmarks, most recent evi-dential methods (including ours) saturate near-perfect AU-ROC, so differences are marginal. On CIFAR-10 →SVHN (far-OOD), our methods substantially improve separation: GEM-CORE reaches 94.75/94.36 (alea./epis.), and GEM-FI further boosts epistemic AUROC to 95.09. On CIFAR-10 →CIFAR-100 (near-OOD), GEM-FI provides the clear-est gains, improving epistemic AUROC from 83.63 (GEM-CORE) to 89.06, suggesting that the feature-informed mi-xture uncertainty better captures semantic overlap cases where aleatoric cues alone can be insufficient. In contrast, GEM-MIX can underperform on the CIFAR benchmarks (e.g., lower epistemic AUROC on SVHN), which is con-sistent with mixture assignments becoming less reliable without the feature-informed coupling used by GEM-FI. 
+
+F.2. Precision-Recall Curves 
+
+Figure 7 shows Precision–Recall curves for OOD detection (SVHN vs. CIFAR-10) using different uncertainty scores. GEM-FI achieves the highest AUPR across all metrics, indicating a better ranking that preserves precision as recall increases. In particular, mutual information (MI) provides the cleanest separation (93.06%), suggesting that mixture-component disagreement is highly informative for far-OOD detection. By contrast, max probability degrades quickly as the threshold is relaxed, consistent with occasional overcon-fident OOD predictions, while evidence-based and entropy scores are more stable but less selective than MI at higher recall. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 78.65
+> I-EDL AUPR = 86.10
+> DAEDL AUPR = 85.28
+> R-EDL AUPR = 84.78
+> Re-EDL AUPR = 87.62
+> GEM-CORE AUPR = 89.87
+> GEM-MIX AUPR = 88.80
+> GEM-FI AUPR = 91.27
+
+(a) Max prob. 
+
+(a) Max prob. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 79.10
+> I-EDL AUPR = 85.70
+> DAEDL AUPR = 85.32
+> R-EDL AUPR = 84.78
+> Re-EDL AUPR = 89.67
+> GEM-CORE AUPR = 89.87
+> GEM-MIX AUPR = 88.80
+> GEM-FI AUPR = 92.59
+
+(b) Total evidence ( 0) (b) Total evidence ( α0)0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 78.87
+> I-EDL AUPR = 86.32
+> DAEDL AUPR = 85.50
+> R-EDL AUPR = 85.00
+> Re-EDL AUPR = 87.84
+> GEM-CORE AUPR = 89.87
+> GEM-MIX AUPR = 88.80
+> GEM-FI AUPR = 92.16
+
+(c) Diff. entropy 
+
+(c) Diff. entropy 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Recall
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Precision
+> EDL AUPR = 79.32
+> I-EDL AUPR = 85.92
+> DAEDL AUPR = 85.54
+> R-EDL AUPR = 85.00
+> Re-EDL AUPR = 89.89
+> GEM-CORE AUPR = 89.80
+> GEM-MIX AUPR = 90.60
+> GEM-FI AUPR = 93.06
+
+(d) Mutual info. (d) Mutual info. 
+
+Figure 7. Precision–Recall curves for OOD detection with differ-ent uncertainty scores. 
+
+F.3. ROC Curves 
+
+Figure 8 shows ROC curves for OOD detection (SVHN vs. CIFAR-10) using the same uncertainty scores. GEM-FI obtains the highest AUROC across metrics, reflecting stronger separability between ID and OOD samples over all thresholds. Among scores, predictive entropy yields the best separation (95.41%), indicating that overall predictive dispersion is a strong cue under far-OOD shifts. MI re-mains competitive by leveraging component disagreement, whereas max probability and total evidence tend to provide weaker early separation at low false positive rates. 
+
+F.4. Distribution Shift/Corruptions 
+
+Although GEM is not specifically designed for corruption robustness, we include a standard corruption stress test for completeness by treating common corruptions as a distribu-tion shift on MNIST-and CIFAR-10-C. We evaluate whether the uncertainty scores can separate clean from corrupted inputs. Table 9 reports AUPR for detecting corruption-induced shifts using aleatoric uncertainty. For CIFAR-10-C we av-erage over 19 corruption types at each severity level, and we also include MNIST →MNIST-C. As severity increases, detection generally becomes easier (higher AUPR), and the comparison highlights how different evidential variants respond to gradual, in-domain corruptions. 
+
+Discussion. Corruption benchmarks such as CIFAR-10-C induce in-domain, low-level perturbations while preserv-ing class semantics, making shift detection qualitatively different from semantic OOD settings. In this regime, aleatoric uncertainty (used for the AUPR evaluation in 14 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 8. AUROC for OOD detection using aleatoric and epistemic uncertainty. 
+
+MNIST → KMNIST MNIST → FMNIST CIFAR-10 → SVHN CIFAR-10 → CIFAR-100 Method Venue Alea. ↑ Epis. ↑ Alea. ↑ Epis. ↑ Alea. ↑ Epis. ↑ Alea. ↑ Epis. ↑
+
+DROPOUT ICML16 93.50 ± 0.10 – 96.10 ± 0.20 – 50.82 ± 0.10 – 44.90 ± 1.00 –KL-PN NeurIPS18 92.50 ± 1.20 92.90 ± 1.00 97.80 ± 0.80 97.85 ± 0.00 43.50 ± 1.90 42.80 ± 2.30 60.85 ± 2.80 61.00 ± 3.40 EDL NeurIPS18 96.55 ± 0.80 95.80 ± 2.00 97.75 ± 0.40 97.50 ± 0.40 81.06 ± 3.50 81.50 ± 1.70 80.63 ± 0.70 80.90 ± 1.00 RKL-PN NeurIPS19 60.20 ± 2.90 53.20 ± 3.40 77.90 ± 3.10 71.70 ± 3.60 53.10 ± 1.10 48.90 ± 0.80 54.90 ± 2.60 54.20 ± 2.80 POSTNET NeurIPS20 95.25 ± 0.20 94.10 ± 0.30 97.40 ± 0.20 96.90 ± 0.20 79.75 ± 0.20 77.20 ± 0.40 81.50 ± 0.80 81.60 ± 0.80 
+
+I-EDL ICML23 97.90 ± 0.20 97.85 ± 0.20 98.50 ± 0.30 98.50 ± 0.30 86.79 ± 2.40 86.40 ± 2.30 82.15 ± 0.70 81.90 ± 0.60 DAEDL ICML24 99.85 ± 0.00 99.88 ± 0.00 99.80 ± 0.00 99.83 ± 0.00 89.24 ± 1.40 89.30 ± 1.40 86.04 ± 0.10 86.10 ± 0.10 R-EDL ICLR24 – 98.20 ± 0.20 – 99.00 ± 0.12 86.78 ± 1.22 86.78 ± 1.22 85.80 ± 0.31 85.85 ± 0.31 CEDL+ ESWA25 99.80 ± 0.07 99.82 ± 0.07 98.70 ± 0.01 98.68 ± 0.01 92.50 ± 0.34 92.55 ± 0.65 78.90 ± 0.57 76.50 ± 0.52 LTS MVA25 97.70 ± 0.85 99.90 ± 0.03 99.50 ± 0.12 99.70 ± 0.12 78.10 ± 0.96 92.00 ± 0.88 70.70 ± 0.79 84.80 ± 0.65 Re-EDL TPAMI25 – 98.70 ± 0.28 – 99.55 ± 0.09 89.72 ± 0.81 92.19 ± 1.13 86.67 ± 0.14 86.65 ± 0.14 GEM-CORE 99.93 ± 0.01 99.62 ± 0.42 99.99 ± 0.00 99.77 ± 0.30 94.75 ± 0.24 94.36 ± 1.02 87.30 ± 0.12 83.63 ± 0.12 GEM-MIX 99.93 ± 0.02 99.93 ± 0.02 99.99 ± 0.01 99.98 ± 0.02 93.05 ± 0.88 81.29 ± 1.06 83.97 ± 0.80 74.60 ± 0.97 GEM-FI 99.94 ± 0.01 99.95 ± 0.01 99.99 ± 0.01 99.99 ± 0.01 93.65 ± 0.55 95.09 ± 0.55 88.06 ± 0.06 89.06 ± 0.06 
+
+Table 9. AUPR scores for distribution-shift detection based on aleatoric uncertainty. For CIFAR-10-C, C ∈ 1, 2, 3, 4, 5
+
+denotes the corruption severity. 
+
+MNIST → MNIST-C CIFAR-10 → CIFAR-10-C AUPR ↑ C = 1 C = 2 C = 3 C = 4 C = 5 
+
+MAX P 78.54 ± 0.30 56.39 ± 0.70 61.88 ± 1.10 65.86 ± 1.30 69.91 ± 1.50 75.01 ± 1.80 EDL 82.75 ± 0.80 54.76 ± 0.30 59.01 ± 0.40 62.46 ± 0.50 65.87 ± 0.60 70.21 ± 0.80 
+
+I-EDL 86.06 ± 0.50 56.33 ± 0.20 61.52 ± 0.50 65.44 ± 0.50 69.45 ± 0.50 74.56 ± 0.50 DAEDL 92.43 ± 0.30 57.89 ± 0.30 63.23 ± 0.40 67.53 ± 0.40 72.21 ± 0.40 77.74 ± 0.40 
+
+GEM-CORE 87.14 ± 0.00 54.87 ± 0.30 58.09 ± 0.35 60.61 ± 0.40 63.46 ± 0.50 68.10 ± 0.60 GEM-MIX 86.42 ± 0.10 54.45 ± 0.25 57.54 ± 0.35 59.84 ± 0.40 62.48 ± 0.45 66.98 ± 0.55 GEM-FI 90.36 ± 0.10 55.88 ± 0.30 59.39 ± 0.40 61.93 ± 0.45 65.00 ± 0.50 69.97 ± 0.60 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 80.84
+> I-EDL AUROC = 86.57
+> DAEDL AUROC = 89.02
+> R-EDL AUROC = 86.56
+> Re-EDL AUROC = 89.50
+> GEM-CORE AUROC = 94.75
+> GEM-MIX AUROC = 93.05
+> GEM-FI AUROC = 93.65
+
+(a) Max prob. 
+
+(a) Max prob. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 81.28
+> I-EDL AUROC = 86.18
+> DAEDL AUROC = 89.08
+> R-EDL AUROC = 86.56
+> Re-EDL AUROC = 91.97
+> GEM-CORE AUROC = 94.36
+> GEM-MIX AUROC = 81.29
+> GEM-FI AUROC = 95.09
+
+(b) Total evidence ( 0) (b) Total evidence ( α0)0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 81.06
+> I-EDL AUROC = 86.79
+> DAEDL AUROC = 89.24
+> R-EDL AUROC = 86.78
+> Re-EDL AUROC = 89.72
+> GEM-CORE AUROC = 93.98
+> GEM-MIX AUROC = 93.23
+> GEM-FI AUROC = 94.83
+
+(c) Diff. entropy 
+
+(c) Diff. entropy 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate
+> EDL AUROC = 81.50
+> I-EDL AUROC = 86.40
+> DAEDL AUROC = 89.30
+> R-EDL AUROC = 86.78
+> Re-EDL AUROC = 92.19
+> GEM-CORE AUROC = 94.78
+> GEM-MIX AUROC = 92.37
+> GEM-FI AUROC = 95.41
+
+(d) Mutual info. (d) Mutual info. 
+
+Figure 8. ROC curves for OOD detection with different uncertainty scores. 
+
+Table 9) need not increase reliably at mild severities: the model can still extract sufficient class evidence and maintain high-confidence predictions even when inputs are corrupted. Since our approach primarily targets epistemic support esti-mation and ID/OOD separation–i.e., suppressing evidence when representation support is low and stabilizing mixture allocations–sensitivity to gradual within-support corruptions is not explicitly optimized. Accordingly, detection typically improves as corruption severity grows, because larger pertur-bations more substantially degrade feature support and yield a clearer separation between clean and corrupted samples. 
+
+F.5. Comparison with TS 
+
+We compare GEM models against TS and representative EDL-based baselines on CIFAR-10 in the closed-set setting (Table 10). All methods are evaluated using their raw, uncal-ibrated outputs (i.e., before any post-hoc calibration), except for the TS baseline, which fits a temperature parameter on a held-out validation set. We report: (i) ECE (15 bins) and Brier score ( ×100 ) for confidence calibration; (ii) AUPR for misclassification detection; and (iii) mean AUROC av-eraged over SVHN and CIFAR-100 for OOD detection. Overall, GEM-C ORE and GEM-FI achieve competitive (of-ten state-of-the-art) calibration without any post-hoc tuning, while GEM-FI further improves misclassification and OOD detection, indicating that energy-gated evidential learning can yield well-calibrated confidence in a single pass. 
+
+F.6. Effect of Post-hoc TS on GEM 
+
+To assess whether GEM models benefit from post-hoc cali-bration, we apply TS following the standard protocol: we fit a scalar temperature T on a held-out validation set by mini-mizing the negative log-likelihood, then evaluate calibration 15 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 10. TS comparison on CIFAR-10 (closed-set; pre-calibration unless noted).                                           
+
+> Method Confidence calibration Misclass. detect. OOD detect. ECE (15 bins) ↓Brier ( ×100 )↓AUPR ↑Mean AUROC ↑
+> TS (post-hoc) 1.06 ±0.10 18.44 ±0.49 98.89 ±0.05 82.07 ±2.23 EDL 11.56 ±0.93 27.34 ±0.71 98.74 ±0.07 82.32 ±0.98
+> I-EDL 44.35 ±1.27 59.73 ±1.31 98.71 ±0.11 82.01 ±1.47 DAEDL 7.22 ±1.18 14.27 ±0.20 99.08 ±0.00 88.19 ±0.10 R-EDL 3.47 ±0.31 18.15 ±0.50 98.98 ±0.05 83.73 ±1.07 Re-EDL 5.72 ±0.32 14.95 ±0.47 98.81 ±0.05 85.46 ±1.41 GEM-C ORE 1.94 ±0.11 1.27 ±0.02 99.22 ±0.01 88.72 ±0.21 GEM-MIX 2.80 ±0.45 6.97 ±0.03 99.43 ±0.02 88.23 ±0.66 GEM-FI 2.42 ±0.04 6.81 ±0.01 99.94 ±0.01 89.30 ±0.10
+
+Table 11. Post-hoc TS on CIFAR-10 for GEM models. Brier: multiclass Brier computed from the final post-gating probabilities, averaged over classes, reported as ×100 .                              
+
+> Model ECE (%) ↓NLL ↓Brier ( ×100 )↓T
+> Before After Before After Before After GEM-C ORE 1.94 0.76 0.2603 0.2553 1.27 1.23 1.18 GEM-MIX 2.80 3.04 0.2700 0.2697 6.97 6.96 1.01 GEM-FI 2.42 2.70 0.2133 0.2189 6.81 6.63 0.95
+
+metrics before and after scaling (Table 11). We emphasize that TS optimizes NLL and does not necessarily improve ECE. GEM-C ORE learns T ≈ 1.18 , indicating mild overconfi-dence; applying TS reduces ECE from 1.94% to 0.76% and slightly improves both NLL and Brier. GEM-MIX learns 
+
+T ≈ 1.01 , consistent with near-calibrated outputs; applying TS leaves NLL and Brier essentially unchanged, and ECE may slightly increase (2.80% → 3.04%). Finally, GEM-FI achieves strong intrinsic calibration (ECE ≈ 2.5%) without post-hoc tuning. With T ≈ 0.95 < 1, TS slightly sharpens predicted probabilities; while this is appropriate for NLL minimization, it can mildly worsen ECE when calibration is already strong under ECE (2.42% → 2.70%), with Brier remaining similar. 
+
+F.7. Reliability Diagrams and Calibration Sanity Checks 
+
+Reliability diagrams assess calibration by plotting empir-ical accuracy against predicted confidence in fixed-width bins (Guo et al., 2017). A well-calibrated model lies close to the diagonal, while deviations indicate over- or under-confidence. Figure 9 reports ID reliability diagrams on CIFAR-10 (test set) for GEM-C ORE , GEM-MIX, and GEM-FI using the final post-gating probabilities (before any post-hoc calibra-tion). This qualitative view complements Table 11 and confirms that all three variants exhibit low ECE on ID data. To further sanity-check calibration, Figure 10 compares the mean max-confidence on correct vs. incorrect predictions. Across all variants, incorrect predictions receive substan-tially lower confidence than correct predictions, alleviating concerns that unusually low Brier scores could arise from pathological overconfidence. 0.0 0.2 0.4 0.6 0.8 1.0           
+
+> Predicted Confidence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Empirical Accuracy
+> GEM-CORE
+> ECE = 1.94%
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Predicted Confidence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Empirical Accuracy
+> GEM-MIX
+> ECE = 2.80%
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Predicted Confidence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Empirical Accuracy
+> GEM-FI
+> ECE = 2.46%
+
+Figure 9. Reliability diagrams on CIFAR-10 test (ID). Empirical accuracy vs. predicted confidence (15 equal-width bins) for GEM-CORE , GEM-MIX, and GEM-FI (pre-TS). Reported ECE values match Table 11. GEM-CORE GEM-MIX GEM-FI      
+
+> Model
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Mean Confidence
+> 0.957 0.944 0.973
+> 0.679 0.733 0.747
+> Correct Predictions Incorrect Predictions
+
+Figure 10. Confidence on correct vs. incorrect predictions (CIFAR-10 test, ID). Mean max-confidence for correct and incorrect pre-dictions for GEM-C ORE , GEM-MIX, and GEM-FI. 
+
+Discussion. Across models, reliability curves remain close to the diagonal on ID data, consistent with the low ECE values in Table 11. Since TS optimizes NLL rather than ECE, applying TS may slightly improve or slightly worsen ECE depending on the model (Table 11). Overall, these diagnostics support that GEM achieves strong ID cali-bration intrinsically, while maintaining substantially lower confidence on incorrect predictions. 
+
+F.8. Uncertainty Distributions (ID vs OOD) 
+
+Figure 11 visualizes how different uncertainty scores sep-arate ID(blue) from OOD(red) samples. We include both digit-domain and natural-image shifts; across pairs, MI provides the clearest ID/OOD separation for GEM-FI, sup-porting the use of mixture-aware epistemic uncertainty. 
+
+F.9. Entropy–MI Analysis 
+
+Figure 12 plots aleatoric uncertainty (entropy) against epis-temic uncertainty (MI) for GEM-FI. ID samples concen-trate in the low-entropy/low-MI region, while OOD sam-ples typically shift toward higher MI (head disagreement), highlighting the complementarity of the two components. For mixture models, we decompose predictive uncertainty into aleatoric (entropy) and epistemic (MI) components: MI (x) = H(ˆ p(x)) −
+
+> K
+
+X
+
+> k=1
+
+πk(x) H p(k)(x). (20) 16 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> 1 - Max Probability
+> 0
+> 2
+> 4
+> 6
+> Density
+> MaxP: MNIST vs FMNIST
+> AUPR = 99.99%
+> ID
+> OOD
+
+(a) MAX P (FMNIST) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> 1 - Max Probability
+> 0
+> 2
+> 4
+> 6
+> Density
+> MaxP: MNIST vs KMNIST
+> AUPR = 99.95%
+> ID
+> OOD
+
+(b) MAX P (KMNIST) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> 1 - Max Probability
+> 0
+> 1
+> 2
+> 3
+> Density
+> MaxP: C10 vs SVHN
+> AUPR = 90.77%
+> ID
+> OOD
+
+(c) MAX P (SVHN) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> 1 - Max Probability
+> 0
+> 2
+> 4
+> Density
+> MaxP: C10 vs C100
+> AUPR = 90.30%
+> ID
+> OOD
+
+(d) MAX P (CIFAR-100) 0.0 0.5 1.0 1.5 2.0 2.5 
+
+> Entropy
+> 0
+> 2
+> 4
+> 6
+> Density
+> Entropy: MNIST vs FMNIST
+> AUPR = 99.98%
+> ID
+> OOD
+
+(e) Entropy (FMNIST) 0.0 0.5 1.0 1.5  
+
+> Entropy
+> 0
+> 2
+> 4
+> 6
+> Density
+> Entropy: MNIST vs KMNIST
+> AUPR = 99.98%
+> ID
+> OOD
+
+(f) Entropy (KMNIST) 0.0 0.5 1.0 1.5 2.0  
+
+> Entropy
+> 0
+> 1
+> 2
+> 3
+> Density
+> Entropy: C10 vs SVHN
+> AUPR = 92.16%
+> ID
+> OOD
+
+(g) Entropy (SVHN) 0.0 0.5 1.0 1.5  
+
+> Entropy
+> 0
+> 1
+> 2
+> 3
+> Density
+> Entropy: C10 vs C100
+> AUPR = 90.75%
+> ID
+> OOD
+
+(h) Entropy (CIFAR-100) 0.0 0.5 1.0 1.5 
+
+> MI
+> 0
+> 5
+> 10
+> 15
+> Density
+> MI: MNIST vs FMNIST
+> AUPR = 99.99%
+> ID
+> OOD
+
+(i) MI (FMNIST) 0.0 0.2 0.4 0.6 0.8  
+
+> MI
+> 0
+> 10
+> 20
+> Density
+> MI: MNIST vs KMNIST
+> AUPR = 99.99%
+> ID
+> OOD
+
+(j) MI (KMNIST) 0.0 0.5 1.0 1.5 2.0  
+
+> MI
+> 0
+> 5
+> 10
+> Density
+> MI: C10 vs SVHN
+> AUPR = 93.06%
+> ID
+> OOD
+
+(k) MI (SVHN) 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> MI
+> 0
+> 5
+> 10
+> Density
+> MI: C10 vs C100
+> AUPR = 89.60%
+> ID
+> OOD
+
+(l) MI (CIFAR-100) 
+
+Figure 11. Uncertainty distributions measured by (top) maximum probability, (middle) entropy, and (bottom) MI for GEM-FI. Blue = ID samples; Red = OOD samples. MI achieves the best separation, especially for far-OOD pairs. 
+
+High MI indicates between-head disagreement, which is particularly useful for OOD detection. 
+
+F.10. Score Comparison Boxplots 
+
+Figure 13 compares common OOD scoring functions– MAX P, predictive entropy, MI, and total evidence α0–across ID(CIFAR-10), near-OOD (CIFAR-100), and far-OOD (SVHN) samples. Well-separated score distributions indicate stronger discriminative uncertainty. In our setting, MI and α0 provide the clearest separation, supporting their use as primary epistemic and evidential signals. 
+
+Discussion. The boxplots in Figure 13 summarize uncer-tainty statistics over ID, near-OOD, and far-OOD samples, emphasizing separation between regimes rather than a sin-gle scalar score. Compared to baselines, GEM-FI yields higher epistemic indicators (e.g., entropy/MI proxies) on OOD while maintaining lower uncertainty on ID data, sug-gesting a better trade-off between selectivity and predictive sharpness. Importantly, the improved separation is most visible in the near-OOD setting, where semantic overlap makes OOD detection challenging and overconfidence is common (Hendrycks & Gimpel, 2017). 
+
+F.11. OOD detection performance on dataset-shift benchmarks (AUPR/AUROC) 
+
+Table 12 summarizes dataset-shift results for GEM-FI, re-porting ID test accuracy and OOD detection metrics com-puted from multiple uncertainty scores (M AX P, total evi-dence α0, Energy, predictive Entropy, and mixture-aware MI). For the CIFAR-10 →TinyImageNet benchmark, we resize TinyImageNet images from the original 64 × 64 to 
+
+32 × 32 to match the CIFAR-10 input resolution used by our model. This design choice avoids introducing input resolu-tion as an additional confounding factor in the dataset-shift setting, so changes in uncertainty scores and OOD metrics are primarily attributable to distribution shift rather than to input-size or architecture/preprocessing differences. For OOD detection, we treat OOD samples as the positive class and report both AUPR and AUROC (higher is better). Beyond detection metrics, we include evidential/epistemic diagnostics. In our setting, total evidence α0 and mixture-aware MI are expected to be relatively high on ID inputs and to decrease on OOD inputs, reflecting reduced support and increased epistemic uncertainty under distribution shift. We additionally report Energy and predictive Entropy as complementary uncertainty signals: Energy provides a cal-ibrated separation cue in logit/probability space, whereas Entropy summarizes overall predictive uncertainty. Taken together, improvements in AUPR/AUROC across these scores (alongside the desired ID ↑/OOD ↓ trends for α0 and MI) provide consistent evidence that GEM-FI yields robust OOD separation without compromising ID accuracy. 17 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 0 1 2 3
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> MI (Epistemic)
+> MNIST
+> FMNIST
+
+(a) MNIST vs FMNIST 0 1 2 3 
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> MI (Epistemic)
+> MNIST
+> KMNIST
+
+(b) MNIST vs KMNIST 0.0 0.5 1.0 1.5 2.0 2.5 3.0  
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> MI (Epistemic)
+> MNIST
+> MNIST-C
+
+(c) MNIST vs MNIST-C 0 1 2 3 
+
+> Entropy (Aleatoric)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> MI (Epistemic)
+> Correct
+> Misclassified
+
+(d) Correct vs Misclass 0 1 2 3
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> MI (Epistemic)
+> CIFAR-10
+> SVHN
+
+(e) CIFAR-10 vs SVHN 0.0 0.5 1.0 1.5 2.0 2.5  
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> MI (Epistemic)
+> CIFAR-10
+> CIFAR-100
+
+(f) CIFAR-10 vs CIFAR-100 0 1 2 3 4 
+
+> Entropy (Aleatoric)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> MI (Epistemic)
+> CIFAR-10
+> CIFAR-10-C
+
+(g) CIFAR-10 vs CIFAR-10-C 0 1 2 3 4 5 
+
+> Entropy (Aleatoric)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> MI (Epistemic)
+> Correct
+> Misclassified
+
+(h) Correct vs Misclass 
+
+Figure 12. Entropy (aleatoric) vs. MI (epistemic) scatter plots for GEM-FI. Top row: MNIST shifts; bottom row: CIFAR-10 shifts. Panels (d) and (h) show Correct vs Misclass for MNIST and CIFAR-10, respectively. ID samples (blue) cluster in the low-entropy, low-MI region, while OOD and corrupted samples (red) exhibit higher values, enabling effective threshold-based OOD detection. 
+
+Table 12. OOD detection performance of GEM-FI on dataset-shift benchmarks. For each scoring function, reported are the ID test accuracy and the corresponding OOD detection metrics AUPR and AUROC. 
+
+Dataset Test Acc. ↑ AUPR ↑ AUROC ↑
+
+MAX P↑ α0↑ Energy ↑ Entropy ↑ MI ↑ MAX P↑ α0↑ Energy ↑ Entropy ↑ MI ↑
+
+MNIST →KMNIST 98.78 99.95 99.96 99.97 99.98 99.99 99.94 99.93 99.97 99.98 99.99 MNIST →FMNIST 98.78 99.99 99.99 99.99 99.98 99.99 99.99 99.99 99.98 99.98 99.99 CIFAR-10 →SVHN 93.75 91.27 92.59 91.35 92.16 93.06 93.65 95.09 94.03 94.83 95.41 CIFAR-10 →CIFAR-100 93.75 90.30 90.20 90.50 90.75 89.60 88.06 89.06 88.46 88.94 89.22 CIFAR-10 →TinyImageNet 93.47 89.23 89.68 89.48 89.78 90.37 88.06 89.82 88.51 89.04 89.93 ID Near-OOD Far-OOD 
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Max Probability
+
+(a) MAX P scores ID Near-OOD Far-OOD  
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Entropy (nats)
+
+(b) Entropy scores ID Near-OOD Far-OOD 
+
+> 0.000
+> 0.002
+> 0.004
+> 0.006
+> 0.008
+> 0.010
+> 0.012
+> 0.014
+> Mutual Information (nats)
+
+(c) MI scores ID Near-OOD Far-OOD  
+
+> 0
+> 5000
+> 10000
+> 15000
+> 20000
+> 25000
+> Total Evidence (  )
+
+(d) Total evidence α0
+
+Figure 13. Box plots comparing uncertainty scores for ID (CIFAR-10), Near-OOD (CIFAR-100), and Far-OOD (SVHN). MI and 
+
+α0 show the clearest separation between ID and OOD samples. 
+
+G. Sensitivity Analysis 
+
+G.1. Qualitative Comparison with Baselines 
+
+Figure 14 presents a side-by-side comparison of the latent structures learned by GEM-C ORE (top row), GEM-MIX (middle row), and GEM-FI (bottom row). The first column shows raw feature embeddings, while the second column de-picts the normalized space used for density estimation. The third column overlays OOD samples (SVHN/CIFAR-100) on ID data (CIFAR-10). Notably, GEM-FI achieves the most compact class clustering and the clearest separation be-tween ID and OOD regions, validating the synergy between the mixture-of-beliefs architecture and Fisher-informed reg-ularization. 
+
+G.2. Effect of λ on conflict score 
+
+Figure 15 illustrates how the mixing coefficient λ controls the relative contribution of inter-class and intra-class conflict in the GEM-FI formulation. We define the conflict score 
+
+C as a weighted combination of inter-class disagreement (variance of means) and intra-class disagreement (mean of variances), modulated by λ ∈ [0 , 1] . When λ = 0 , the conflict score depends solely on inter-class disagreement, 18 GEM-FI: Gated Evidential Mixtures with Fisher Modulation Before Norm After Norm ID vs OOD 
+
+> ID
+> Far-OOD
+> Near-OOD
+
+(a) GEM-CORE Before Norm After Norm ID vs OOD 
+
+> ID
+> Far-OOD
+> Near-OOD
+
+(b) GEM-MIX Before Norm After Norm ID vs OOD 
+
+> ID
+> Far-OOD
+> Near-OOD
+
+(c) GEM-FI 
+
+Figure 14. Qualitative comparison of feature spaces across methods. Rows: GEM-CORE (top), GEM-MIX (middle), GEM-FI (bottom). Columns: Before Normalization, After Normalization, ID (Blue) vs OOD (Red/Orange). 
+
+resulting in vertical gradients dominated by Cinter . As λ
+
+increases, the influence of intra-class conflict becomes more pronounced, leading to smoother diagonal transitions across the conflict landscape. At λ = 1 , the score is fully de-termined by intra-class inconsistency, encouraging more stable mixture allocations and reducing sensitivity to spuri-ous inter-class fluctuations near decision boundaries. 
+
+G.3. Sensitivity to λF I and λKL 
+
+To complement the mixture-size analysis, we also examine sensitivity to the Fisher regularization strength λF I and the evidential regularization coefficient λKL on CIFAR-10 →SVHN. Across both sweeps, the default setting remains competitive while nearby values yield similar accuracy and OOD separation, indicating that the method is not driven by a narrow hyperparameter sweet spot. 
+
+Table 13. Sensitivity to λF I on CIFAR-10 →SVHN.                                 
+
+> λF I Test Acc. ↑Epis. AUPR ↑
+> 0.01 93.68 ±0.40 91.43 ±0.55 0.05 93.71 ±0.30 92.12 ±0.45 0.10 93.75 ±0.36 92.59 ±0.31
+> 0.30 93.65 ±0.35 92.33 ±0.42 1.00 93.40 ±0.50 90.80 ±0.80
+
+19 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 0.0 0.2 0.4 0.6 0.8 1.0                     
+
+> Cinter
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cintra
+> = 0
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Cinter
+> = 0.25
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Cinter
+> = 0.5
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Cinter
+> = 0.75
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Cinter
+> = 1.0
+> 0.00
+> 0.10
+> 0.20
+> 0.30
+> 0.40
+> 0.50
+> 0.60
+> 0.70
+> 0.80
+> 0.90
+> 1.00
+> Conflict Score C
+
+Figure 15. Effect of the mixing coefficient λ on the conflict score C in GEM-FI. Each panel shows C as a function of inter-class conflict 
+
+Cinter and intra-class conflict Cintra for a fixed value of λ (from left to right: λ ∈ 0, 0.25 , 0.5, 0.75 , 1.0). Larger values of C indicate stronger disagreement between evidential components. 
+
+Table 14. Sensitivity to λKL on CIFAR-10 →SVHN.                           
+
+> λKL Test Acc. Epis. AUPR
+> 10 −593.60 ±0.28 91.9 ±0.42
+> 10 −493.75 ±0.36 92.59 ±0.31
+> 10 −393.30 ±0.32 92.2 ±0.50
+> 10 −292.50 ±0.45 91.5 ±0.65
+
+G.4. Effect of mixture size K
+
+To assess the impact of the mixture size in GEM-FI, we vary the number of heads K ∈ 3, 4, 5 and report OOD detection performance together with ID test accuracy on CIFAR-10 (Table 15). We observe that performance is relatively stable across different values of K, while K = 3 provides the best overall trade-off in these runs, indicating that a small mix-ture is sufficient to capture meaningful epistemic structure without over-parameterizing the model. 
+
+Table 15. AUPR scores of OOD detection for GEM-FI with different mixture sizes K on CIFAR-10, based on aleatoric and epistemic uncertainty, along with test accuracy.                                                         
+
+> KTest Acc. ↑CIFAR-10 →SVHN CIFAR-10 →CIFAR-100 (%) Alea. ↑Epis. ↑Alea. ↑Epis. ↑
+> 393.75 ±0.36 91.27 ±0.29 92.59 ±0.31 90.30 ±0.06 90.20 ±0.06
+> 491.71 ±0.14 90.70 ±0.30 92.03 ±0.21 89.04 ±0.12 87.63 ±0.09 592.62 ±0.20 90.62 ±0.14 92.54 ±0.14 90.28 ±0.08 90.15 ±0.08
+
+G.5. Support-Conditioned Behavior Diagnostics 
+
+We analyze how predictive uncertainty, calibration, energy, and accuracy/confidence vary as a function of a feature-space support proxy. Support is measured via kNN distance (k=10 ) to a CIFAR-10 training feature bank. We report trends for CIFAR-10 (ID), CIFAR-100 (near-OOD), and SVHN (far-OOD). 
+
+Uncertainty vs. support. Figure 16 shows that predic-tive uncertainty increases as kNN distance grows (i.e., sup-port decreases) across ID, near-OOD, and far-OOD. This monotone rise is visible under both entropy and 1 − max p,indicating that samples farther from the CIFAR-10 feature bank are systematically harder and/or less well supported. Compared to the baseline, the proposed variants exhibit a more pronounced uncertainty increase in low-support re-gions, reflecting more cautious behavior under distribution shift. 
+
+Calibration vs. support. Figure 17 reports support-conditioned calibration using proper scoring rules (NLL and Brier; ↓ better). Calibration degrades as support decreases, consistent with low-support inputs being more error-prone and shift-prone. Importantly, for matched support levels, the proposed methods generally achieve lower NLL and/or Brier score than the baseline, suggesting that the improved uncer-tainty behavior is accompanied by better-aligned predictive probabilities rather than merely increased conservatism. 
+
+Accuracy and confidence vs. support. Figure 18 con-nects support to performance and confidence. On ID, accu-racy decreases with increasing kNN distance, reflecting that low-support samples are inherently more challenging. For OOD splits—where accuracy can be less informative due to label-space mismatch—we instead inspect max-confidence: a desirable reliability signature is reduced confidence as support decreases. The proposed variants display a more support-sensitive confidence profile in low-support bins, consistent with improved selective caution under shift. 
+
+Normalized energy vs. support. Figure 19 plots the learned energy signal against the same support proxy using a normalized scale (e.g., z-scoring) to enable comparison across splits and methods. The relationship between energy and the kNN proxy is not uniformly monotone and can vary by regime, indicating that energy is not acting as a direct, universal support estimator under this crude proxy. This is expected: the energy head is trained end-to-end as part of the gating/uncertainty mechanism, not to match an explicit density model or support-distance objective. Accordingly, we interpret energy as a learnable control signal whose util-ity is evidenced indirectly through the support-conditioned reliability improvements in uncertainty, calibration, and con-fidence (Figs. 16–19). 
+
+G.6. Fair Comparison with VOS 
+
+Because VOS is used only in the full GEM-FI pipeline, we also report a matched comparison in which VOS exposure is added to baseline methods and removed from GEM-FI. Table 16 shows that VOS improves all methods to some degree, but does not explain the gains by itself: even without VOS, GEM-FI remains stronger than the VOS-augmented DAEDL and Re-EDL baselines. 20 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 0.2 0.4 0.6 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Entropy H[p(y|x)]
+
+ID (CIFAR-10) 
+
+0.2 0.4 0.6 0.8 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+1.25 
+
+1.50 near-OOD (CIFAR-100) 
+
+0.4 0.6 0.8 1.0 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+1.4 
+
+1.6 
+
+far-OOD (SVHN) 
+
+> Baseline
+> GEM-CORE
+> GEM-FI
+
+0.2 0.4 0.6 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> 1 - max(p)
+
+0.2 0.4 0.6 0.8 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.4 0.6 0.8 1.0 
+
+kNN Distance (Support Proxy) 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+Figure 16. Uncertainty vs. support (entropy / 1 − max p). 0.2 0.4 0.6 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+1.25 
+
+> NLL
+
+ID (CIFAR-10) 
+
+0.2 0.4 0.6 0.8 
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+near-OOD (CIFAR-100) 
+
+0.4 0.6 0.8 1.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+2.0 
+
+2.5 
+
+3.0 
+
+far-OOD (SVHN) 
+
+> Baseline
+> GEM-CORE
+> GEM-FI
+
+0.2 0.4 0.6 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+> Brier Score
+
+0.2 0.4 0.6 0.8 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.4 0.6 0.8 1.0 
+
+kNN Distance (Support Proxy) 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+Figure 17. Calibration vs. support (NLL, Brier; ↓ better). 0.2 0.4 0.6 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Accuracy
+
+ID (CIFAR-10) 
+
+0.2 0.4 0.6 0.8 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Max Confidence
+
+near-OOD (CIFAR-100) 
+
+0.4 0.6 0.8 1.0 
+
+kNN Distance (Support Proxy) 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Max Confidence
+
+far-OOD (SVHN) 
+
+> Baseline
+> GEM-CORE
+> GEM-FI
+
+Figure 18. Accuracy (ID; ↑ better) and confidence (OOD; ↓ better) vs. support. 
+
+Table 16. Fair comparison with VOS on CIFAR-10 →SVHN. Aleatoric and epistemic columns report AUPR using MaxP and 
+
+α0/MI-style scores, respectively. 
+
+Method Alea. AUPR ↑ Epis. AUPR ↑
+
+DAEDL 85.50 ± 1.40 85.54 ± 1.40 DAEDL + VOS 87.12 ± 1.20 87.34 ± 1.25 Re-EDL 87.84 ± 0.96 89.89 ± 1.39 Re-EDL + VOS 88.95 ± 1.00 90.67 ± 1.10 GEM-FI (without VOS) 90.50 ± 0.30 91.82 ± 0.32 GEM-FI (with VOS) 91.27 ± 0.29 92.59 ± 0.31 
+
+G.7. Additional VOS and Density-Scaling Ablations 
+
+Table 17 isolates the role of the VOS boundary-sharpening mechanism by replacing it with simple feature-space noise. VOS remains the stronger auxiliary choice, but the core gat-21 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 0.2 0.4 0.6       
+
+> kNN Distance
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Entropy H[p(y|x)]
+> (a) Uncertainty vs Support
+> Baseline
+> GEM-CORE
+> GEM-FI
+> 0.2 0.4 0.6
+> kNN Distance
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> NLL
+> (b) Calibration vs Support
+> 0.2 0.4 0.6
+> kNN Distance
+> 3
+> 2
+> 1
+> 0
+> 1
+> 2
+> Energy (z-score)
+> (c) Normalized Energy vs Support
+> 0.2 0.4 0.6
+> kNN Distance
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Max Confidence
+> (d) Confidence vs Support
+
+Figure 19. Normalized energy vs. support. While the relationship is broadly increasing on average, local non-monotonicity can ap-pear in transition regimes near class boundaries or mixed-support regions; this does not materially affect the bulk OOD detection behavior, where energy still serves as a distance-informed support signal. 
+
+ing and mixture design still retain substantial performance without structured synthetic outliers. Table 18 isolates the contribution of the supplementary density scaler ρ(z): most of the gain is retained when ρ(z) = 1 , while the full model provides a further improvement. 
+
+Table 17. Effect of replacing VOS with simple feature-space noise on CIFAR-10 →SVHN.               
+
+> Method Alea. AUPR ↑Epis. AUPR ↑
+> GEM-FI + VOS 91.27 ±0.29 92.59 ±0.31
+> GEM-FI + feature-space noise 89.50 ±0.35 89.80 ±0.38
+
+Table 18. Effect of removing the supplementary density scaler on CIFAR-10 →SVHN.                 
+
+> Model Alea. AUPR ↑Epis. AUPR ↑
+> GEM-FI with ρ(z)91.27 ±0.29 92.59 ±0.31
+> GEM-FI with ρ(z) = 1 89.50 ±0.35 91.00 ±0.40
+
+G.8. Energy–Support Correlation Statistics 
+
+To complement the qualitative support-conditioned plots in Section G.5, Table 19 reports rank-correlation statistics between learned energy and kNN support distance, and Table 20 reports a decile-based summary on CIFAR-10. The average trend is increasing, while local deviations remain concentrated in transition regimes near class boundaries and mixed-support regions. 
+
+Table 19. Spearman correlation between learned energy and kNN support distance.              
+
+> Dataset Spearman ρp-value MNIST 0.82 ±0.03 <10 −6
+> CIFAR-10 0.74 ±0.05 <10 −6
+
+Table 20. Mean kNN support distance across energy deciles on CIFAR-10 test data. Decile 1 denotes lowest energy (highest support), and decile 10 the highest energy regime.                                
+
+> Energy decile 12345678910 Mean kNN dist. 4.8 5.5 6.3 7.0 7.8 8.6 9.4 10.3 11.4 12.5 Std. dev. 1.2 1.4 1.7 1.9 2.1 2.4 2.7 3.1 3.5 3.8
+
+G.9. Head Diversity and Routing Specialization 
+
+We further quantify the diversity induced by the mixture ar-chitecture. Table 21 shows that head disagreement increases from ID to near-OOD to far-OOD settings, indicating that the mixture captures complementary uncertainty patterns rather than collapsing to identical behavior. Table 22 sum-marizes router specialization: easy ID cases concentrate most probability mass on one head, while low-support and OOD inputs induce higher routing entropy and softer allo-cations. 
+
+Table 21. Head-diversity statistics for GEM-FI with K = 3 on CIFAR-10. Pairwise cosine similarity is averaged over all head pairs.                     
+
+> Split Pairwise cosine sim. Disagreement rate ID (CIFAR-10 test) 0.91 ±0.05 9±2% Near-OOD (CIFAR-100) 0.77 ±0.09 31 ±3% Far-OOD (SVHN) 0.61 ±0.12 47 ±5%
+
+Table 22. Router specialization summary for GEM-FI with K = 3 
+
+on CIFAR-10. Lower entropy and larger maximum router weight indicate stronger specialization.                      
+
+> Condition Head entropy H(π)Mean max router wt. Easy ID (high-conf., correct) 0.22 ±0.08 0.87 ±0.04 Boundary (low-conf., correct) 0.75 ±0.12 0.58 ±0.06 OOD (SVHN) 1.05 ±0.09 0.42 ±0.05
+
+H. Failure Modes, Limitations, and Compute Resources 
+
+H.1. Failure Modes 
+
+While the proposed method demonstrates strong perfor-mance in practice, we observe the following failure modes. First, head collapse may occur: without π-entropy regular-ization (or with an insufficient coefficient), mixture weights can concentrate on a single head, effectively reducing the model to a single-expert predictor. Second, confidence lock-in persists for a small subset of samples: some misclassified inputs remain highly confident due to shortcut features or class-conditional biases learned early in training, and the gate may not sufficiently down-weight these cases. Third, 
+
+energy-gate saturation can happen: very large-magnitude 22 GEM-FI: Gated Evidential Mixtures with Fisher Modulation 
+
+Table 23. Computational overhead comparison on CIFAR-10 with a ResNet-18 backbone.                                                                 
+
+> Model Params (M) Train (s/epoch) Infer (ms/batch) Memory (GB) DAEDL 11.17 ±0.00 28.40 ±0.5 3.20 ±0.1 2.11 ±0.0 GEM-CORE 11.24 ±0.00 30.11 ±0.5 3.40 ±0.1 2.23 ±0.0 GEM-MIX ( K=3) 11.38 ±0.00 34.64 ±0.6 3.80 ±0.1 2.51 ±0.1 GEM-FI ( K=3) 11.38 ±0.00 42.31 ±0.8 3.85 ±0.1 3.14 ±0.1 GEM-FI ( K=5) 11.52 ±0.00 51.70 ±1.0 4.22 ±0.1 3.86 ±0.1
+
+energies may saturate the gating function, reducing sensitiv-ity to intermediate support differences; mild evaluation-time desaturation helps mitigate this effect. Fourth, expert redun-dancy may emerge: multiple heads can converge to similar solutions (especially with limited diversity pressure), which reduces the benefit of maintaining multiple experts and can amplify head collapse. Finally, training instability under aggressive settings can arise: large learning rates, very small batch sizes, or strong weight decay may lead to oscillatory mixture weights and brittle gating dynamics. 
+
+H.2. Limitations 
+
+Our approach has several practical limitations. First, perfor-mance can be sensitive to mixture-related hyperparameters (e.g., entropy strength, number of heads, and gate scaling); poor settings may yield overly sharp routing or overly uni-form routing. Second, multi-head evaluation increases in-ference cost: although the added parameters are small, run-ning multiple heads introduces a modest latency overhead compared to a single-head evidential baseline. Third, the method benefits from stable optimization; in low-precision or memory-constrained regimes, careful tuning (e.g., gra-dient clipping or conservative schedules) may be required to avoid brittle gating behavior. Fourth, head behaviors are not inherently interpretable: while mixture weights provide some signal, attributing semantic meaning to each head is not guaranteed without additional constraints. 
+
+H.3. Compute Resources 
+
+All experiments were conducted on a single NVIDIA RTX 3090 GPU with 32GB system RAM. For CIFAR-10 exper-iments we used batch size 128 ; for MNIST we used batch size 50 . Training-time overhead is dominated by the FI-related autograd operations used during GEM-FI optimiza-tion, while inference remains single-pass and incurs only a modest increase relative to single-head evidential baselines. Detailed parameter counts, training time per epoch, infer-ence latency, and memory usage are reported in Table 23. 23

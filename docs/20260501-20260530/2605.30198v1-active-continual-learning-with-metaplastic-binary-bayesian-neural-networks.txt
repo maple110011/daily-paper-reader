@@ -1,0 +1,2446 @@
+Title: Active Continual Learning with Metaplastic Binary Bayesian Neural Networks
+
+URL Source: https://arxiv.org/pdf/2605.30198v1
+
+Published Time: Fri, 29 May 2026 01:41:31 GMT
+
+Number of Pages: 42
+
+Markdown Content:
+# Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Kellian Cottart 1 Th´ eo Ballet 1 Djohan Bonnet 1 2 Damien Querlioz 1
+
+## Abstract 
+
+Always-on edge systems must keep learning as conditions change under tight compute budgets and must detect unreliable predictions. Bayesian binary neural networks are attractive in this set-ting, but mean-field Bernoulli posteriors can sat-urate on long non-stationary streams, wiping out epistemic uncertainty and freezing plasticity. We propose BiMU, derived from a bounded-memory variational objective that balances stability, plas-ticity, and forgetting. BiMU combines a data term with controlled relaxation toward the prior and an uncertainty-dependent step size that prevents saturation and sustains informative uncertainty. This non-degenerate posterior enables fully on-line, buffer-free active querying via Monte Carlo disagreement, reducing label queries and back-propagation updates under imbalance. BiMU sus-tains learning and strong OOD detection on 1000-tasks Permuted-MNIST, and on OpenLORIS-Object achieves up to 32× label/update savings at matched accuracy under class imbalance and feature compression. 
+
+## 1. Introduction 
+
+Always-on edge systems face a core tension: they must run inference continuously under tight energy budgets, yet still adapt online as conditions drift (new users, sensor aging, changing environments) and detect when predictions are un-reliable (out-of-distribution inputs, rare events). Binary neu-ral networks (BiNNs) (Hubara et al., 2016) are a natural fit: constraining activations and weights to {− 1, +1 } reduces memory traffic and replaces multiply-accumulate operations with cheap bitwise arithmetic, which is critical when infer-ence dominates an always-on device’s lifetime compute. Bayesian BiNNs (Meng et al., 2020; Khan & Rue, 2023) 
+
+> 1
+
+Universit ´e Paris-Saclay, CNRS, Centre de Nanosciences et de Nanotechnologies, Palaiseau, France 2Forschungszentrum J ¨ulich, Germany. Correspondence to: Damien Querlioz 
+
+<damien.querlioz@universite-paris-saclay.fr >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+are even more attractive because they quantify epistemic uncertainty beyond point predictions, enabling reliability monitoring and OOD detection in safety- or mission-critical deployments. However, Bayesian BiNNs trained with mean-field Bernoulli posteriors face a critical failure mode on long, non-stationary streams: the Bernoulli parameters saturate toward 0 or 1 as evidence accumulates. Equivalently, the natural parameters grow in magnitude, posterior samples be-come nearly deterministic, epistemic uncertainty collapses, and weight sign changes become exceedingly unlikely. This 
+
+posterior saturation (often observed as “frozen synapses”) has been reported in continual-learning practice for binary networks (Laborieux et al., 2021) and prevents sustained online adaptation. At the edge, this issue is compounded by two practical constraints: weight updates are expensive, and data streams are strongly imbalanced, so most samples are redundant while rare events and distribution shifts carry most of the learning signal. In this work, we introduce Binary Metaplasticity from Un-certainty (BiMU) , a Bayesian continual-learning rule for mean-field Bernoulli synapses that prevents posterior degen-eracy while maintaining usable epistemic uncertainty over long streams. BiMU is derived from the bounded-memory Bayesian learning-and-forgetting objective of (Bonnet et al., 2025), and we specialize it here to Bernoulli synapses to avoid saturation in binary posteriors. The update combines (i) a data-driven gradient term with (ii) an uncertainty-gated relaxation toward the prior that counteracts saturation, to-gether with (iii) a bounded, state-dependent (metaplastic) step size that stabilizes consolidated synapses while keeping uncertain ones plastic. This yields a fully online, buffer-free Bayesian update for continual learning without task-boundary signals. Preserving epistemic uncertainty is not only diagnostic: it enables fully online active continual learning. BiMU sup-ports cheap Monte Carlo sampling of binary weights, and we use a one-pass threshold rule: an incoming example is la-beled (and triggers backpropagation) only if a disagreement score exceeds a fixed threshold. This directly reduces label requests and parameter updates and is particularly effective under class imbalance, where most samples are uninfor-mative, but rare events are critical. More broadly, BiMU 1
+
+> arXiv:2605.30198v1 [cs.LG] 28 May 2026 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks
+
+treats epistemic uncertainty as a finite resource that must be preserved to support future adaptation. We evaluate BiMU in three regimes: (i) 1000-tasks Permuted-MNIST to stress long-horizon non-stationarity and OOD detection; (ii) OpenLORIS-Object continual recognition under distribution shifts with a frozen Ima-geNet feature extractor to isolate online adaptation under constrained trainable capacity; and (iii) imbalanced stream-ing scenarios with online querying to quantify label/update efficiency, including per-class effects. 
+
+Contributions. 
+
+• We derive BiMU: a bounded-memory variational up-date for mean-field Bernoulli synapses (Eq. (6) ) with uncertainty-gated relaxation and a bounded metaplastic step size (Eq. (7)) that prevents posterior saturation. • We couple BiMU with one-pass Monte Carlo disagree-ment to perform buffer-free online querying, so only informative samples are labeled and updated, reducing annotation and backprop cost under imbalance. • We demonstrate sustained learning and useful un-certainty (OOD detection and querying) on 1000-tasks Permuted-MNIST, and OpenLORIS-Object with frozen/compressed features, achieving 32 × fewer la-bel/update steps at matched accuracy. 
+
+## 2. Related work 
+
+2.1. Bayesian inference, uncertainty, and continual learning 
+
+Bayesian neural networks (BNNs) treat weights as random variables and quantify epistemic uncertainty through a pos-terior over parameters. In practice, BNNs are commonly trained with variational inference (VI), approximating the posterior with a tractable distribution q(ω) by minimizing a KL divergence or maximizing an ELBO (Jordan et al., 1999; Graves, 2011; Kingma et al., 2015; Blundell et al., 2015). This provides uncertainty estimates that are useful for reliability monitoring and OOD detection (Kendall & Gal, 2017; Gal et al., 2017). Continual learning (CL) considers sequentially arriving data where past samples are typically unavailable, so na ¨ıve fine-tuning leads to catastrophic forgetting. A classical Bayesian approach reuses the previous approximate pos-terior as the next prior, yielding online/streaming VI up-dates (Broderick et al., 2013; Nguyen et al., 2018; Zeno et al., 2021). Regularization-based CL methods can also be interpreted through a Bayesian lens: Elastic Weight Con-solidation (EWC) constrains important parameters via a Fisher-based quadratic penalty (Pascanu & Bengio, 2014; Kirkpatrick et al., 2017), and Synaptic Intelligence (SI) accumulates parameter-importance scores online (Zenke et al., 2017). Online variants (e.g., Online EWC) intro-duce discounting to limit unbounded accumulation of impor-tance (Schwarz et al., 2018). However, over very long hori-zons these methods can still become increasingly rigid as evidence/importance accumulates and plasticity decreases. Moreover, many such approaches require storing additional per-parameter state (e.g., Fisher/importance and/or refer-ence parameters), which is non-trivial under tight edge-memory budgets. 
+
+2.2. Bounded-memory Bayesian learning and controlled forgetting 
+
+A direct way to prevent long-horizon rigidity is to explicitly bound the amount of retained information. Bayesian learn-ing and forgetting (Bonnet et al., 2025) targets a bounded-memory posterior that adds evidence from the current batch while removing the contribution of the oldest batch in an effective window of size N :
+
+p(ω|D t−N :t) = p(Dt|ω) p(ω|D t−N −1: t−1)
+
+p(Dt)
+
+× p(Dt−N −1)
+
+p(Dt−N −1|ω) . (1) This yields controlled information decay with memory inde-pendent of stream length and provides an explicit stability-plasticity-forgetting trade-off. In the Gaussian case, this principle leads to MESU (Bonnet et al., 2025), which sus-tains adaptation while preserving meaningful uncertainty over long streams. 
+
+2.3. Bayesian binary networks and posterior saturation 
+
+Our work builds on the same bounded-memory principle as MESU but targets binary weights with mean-field Bernoulli posteriors. In this setting, a key long-horizon failure mode is Bernoulli posterior saturation : probabilities collapse to-ward 0 or 1, destroying epistemic uncertainty and making weight sign changes exceedingly unlikely. This freezing effect is observed in continual-learning practice for binary networks (Laborieux et al., 2021) and also arises when ap-plying mean-field Bernoulli BNN training rules (e.g., Bayes-BiNN (Meng et al., 2020; Khan & Rue, 2023)) na ¨ıvely in long non-stationary streams without explicit forgetting. 
+
+2.4. Active learning under streaming and continual shift 
+
+Active learning (AL) aims to reduce annotation and up-date cost by querying informative samples, which is par-ticularly valuable under class imbalance and rare-event streams (MacKay, 1996; Khan et al., 2019; Ngartera et al., 2024). Bayesian models naturally support AL through uncertainty-based acquisition functions such as mutual in-formation (BALD) (Houlsby et al., 2011) or predictive en-2Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+tropy (Shannon, 1948). However, much of the AL literature assumes pool-based storage and ranking of unlabeled data, which is a poor match for always-on streaming systems with strict memory and latency constraints. Fully online AL instead uses one-pass decision rules that query immediately based on an uncertainty score (Liu et al., 2015; Rajendran et al., 2023). Disagreement-based mea-sures such as the variation ratio (Freeman, 1965) are attrac-tive in this setting because they depend only on Monte Carlo predicted labels, avoiding information-theoretic computa-tions given the same MC predictions. Existing continual AL methods often add replay buffers, task-boundary assump-tions, or consolidation state (Perkonigg et al., 2021; Ash et al., 2021; Das et al., 2023; Vu et al., 2024; Park et al., 2025), increasing overhead. Taken together, these works highlight two requirements for practical online continual AL with binary posteriors: (i) preventing Bernoulli posterior saturation so epistemic un-certainty remains informative over long horizons, and (ii) exposing a cheap uncertainty signal that supports one-pass thresholding without buffering. BiMU addresses (i) through bounded-memory Bernoulli updates and metaplastic step sizing, and leverages (ii) via Monte Carlo disagreement thresholding to reduce both label queries and backpropaga-tion updates in streaming continual learning. 
+
+## 3. Forgetting in binary Bayesian neural networks 
+
+3.1. Bernoulli variational parameterization 
+
+We approximate the posterior over s binary weights ω ∈{− 1, +1 }s with a mean-field Bernoulli distribution param-eterized by natural parameters λ ∈ Rs. For each synapse 
+
+i ∈ [1 , . . . , s ],
+
+ω(i) ∼ 2 Ber 
+
+
+
+σ(2 λ(i))
+
+
+
+− 1. (2) Equivalently (Prop. A.1), 
+
+q(ω|λ) = 
+
+> s
+
+Y
+
+> i=1
+
+exp  λ(i)ω(i)
+
+2 cosh  λ(i) . (3) Here λ(i) = 0 corresponds to maximal uncertainty p(ω(i) =+1) = 1/2, while large |λ(i)| yields near-deterministic weights. We denote by λprior the natural parameters of the initialization prior p(ω).
+
+3.2. Binary Metaplasticity from Uncertainty 
+
+At time step t (one online update per batch Dt), we seek an approximate posterior that retains only a bounded amount of information from the past, corresponding to a sliding win-dow of roughly the last N updates. Following the controlled-forgetting posterior (Eq. (1) ), we compute λt by variational projection: 
+
+λt = arg min  
+
+> λ
+
+DKL (q(ω|λ) ∥ p(ω | D t−N :t)) . (4) Using the variational decomposition (Prop. A.2), the ob-jective is the sum of a data term L(λ, Dt) and KL regular-izers. Under the mean-field Bernoulli approximation, the KL terms decouple across synapses (while the data term still couples parameters through the network). This yields a coordinate-wise update for each λ(i):
+
+λ(i) 
+
+> t
+
+= arg min 
+
+> λ(i)
+
+h
+
+L(λ, Dt) + 1 
+
+> N
+
+DKL 
+
+
+
+q(ω(i)|λ(i))∥p(ω(i))
+
+
+
++  1 − 1
+
+> N
+
+ DKL 
+
+
+
+q(ω(i)|λ(i))∥q(ω(i)|λ(i)
+
+> t−1
+
+)
+
+ i 
+
+. (5) This form makes the roles explicit (Fig. 1): the data term drives plasticity , the KL-to-previous term provides stabil-ity , and the KL-to-prior term implements controlled forget-ting , preventing unbounded evidence accumulation in long streams. The window size N should be interpreted as a forgetting horizon: smaller N relaxes faster toward the prior, while larger N approaches cumulative learning and can induce rigidity (Appendix G). -1 1Plasticity Stability Forgetting   
+
+> -1 1
+> -1 1
+> -1 1
+> -1 1
+> -1 1
+> -1 1 -1 1
+> -1 1
+> -1 1 -1 1
+> -1 1
+> -1 1
+> -1 1
+> -1 1
+> -1 1-1 1
+> -1 1
+
+Figure 1. Schematic of the BiMU update. The next variational state is shaped jointly by the current loss (plasticity), the previous posterior (stability), and the prior (forgetting). Bars show Bernoulli probabilities for ω ∈ {− 1, +1 }.
+
+Eqs. (1) - (3) constitute the background that allows de-riving BiMU. Combining the closed-form Bernoulli KL (Prop. A.3) with a second-order expansion around λt−1
+
+yields a per-synapse update (Theorem A.4): 
+
+λ(i) 
+
+> t
+
+= λ(i) 
+
+> t−1
+
+− η(λ(i)
+
+> t−1
+
+)
+
+"
+
+∂L
+
+∂λ (i) λt−1
+
++ λ(i) 
+
+> t−1
+
+− λ(i)prior 
+
+N cosh 2(λ(i)
+
+> t−1
+
+)
+
+#
+
+.
+
+(6) The gradient term ∂L/∂λ (i) implements plasticity . The sec-ond term implements controlled forgetting via a relaxation toward the prior. This relaxation term is uncertainty-gated: since Var q (ω) = 1 − tanh 2(λ) = cosh −2(λ), the pull 3Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+toward the prior is strongest for uncertain synapses and van-ishes as |λ| → ∞ . Accordingly, the mechanism primarily prevents runaway growth of |λ| that would otherwise drive Bernoulli probabilities toward 0 or 1 and collapse epistemic uncertainty. The stability mechanism appears in the metaplastic step size 
+
+η(·). In the exact second-order update (Theorem A.4), η(·)
+
+depends on a curvature term involving ∂2L/∂ (λ(i))2. Es-timating this curvature online is challenging for Bernoulli synapses: unlike mean-field Gaussians, Bernoulli posteri-ors do not expose a continuous dispersion parameter that enables MESU’s Stein-based diagonal-Hessian estimator, and naive Fisher/Hessian approximations can be unstable in single-pass regimes. We therefore avoid explicit curvature estimation and use a bounded surrogate that preserves the qualitative effect of curvature while guaranteeing positivity and a maximum step size (Prop. A.5). Concretely, we use the element-wise learning rate η(λt−1) defined by: 
+
+1
+
+η(λ(i)
+
+> t−1
+
+) = 1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L
+
+∂λ (i) λt−1
+
++ 1
+
+αmax 
+
++ 2 ∂L
+
+∂λ (i) λt−1
+
+, (7) The gradient-dependent terms make the step size asymmet-ric : consolidation steps that reinforce the current synap-tic sign are full, whereas de-consolidation steps that push against the current sign are inhibited. This effect is seen in Fig. 2. Three regimes emerge: (i) Uncertain synapses (λ(i) ≈ 0): updates are conservatively bounded. (ii) Consolidation ( λ(i)g(i) < 0): consistent gradients rein-force the current weight sign and η approaches its upper bound, enabling fast consolidation. (iii) De-consolidation (λ(i)g(i) > 0): gradients opposing the current sign reduce 
+
+|λ(i)|, but η shrinks, making sign changes difficult unless such gradients persist. This consolidation/de-consolidation asymmetry is consistent with the qualitative metaplastic behavior reported in Laborieux et al. (2021), but here it emerges directly from the Bayesian formulation and the bounded learning-rate construction. Together, Eqs. (6) - (7) define BiMU : a fully online up-date that mitigates Bernoulli posterior saturation while pre-serving actionable epistemic uncertainty over long, non-stationary streams. 
+
+3.3. Uncertainty Estimation and Online Querying 
+
+BiMU can use posterior uncertainty as a control signal for fully online active continual learning: an example is labeled and triggers an update only when the current posterior has epistemic disagreement. Since q(ω|λ) is Bernoulli, uncer-tainty can be estimated by sampling binary networks and running Monte Carlo (MC) forward passes, with no buffer or revisiting past data. -5.00 -2.50 0.00 2.50 5.00 
+
+## λ (       
+
+> −
+> )1ti
+> -0.50 -0.25 0.00 0.25 0.50 Derivative
+> 0.0 0.2 0.4 0.6 0.8 1.0 Learning rate  η
+> Uncertainty regime Consolidation regime Consolidation regime Deconsolidation regime Deconsolidation regime
+> Figure 2. Color map of the learning rate η(αmax = 1 ) as a function of the synaptic state λ(i)
+> t−1and the derivative ∂L/∂λ (i).
+
+For an incoming (possibly unlabeled) example xj , we draw 
+
+K independent weight samples {ωk}Kk=1 ∼ q(ω|λ) and compute predictive distributions Vj = {p(y|xj , ωk)}Kk=1 .
+
+Given Vj , we compute an uncertainty score u(Vj ) ∈ R
+
+on-the-fly and use it for one-pass querying decisions. 
+
+Predictive uncertainty decomposition. In Bayesian pre-dictive models, epistemic uncertainty can be quantified as the mutual information between predictions and parame-ters (Gal et al., 2017), 
+
+I(ω, y |xj ) = H[p(y|xj )] − Eq(ω|λ)[H[p(y|xj , ω)]] , (8) (H(·) denotes Shannon entropy.), i.e., predictive uncertainty minus expected predictive entropy (aleatoric). We use these scores primarily for analysis and OOD detection. For online querying, we prefer a cheaper disagreement score. 
+
+Variation ratio. We adopt the variation ratio (VR) (Free-man, 1965), which measures disagreement among K Monte Carlo predictors. Let ˆyk = arg max c∈C p(yc|xj , ωk) be the predicted class under sample k, and let fmode =max c∈C 
+
+PKk=1 1[ˆ yk = c] be the number of samples pre-dicting the modal class. We define VR = 1 − fmode /K .When labels are available, we also report the oracle diagnos-tic VR -True = 1 − 1
+
+> K
+
+PKk=1 1[ˆ yk = yj ].The unlabeled scores above (VR, predictive uncertainty, aleatoric uncertainty, and epistemic uncertainty) are com-puted before observing yj . Therefore, if the input distri-bution remains familiar but the task function changes, i.e., 
+
+p(y|x) shifts while p(x) does not, unlabeled scores may fail to trigger a query because the input does not appear out-of-distribution. VR-True is particularly useful for diagnosing and adapting to such pure labeling-function shifts, but it 4Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+requires labels for the corresponding training samples. 
+
+One-pass threshold querying. At time t, we query the label of xj iff u(Vj ) ≥ τ, with a fixed threshold τ ∈ R.Only queried samples trigger backpropagation and a BiMU update. Computing the query score requires K Monte Carlo forward passes, but these are particularly cheap in binary net-works (bit-level sampling and low-cost binary arithmetic), whereas backpropagation and weight writes dominate on-device training cost. 
+
+## 4. Experiments 
+
+We evaluate BiMU along three axes: long-horizon plastic-ity under sustained non-stationarity without task-boundary signals; uncertainty quality for OOD detection; and la-bel/update efficiency via online, buffer-free active querying. Methodological details, including the hyperparameter tun-ing procedure, are provided in Appendix B. For BiMU, the main tuned hyperparameters are the memory window N ,the maximum metaplastic step size αmax , and the scaling coefficients of the likelihood and KL terms; for active learn-ing, the query threshold τ controls the realized label/update budget. 
+
+4.1. Gradient estimation for Bernoulli synapses 
+
+BiMU provides a closed-form update for the stability and forgetting terms in the natural parameters λ (Eqs. (6) - (7) ). In all experiments, we estimate stochastically ∇λL(λ, Dt)
+
+using a differentiable Bernoulli relaxation (Concrete / Gumbel-softmax reparameterization) (Maddison et al., 2017), following Algorithm 1 (Appendix O). Concretely, we draw relaxed weight samples, backpropagate through the relaxation, and average gradients over K MC samples. 
+
+4.2. 1000-tasks Permuted-MNIST: long-horizon continual learning 
+
+We stress-test long-horizon online continual learning on 1000-tasks Permuted-MNIST, where each task applies a fixed random pixel permutation to MNIST. Training is strictly online (one epoch per task; batch size 1; no replay). Methods that require explicit task-boundary signals (Table 1, 
+
+Task bounds = yes) are provided the task boundaries; BiMU and all Task bounds = no baselines are run without them. We use a compact MLP with one hidden layer of 100 units to emphasize plasticity limits in a low-capacity binary regime. As a sanity check, the last column of Table 1 reports single-task accuracy. In this setting, BiMU and BayesBiNN (Meng et al., 2020; Khan & Rue, 2023) perform best, ahead of STE (Hubara et al., 2016) and Synaptic Metaplasticity (La-borieux et al., 2021), confirming that Bayesian binary train-ing is already competitive in this small-network regime. 
+
+Table 1. 1000-tasks Permuted-MNIST (online; 100-unit MLP). Mean accuracy over the last 5 tasks; OOD AUC (Permuted MNIST vs. Fashion-MNIST); MMRR; Single-task accuracy. Mean ±std over 5 runs.                                                                                          
+
+> METHOD TASK BOUNDS
+> MEAN ACC. 5TASKS (%) OOD DET .(AUC) MMRR ACC .1TASK (%)
+> Binary neural networks
+> BIMU NO 90.30 ±0.38 0.99 ±0.00 139.47 94.67 ±0.11
+> BAYES BINN YES 41 .12 ±1.62 0 .57 ±0.12 2.04 93 .22 ±0.09
+> SYN . M ETA .YES 10 .27 ±0.01 -1.64 71 .40 ±1.48
+> STE NO 29 .35 ±0.96 0 .69 ±0.04 9.32 77 .56 ±1.35
+> Real-valued neural networks
+> MESU NO 91.69 ±0.58 0.95 ±0.03 261.10 96.10 ±0.18
+> EWC O. YES 81 .78 ±0.82 0 .66 ±0.11 6.63 96 .06 ±0.11
+> SI YES 74 .41 ±1.19 0 .66 ±0.17 5.11 95 .55 ±0.28
+> SGD NO 66 .64 ±2.70 0 .87 ±0.05 43 .50 96 .03 ±0.34
+
+After training on all 1000 tasks, we report three quanti-ties (Table 1). (i) MEAN ACC. (last 5 tasks) averages test accuracy over the final five tasks and directly measures late-stream adaptability (ability to keep learning after a very long sequence of shifts). (ii) MMRR (Appendix D) summa-rizes rigidity accumulation by comparing late-stream perfor-mance to each method’s best observed per-task performance over the stream. (iii) OOD AUC evaluates uncertainty-based discrimination between in-distribution Permuted-MNIST and Fashion-MNIST (see Appendix B for the uncertainty score used per method). Appendix C also reports backward transfer (BWT) and explains why late-stream accuracy and MMRR are more informative than backward transfer for diagnosing loss of plasticity in very long non-stationary streams. Among binary-weight methods, BiMU is the only approach that remains accurate at the end of the 1000-tasks stream: it reaches 90 .30% mean accuracy on the last five tasks, whereas BayesBiNN, Synaptic Metaplasticity, and STE drop to 41 .12% , 10 .27% , and 29 .35% , respectively. BiMU also has the highest MMRR among binary methods, indicating far less rigidity accumulation. The gap to BayesBiNN reflects two mechanisms. First, BiMU implements bounded-memory forgetting. Second, BiMU uses the uncertainty-dependent metaplastic step size in Eq. (7) , which changes how evidence is consolidated or de-consolidated online. The N ablation supports this distinc-tion: even when N = 100 ,000 , where BiMU approaches cumulative learning, it remains above BayesBiNN in the 100-tasks study ( 83 .70% vs. 67 .91% accuracy, 0.94 vs. 0.75 
+
+OOD AUC, MMRR 13 .13 vs. 5.03 ; Appendix G). The same ablation study shows that the results of BiMU remain strong over a broad range of N values. N acts as an interpretable 5Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+stability-plasticity-forgetting control parameter, analogous to a replay size or discount factor. STE, lacking a continual-learning mechanism, suffers both catastrophic forgetting and some rigidity from latent real-valued weight divergence over long training. Synaptic Meta-plasticity has the strongest rigidity of all tested methods, by construction, due to its nearly irreversible metaplasticity mechanism. Among real-valued baselines, MESU achieves the best late-stream accuracy ( 91 .69% ), narrowly above BiMU, but relies on a higher-dimensional posterior parameterization (μ, σ).EWC Online and Synaptic Intelligence reach intermediate performance ( 81 .78% and 74 .41% ), while SGD degrades substantially at the tail of the stream ( 66 .64% ). Finally, BiMU yields the strongest OOD detection ( 0.99 
+
+AUC), ahead of MESU ( 0.95 ) and SGD ( 0.87 ). We do not report OOD AUC for Synaptic Metaplasticity because its near-chance late-stream accuracy makes its predictive uncertainty uninformative for in-vs-out discrimination in this setting. We further find that the Reverse Binary Gate activation sharpens disagreement between posterior samples on out-of-distribution inputs, improving OOD separability (Appendix H). BiMU’s gains persist with increased network capacity (Appendix E) while retaining a minimal, constant training-state memory footprint (Appendix F). 
+
+4.3. OpenLORIS-Object: lifelong learning under nuisance-factor shifts 
+
+We next evaluate BiMU on OpenLORIS-Object, a lifelong recognition benchmark designed around robotic nuisance factors. We follow the sequential factors analysis protocol (12 tasks: illumination, occlusion, pixel corruption, and clutter at three difficulty levels) without active querying. To isolate online adaptation under constrained trainable ca-pacity, we freeze an ImageNet-pretrained VGG19 feature extractor and train only an online linear classifier on top of its 512 × 7 × 7 = 25 ,088 -dimensional representation. To emulate edge-like feature-compression constraints, we additionally train the head on a fixed random subset of 8,192 
+
+and 1,024 features ( ≈ 3× and 25 × compression). After training on all 12 tasks in a single pass (no replay), we report the mean accuracy averaged across the 12 task test sets (Table 2). For OOD evaluation, we remove the toy 
+
+class during training and treat it as out-of-distribution at test time. We report ROC-AUC using aleatoric and epistemic uncertainty estimates. Under strong compression (1,024 features), BiMU reaches 
+
+73 .61% mean accuracy, improving substantially over STE, Synaptic Metaplasticity, and non-Bayesian real-valued base-
+
+Table 2. OpenLORIS-Object (online; linear head on frozen VGG19). Mean accuracy over 12 tasks and OOD AUC (held-out toy ); results for 1,024/8,192/25,088 features. Mean ±std over 5 runs.                                                                                                                                                                                                     
+
+> METHOD FEATURES MEAN ACC. (%) ALEATORIC
+> (AUC) EPISTEMIC
+> (AUC)
+> Binary neural networks
+> BIMU 1,024 73.61 ±1.53 0.96 ±0.01 1.00 ±0.00
+> 8,192 89.19 ±0.19 0.99 ±0.00 1.00 ±0.00
+> 25,088 90.62 ±0.22 0.93 ±0.00 0.90 ±0.00
+> BAYES BINN 1,024 72 .01 ±1.69 0.93 ±0.01 1.00 ±0.00
+> 8,192 86 .93 ±0.41 0.99 ±0.00 1.00 ±0.00
+> 25,088 89 .37 ±0.77 0.92 ±0.00 0.90 ±0.01
+> SYN . M ETA .1,024 62 .82 ±2.31 0.72 ±0.04 –8,192 88 .03 ±0.38 0.63 ±0.03 –25,088 86 .72 ±0.34 0.55 ±0.00 –STE 1,024 52 .88 ±3.39 0.73 ±0.02 –8,192 79 .12 ±1.39 0.61 ±0.05 –25,088 83 .79 ±1.13 0.55 ±0.00 –
+> Real-valued neural networks
+> MESU 1,024 80.82 ±0.94 0.90 ±0.01 0.99 ±0.00
+> 8,192 87 .01 ±0.69 1.00 ±0.00 0.98 ±0.00
+> 25,088 87 .84 ±0.11 0.83 ±0.00 0.86 ±0.00
+> EWC O NLINE 1,024 75 .72 ±0.87 0.97 ±0.01 –8,192 87.18 ±0.58 1.00 ±0.00 –25,088 88.23 ±0.05 0.79 ±0.00 –SI 1,024 70 .75 ±0.57 0.95 ±0.03 –8,192 86 .44 ±0.64 1.00 ±0.00 –25,088 88 .04 ±0.03 0.83 ±0.00 –SGD 1,024 62 .31 ±1.80 0.50 ±0.00 –8,192 86 .27 ±0.51 1.00 ±0.00 –25,088 88 .04 ±0.03 0.83 ±0.00 –
+
+lines (SGD, SI), while remaining below real-valued MESU and EWC Online in this low-dimensional regime. As the fea-ture dimension increases, BiMU scales smoothly to 89 .19% 
+
+at 8,192 features and 90 .62% at 25 ,088 features, slightly above the real-valued baselines in this raw-feature setting. BiMU also remains consistently ahead of BayesBiNN, with a smaller gap than on 1000-tasks Permuted-MNIST, con-sistent with the shorter horizon (12 tasks) where Bernoulli posterior saturation is less pronounced. Uncertainty remains informative under compression: BiMU attains near-perfect epistemic OOD separability (AUC =1.00 ) at 1,024 and 8,192 features. At full dimensionality, epistemic AUC drops to 0.90 (a trend shared by Bayes-BiNN), indicating reduced uncertainty-based separability in this linear-head setting as capacity increases. When the extracted features are standardized using OpenLORIS statis-tics (offline control), real-valued methods regain their ad-vantage (Appendix J), highlighting BiMU’s robustness to unnormalized features in the streaming regime. 
+
+4.4. Animals: one-pass active learning under class imbalance 
+
+6Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+We first isolate the active learning component (without con-tinual distribution shift) in a strongly imbalanced image-classification stream built from a 20-class subset of the Ani-mals dataset (Jana, 2023) (Appendix B.5). We designate as 
+
+low-frequency the classes with fewer than 200 training im-ages and group the remaining classes as high-frequency . Im-ages are encoded with a frozen ImageNet-pretrained VGG19 feature extractor (25,088-dim), and we train only an online linear classifier in a single pass (batch size 1; no replay buffer). Active learning follows our one-pass threshold-ing protocol: for each incoming sample, we compute an uncertainty score and query its label (and perform backprop-agation) only if the score exceeds a fixed threshold; other-wise the example is skipped (no label request, no update). Therefore, the queried-label fraction directly measures both the annotation budget and the update budget . We compare random querying to predictive, aleatoric, epistemic uncer-tainty, and variation ratio (VR), averaging over five runs (with K = 10 MC predictors for Bayesian methods). We additionally report an oracle diagnostic, VR-True , which compares sampled predictions to the ground-truth label; it is not deployable because it assumes labels for all samples. Fig. 3 shows final test accuracy as a function of the queried-label fraction, evaluated on a balanced test set (50 images per class). Selective querying consistently improves over random querying at matched budgets, indicating that one-pass active learning is effective in this low-label regime. The horizontal line shows 100% update baseline under the same one-pass protocol (i.e., always querying/updating on every sample), reaching 86 .28% . VR is the most effective criterion, outperforming entropy scores at comparable bud-gets: it reaches 84 .46% accuracy while querying only 11% 
+
+of labels, and reaches 87 .12% at 18% labels, slightly ex-ceeding the 100% update baseline, consistent with updates being concentrated on informative and under-represented examples rather than redundant majority-class samples. Figs. 3(b,c) break down results by class frequency. Gains are driven primarily by low-frequency classes while high-frequency accuracy is largely preserved. At the 11% la-beling budget, VR improves low-frequency accuracy by 41 absolute points over random querying, yielding substantially better balanced performance under severe imbalance. Fig. 4 compares VR thresholding across Bayesian methods; for the deterministic STE baseline we use aleatoric uncer-tainty for querying. In this stationary setting, inherent class confusability makes entropy-based querying already useful, but posterior sampling further improves the accuracy-label trade-off when the disagreement signal is well calibrated. Among Bayesian baselines, MESU is sensitive to feature scaling on raw VGG19 features; per-dimension standard-ization substantially improves MESU and can be compet-itive over a narrow range of query budgets (Appendix I). 10 0 10 1 10 2              
+
+> 40
+> 60
+> 80
+> 100 Total
+> Aleatoric Epistemic Predictive Random VR VR-True Accuracy (%)
+> (b) (c) (a)
+> 10 010 110 2
+> 0
+> 25
+> 50
+> 75
+> 100 Low frequency
+> 10 010 110 2
+> 60
+> 80
+> 100 High frequency
+> Data used for training (%)
+
+Figure 3. Imbalanced Animals active learning (frozen VGG19 features). Accuracy vs. queried-label fraction: (a) overall, (b) high-frequency classes, (c) low-frequency classes. Horizontal line: 100% update baseline. Mean over five runs. 10 0 10 1 10 2
+
+> Data used for training (%)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 Accuracy (%)  STE MESU (Standardized) BiMU MESU BayesBiNN
+
+Figure 4. Variation ratio-based and STE aleatoric-based active learning on the Animals dataset. 
+
+7Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+In contrast, BiMU remains consistently strong without fea-ture standardization, indicating that its disagreement signal remains informative under the native VGG19 feature distri-bution, a practical advantage for edge-like streams where reliable normalization may be unavailable or drift over time. BayesBiNN performs markedly worse under VR query-ing, requiring substantially more labels to reach a given accuracy and often not exceeding random querying (Fig. 8, Appendix I). Empirically, its posterior-sample disagreement is less aligned with learning progress in this single-pass, imbalanced regime, causing VR to select less informative samples at matched budgets. 
+
+4.5. OpenLORIS-Object: active continual learning under shift and imbalance 
+
+We finally test whether BiMU’s one-pass active-learning gains persist under continual nuisance-factor shifts. We use OpenLORIS-Object under the sequential factors analysis protocol (12 tasks) with a frozen VGG19 feature extrac-tor and an online linear head, using a fixed random sub-set of 8,192 features from the original 25 ,088 -dimensional representation. To induce a long-tailed stream, we define low-frequency classes as those with fewer than 700 training examples and randomly remove 50-80% of their training images. This makes rare categories appear more sparsely over time and increases the share of redundant majority-class samples. Active learning follows the same one-pass rule as in Sec. 4.4: for each incoming sample, we compute an uncertainty score and query its label only if it exceeds a fixed threshold. Only queried samples trigger labeling and backpropagation updates, so the queried fraction directly measures both annotation and update budgets. Fig. 5 reports accuracy versus queried-label fraction (over-all, low frequency, and high frequency classes). With VR thresholding (computed with K = 10 posterior-sampled predictors unless stated otherwise), BiMU reaches 88 .70% 
+
+while updating on only 3.1% of the stream, corresponding to a 32 × reduction in labeled samples and gradient updates relative to the 100% update baseline ( 87 .76% , equivalent to training on the full stream in this one-pass setting). With a 4.0% update budget, accuracy increases to 90 .91% (a 
+
+25 × reduction). The improvement over the 100% update baseline is consistent with the imbalanced stream: skipping redundant majority-class samples implicitly reweights up-dates toward informative and under-represented examples. The gains in the low-label regime are indeed driven primar-ily by improved performance on low-frequency categories (Fig. 5c), while avoiding redundant updates on frequent classes (Fig. 5b), yielding higher overall accuracy than ran-dom querying at matched budgets. Appendix M further shows that VR queries concentrate shortly after task shifts 10 0 10 1 10 2             
+
+> 70
+> 80
+> 90
+> 100 Total
+> Aleatoric Epistemic Predictive Random VR VR-True
+> 10 010 110 2
+> 40
+> 60
+> 80
+> 100 Low frequency
+> 10 010 110 2
+> 80
+> 90
+> 100
+> High frequency
+> Data used for training (%) Accuracy (%)
+> (b) (c) (a)
+
+Figure 5. Active continual learning on OpenLORIS-Object under class imbalance (sequential factor analysis; frozen VGG19 fea-tures subsampled to 8,192 dims; online linear head). Accuracy vs. queried-label fraction for (a) overall accuracy, (b) frequent classes, and (c) rare classes. Horizontal line: 100% update baseline. Mean over five runs. 
+
+while remaining non-zero later in each task. 10 0 10 1 10 2
+
+> Data used for training (%)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 Accuracy (%)  STE MESU BiMU MESU (Standardized) BayesBiNN
+
+Figure 6. OpenLORIS-Object active continual learning (8,192 frozen VGG19 features): accuracy vs. queried-label fraction for BiMU, MESU, and BayesBiNN (VR thresholding) and STE (aleatoric thresholding). Results averaged over five runs. 
+
+Fig. 6 compares VR thresholding across Bayesian methods at matched queried-label fractions. BiMU achieves higher accuracy than MESU and BayesBiNN, indicating that its posterior-sample disagreement remains more useful for one-pass querying under feature compression and continual shift. Appendix K provides additional details for other algorithms. Appendix L further shows that small K already recovers most of the label/update savings, supporting low-overhead deployment. Overall, BiMU enables effective active con-tinual learning without replay buffers and without requiring task-identity/boundary signals by sustaining informative epistemic uncertainty in a binary-weight model. 8Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## 5. Conclusion 
+
+We introduced BiMU, a Bayesian continual-learning rule for binary neural networks that prevents mean-field Bernoulli posteriors from saturating while preserving informative epis-temic uncertainty on long, non-stationary streams. Starting from a bounded-memory Bayesian learning-and-forgetting objective, BiMU yields a fully online update in the natural parameters that combines a data-driven term with controlled relaxation toward the prior and a bounded, uncertainty-dependent (metaplastic) step size. This sustains plasticity without replay buffers and without requiring task-identity or task-boundary signals. Empirically, BiMU maintains long-horizon adaptation where existing binary baselines lose plasticity. On 1000-tasks Permuted-MNIST, it achieves high final accuracy and near-perfect OOD detection, while BayesBiNN, Synaptic Metaplasticity, and STE degrade substantially as training proceeds. On OpenLORIS-Object with frozen VGG19 fea-tures and aggressive dimensionality reduction, BiMU re-mains competitive in the streaming setting while retaining a compact binary posterior and useful uncertainty estimates. Preserving epistemic uncertainty is also operationally bene-ficial: BiMU enables fully online active continual learning via one-pass Monte Carlo disagreement (variation ratio) thresholding. On OpenLORIS-Object under class imbal-ance, BiMU reaches 88 .70% accuracy while updating on only 3.1% of samples (a 32 × reduction in labels and gra-dient updates), with gains driven primarily by improved performance on under-represented classes while avoiding redundant updates on frequent ones. Appendix N further shows that the fixed threshold τ can be replaced by a fully online budget-driven controller that tar-gets a desired query/update fraction. Appendix P quantifies the inference-update trade-off on an STM32 microcontroller unit and shows that active BiMU reduces expected compute despite the extra Monte Carlo forward passes. BiMU makes uncertainty evaluation practical on energy-constrained edge platforms because its Monte Carlo infer-ence is intrinsically cheaper than in real-valued Bayesian networks. Sampling Bernoulli synapses can be imple-mented with simple bit-level draws and comparisons, and each sampled forward pass leverages binary arithmetic (e.g., XNOR/popcount or bitwise accumulations) rather than real-valued multiplications, with substantially reduced data movement due to compact weight representations. This shifts the cost profile of uncertainty estimation toward oper-ations that are well matched to microcontroller-class deploy-ments (Cerutti et al., 2020) and becomes even more com-pelling on dedicated hardware (Conti et al., 2018), where emerging devices and circuits can provide stochastic sam-pling primitives at very low overhead (Querlioz & Vianello, 2025). When an update is required, however, backpropa-gation is still comparatively expensive; BiMU’s one-pass querying mitigates this by triggering learning only on sam-ples that are predicted to be informative under the current posterior. This makes the average training-time budget com-patible with always-on operation, while retaining calibrated uncertainty for both OOD monitoring and selective supervi-sion. Overall, BiMU shows that binary Bayesian models can combine edge-efficient inference with sustained plasticity and actionable uncertainty, providing a practical route to reliable, data-efficient lifelong learning under tight memory, compute, and annotation budgets. 
+
+## Code availability 
+
+The code to reproduce our experiments is available at https://github.com/kellian-cottart/ active-continual-learning-bayesianbinn .
+
+## Acknowledgments 
+
+This work was supported by the Horizon Europe program (EIC Pathfinder METASPIN, grant number 326101098651). It also benefited from a France 2030 government grant man-aged by the French National Research Agency (ANR-23-PEIA-0002). The authors would like to thank Emre Neftci for discussion and invaluable feedback. 
+
+## Impact Statement 
+
+BiMU targets continual learning on resource-constrained devices by enabling fully online adaptation with binary Bayesian neural networks while preserving epistemic un-certainty over long, non-stationary streams. This can re-duce energy use, labeling effort, and unnecessary gradient updates, and it can improve reliability through uncertainty-aware monitoring (e.g., selective supervision and out-of-distribution detection) in applications such as robotics and embedded vision. At the same time, continual adaptation can amplify biases present in streaming and imbalanced data, and uncertainty estimates may become unreliable under unmodeled shifts or adversarial conditions. Practical deployments should in-clude privacy and data-governance protections, ongoing evaluation across subpopulations, and human oversight, especially in safety-critical settings. Our contribution is methodological; its societal impact depends on how the ap-proach is integrated, validated, and governed in downstream systems. 9Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## References 
+
+Akiba, T., Sano, S., Yanase, T., Ohta, T., and Koyama, M. Optuna: A next-generation hyperparameter optimization framework. In Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining , pp. 2623–2631, 2019. Ash, J., Goel, S., Krishnamurthy, A., and Kakade, S. Gone fishing: Neural active learning with fisher embeddings. 
+
+Advances in Neural Information Processing Systems , 34: 8927–8939, 2021. Blundell, C., Cornebise, J., Kavukcuoglu, K., and Wierstra, D. Weight uncertainty in neural network. In International conference on machine learning , pp. 1613–1622. PMLR, 2015. Bonnet, D., Cottart, K., Hirtzlin, T., Januel, T., Dalgaty, T., Vianello, E., and Querlioz, D. Bayesian continual learning and forgetting in neural networks. Nature Com-munications , 16(1):9614, 2025. Broderick, T., Boyd, N., Wibisono, A., Wilson, A. C., and Jordan, M. I. Streaming variational bayes. Advances in neural information processing systems , 26, 2013. Cerutti, G., Andri, R., Cavigelli, L., Farella, E., Magno, M., and Benini, L. Sound event detection with binary neural networks on tightly power-constrained iot devices. In 
+
+Proceedings of the ACM/IEEE International Symposium on Low Power Electronics and Design , pp. 19–24, 2020. Conti, F., Schiavone, P. D., and Benini, L. Xnor neural en-gine: A hardware accelerator ip for 21.6-fj/op binary neu-ral network inference. IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems , 37(11): 2940–2951, 2018. Das, A. M., Bhatt, G., Bhalerao, M. M., Gao, V. R., Yang, R., and Bilmes, J. Continual active learning, 2023. URL https://openreview.net/forum? id=GC5MsCxrU-.Deng, J., Dong, W., Socher, R., Li, L.-J., Li, K., and Fei-Fei, L. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition , pp. 248–255. Ieee, 2009. Freeman, L. C. Elementary applied statistics: for students in behavioral science. Open Journal of Statistics , 14(3), 1965. Gal, Y., Islam, R., and Ghahramani, Z. Deep bayesian active learning with image data. In International conference on machine learning , pp. 1183–1192. PMLR, 2017. Graves, A. Practical variational inference for neural net-works. Advances in neural information processing sys-tems , 24, 2011. Houlsby, N., Husz ´ar, F., Ghahramani, Z., and Lengyel, M. Bayesian active learning for classification and preference learning. arXiv preprint arXiv:1112.5745 , 2011. Hubara, I., Courbariaux, M., Soudry, D., El-Yaniv, R., and Bengio, Y. Binarized neural networks. Advances in neural information processing systems , 29, 2016. Jana, A. Animals detection images dataset, 2023. URL https://www.kaggle. com/datasets/antoreepjana/ animals-detection-images-dataset .Jordan, M. I., Ghahramani, Z., Jaakkola, T. S., and Saul, L. K. An introduction to variational methods for graphical models. Machine learning , 37(2):183–233, 1999. Kendall, A. and Gal, Y. What uncertainties do we need in bayesian deep learning for computer vision? Advances in neural information processing systems , 30, 2017. Khan, M. E. and Rue, H. The bayesian learning rule. Journal of Machine Learning Research , 24(281):1–46, 2023. Khan, S., Hayat, M., Zamir, S. W., Shen, J., and Shao, L. Striking the right balance with uncertainty. In Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 103–112, 2019. Kingma, D. P., Salimans, T., and Welling, M. Variational dropout and the local reparameterization trick. Advances in neural information processing systems , 28, 2015. Kirkpatrick, J., Pascanu, R., Rabinowitz, N., Veness, J., Des-jardins, G., Rusu, A. A., Milan, K., Quan, J., Ramalho, T., Grabska-Barwinska, A., et al. Overcoming catastrophic forgetting in neural networks. Proceedings of the national academy of sciences , 114(13):3521–3526, 2017. Laborieux, A., Ernoult, M., Hirtzlin, T., and Querlioz, D. Synaptic metaplasticity in binarized neural networks. Na-ture communications , 12(1):2549, 2021. Lan, Q. and Mahmood, A. R. Elephant neural networks: Born to be a continual learner, 2024. URL https:// openreview.net/forum?id=kxe0hQ5mxp .Liu, D., Zhang, P., and Zheng, Q. An efficient online ac-tive learning algorithm for binary classification. Pattern Recognition Letters , 68:22–26, 2015. Lopez-Paz, D. and Ranzato, M. Gradient episodic memory for continual learning. Advances in neural information processing systems , 30, 2017. 10 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+MacKay, D. J. Bayesian methods for backpropagation net-works. In Models of neural networks III: association, gen-eralization, and representation , pp. 211–254. Springer, 1996. Maddison, C., Mnih, A., and Teh, Y. The concrete dis-tribution: A continuous relaxation of discrete random variables. In Proceedings of the international conference on learning Representations . International Conference on Learning Representations, 2017. Meng, X., Bachmann, R., and Khan, M. E. Training binary neural networks using the bayesian learning rule. In 
+
+International conference on machine learning , pp. 6852– 6861. PMLR, 2020. Ngartera, L., Issaka, M. A., and Nadarajah, S. Application of bayesian neural networks in healthcare: three case studies. Machine Learning and Knowledge Extraction , 6 (4):2639–2658, 2024. Nguyen, C. V., Li, Y., Bui, T. D., and Turner, R. E. Variational continual learning. In International Confer-ence on Learning Representations , 2018. URL https: //openreview.net/forum?id=BkQqq0gRb .Park, J., Park, D., and Lee, J. G. Active learning for contin-ual learning: Keeping the past alive in the present. In 13th International Conference on Learning Representations, ICLR 2025 , pp. 58771–58790. International Conference on Learning Representations, ICLR, 2025. Pascanu, R. and Bengio, Y. Revisiting natural gradient for deep networks. OpenReview , 2014. URL https:// openreview.net/forum?id=vz8AumxkAfz5U .Perkonigg, M., Hofmanninger, J., and Langs, G. Continual active learning for efficient adaptation of machine learn-ing models to changing image acquisition. In Interna-tional Conference on Information Processing in Medical Imaging , pp. 649–660. Springer, 2021. Querlioz, D. and Vianello, E. Bayesian electronics for trust-worthy artificial intelligence. Nature Reviews Electrical Engineering , pp. 1–10, 2025. Rajendran, P. T., Espinoza, H., Delaborde, A., and Mraidha, C. Stream-based active learning with adaptive uncertainty and diversity thresholds. In 2023 IEEE 33rd International Workshop on Machine Learning for Signal Processing (MLSP) , pp. 1–6. IEEE, 2023. Schwarz, J., Czarnecki, W., Luketina, J., Grabska-Barwinska, A., Teh, Y. W., Pascanu, R., and Hadsell, R. Progress & compress: A scalable framework for con-tinual learning. In International conference on machine learning , pp. 4528–4537. PMLR, 2018. Shannon, C. E. A mathematical theory of communication. 
+
+The Bell system technical journal , 27(3):379–423, 1948. She, Q., Feng, F., Hao, X., Yang, Q., Lan, C., Lomonaco, V., Shi, X., Wang, Z., Guo, Y., Zhang, Y., et al. Openloris-object: A robotic vision dataset and benchmark for life-long deep learning. In 2020 IEEE international confer-ence on robotics and automation (ICRA) , pp. 4767–4773. IEEE, 2020. Simonyan, K. and Zisserman, A. Very deep convolu-tional networks for large-scale image recognition. arXiv preprint arXiv:1409.1556 , 2014. Ulyanov, D., Vedaldi, A., and Lempitsky, V. Instance nor-malization: The missing ingredient for fast stylization. 
+
+arXiv preprint arXiv:1607.08022 , 2016. Vu, T.-T., Khadivi, S., Ghorbanali, M., Phung, D., and Haffari, G. Active continual learning: On balancing knowledge retention and learnability, 2024. URL https: //openreview.net/forum?id=he4CPgU44D .Xiao, H., Rasul, K., and Vollgraf, R. Fashion-mnist: a novel image dataset for benchmarking machine learning algorithms. arXiv preprint arXiv:1708.07747 , 2017. Zenke, F., Poole, B., and Ganguli, S. Continual learning through synaptic intelligence. In International conference on machine learning , pp. 3987–3995. Pmlr, 2017. Zeno, C., Golan, I., Hoffer, E., and Soudry, D. Task-agnostic continual learning using online variational bayes with fixed-point updates. Neural Computation , 33(11):3139– 3177, 2021. 11 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## A. Mathematical derivations 
+
+Proposition A.1 (Exponential family product of Bernoulli) . The joint distribution of ω can be written in exponential form as 
+
+q(ω|λ) = 
+
+> s
+
+Y
+
+> i=1
+
+exp  λ(i)ω(i)
+
+2 cosh  λ(i) , (9) 
+
+where the natural parameters λ(i) ∈ R are related to the Bernoulli parameters by 
+
+p(i) = σ
+
+
+
+2λ(i)
+
+. (10) 
+
+Proof. We begin by using a change of variable that maps the standard Bernoulli support {0, 1} to {− 1, 1}. Let v(i) ∼
+
+Bernoulli (p(i)) with v(i) ∈ { 0, 1}, and define 
+
+ω(i) = 2 v(i) − 1. (11) This transformation ensures that ω(i) ∈ {− 1, 1} and preserves the Bernoulli probability, with P(ω(i) = 1) = p(i) and 
+
+P(ω(i) = −1) = 1 − p(i). For a single synapse ω(i) ∈ {− 1, 1}, the Bernoulli probability mass function can be written as 
+
+q(ω(i)) =  p(i) 1+ ω(i)2  1 − p(i) 1−ω(i)2 . (12) Taking the logarithm yields 
+
+log q(ω(i)) = 12
+
+h
+
+(1 + ω(i)) log p(i) + (1 − ω(i)) log(1 − p(i))
+
+i
+
+(13) 
+
+= 12
+
+h
+
+log  p(i)(1 − p(i)) + ω(i) log 
+
+ p(i)
+
+1 − p(i)
+
+ i
+
+. (14) Defining the natural parameter 
+
+λ(i) = 12 log 
+
+ p(i)
+
+1 − p(i)
+
+
+
+, (15) The Bernoulli parameter p(i) can be recovered by inverting the definition of the natural parameter: 
+
+λ(i) = 12 log 
+
+ p(i)
+
+1 − p(i)
+
+
+
+⇐⇒ p(i)
+
+1 − p(i) = e2λ(i)
+
+(16) 
+
+⇐⇒ p(i) = e2λ(i)
+
+1 + e2λ(i) = σ
+
+
+
+2λ(i)
+
+, (17) where σ(·) denotes the logistic sigmoid function. The distribution is rewritten as 
+
+q(ω(i)) = exp 
+
+
+
+λ(i)ω(i) + 12 log  p(i)(1 − p(i))
+
+. (18) Using the identity 
+
+p(i)(1 − p(i)) = 1
+
+ 2 cosh( λ(i))2 , (19) the remaining log term simplifies to 
+
+exp 
+
+ 12 log  p(i)(1 − p(i))
+
+= 12 cosh( λ(i)) . (20) Hence, for each variable, 
+
+q(ω(i)) = exp  λ(i)ω(i)
+
+2 cosh( λ(i)) . (21) 12 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Finally, independence of the synapses implies that the joint distribution factorizes as 
+
+q(ω|λ) = 
+
+> s
+
+Y
+
+> i=1
+
+q(ω(i)) = 
+
+> s
+
+Y
+
+> i=1
+
+exp  λ(i)ω(i)
+
+2 cosh( λ(i)) , (22) which completes the proof. 
+
+Proposition A.2 (Variational free-energy decomposition under controlled forgetting) . Let p(ω) be the prior distribution over binary synaptic variables ω, and let {D t}t> 0 denote a stream of data batches. Assume that all past batches 
+
+Dt−N −1, . . . , Dt−1 have equal marginal likelihood. Then, approximating the posterior p(ω|D t−N :t) with a variational distribution q(ω|λ), the variational free energy at time t decomposes as 
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N :t) ≈
+
+
+
+1 − 1
+
+N
+
+
+
+DKL 
+
+ q(ω|λ) q(ω|λt−1) + 1
+
+N DKL 
+
+ q(ω|λ) p(ω) + L(λ, Dt), (23) 
+
+where 
+
+L(λ, Dt) = − Eq(ω|λ)[log p(Dt|ω)] (24) 
+
+is the negative log-likelihood of the current batch. Proof. By Bayes’ rule with controlled forgetting, the posterior over the window Dt−N :t satisfies 
+
+p(ω|D t−N :t) ∝ p(Dt|ω) p(ω|D t−N −1: t−1)
+
+ p(ω)
+
+p(ω|D t−N −1: t−1)
+
+ 1
+
+> N
+
+, (25) where the equal-marginal-likelihood assumption implies 
+
+p(Dt−N −1: t−1|ω) = 
+
+> t−1
+
+Y 
+
+> i=t−N−1
+
+p(Di|ω) = p(Dt−N −1|ω)N . (26) We now consider the variational objective 
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N :t) = Eq [log q(ω|λ)] − Eq [log p(ω|D t−N :t)] . (27) Substituting the expression of the posterior and expanding the logarithm yields 
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N :t) = Eq [log q(ω|λ)] − Eq [log p(ω|D t−N −1: t−1)] 
+
+− 1
+
+N Eq
+
+
+
+log p(ω)
+
+p(ω|D t−N −1: t−1)
+
+
+
+− Eq [log p(Dt|ω)] . (28) We multiply and divide by the variational distribution 
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N :t) = Eq [log q(ω|λ)] − Eq [log p(ω|D t−N −1: t−1)] 
+
+− Eq
+
+"
+
+log 
+
+ p(ω)
+
+p(ω|D t−N −1: t−1)
+
+q(ω|λ)
+
+q(ω|λ)
+
+ 1
+
+> N
+
+!# 
+
+− Eq [log p(Dt|ω)] . (29) Rearranging terms, we obtain 
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N :t) =
+
+
+
+1 − 1
+
+N
+
+
+
+DKL 
+
+ q(ω|λ) p(ω|D t−N −1: t−1)
+
++ 1
+
+N DKL 
+
+ q(ω|λ) p(ω) − Eq [log p(Dt|ω)] . (30) Finally, since the true posterior p(ω|D t−N −1: t−1) is intractable, we approximate it by the previous variational solution 
+
+q(ω|λt−1), assuming it minimized the divergence at the previous time step. Defining 
+
+L(λ, Dt) = − Eq(ω|λ)[log p(Dt|ω)] , (31) the stated decomposition follows. 13 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Proposition A.3 (Closed-form KL divergence for Bernoulli variables) . Let q(ω|θ) and q(ω|ξ) be Bernoulli distributions in exponential-family form with support X = {− 1, 1}, ω ∈ X :
+
+q(ω|θ) = exp( θ ω )2 cosh( θ) , q(ω|ξ) = exp( ξ ω )2 cosh( ξ) . (32) 
+
+The KL divergence between these two distributions admits the closed-form expression: 
+
+DKL 
+
+ q(ω|θ) ∥ q(ω|ξ) = Eq(ω|θ)
+
+"
+
+log q(ω|θ)
+
+q(ω|ξ)
+
+#
+
+= ( θ − ξ) tanh( θ) − log cosh( θ)cosh( ξ) . (33) 
+
+Proof. By definition, the KL divergence is given by 
+
+DKL 
+
+ q(ω|θ) ∥ q(ω|ξ) := X
+
+> X
+
+q(ω|θ) log q(ω|θ)
+
+q(ω|ξ) . (34) Substituting the exponential-family forms: 
+
+q(ω|θ) log q(ω|θ)
+
+q(ω|ξ) = exp( θ ω )2 cosh( θ) log exp( θ ω )/2 cosh( θ)exp( ξ ω )/2 cosh( ξ)= exp( θ ω )2 cosh( θ)
+
+h
+
+(θ − ξ) ω − log cosh( θ)cosh( ξ)
+
+i
+
+. (35) Summing over X :
+
+DKL 
+
+ q(ω|θ) ∥ q(ω|ξ) = exp( θ)2 cosh( θ)
+
+h
+
+(θ − ξ) − log cosh( θ)cosh( ξ)
+
+i
+
++ exp( −θ)2 cosh( θ)
+
+h
+
+− (θ − ξ) − log cosh( θ)cosh( ξ)
+
+i
+
+= ( θ − ξ) exp( θ) − exp( −θ)2 cosh( θ) − log cosh( θ)cosh( ξ)= ( θ − ξ) tanh( θ) − log cosh( θ)cosh( ξ) . (36) This completes the derivation of the closed-form. 
+
+Theorem A.4 (Memory-limited second-order asymmetric update for binary synapses) . Consider a Bayesian neural network with synaptic weights ω = ( ω(1) , . . . , ω (s)) ∈ X s, with X = {− 1, 1} Assume a mean-field Bernoulli variational approximation q(ω|λ) = Qsi=1 q(ω(i)|λ(i)), where each synapse follows the exponential-family form 
+
+q(ω(i)|λ(i)) = exp  λ(i)ω(i)
+
+2 cosh( λ(i)) . (37) 
+
+Let Dt denote the current batch of data and L(λ, Dt) = −Eq(ω|λ)[log p(Dt|ω)] the negative log-likelihood. Assume a memory window of size N and a prior parameter λ(i)
+
+> prior
+
+.The second-order expansion of the variational free energy yields the following asymmetric optimal update rule: 
+
+λ(i) 
+
+> t
+
+= λ(i) 
+
+> t−1
+
+−
+
+∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
++ λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+N cosh 2(λ(i)
+
+> t−1
+
+)1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
++ ∂2L(λ, Dt)
+
+∂λ (i)2 λ=λt−1
+
+. (38) 
+
+This update corresponds to a memory-modulated second-order step with an asymmetric, state-dependent learning rate. 
+
+14 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Proof. We derive the optimal update for the variational parameter λ(i) by minimizing the variational free energy associated with synapse i under the memory-limited Bayesian continual learning objective. 
+
+Variational objective. Following the derivation of the memory-limited posterior in Prop. A.2, the variational free energy for a single synapse i is given by 
+
+F(λ(i), Dt) = 
+
+
+
+1 − 1
+
+N
+
+
+
+DKL 
+
+
+
+q(ω(i)|λ(i)) ∥ q(ω(i)|λ(i)
+
+> t−1
+
+)
+
+
+
++ 1
+
+N DKL 
+
+
+
+q(ω(i)|λ(i)) ∥ p(ω(i))
+
+
+
++ L(λ, Dt), (39) where L(λ, Dt) = −Eq(ω|λ)[log p(Dt|ω)] is the negative log-likelihood. 
+
+Exponential-family form. Following Prop. A.1, each synapse follows a Bernoulli distribution over X , written in exponential-family form as 
+
+q(ω(i)|λ(i)) = exp( λ(i)ω(i))2 cosh( λ(i)) . (40) The prior p(ω(i)) is of the same form with natural parameter λ(i)
+
+> prior
+
+.
+
+Closed-form KL divergence. Prop. A.3 states that for any Bernoulli distributions over ω ∈ X in exponential-family form 
+
+q(ω|θ) and q(ω|ξ):
+
+q(ω|θ) = exp( θ ω )2 cosh( θ) , q(ω|ξ) = exp( ξ ω )2 cosh( ξ) , (41) the KL divergence between these two distributions admits the closed-form expression: 
+
+DKL 
+
+ q(ω|θ) ∥ q(ω|ξ) = Eq(ω|θ)
+
+"
+
+log q(ω|θ)
+
+q(ω|ξ)
+
+#
+
+= ( θ − ξ) tanh( θ) − log cosh( θ)cosh( ξ) . (42) 
+
+Closed-form free-energy. Substituting the closed-form KL divergence of Bernoulli distributions from (Eq. (42) ) into the single-synapse variational free energy (39), we obtain: 
+
+F(λ(i), Dt) = 
+
+
+
+1 − 1
+
+N
+
+ h
+
+(λ(i) − λ(i)
+
+> t−1
+
+) tanh( λ(i)) − log cosh( λ(i))cosh( λ(i)
+
+> t−1
+
+)
+
+i
+
++ 1
+
+N
+
+h
+
+(λ(i) − λ(i)
+
+> prior
+
+) tanh( λ(i)) − log cosh( λ(i))cosh( λ(i)
+
+> prior
+
+)
+
+i
+
++ L(λ, Dt). (43) We reorganize the terms to isolate contributions from previous parameter values λ(i) 
+
+> t−1
+
+and the prior λ(i)
+
+> prior
+
+. First, note that 
+
+(λ(i) − λ(i)
+
+> prior
+
+) = ( λ(i) − λ(i)
+
+> t−1
+
+) + ( λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+),
+
+so that 
+
+1
+
+N (λ(i) − λ(i)
+
+> prior
+
+) tanh( λ(i)) = 1
+
+N (λ(i) − λ(i)
+
+> t−1
+
+) tanh( λ(i)) + 1
+
+N (λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+) tanh( λ(i)). (44) Similarly, the logarithmic term can be split: 
+
+− 1
+
+N log cosh( λ(i))cosh( λ(i)
+
+> prior
+
+) = − 1
+
+N log cosh( λ(i))cosh( λ(i)
+
+> t−1
+
+) − 1
+
+N log cosh( λ(i)
+
+> t−1
+
+)cosh( λ(i)
+
+> prior
+
+) . (45) 15 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Combining these expansions with the first KL term weighted by 1 − 1/N , we factor the contributions of (λ(i) −
+
+λ(i)
+
+> t−1
+
+) tanh( λ(i)) and − log(cosh( λ(i))/ cosh( λ(i)
+
+> t−1
+
+)) :
+
+F(λ(i), Dt) = ( λ(i) − λ(i)
+
+> t−1
+
+) tanh( λ(i)) − log cosh( λ(i))cosh( λ(i)
+
+> t−1
+
+)+ 1
+
+N
+
+h
+
+(λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+) tanh( λ(i)) − log cosh( λ(i)
+
+> t−1
+
+)cosh( λ(i)
+
+> prior
+
+)
+
+i
+
++ L(λ, Dt). (46) 
+
+First-order optimality condition. Differentiating (46) with respect to λ(i) yields 
+
+∂F
+
+∂λ (i) = 1cosh 2(λ(i))
+
+"
+
+(λ(i) − λ(i)
+
+> t−1
+
+) + λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+N
+
+#
+
++ ∂L(λ, Dt)
+
+∂λ (i) . (47) The optimal update λ(i) 
+
+> t
+
+satisfies 
+
+∂F
+
+∂λ (i) = 0 ⇐⇒ λ(i) − λ(i) 
+
+> t−1
+
+= − cosh 2(λ(i)) ∂L(λ, Dt)
+
+∂λ (i) − λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+N (48) 
+
+Second-order expansion. To retrieve terms in λ(i)
+
+> t−1
+
+, we apply a second-order Taylor expansion around λ(i) 
+
+> t−1
+
+for 
+
+cosh 2(λ(i)) ∂L(λ,Dt) 
+
+> ∂λ (i)
+
+, with L twice differentiable, and cosh 2(λ(i)) differentiable. 
+
+cosh 2(λ(i) 
+
+> t
+
+) ∂L(λ, Dt)
+
+∂λ (i) ≈ cosh 2(λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
++ ( λ(i) 
+
+> t
+
+− λ(i)
+
+> t−1
+
+)
+
+"
+
+cosh 2(λ(i)
+
+> t−1
+
+) ∂2L(λ, Dt)
+
+∂(λ(i))2 λ=λt−1
+
++ 2 sinh( λ(i)
+
+> t−1
+
+) cosh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂(λ(i)) λ=λt−1
+
+#
+
+(49) 
+
+Solving for the update. 
+
+Using the identity tanh( x) = sinh( x)/ cosh( x), substituting (49) into the stationary condition (48) and collecting terms linear in ∆λ(i) = λ(i) 
+
+> t
+
+− λ(i) 
+
+> t−1
+
+yields 
+
+λ(i) 
+
+> t
+
+= λ(i) 
+
+> t−1
+
+−
+
+∂L(λ, Dt)
+
+∂λ (i) λ=λt−1 + λ(i) 
+
+> t−1
+
+− λ(i)
+
+> prior
+
+N cosh 2(λ(i)
+
+> t−1
+
+)1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1 + ∂2L(λ, Dt)
+
+∂(λ(i))2 λ=λt−1
+
+. (50) This concludes the proof. 
+
+Proposition A.5 (Bounded Learning Rate with a Curvature Surrogate) . Consider the binary Bayesian update rule with learning rate 
+
+η(λ(i)
+
+> t−1
+
+) = 1 
+
+> 1cosh 2(λ(i)
+> t−1)
+
++ 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ,Dt)  
+
+> ∂λ (i)λ=λt−1
+
++ ∂2L(λ,Dt) 
+
+> ∂(λ(i))2λ=λt−1
+
+. (51) 
+
+In large-scale neural networks, the exact evaluation of the second derivative term ∂2L/∂ (λ(i))2 is computationally prohibitive. Let f : R → R be a surrogate curvature function that replaces this second derivative in the denominator. 
+
+16 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Fix a maximum learning rate αmax > 0. If f satisfies 
+
+f (λ(i)
+
+> t−1
+
+) ≥ 1
+
+αmax 
+
+− 1cosh 2(λ(i)
+
+> t−1
+
+) − 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+, (52) 
+
+then the resulting learning rate satisfies 
+
+0 < η (λ(i)
+
+> t−1
+
+) ≤ αmax ∀λ(i) 
+
+> t−1
+
+∈ R,
+
+and therefore defines a valid bounded gradient descent step. In particular, the choice 
+
+f (λ(i)
+
+> t−1
+
+) = 1
+
+αmax 
+
++ 2 ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+(53) 
+
+is a computationally efficient surrogate that guarantees positivity and boundedness of the learning rate without requiring second-order derivatives. Proof. Fix αmax > 0. By definition of the update rule, replacing the second derivative with a surrogate curvature function f
+
+yields 
+
+1
+
+η(λ(i)
+
+> t−1
+
+) = 1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
++ f (λ(i)
+
+> t−1
+
+). (54) The constraint 0 < η (λ(i)
+
+> t−1
+
+) ≤ αmax is equivalent to requiring 
+
+1
+
+η(λ(i)
+
+> t−1
+
+) ≥ 1
+
+αmax 
+
+. (55) Thus, a sufficient condition is 
+
+1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
++ f (λ(i)
+
+> t−1
+
+) ≥ 1
+
+αmax 
+
+. (56) We now derive a uniform lower bound for the terms that do not involve f . Since 1/ cosh 2(x) ≥ 0 and | tanh( x)| ≤ 1 for all 
+
+x ∈ R, we obtain 
+
+2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+≥ − 2 ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+. (57) Consequently, 
+
+1cosh 2(λ(i)
+
+> t−1
+
+) + 2 tanh( λ(i)
+
+> t−1
+
+) ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+≥ − 2 ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+. (58) Substituting (58) into (56), it suffices to define the surrogate curvature term as 
+
+f (λ(i)
+
+> t−1
+
+) ≥ 1
+
+αmax 
+
++ 2 ∂L(λ, Dt)
+
+∂λ (i) λ=λt−1
+
+. (59) This choice of f depends only on first-order information and can be evaluated efficiently even in large-scale neural networks. With this surrogate, the denominator in (54) is strictly positive and uniformly lower bounded by 1/α max for all λ(i) 
+
+> t−1
+
+∈ R,ensuring 0 < η (λ(i)
+
+> t−1
+
+) ≤ αmax .
+
+17 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## B. Main results: Experiments methodology 
+
+B.1. Implemented Objective 
+
+In practice, we optimize a scaled bounded-memory variational objective for BiMU, which explicitly balances data fitting, stability to previous parameters, and forgetting toward the prior. Given an online batch Dt, we minimize 
+
+St(λ) = βL L(λ, Dt) + βKL 
+
+ 
+
+1 − 1
+
+N
+
+
+
+KL( q(ω | λ) ∥ q(ω | λt−1)) + 1
+
+N KL( q(ω | λ) ∥ p(ω)) 
+
+
+
+, (60) where λ denotes the Bernoulli natural parameters, L(λ, Dt) = −Eq(ω|λ)[log p(Dt | ω)] is the negative log-likelihood, p(ω)
+
+is the prior, N controls the effective memory window, likelihood coefficient βL controls the scale of the asymmetry, and KL coefficient βKL allows for regularization strength. The second-order approximation of the optimal update of St yields the metaplastic learning rate 
+
+η(λt−1) = 1
+
+βKL 
+
+ 1 − tanh 2(λt−1) + 2 βL tanh( λt−1) g + 2 βL|g| + α−1max 
+
+, (61) where g = ∂L(λ,Dt)/∂λ|λ=λt−1 and αmax bounds the maximum step size. We prefer 1 − tanh 2(λt−1) to cosh −2(λt−1),which is mathematically equivalent but allows factoring the computation of tanh( λt−1). The resulting online update of the natural parameters is 
+
+λt = λt−1 − η(λt−1) ⊙
+
+
+
+γ β L g + βKL 
+
+N (λt−1 − λprior )  1 − tanh 2(λt−1)
+
+, (62) where γ is an added learning rate scaling the gradient, and ⊙ denotes element-wise multiplication. This formulation is used in all experiments unless stated otherwise. 
+
+B.2. Hyperparameters tuning 
+
+Hyperparameter optimization (HPO) is performed using Optuna (Akiba et al., 2019), with 200 optimization trials per method. We define a task-dependent objective H, evaluated at each task, as 
+
+Ht = w1 · Acc 0 + w2 · Acc + w3 · Acc t, (63) where Acc 0 is the accuracy on the first task, Acc denotes the mean accuracy over all tasks learned so far, and Acc t is the accuracy on the current task. The objective H jointly captures initial-task retention, overall performance, and adaptability to the most recent task, with their relative importance controlled by weights (w1, w 2, w 3). Maximizing H therefore promotes balanced hyperparameter configurations that neither over-emphasize stability nor plasticity, preventing HPO from artificially amplifying catastrophic forgetting or catastrophic remembering in the different algorithms. 
+
+B.3. 1000-tasks Permuted MNIST Experimental setup. We evaluate all methods on the Permuted MNIST benchmark with 1000 sequential tasks, where each task applies a distinct random pixel permutation to the MNIST images, inducing continual distribution shifts. Training follows a fully online protocol: each sample is observed once and no replay is used. All approaches share a common continual learning setup. We use a compact MLP with a single hidden layer of 100 neurons, train for one epoch per task with batch size 1, and evaluate with batch size 100. Inputs are standardized. Monte Carlo sampling is used for Bayesian methods. BiMU and BayesBiNN employ 5 posterior samples for both inference and gradient estimation, while MESU uses 10 samples. Out-of-distribution detection is evaluated using Fashion-MNIST (Xiao et al., 2017) as OOD data. Performance is measured by ROC-AUC, computed over 1000 decision thresholds to discriminate in-distribution from OOD samples. 
+
+Hyperparameter optimization. 
+
+Hyperparameters are computed on 10 tasks of Permuted MNIST with different permutations as the ones presented in the main paper as validation. Hyperparameters are obtained by maximizing the hyperparameter tuning cost function H (see Appendix B.2). 18 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 3. Hyperparameter configurations for all evaluated methods on the 1000-tasks Permuted MNIST benchmark with 100 neurons.                                                                                         
+
+> METHOD ACTIVATION LEARNING RATE (S)ADDITIONAL PARAMETERS MC SAMPLES
+> Binary Neural Networks
+> BIMU REVERSE BINARY GATE γ= 4 .9αMAX = 0 .0023 ,βL= 161 .3,βKL = 3 .76 ,N= 700 5
+> BAYES BINN REVERSE BINARY GATE 0.77 PRIOR STRENGTH = 1 .25 ×10 −55
+> SYNAPTIC METAPLASTICITY SIGN 3.7×10 −5METAPLASTICITY = 7 .2,WEIGHT DECAY = 2 .9×10 −91STE (B ASELINE )SIGN 1×10 −4WEIGHT DECAY = 2 .2×10 −91
+> Real-Valued Neural Networks
+> MESU RELU αμ= 1 .6,ασ= 2 .1σPRIOR = 0 .3,N= 600 ,000 ,CLAMP GRAD = 0 .36 10
+> ONLINE EWC RELU 0.003 IMPORTANCE = 4 .1,DOWNWEIGHTING = 0 .71SYNAPTIC INTELLIGENCE RELU 0.003 COEFF .= 1 ×10 −4,DAMPING = 1 .01SGD (B ASELINE )RELU 9×10 −4–1
+
+B.4. OpenLORIS-Object Experimental setup. We evaluate all methods on the OpenLORIS-Object dataset (She et al., 2020) using the sequential factor analysis protocol. The benchmark comprises 12 sequential tasks defined by four nuisance factors (illumination, occlusion, pixel corruption, and clutter) each evaluated at three difficulty levels, covering 19 object classes. Learning follows a fully online continual setting, where each sample is processed once without replay. We adopt a frozen ImageNet-pretrained VGG19 (Deng et al., 2009; Simonyan & Zisserman, 2014) network as a feature extractor. Images are preprocessed using the standard VGG19 pipeline, and features are taken from the final convolutional block after removing the classifier, yielding 512×7×7 representations. To study adaptation under constrained capacity, we randomly subsample these features to 8,192 and 1,024 dimensions when specified. All methods share a unified continual learning configuration. A linear classifier is trained online with no hidden layers, for one epoch per task, using batch size 1 for training and batch size 4 for evaluation. No input normalization is applied. Bayesian methods (MESU, BiMU, and BayesBiNN) use 10 Monte Carlo samples for inference and gradient estimation. B.4.1. C ONTINUAL LEARNING 
+
+Additional experimental setup. 
+
+We evaluate all algorithms on 18 classes instead of 19. The ‘toy’ class is removed from the dataset. We evaluate out-of-distribution performance using images taken from the ‘toy’ class. The ROC-AUC is computed through 1000 threshold points to distinguish between in and out-of-distribution data. 
+
+Hyperparameter optimization. 
+
+Hyperparameters are computed on the validation set of OpenLORIS-Object. Hyperparameters are obtained by maximizing the hyperparameter tuning cost function H (see Appendix B.2). 19 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 4. Hyperparameter configurations for OpenLORIS-Object for 25,088, 8,192, and 1,024 input features. 
+
+METHOD LEARNING RATE (S) ADDITIONAL PARAMETERS MC SAMPLES 
+
+25,088 INPUT FEATURES 
+
+Binary Neural Networks 
+
+BIMU γ = 2 .16 αMAX = 0 .06 , βL = 164 .9, βKL = 0 .156 , N = 6900 10 BAYES BINN 0.011 PRIOR STRENGTH = 1 .3 × 10 −6 10 SYNAPTIC METAPLASTICITY 3 × 10 −4 METAPLASTICITY = 5 .6, WEIGHT DECAY = 3 .3 × 10 −12 1STE (B ASELINE ) 1 × 10 −4 – 1
+
+Real-Valued Neural Networks 
+
+MESU αμ = 71 .91 , ασ = 0 .015 σPRIOR = 0 .69 , N = 449 ,000 , CLAMP GRAD = 0 .61 10 ONLINE EWC 3.9 × 10 −4 IMPORTANCE = 0 .12 , DOWNWEIGHTING = 0 .03 1SYNAPTIC INTELLIGENCE 0.002 COEFF . = 7 × 10 −5 , DAMPING = 12 .6 1SGD (B ASELINE ) 0.002 – 1
+
+8,192 INPUT FEATURES 
+
+Binary Neural Networks 
+
+BIMU γ = 33 .2 αMAX = 0 .08 , βL = 187 .8, βKL = 1 .5, N = 6700 10 BAYES BINN 0.86 PRIOR STRENGTH = 1 × 10 −6 10 SYNAPTIC METAPLASTICITY 6 × 10 −4 METAPLASTICITY = 6 , WEIGHT DECAY = 6 .4 × 10 −12 1STE (B ASELINE ) 0.003 – 1
+
+Real-Valued Neural Networks 
+
+MESU αμ = 16 .34 , ασ = 0 .04 σPRIOR = 0 .9, N = 460 ,000 , CLAMP GRAD = 0 .9 10 ONLINE EWC 0.001 IMPORTANCE = 0 .069 , DOWNWEIGHTING = 0 .2 1SYNAPTIC INTELLIGENCE 0.001 COEFF . = 0 .025 , DAMPING = 0 .15 1SGD (B ASELINE ) 0.01 – 1
+
+1,024 INPUT FEATURES 
+
+Binary Neural Networks 
+
+BIMU γ = 0 .87 αMAX = 0 .092 , βL = 27 .26 , βKL = 1 .6, N = 8900 10 BAYES BINN 0.3 PRIOR STRENGTH = 6 .25 × 10 −6 10 SYNAPTIC METAPLASTICITY 6 × 10 −4 METAPLASTICITY = 2 .15 , WEIGHT DECAY = 5 .22 × 10 −6 1STE (B ASELINE ) 0.0035 – 1
+
+Real-Valued Neural Networks 
+
+MESU αμ = 2 .96 , ασ = 11 .27 σPRIOR = 0 .92 , N = 275 ,000 , CLAMP GRAD = 0 .34 10 ONLINE EWC 0.005 IMPORTANCE = 0 .028 , DOWNWEIGHTING = 0 .6 1SYNAPTIC INTELLIGENCE 0.006 COEFF . = 0 .003 , DAMPING = 0 .13 1SGD (B ASELINE ) 89 .5 – 1
+
+20 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+B.4.2. I MBALANCED ACTIVE CONTINUAL LEARNING 
+
+Additional experimental setup. 
+
+From the 19 classes of the OpenLORIS-Object dataset (She et al., 2020) under the sequential factor analysis protocol, we designate as low frequency the classes containing fewer than 700 training samples. To induce further class imbalance, we randomly remove between 50% and 80% of the training images from each low frequency class. For evaluation, the test set is balanced by subsampling all classes to the minimum class cardinality, enabling separate and fair assessment of performance on high and low frequency classes. In the main results, we perform an active learning ablation study, comparing epistemic, aleatoric, predictive, variation ratio (VR), and oracle VR-True strategies across a range of uncertainty thresholds and multiple algorithms. 
+
+Hyperparameter optimization. 
+
+Hyperparameter optimization is conducted without active learning, and the resulting performance is reported as the baseline. Hyperparameters are computed on the validation set of OpenLORIS-Object. They are obtained by maximizing the hyperparameter tuning cost function H (see Appendix B.2). 
+
+Table 5. Hyperparameters for algorithms on the OpenLORIS-Object dataset with an imbalanced training set with 8,192 input features.                                                        
+
+> METHOD LEARNING RATE (S)ADDITIONAL PARAMETERS MC SAMPLES
+> Binary Neural Networks
+> BIMU γ= 48 .7αMAX = 0 .065 ,βL= 16 .7,βKL = 0 .53 ,N= 1600 10 BAYES BINN 0.066 PRIOR STRENGTH = 4 .6×10 −510 STE 0.005 WEIGHT DECAY = 5 ×10 −71
+> Real-valued Neural Networks
+> MESU αμ= 60 .16 ,ασ= 2 .95 μPRIOR = 0 ,σPRIOR = 0 .36 ,N= 328 ,000 ,CLAMP GRAD = 0 .710 MESU ( STANDARDIZED )αμ= 20 .2,ασ= 0 .005 μPRIOR = 0 ,σPRIOR = 0 .61 ,N= 485 ,000 ,CLAMP GRAD = 0 .05 10
+
+B.5. Animals Detection: Imbalanced active learning 
+
+In the main text, we evaluate and compare active learning strategies on a subset of the Animals Detection dataset (Jana, 2023). From the 80 available classes, we select 20 classes exhibiting strong class imbalance (see Table 6). Classes with fewer than 200 training samples are considered low frequency. For fair evaluation, we construct a balanced test set by uniformly sampling 50 examples per class, allowing us to explicitly assess the impact of class imbalance on low and high frequency classes. Images are processed using a frozen VGG19 network (Simonyan & Zisserman, 2014) pretrained on ImageNet (Deng et al., 2009). Standard VGG19 preprocessing is applied, and features are extracted from the final convolutional block after removing the classifier, yielding 512×7×7 representations. All methods share a common experimental configuration. A linear classifier is trained online with no hidden layers, for a single epoch, using batch size 1 for training and batch size 50 for evaluation. No input normalization is applied. Bayesian methods (MESU, BiMU, and BayesBiNN) use 10 Monte Carlo samples for inference and gradient estimation. 21 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 6. Train/test splits for selected animal classes. Classes under 200 training examples are considered as being under-represented classes. 
+
+CLASS NUMBER OF TRAIN EXAMPLES NUMBER OF TEST EXAMPLES 
+
+BUTTERFLY 1997 50 LIZARD 1412 50 FISH 1404 50 MONKEY 1043 50 SPIDER 1015 50 EAGLE 849 50 FROG 617 50 JELLYFISH 501 50 PENGUIN 390 50 WHALE 291 50 ZEBRA 164 50 CROCODILE 136 50 LEOPARD 132 50 SHEEP 125 50 RACCOON 106 50 RAVEN 91 50 PANDA 62 50 LYNX 66 50 BULL 72 50 SCORPION 76 50 
+
+Hyperparameter optimization. 
+
+To decouple model selection from the active-learning mechanism, we tune all training hyperparameters once in a fully supervised streaming run (i.e., the model updates on every incoming example; no querying is applied during HPO). In the active-learning runs, we do not retune hyperparameters for any acquisition function or labeling budget: accuracy-budget curves are obtained solely by sweeping the uncertainty threshold τ with these fixed settings. This protocol ensures that differences between acquisition strategies reflect the querying criterion rather than strategy-specific hyperparameter tuning. 
+
+Table 7. Baseline hyperparameter configurations for the Animals Detection dataset with imbalanced classes.                                                    
+
+> METHOD LEARNING RATE (S)ADDITIONAL PARAMETERS MC SAMPLES
+> Binary Neural Networks
+> BIMU γ= 5 .8αMAX = 0 .054 ,βL= 14 ,βKL = 0 .16 ,N= 4600 10 BAYES BINN 10 PRIOR STRENGTH = 1 ×10 −610 STE 0.0001 WEIGHT DECAY = 2 .4×10 −91
+> Real-Valued Neural Networks
+> MESU αμ= 42 .4,ασ= 97 .7σPRIOR = 0 .56 ,N= 61 ,000 ,CLAMP GRAD = 0 .110 MESU ( STANDARDIZED )αμ= 65 .6,ασ= 4 .7σPRIOR = 0 .86 ,N= 397 ,000 ,CLAMP GRAD = 0 .41 10
+
+## C. Backward transfer clarifications 
+
+Backward transfer (BWT) (Lopez-Paz & Ranzato, 2017) is a standard metric for quantifying forgetting in continual learning. If at,i denotes the test accuracy on task i after training up to task t, a common definition is 
+
+BWT = 1
+
+T − 1 
+
+> T−1
+
+X
+
+> i=1
+
+(aT,i − ai,i ) . (64) BWT measures how much performance on previously learned tasks changes after subsequent training. A negative value indicates stronger forgetting, while a value close to zero is usually interpreted as better backward stability. Positive values indicate positive transfer. 22 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+The goal of our work is to both mitigate catastrophic forgetting of old tasks, as well as progressive loss of plasticity due to posterior saturation on new tasks. In Binary networks, the latent variable (or natural parameter) can grow in magnitude over a long stream, driving synapses to saturation. Once this happens, weights are nearly deterministic and sign changes become increasingly unlikely. BWT is conditional on the amount of task-specific performance that was acquired in the first place. A method that learns a task well and later forgets it will have a negative BWT. In contrast, a method that fails to learn, or that becomes rigid and remains uniformly poor, can obtain a near-zero BWT simply because there is little performance left to lose. Therefore, on very long non-stationary streams, BWT can confound two qualitatively different regimes: useful stability after learning, and apparent stability caused by loss of plasticity.                                    
+
+> Table 8. BWT on the 1000-tasks Permuted-MNIST stream. Synaptic Metaplasticity has the least negative BWT, but it reaches only chance-level accuracy. BiMU has a more negative BWT, but remains highly plastic and accurate after 1000 tasks.
+> METHOD MEAN ACC .5TASKS (%) MMRR BWT
+> BIMU 90 .30 ±0.38 139 .47 −0.8187 ±0.0014
+> BAYES BINN 41 .12 ±1.62 2.04 −0.3897 ±0.0021
+> SYNAPTIC METAPLASTICITY 10 .27 ±0.01 1.64 −0.0009 ±0.0001
+> STE 29 .35 ±0.96 9.32 −0.5689 ±0.0105
+
+In the main paper, we report the mean accuracy on the last five tasks and Maximum Memory Rigidity Resilience (MMRR) instead of BWT, which appears in Table 8. Late-stream accuracy directly measures whether the model can still acquire new tasks after a long history of distribution shifts. MMRR complements this by measuring how much of the method’s best attainable performance is preserved at the end of the stream. Together, these quantities distinguish a model that remains both stable and plastic from one that stops changing. Specifically, Synaptic Metaplasticity has the least negative BWT among the binary methods. However, it is the weakest method at the end of the stream, with only 10 .27% mean accuracy over the last five tasks. This value is close to chance for MNIST classification, showing that the near-zero BWT neither reflects good performance in continual learning nor how much loss of plasticity occurred in the model. This supplementary analysis emphasizes that a better BWT is not necessarily a good sign of well-performing continual learning, specifically for our use-case. When posterior saturation or synaptic rigidity prevents new learning, BWT can become artificially favorable. To solve the challenges we presented in the introduction, the relevant question is whether the method can still learn after hundreds or thousands of distribution shifts. Late-stream accuracy and MMRR directly answer this question, while BWT only measures one aspect of backward stability. The OpenLORIS-Object results provide a complementary case, due to not facing the same rigidity as for the 1000-tasks Permuted MNIST. As shown in Table 9, BiMU achieves the highest mean accuracy, 90 .62% , while having BWT comparable to BayesBiNN, Synaptic Metaplasticity and within range of other continual learning methods. STE is worse both in accuracy and in BWT. 23 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks                                                           
+
+> Table 9. OpenLORIS-Object with 25 ,088 frozen VGG19 features. We report the mean accuracy over all tasks and backward transfer (BWT).
+> METHOD MEAN ACC .OVER ALL TASKS (%) BWT
+> Binary Neural Networks
+> BIMU 90 .62 ±0.22 −0.0525 ±0.0027
+> BAYES BINN 89 .37 ±0.77 −0.0399 ±0.0078
+> SYNAPTIC METAPLASTICITY 86 .72 ±0.34 −0.0485 ±0.0021
+> STE (B ASELINE )83 .79 ±1.13 −0.0790 ±0.0157
+> Real-Valued Neural Networks
+> MESU 87 .84 ±0.11 −0.0515 ±0.0012
+> ONLINE EWC 88 .23 ±0.05 −0.0452 ±0.0003
+> SYNAPTIC INTELLIGENCE 88 .04 ±0.03 −0.0517 ±0.0004
+> SGD (B ASELINE )88 .04 ±0.03 −0.0517 ±0.0004
+
+So far, this is consistent with our main claim: BiMU deliberately forgets part of the accumulated posterior information in order to avoid rigidity and preserve plasticity. If the information is not useful currently and lies outside of the memory window N , it is discarded. A loss in backward transfer is exchanged for higher overall accuracy on late stream: it tends to indicate that the method discards non-essential or outdated representations. 
+
+## D. Maximum Memory Rigidity Resilience (MMRR): A measure of plasticity loss 
+
+In long-horizon continual learning, models may progressively lose plasticity as evidence accumulates, becoming increasingly resistant to parameter updates. This rigidity can degrade performance on new tasks even in the absence of explicit forgetting. Standard metrics such as average accuracy (ACC), Forward Transfer (FWT), or Backward Transfer (BWT) (Lopez-Paz & Ranzato, 2017) do not explicitly capture this phenomenon, as they focus on task-to-task retention rather than long-term adaptability under prolonged non-stationarity. To quantify plasticity loss, we build on the Memory Rigidity Resilience (MRR) metric of (Bonnet et al., 2025) and introduce Maximum Memory Rigidity Resilience (MMRR), a scalar diagnostic that measures performance degradation relative to the model’s own best observed performance. Let at ∈ [0 , 1] denote the accuracy of the model evaluated on task t, and let 
+
+amax = max  
+
+> t′≤T
+
+at′
+
+be the maximum accuracy achieved by the model on any task over the full training horizon T . We define the Maximum Memory Rigidity Resilience (MMRR) at time t as 
+
+MMRR t = 1
+
+amax − at + ε ,
+
+where ε > 0 ensures numerical stability. Larger values indicate smaller performance degradation and thus higher resistance to rigidity. MMRR captures the inability of a model to sustain its peak performance as new tasks arrive, independently of explicit forgetting. Unlike the original MRR, which anchors rigidity to early-task performance and can be misleading when performance improves over time, MMRR evaluates each model relative to its maximum attainable accuracy over the stream. This ensures stability and interpretability in long-horizon settings. In our experiments, MMRR clearly separates methods that maintain long-term adaptability from those that become rigid: BayesBiNN, Synaptic Metaplasticity, and STE exhibit rapid MMRR collapse due to posterior saturation, while BiMU maintains high MMRR over extended non-stationary streams, indicating sustained plasticity. 24 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## E. 1000-tasks Permuted MNIST: Effect of Network Capacity 
+
+This appendix investigates whether BiMU’s advantages persist when network capacity is substantially increased. While the main paper focuses on compact architectures to emphasize bounded-memory effects, scaling the model allows us to disentangle representational limitations from loss of plasticity and synaptic rigidity. We repeat the 1000-tasks Permuted MNIST experiment using a single-hidden-layer network with 2000 neurons, keeping the online continual learning protocol unchanged. Training is strictly online, with each sample observed once. Inputs are standardized, training uses batch size 1, evaluation uses batch size 100, and out-of-distribution (OOD) detection is assessed on Fashion-MNIST using ROC-AUC over 1000 thresholds. Bayesian methods employ Monte Carlo sampling during inference: BiMU and BayesBiNN use 5 samples, while MESU uses 10. All other methods are deterministic. Table 10 reports results averaged over the last five tasks after training on all 1000 permutations. Increasing capacity improves accuracy for all methods, confirming that additional representational capacity partly mitigates long-horizon continual learning challenges. BiMU benefits most from scaling, achieving a mean accuracy of 95 .20% , the best performance among binary-weight models and higher than all real-valued baselines. In contrast, other binary approaches fail to fully exploit the additional capacity: BayesBiNN improves relative to the low-capacity setting but remains constrained by progressive rigidity, STE shows only moderate gains, and Synaptic Metaplasticity collapses to near-chance performance. This indicates that capacity alone is insufficient without mechanisms that actively regulate plasticity. Among real-valued models, scaling preserves the relative performance trends observed in smaller networks. MESU achieves strong results ( 92 .99% ), followed by EWC Online and Synaptic Intelligence. Notably, BiMU surpasses all real-valued baselines despite operating under a more constrained synaptic posterior, highlighting that its advantage stems from synapse-level control of learning dynamics rather than architectural flexibility. The Maximum Memory Rigidity Resilience (MMRR) metric further emphasizes these differences. BiMU achieves the highest resilience ( 862 .09 ), indicating minimal degradation between early and late tasks and sustained plasticity across the entire stream. All other methods exhibit substantially lower resilience, confirming that they progressively lose adaptability even with increased capacity. Scaling also accentuates differences in uncertainty estimation. BiMU achieves perfect OOD discrimination on Fashion-MNIST (AUC = 1 .00 ), while MESU remains strong but inferior (AUC = 0 .86 ), and other baselines lag behind. This demonstrates that BiMU preserves meaningful epistemic uncertainty over extremely long task horizons, even as capacity increases.                                                                 
+
+> Table 10. Benchmark on 1000 tasks Permuted MNIST in the Online Continual Learning context (2000 neurons). The mean accuracy is taken after training on all tasks, computing the average of the accuracy on the last five tasks test datasets. Memory rigidity resilience is defined as the inverse of the absolute differential in accuracy between the first and the last task. Mean ±standard deviation are given over five runs. Methods are grouped by whether they use binary weights or not.
+> METHOD MEAN ACC. 5TASKS (%) OOD DET .(AUC) MMRR
+> Binary neural networks
+> BIMU 95.20 ±0.26 1.00 ±0.00 862.09
+> BAYES BINN 86 .61 ±0.27 0.80 ±0.10 9.86
+> SYN . M ETA .10 .34 ±0.19 0.00 ±0.04 1.33
+> STE 47 .39 ±1.35 0.61 ±0.10 39 .12
+> Real-valued neural networks
+> MESU 92.99 ±0.71 0.86 ±0.02 171.82
+> EWC O. 91 .47 ±0.31 0.44 ±0.14 139 .66
+> SI 92 .82 ±0.49 0.96 ±0.04 89 .77
+> SGD 90 .61 ±1.32 0.98 ±0.02 117 .65
+
+25 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Hyperparameter optimization. 
+
+Hyperparameters are computed on 10 tasks of Permuted MNIST with different permutations as the ones presented in the main paper as validation. They are obtained by maximizing the hyperparameter tuning cost function H (see Appendix B.2). 
+
+Table 11. Hyperparameter configurations for all evaluated methods on the 1000-tasks Permuted MNIST benchmark with 2000 neurons.                                                                                         
+
+> METHOD ACTIVATION LEARNING RATE (S)ADDITIONAL PARAMETERS MC SAMPLES
+> Binary Neural Networks
+> BIMU REVERSE BINARY GATE 60 αMAX = 0 .005 ,βL= 280 .7,βKL = 6 .2,N= 900 5
+> BAYES BINN REVERSE BINARY GATE 0.05 PRIOR STRENGTH = 1 .1×10 −65
+> SYNAPTIC METAPLASTICITY SIGN 1×10 −5METAPLASTICITY = 6 .3,WEIGHT DECAY = 1 .46 ×10 −61STE (B ASELINE )SIGN 1×10 −4WEIGHT DECAY = 9 .7×10 −51
+> Real-Valued Neural Networks
+> MESU RELU αμ= 2 .2,ασ= 0 .47 σPRIOR = 0 .46 ,N= 1 .6×10 6,CLAMP GRAD = 0 .83 10
+> ONLINE EWC RELU 0.006 IMPORTANCE = 4 .0,DOWNWEIGHTING = 0 .41SYNAPTIC INTELLIGENCE RELU 0.0015 COEFF .= 1 ×10 −4,DAMPING = 1 .01SGD (B ASELINE )RELU 0.001 –1
+
+## F. 1000-tasks Permuted MNIST: Training-State Memory Overhead 
+
+Table 12 reports the training-state memory overhead of all methods evaluated on the 1000-tasks Permuted MNIST benchmark. We measure the total persistent memory required during training, including model parameters and all auxiliary variables needed to perform parameter updates, excluding activations, capturing the dominant constraints in long-horizon learning scenarios. BiMU is the only continual learning method among the others that is fully online, not requiring stored past parameters, task-specific statistics, replay buffers, or optimizer momentum. Its updates rely solely on the current Bernoulli posterior parameters and the incoming batch, so the training-state memory footprint is identical to the inference-state memory footprint and remains constant over time. In the binary setting, BayesBiNN stores both Bernoulli parameters and associated the posterior of the previous task, resulting in a larger memory overhead than BiMU. STE and Synaptic Metaplasticity are trained with Adam, which requires storing two additional momentum matrices per parameter. In addition, Synaptic Metaplasticity maintains task-specific Batch Normalization parameters, which accumulate linearly with the number of tasks and dominate the memory overhead in long-horizon regimes. In the real-valued setting, MESU attaches an explicit variance parameter to each synapse, increasing the memory footprint relative to SGD. EWC Online and Synaptic Intelligence require storing both an importance matrix and a copy of the parameters from the previous task, resulting in persistent additional storage even in their online variants. 26 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks            
+
+> Table 12. Training-state memory overhead on the 1000-tasks Permuted MNIST benchmark. Reported values correspond to the total persistent memory required during training, including model parameters and all auxiliary update variables, but excluding transient activations.
+> METHOD TRAINING -STATE MEMORY OVERHEAD (MB)
+> Binary neural networks
+> BIMU 0.32
+> BAYES BINN 0.64
+> SYN . M ETA .1.84
+> STE 0.95
+> Real-valued neural networks
+> MESU 0.64
+> EWC O. 0.95
+> SI 0.95
+> SGD 0.32
+
+## G. 100-tasks Permuted MNIST: Effect of the memory window on stability and forgetting 
+
+G.1. Forgetting, rigidity, controlled regimes 
+
+Consider BiMU’s update of the natural parameters λ(i) 
+
+> t
+
+defined in Eq. (6), obtained from the bounded-memory Bayesian objective with memory window N . For a fixed data stream and learning-rate bound αmax , the memory window N explicitly controls the forgetting-stability trade-off as follows. 
+
+Small memory window (low N ): forgetting-dominated regime. When N is small, the forgetting term 
+
+λ(i) 
+
+> t−1
+
+− λ(i)prior 
+
+N cosh 2(λ(i)
+
+> t−1
+
+)
+
+rapidly relaxes the parameters toward the prior. Past evidence is, therefore, quickly discarded, preventing sustained accumulation of information in λ(i) and leading to excessive forgetting. 
+
+Large memory window (high N ): stability-dominated regime. As N increases, the forgetting term vanishes, and updates approach cumulative Bayesian learning. In this regime, the magnitude of λ(i) grows monotonically as evidence accumulates, driving Bernoulli probabilities toward deterministic values. This induces synaptic degeneracy and increases memory rigidity, reflected by low MMRR values, inducing a situation akin to the one observed on BayesBiNN. 
+
+Intermediate memory window: controlled forgetting. For intermediate values of N , forgetting counterbalances evidence accumulation, bounding the magnitude of λ(i) over time. This prevents synaptic degeneracy while preserving sufficient information for learning, yielding a favorable trade-off between plasticity and stability. Overall, the memory window N acts as a direct control parameter for forgetting, regulating both the long-term magnitude of the synaptic parameters and the degree of rigidity in the learned representation. 
+
+G.2. Memory window ablation study 
+
+Table 13 quantitatively illustrates the effect of the memory window N on forgetting, memory rigidity, and uncertainty in 100-tasks Permuted-MNIST. For very small N = 100 , the model falls into the forgetting-dominated regime: final accuracy is only 27 .09% , OOD detection remains near-perfect ( 0.99 ), and MMRR is high ( 216 .45 ), indicating rapid weight fluctuations induced by forgetting, unstable posterior retention circumventing stability. Increasing N to 400 allows more evidence accumulation, improving accuracy to 73 .46% , with OOD AUC stable ( 1.00 ) and a high MMRR (574.72), reflecting higher retention than N = 100 without accumulating rigidity. Intermediate windows ( N = 700 –1000 ) achieve the best balance: accuracy peaks at 90 .29% (N = 700 ) while OOD detection remains strong ( 0.99 –0.98 ) and MMRR is moderate ( 215 .52 –46 .30 ), consistent with controlled forgetting that stabilizes synapses without compromising plasticity. For larger windows ( N = 1300 –1900 ), final accuracy slightly declines (86 .55% –87 .67% ) while MMRR steadily decreases to 28 .36 –21 .01 , indicating increased rigidity, and slower adaptation to 27 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+recent tasks. Finally, a large memory window ( N = 100 ,000 ) leads to further drops in accuracy, at about 83 .70% and OOD AUC ( 0.94 ), with minimal MMRR ( 13 .13 ), consistent with synaptic degeneracy. Overall, Table 13 confirms that N acts as a direct control mechanism over forgetting and rigidity: small N causes rapid forgetting, very large N induces rigidity and synaptic degeneracy, and intermediate N preserves a favorable stability-plasticity trade-off while maintaining informative epistemic uncertainty. Contrary to MESU (Bonnet et al., 2025) that suggests using N as the number of batches, here the exponential dependency prevents from asserting a similar statement.                                                                         
+
+> Table 13. Effect of the memory window Nof BiMU, and of BayesBiNN on forgetting, rigidity, and uncertainty in 100-tasks Permuted-MNIST (OCL; 100-hidden-unit MLP). MEAN ACC. (last 5) is averaged over the final five tasks. OOD AUC is ROC-AUC for Permuted MNIST vs Fashion-MNIST. MMRR: Maximum Memory Rigidity Resilience (see main text). Mean ±std over 5 runs.
+> MEMORY WINDOW NMEAN ACC. 5TASKS (%) OOD DET .(AUC) MMRR
+> 100 27 .09 ±0.57 0.99 ±0.00 216 .45
+> 400 73 .46 ±2.59 1.00 ±0.00 574.72
+> 700 90.29 ±0.24 0.99 ±0.01 215 .52
+> 1000 89 .07 ±0.28 0.98 ±0.01 46 .30
+> 1300 87 .67 ±0.33 0.97 ±0.02 28 .36
+> 1600 86 .94 ±0.29 0.96 ±0.02 24 .91
+> 1900 86 .55 ±0.24 0.96 ±0.02 21 .01
+> 100000 83 .70 ±0.30 0.94 ±0.05 13 .13
+> BAYES BINN 67 .91 ±0.96 0.75 ±0.20 5.03
+
+We further illustrate the effect of the memory window N on synaptic weight distributions at the end of training. Figure 7 shows the histograms of the probability of each synapse for all values of N . Small N results in broad, low-confidence distributions, reflecting rapid forgetting without stability. Intermediate N produces well-formed, moderately peaked distributions, indicating a favorable balance between plasticity and stability. Very large N leads to sharply peaked distributions near 0 or 1, highlighting distribution degeneracy and loss of plasticity, a behaviour also observed on BayesBiNN due to the absence of forgetting for the algorithm. 28 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5 Density                                         
+
+> Memory Window N=1000
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0510 15 20 Density
+> Memory Window N=1300
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0510 15 20 Density
+> Memory Window N=1600
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0510 15 20 Density
+> Memory Window N=1900
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0510 15 20 Density
+> Memory Window N=100000
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0510 15 20 25 Density
+> BayesBiNN
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 01234567Density
+> Memory Window N=100
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 0.0 0.5 1.0 1.5 2.0 2.5 Density
+> Memory Window N=400
+> 0.0 0.2 0.4 0.6 0.8 1.0 Probability 02468Density
+> Memory Window N=700
+
+Figure 7. Histograms of the synaptic probabilities p = sigmoid (2 λ) at the end of training for different memory windows N and BayesBiNN in 100-tasks Permuted-MNIST (OCL; 100-hidden-unit MLP). Small N shows broad distributions indicative of forgetting-dominated dynamics, intermediate N yields moderate peaks reflecting a balanced stability-plasticity-forgetting trade-off, and very large N
+
+exhibits sharp peaks near 0 and 1, consistent with synaptic degeneracy and rigidity, highlighting too high stability, akin to BayesBiNN’s behaviour. 
+
+## H. 100-tasks Permuted MNIST: Activation function ablation study 
+
+Binary Neural Networks (BiNNs) traditionally rely on the sign activation function (Hubara et al., 2016; Laborieux et al., 2021), together with a surrogate hardtanh during backpropagation to overcome the non-differentiability of the binary non-linearity: sign (x) = 
+
+
+
+1 if x > 0,
+
+−1 if x < 0,
+
+0 otherwise, hardtanh (x) = 
+
+
+
+1 if x > 1,x if − 1 ≤ x ≤ 1,
+
+−1 if x < −1.
+
+(65) In this setting, neurons are activated according to the sign of their pre-activations. Combined with instance normaliza-tion (Ulyanov et al., 2016), gradients are only propagated through neurons whose pre-activations lie in the narrow neutral region [−1, 1] . Consequently, learning is dominated by the most frequent pre-activation values, which can be suboptimal in continual learning scenarios where selective and stable parameter updates are required. 
+
+Reverse Binary Gate. We introduce the Reverse Binary Gate (RBG) activation function and its surrogate sRBG. Unlike the sign function, RBG selects neurons based on the magnitude of their pre-activations rather than their sign: RBG (x, a ) = 
+
+(
+
+0 if |x| < a 
+
+> 2
+
+,
+
+1 otherwise , sRBG (x, a ) = 
+
+
+
+−x if − 3a 
+
+> 2
+
+< x < − a 
+
+> 2
+
+,x if a 
+
+> 2
+
+< x < 3a 
+
+> 2
+
+,
+
+0 if |x| < a 
+
+> 2
+
+,
+
+1 otherwise .
+
+(66) This design inverts the usual gating logic: neurons with the most frequent activations are suppressed, while only the moderate to low activations contribute to the forward and backward passes. As a result, a majority of synapses are explicitly 29 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+deactivated, promoting sparse and selective updates. The RBG function can be interpreted as a reversed version of the Elephant activation (Lan & Mahmood, 2024) in the limit case. 
+
+Disentangling activation functions from continual learning. Table 14 reports an ablation study on 100-tasks Permuted MNIST that isolates the effect of the activation function from the continual learning mechanism. By comparing sign-based and RBG-based variants of the same algorithms, we disentangle the respective contributions of activation design and learning rules for the Permuted MNIST experiment.                                                                                               
+
+> Table 14. Disentangling the effect of the activation function on continual learning performance (100-tasks Permuted MNIST). Mean accuracy is computed over the last five tasks; OOD detection is ROC-AUC for Permuted MNIST vs Fashion-MNIST. Maximum Resilience corresponds to the Maximum Memory Rigidity Resilience (MMRR). Mean ±std over 5 runs.
+> METHOD ACTIVATION MEAN ACC. 5TASKS (%) OOD DET .(AUC) MMRR ACC .1TASK (%)
+> BAYES BINN SIGN 66 .40 ±0.97 0.54 ±0.19 5.85 90 .27 ±0.32
+> BAYES BINN RBG 67 .41 ±1.03 0.76 ±0.17 4.99 93 .22 ±0.09
+> BIMU SIGN 81 .78 ±0.58 0.76 ±0.08 22 .25 92 .89 ±0.22
+> BIMU RBG 90 .29 ±0.24 0.99 ±0.01 215 .52 94 .67 ±0.11
+> MESU RELU 93 .51 ±0.18 0.91 ±0.03 500 .02 96 .10 ±0.18
+> MESU RBG 92 .35 ±0.21 0.80 ±0.05 943 .44 93 .01 ±0.20
+> SYN . M ETA .SIGN 10 .22 ±0.05 -9.92 71 .40 ±1.48
+> SYN . M ETA .RBG 11 .35 ±0.00 -26 .29 13 .20 ±1.38
+
+To isolate the impact of the activation function from long-horizon continual learning effects, we provide an ablation study conducted on 100-tasks Permuted MNIST. This reduced setting compared to the main enables a clearer separation between optimization effects induced by the activation function and degradation caused by prolonged memory saturation. The results in Table 14 reveal heterogeneous sensitivities to the choice of activation across methods. For BayesBiNN, replac-ing the sign activation with the Reverse Binary Gate yields a small but consistent improvement in continual performance: mean accuracy over the last five tasks increases from 66 .40% to 67 .41% , while OOD detection improves markedly from 
+
+0.54 to 0.76 ROC-AUC. One-task accuracy also increases from 90 .27% to 93 .22% , indicating that RBG provides a stronger single-task accuracy. However, memory resilience slightly decreases ( 5.85 to 4.99 ), suggesting that while magnitude-based gating improves representation quality, it does not fundamentally resolve the rigidity and plasticity limitations of BayesBiNN. In contrast, BiMU benefits substantially from the Reverse Binary Gate. Switching from sign to RBG increases the mean accuracy from 81 .78% to 90 .29% , improves OOD detection from 0.76 to 0.99 ROC-AUC, and dramatically boosts MMRR from 22 .25 to 215 .52 . Importantly, one-task accuracy also improves from 92 .89% to 94 .67% , confirming that the gains are not solely due to reduced forgetting but to which neurons are going to be activated during the forward and backward passes. These results indicate that selecting neurons based on activation magnitude rather than sign leads to more stable Bayesian updates and mitigates interference between tasks. For MESU, the activation change does not provide a clear advantage. While RBG substantially increases memory rigidity (500 .02 to 943 .44 ), it degrades OOD detection ( 0.91 to 0.80 ROC-AUC), slightly reduces mean continual accuracy ( 93 .51% 
+
+to 92 .35% ), and lowers one-task accuracy from 96 .10% to 93 .01% . This indicates that the Reverse Binary Gate increases rigidity in real-valued networks, harming both generalization and predictive confidence. As a result, RBG does not replace the role of structured Bayesian updates in MESU. Finally, for Synaptic Metaplasticity, one-task accuracy collapses from 71 .40% to 13 .20% . This highlights a fundamental incompatibility between the method and magnitude-based gating, exacerbating known sensitivities to network size, batching, and training regime. Overall, this ablation demonstrates that selecting synapses based on activation magnitude rather than sign can substantially improve both single-task performance and continual learning robustness in Bayesian binary neural networks, particularly for BiMU. The effect is strongly method-dependent: it is moderate for BayesBiNN, ineffective for MESU and Synaptic Metaplasticity. While it improves performance, it does not prevent memory rigidity nor does it work better than a ReLU for real-valued networks. 30 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## I. Animals Imbalanced Active Learning: Complementary Figures 
+
+Complementary to the main text, we provide additional figures illustrating the behavior of each acquisition strategy on the Animals benchmark under imbalanced active learning. These figures correspond to the aggregated results reported in Fig. 4 and are presented here to facilitate a more detailed, per-method analysis. Certain strategies are not appearing on figures due to the threshold not being activated, very small measures of uncertainty or points overlapping. Fig. 8 reports the performance of BayesBiNN on the Animals dataset. All acquisition strategies perform below random sampling, indicating that the uncertainty estimates are not sufficiently informative to support effective active learning. Unlike settings with a very large number of tasks such as Permuted MNIST, where weight divergence naturally emerges, the Animals dataset contains relatively few training examples per task (10,549 images in total, corresponding to roughly one sixth of a MNIST task). As a result, the model’s weights do not have sufficient opportunity to diverge across tasks. Moreover, in the absence of a metaplastic learning rate mechanism, BayesBiNN is unable to learn efficiently enough from these limited examples to consolidate its weights. This prevents the model from reliably distinguishing between low-frequency and high-frequency samples. While this leads to high overall uncertainty and consequently strong out-of-distribution detection, the quality of the uncertainty estimates remains poor, as predictions are primarily influenced by the most recently observed samples rather than by the dataset as a whole, in contrast to methods incorporating metaplasticity such as BiMU. 10 0 10 1 10 2             
+
+> 20
+> 40
+> 60
+> 80
+> 100 Total
+> Aleatoric Epistemic Predictive Random VR VR-True
+> 10 010 110 2
+> 0
+> 25
+> 50
+> 75
+> 100 Low frequency
+> 10 010 110 2
+> 40
+> 60
+> 80
+> 100 High frequency
+
+Data used for training (%)  
+
+> Figure 8. Animals dataset under imbalanced active learning using BayesBiNN. Classification accuracy as a function of the fraction of queried samples, highlighting the behavior of Bayesian binary weights under uncertainty-driven querying.
+
+Fig. 9 and Fig. 10 show the results for MESU, without and with input standardization, respectively. Without standardization, all querying strategies other than VR and VR-True collapse early in training, reflecting the inability to learn with low amount of data and poorly conditioned features. While both VR variants benefit from uncertainty-driven sampling, standardization markedly improves performance, yielding lower data used for training and more balanced exploration of minority classes, consistently outperforming random acquisition. Among all criteria, epistemic uncertainty achieves the strongest trade-off between data and accuracy, reaching the random-query baseline with the smallest fraction of labeled samples. This confirms that when uncertainty estimates are well calibrated, they enable highly selective supervision, and further highlights the sensitivity of real-valued Bayesian methods such as MESU to input preprocessing. 31 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 10 0 10 1 10 2 
+
+> 0
+> 25
+> 50
+> 75
+> 100 Total
+
+Aleatoric Epistemic Predictive Random VR VR-True             
+
+> 10 010 110 2
+> 0
+> 25
+> 50
+> 75
+> 100 Low frequency
+> 10 010 110 2
+> 0
+> 25
+> 50
+> 75
+> 100 High frequency
+
+Data used for training (%) 
+
+Figure 9. Animals dataset under imbalanced active learning using MESU. Performance as a function of the queried-label fraction, illustrating uncertainty-based acquisition with real-valued Bayesian Gaussian weights. 10 0 10 1 10 2 
+
+> 40
+> 60
+> 80
+> 100 Total
+
+Aleatoric Epistemic Predictive Random VR VR-True             
+
+> 10 010 110 2
+> 20
+> 40
+> 60
+> 80
+> 100 Low frequency
+> 10 010 110 2
+> 60
+> 70
+> 80
+> 90
+> 100 High frequency
+
+Data used for training (%) 
+
+Figure 10. Animals dataset under imbalanced active learning using MESU with feature standardisation. Standardisation improves stability and performance across labeling budgets. 
+
+Finally, Fig. 11 illustrates the behavior of STE. STE achieves competitive early performance, its acquisition strategy exhibits higher sensitivity to class imbalance at low percentage of labeled data, resulting in consistent drops in accuracy when threshold are increased, leading to a poor accuracy/labeled data ratio compared to BiMU and MESU. 10 0 10 1 10 2       
+
+> 0
+> 25
+> 50
+> 75
+> 100 Low frequency
+> 10 010 110 2
+> 40
+> 60
+> 80
+> 100 High frequency
+
+Data used for training (%)       
+
+> 10 010 110 2
+> 20
+> 40
+> 60
+> 80
+> 100 Total
+
+Aleatoric Random 
+
+Figure 11. Animals dataset under imbalanced active learning using STE. Accuracy as a function of the queried-label fraction when acquisition is driven by aleatoric uncertainty in binary weights setup. 
+
+Overall, these complementary figures highlight qualitative differences in acquisition dynamics that are not fully captured by summary metrics alone, especially for BayesBiNN, which, while having reliable OOD detection estimates, does not capture 32 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+as well what examples are important and which are not. 
+
+## J. OpenLORIS-Object: Effect of standardization on the output features of VGG19 
+
+The goal of this appendix experiment is to quantify how much of the performance gap observed in the main results between Bayesian binary algorithms and real-valued algorithms is attributable to input preprocessing rather than to the learning algorithms themselves. To this end, we repeat the OpenLORIS-Object experiment using standardized 8,192-dimensional VGG19 features, where each feature is normalized using the mean and variance estimated from the training data. This contrasts with the streaming setting of Table 2, where no such normalization is applied.                                                                 
+
+> Table 15. OpenLORIS-Object (OCL; linear head) with standardized 8,192-dimensional VGG19 features. Mean accuracy is averaged over the 12 tasks after training on all tasks. OOD AUC is computed using the held-out toy class. Results are mean ±std over 5 runs.
+> METHOD MEAN ACC. (%) ALEATORIC
+> (AUC) EPISTEMIC
+> (AUC)
+> Binary neural networks
+> BIMU 90.98 ±0.38 1.00 ±0.00 1.00 ±0.00
+> BAYES BINN 90 .20 ±0.13 1.00 ±0.00 1.00 ±0.00
+> STE 77 .69 ±2.29 ––SYNAPTIC METAPLASTICITY 79 .28 ±0.85 ––
+> Real-valued neural networks
+> MESU 92.55 ±0.24 0.99 ±0.00 0.99 ±0.00
+> EWC O NLINE 92 .34 ±0.32 1.00 ±0.00 –SYNAPTIC INTELLIGENCE 92 .23 ±0.30 1.00 ±0.00 –SGD 92 .31 ±0.31 1.00 ±0.00 –
+
+Standardization consistently improves performance across all methods, but the gains are markedly larger for real-valued neural networks. In particular, MESU improves from 87 .01% to 92 .55% mean accuracy, while EWC Online and Synaptic Intelligence increase from 87 .18% and 86 .44% to 92 .34% and 92 .23% , respectively. These substantial gains indicate that real-valued continual learning methods strongly benefit from well-conditioned inputs and rely on stable feature statistics induced by mean–variance normalization. Their optimization dynamics and regularization mechanisms are therefore closely tied to offline preprocessing assumptions. Binary Bayesian methods also benefit from standardization, but to a lesser extent. BiMU improves from 89 .19% to 
+
+90 .98% accuracy, and BayesBiNN from 86 .93% to 90 .20% , while maintaining near-perfect epistemic uncertainty separation (ROC-AUC ≈ 1.00 ). The more modest performance increase suggests that binary models are comparatively less sensitive to feature scaling. When input statistics are known in advance and preprocessing based on the full training distribution is feasible, real-valued methods achieve higher final accuracy than binary approaches. However, the main results focus on realistic continual learning scenarios for edge and robotic systems, where data arrive as an unbounded stream and reliable estimation of global feature statistics is not possible online. In this regime, the robustness of binary Bayesian methods – and in particular BiMU – to unnormalized inputs and shifting distributions provides a practical advantage, despite their more constrained parameterization. 
+
+Hyperparameter optimization. 
+
+Hyperparameters are computed on the validation set of OpenLORIS-Object. They are computed through the custom hyperparameter tuning cost function H (see Appendix B.2). 33 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 16. Hyperparameter configurations for all evaluated methods on the OpenLORIS dataset (standardized, 8192 features).                                                                            
+
+> METHOD LEARNING RATE (S)ADDITIONAL PARAMETERS MC SAMPLES
+> Binary Neural Networks
+> BIMU 1.2αMAX = 0 .07 ,βL= 184 ,βKL = 0 .14 ,N= 7 ,900 10 BAYES BINN 1.59 PRIOR STRENGTH = 1 .2×10 −610 SYNAPTIC METAPLASTICITY 4.5×10 −5METAPLASTICITY = 13 .7,WEIGHT DECAY = 8 ×10 −12 1STE (B ASELINE )1×10 −4–1
+> Real-Valued Neural Networks
+> MESU αμ= 4 .0,ασ= 5 .0σPRIOR = 0 .76 ,N= 5 ,000 ,000 ,CLAMP GRAD = 0 .53 10 ONLINE EWC 4×10 −4IMPORTANCE = 0 .124 ,DOWNWEIGHTING = 0 .71SYNAPTIC INTELLIGENCE 4×10 −4COEFF .= 4 .5×10 −5,DAMPING = 0 .05 1SGD (B ASELINE )3×10 −4–1
+
+## K. OpenLORIS-Object Imbalanced Continual Active Learning: Complementary Figures 
+
+This section provides additional results on the OpenLORIS-Object benchmark, focusing on the imbalanced continual active learning setting. The figures presented here complement the main results and allow for a detailed inspection of each method’s behavior over time and across acquisition steps. Fig. 12 presents the results for BayesBiNN on the OpenLORIS dataset in imbalanced continual active learning setting. As in the Animals setting, all active learning strategies perform below random acquisition, highlighting the limited usefulness of the uncertainty estimates produced by the model. Although OpenLORIS contains a larger total number of training examples (442,194 images), this corresponds to only approximately seven Permuted MNIST–scale tasks. This short task horizon limits the degree of weight divergence that emerge during training. In the absence of a metaplastic learning rate mechanism, BayesBiNN is therefore unable to leverage these examples efficiently enough to consolidate task-relevant weights. As a consequence, the model struggles to differentiate between low-frequency and high-frequency samples. While this results in high overall uncertainty and yields strong out-of-distribution detection, the resulting uncertainty remains poorly structured, as predictions are dominated by the most recently observed samples rather than reflecting statistics accumulated over the full dataset, unlike approaches that explicitly incorporate metaplasticity such as BiMU. 10 0 10 1 10 2
+
+0
+
+25 
+
+50 
+
+75 
+
+100 Low frequency 
+
+10 0 10 1 10 2
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 High frequency 
+
+Data used for training (%) 
+
+10 0 10 1 10 2
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 Total 
+
+Aleatoric Epistemic Predictive Random VR VR-True 
+
+Figure 12. OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features under imbalanced continual active learning using BayesBiNN. Evolution of classification accuracy across labeling budgets in the presence of distribution shifts for Bayesian binary weights without forgetting. 
+
+Fig. 13 and Fig. 14 report MESU’s performance with and without input standardization. In contrast to the Animals benchmark, performance degradation without standardization is less severe, owing to the substantially larger number of samples available to accumulate information about the importance of each parameter, leading to more reliable uncertainty estimates. Nevertheless, standardization consistently improves robustness and reduces variability across acquisition steps. In particular, standardization yields an accuracy gain of roughly 10 percentage points at the 3% labeling budget for VR. Under standardized features, aleatoric, epistemic, and predictive uncertainty criteria exhibit similar behavior, indicating reliable 34 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+discrimination of informative samples throughout the stream leading to strong efficiency of uncertainty estimates to select which data to integrate to increase accuracy. 10 0 10 1 10 2       
+
+> 20
+> 40
+> 60
+> 80
+> 100 Low frequency
+> 10 010 110 2
+> 40
+> 60
+> 80
+> 100 High frequency
+
+Data used for training (%)       
+
+> 10 010 110 2
+> 40
+> 60
+> 80
+> 100 Total
+
+Aleatoric Epistemic Predictive Random VR VR-True 
+
+Figure 13. OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features under imbalanced continual active learning using MESU. Performance under uncertainty-driven querying with real-valued Bayesian weights. 10 0 10 1 10 2      
+
+> 40
+> 60
+> 80
+> 100 Low frequency
+> 10 010 110 2
+> 85
+> 90
+> 95
+> 100
+> High frequency
+
+Data used for training (%)       
+
+> 10 010 110 2
+> 60
+> 70
+> 80
+> 90
+> 100 Total
+
+Aleatoric Epistemic Predictive Random VR VR-True 
+
+Figure 14. OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features under imbalanced continual active learning using MESU with feature standardisation. Standardisation improves robustness under continual distribution shifts. 
+
+Fig. 15 shows the results obtained with STE. STE’s performance degrades more noticeably when confronted with successive task shifts, yielding poor aleatoric measurements that are unable to capture efficient examples to learn on. 10 0 10 1 10 2
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 Total 
+
+Aleatoric Random 
+
+10 0 10 1 10 2
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 Low frequency 
+
+10 0 10 1 10 2
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 High frequency 
+
+Data used for training (%) 
+
+Figure 15. OpenLORIS-Object (OCL; linear head) with standardized 8,192-dimensional VGG19 features under imbalanced continual active learning using STE. Performance degradation under long-tailed distributions and sequential task shifts. 
+
+35 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+These complementary figures further support the main conclusions of the paper: that reliable epistemic uncertainty is critical for effective active continual learning under class imbalance, that its quality is strongly influenced by input conditioning in real-valued Bayesian methods, and that preserving uncertainty over long, non-stationary streams enables substantial reductions in labeling and update costs without sacrificing accuracy. 
+
+## L. OpenLORIS-Object Imbalanced Continual Active Learning: Number of predictors for variation ratio 
+
+In this appendix, we investigate the performance of variation ratio when limiting or increasing the number of predictors associated with the disagreement in the Online Continual Learning setting. Even when using few samples, variation ratio achieves strong predictive performance. For instance, using only 2 samples with 3.3% of the data achieves 89 .3% ± 0.88 
+
+accuracy, while 3 samples with 3.87% of the data reach 90 .61% ± 0.53 . Low-sample regimes already provide high accuracy even without a large range of thresholds, denoting the ability of BiMU to distinguish well useful samples from non-informative ones. Increasing the number of samples generally improves accuracy and allows finer control via the threshold parameter. For example, with 10 samples and 3.97% of the data, accuracy reaches 90 .91% ± 0.98 , and with 25 samples using 4.81–5.63% of the data, accuracy increases up to 91 .74% ± 0.23 . These higher-sample regimes provide additional thresholds for flexible performance trade-offs, but require more forward passes to estimate disagreement, leading to more computational overhead. High number of predictors also induce a higher variance at low data usage due to the difference of training examples selected through seeds. 36 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 17. Ablation study of the number of samples used to compute the variation ratio uncertainty measure on OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features. Rows with identical samples, accuracy, and data usage are merged, and the thresholds column lists all thresholds for that configuration. Low sample regimes achieve high accuracy under strong compression. Additional samples yield better accuracy and offer more thresholds at the cost of more forward passes. Data used now shows mean ±
+
+standard deviation across final updates. Results are averaged over five runs. SAMPLES ACCURACY (%) DATA USED (%) THRESHOLD 
+
+2 89.30 ± 0.88 3.30 ± 0.04 0.50 3 90.61 ± 0.53 3.87 ± 0.05 0.33 3 82.26 ± 1.15 1.62 ± 0.03 0.66 5 88.85 ± 0.92 2.91 ± 0.16 0.20 5 80.86 ± 1.90 1.47 ± 0.16 0.40 – 0.60 5 52.21 ± 23.71 0.34 ± 0.19 0.80 10 90.91 ± 0.98 3.97 ± 0.03 0.10 10 88.70 ± 1.94 3.10 ± 0.31 0.20 – 0.30 10 79.27 ± 4.00 1.37 ± 0.24 0.40 – 0.50 10 44.02 ± 32.02 0.42 ± 0.39 0.60 10 9.37 ± 8.22 0.02 ± 0.04 0.70 10 5.26 ± 0.00 0.00 ± 0.00 0.80 – 0.90 25 91.34 ± 0.50 5.63 ± 0.09 0.04 25 91.11 ± 0.44 4.40 ± 0.04 0.12 25 90.93 ± 0.70 4.03 ± 0.05 0.16 25 90.23 ± 0.68 3.65 ± 0.14 0.20 25 89.00 ± 0.64 3.27 ± 0.23 0.24 25 87.16 ± 1.88 2.93 ± 0.36 0.28 25 86.40 ± 2.68 2.61 ± 0.44 0.32 25 79.14 ± 13.18 1.96 ± 0.78 0.36 25 66.41 ± 30.90 1.48 ± 0.84 0.40 25 51.53 ± 37.93 1.03 ± 0.88 0.44 25 34.82 ± 36.25 0.52 ± 0.65 0.48 25 19.95 ± 29.37 0.23 ± 0.45 0.52 25 19.16 ± 27.79 0.17 ± 0.34 0.56 25 18.48 ± 26.44 0.13 ± 0.26 0.60 25 17.01 ± 23.49 0.10 ± 0.19 0.64 25 16.07 ± 21.61 0.07 ± 0.14 0.68 25 5.26 ± 0.00 0.00 ± 0.00 > 0.72 BASELINE 87.76 ± 0.19 100 -
+
+37 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## M. OpenLORIS-Object Imbalanced Continual Active Learning: Querying dynamics and temporal distribution of active updates 
+
+In this appendix, we further analyze when active updates occur during OpenLORIS-Object. We want to assert whether variation ratio querying reacts to distributional changes or if it selects samples uniformly throughout each task. For each task, we divide the online stream into 100 parts, with three temporal regions: the first quarter (0–24), the middle part of the task (25–74), and the last quarter (74–99). As labels are queried only when the variation ratio score exceeds the fixed threshold, the number of queried samples is also the number of backpropagation updates. Table 18 reports the accuracy at several checkpoints within each task, together with the percentage of updates occurring in each temporal region. The main trend is consistent across tasks: most updates occur shortly after the distribution shift. On average, 45 .85% of all updates are performed in the first quarter of a task, while only 12 .56% occur in the last quarter. Querying is concentrated when the stream changes then progressively decreases as the model adapts to the current factor. Importantly, the update rate does not collapse to zero at the end of the task. The last quarter still accounts for 12 .56% of the updates on average, indicating that the posterior remains sufficiently uncertain to select informative samples after the initial adaptation phase. The model reacts strongly after a shift and does not become completely rigid once the current task has been partially learned. 
+
+Table 18. Temporal distribution of variation ratio updates on OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features. Accuracy is reported at fixed checkpoints within each task. Update percentages indicate the fraction of updates occurring in the first quarter, middle part, and last quarter of the task. Most updates occur immediately after the task shift, while a smaller but non-zero fraction remains available later in the task. 
+
+(A) A CCURACY CHECKPOINTS 
+
+TASK ACC @0 (%) ACC @25 (%) ACC @50 (%) ACC @75 (%) ACC @99 (%) TASK 1 5.26 ± 0.00 86 .40 ± 12 .42 90 .53 ± 6.55 92 .54 ± 4.96 90 .26 ± 4.30 
+
+TASK 2 5.26 ± 0.00 92 .72 ± 3.96 92 .50 ± 4.16 93 .03 ± 2.93 91 .01 ± 2.79 
+
+TASK 3 8.73 ± 6.93 94 .21 ± 1.19 89 .82 ± 0.58 89 .47 ± 1.68 88 .11 ± 1.78 
+
+TASK 4 8.90 ± 7.28 75 .53 ± 3.06 94 .61 ± 2.59 95 .96 ± 1.19 91 .93 ± 1.32 
+
+TASK 5 12 .68 ± 9.56 55 .18 ± 2.04 95 .44 ± 0.93 94 .65 ± 0.97 90 .00 ± 1.28 
+
+TASK 6 11 .45 ± 10 .22 37 .85 ± 3.13 93 .51 ± 1.74 91 .54 ± 2.68 81 .14 ± 1.21 
+
+TASK 7 18 .60 ± 17 .69 66 .10 ± 4.36 80 .88 ± 3.11 91 .89 ± 0.31 90 .31 ± 0.78 
+
+TASK 8 18 .25 ± 16 .71 68 .33 ± 2.48 80 .44 ± 2.69 96 .45 ± 0.95 93 .60 ± 0.97 
+
+TASK 9 12 .32 ± 8.70 39 .61 ± 2.42 53 .25 ± 2.05 91 .54 ± 1.36 80 .96 ± 1.06 
+
+TASK 10 19 .78 ± 17 .86 68 .82 ± 3.38 70 .79 ± 2.00 83 .25 ± 1.57 89 .78 ± 1.40 
+
+TASK 11 21 .32 ± 19 .67 64 .61 ± 5.02 72 .06 ± 2.27 76 .18 ± 1.36 92 .37 ± 1.08 
+
+TASK 12 14 .87 ± 11 .93 42 .11 ± 2.14 41 .58 ± 2.92 42 .37 ± 1.25 94 .25 ± 2.00 
+
+AVERAGE 13 .12 ± 5.29 65 .96 ± 18 .73 79 .62 ± 16 .68 86 .57 ± 14 .40 89 .48 ± 4.10 
+
+(B) T EMPORAL DISTRIBUTION OF UPDATES 
+
+TASK UPDATES 0–24 (%) UPDATES 25–73 (%) UPDATES 74–99 (%) TASK 1 25 .43 ± 31 .15 40 .19 ± 29 .00 13 .08 ± 12 .57 
+
+TASK 2 41 .00 ± 20 .55 41 .82 ± 11 .01 15 .66 ± 9.49 
+
+TASK 3 53 .47 ± 1.72 33 .85 ± 1.05 10 .95 ± 1.35 
+
+TASK 4 58 .65 ± 1.75 29 .72 ± 1.47 9.81 ± 1.37 
+
+TASK 5 61 .35 ± 1.65 29 .07 ± 1.63 7.67 ± 1.26 
+
+TASK 6 56 .65 ± 3.22 32 .93 ± 2.51 8.26 ± 1.02 
+
+TASK 7 42 .37 ± 2.68 40 .33 ± 2.30 14 .96 ± 0.79 
+
+TASK 8 41 .28 ± 4.12 42 .43 ± 3.22 14 .60 ± 1.55 
+
+TASK 9 42 .83 ± 2.84 40 .16 ± 1.31 14 .76 ± 2.30 
+
+TASK 10 40 .73 ± 1.84 43 .60 ± 1.14 13 .65 ± 2.15 
+
+TASK 11 39 .53 ± 2.58 42 .64 ± 1.02 15 .13 ± 2.02 
+
+TASK 12 46 .93 ± 2.25 39 .01 ± 1.72 12 .19 ± 1.45 
+
+AVERAGE 45 .85 ± 9.70 37 .98 ± 4.95 12 .56 ± 2.66 
+
+38 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## N. Budget-driven adaptive thresholding for variation ratio 
+
+In the main experiments, active continual learning uses a fixed one-pass threshold: an incoming example is queried if its uncertainty score exceeds τ . While a fixed threshold is simple and hardware-friendly, deployment may require tighter control over the realized query rate as we do not know in advance the budget of updates that variation ratio will use. In this appendix, we propose a fully online budget-driven controller that adapts τ from the discrepancy between the current query rate and a target budget, set in advance as a hyperparameter. Let B ∈ [0 , 1] denote the target fraction of samples to query, and let Qrate (t) be the fraction of samples queried up to time t.The signed budget error is 
+
+ϵt = Qrate (t) − B. (67) A positive value indicates that the current stream has exceeded the target budget, whereas a negative value indicates that the controller is below budget. We compute a continuous threshold 
+
+τcont (t) = B + sign( ϵt) |ϵt|γ , (68) where γ > 0 controls the adaptation speed. When Qrate (t) > B , the threshold is increased, making the controller more selective. Conversely, when Qrate (t) < B , the threshold is decreased, making the controller more permissive. For variation ratio querying, the uncertainty score is discrete due to being computed from a finite number of Monte Carlo predictors. With K posterior samples, variation ratio can only take values in a finite set. We quantize the controller output onto the same set: 
+
+nt = round( Kτ cont (t)) , (69) 
+
+nt = min(max( nt, 0) , K ) , (70) 
+
+τt = nt
+
+K . (71) The controller is memory-free; it only requires the current cumulative query rate, the target budget, and the finite-K
+
+quantization level. We evaluate this controller on OpenLORIS-Object under the same active continual learning setting as in Sec. 4.5: sequential factor analysis, frozen VGG19 features, an online linear head, 8,192 randomly selected features, class imbalance, and one-pass training without replay. We use variation ratio querying with K = 10 posterior samples. The queried fraction is reported as the percentage of samples that trigger both a label request and a parameter update. Adaptive thresholding can recover the performance of the best fixed-threshold variation ratio while explicitly targeting an update budget. With a 3% target budget and γ = 0 .50 , the controller reaches 90 .79 ± 0.61% accuracy while querying 
+
+3.96 ± 0.03% of the stream. This is close to the best fixed-threshold variation ratio result, which reaches 90 .91% accuracy at 3.97% queried data. Budget-driven adaptive thresholding is feasible in the fully online setting. However, the controller is sensitive to the operating regime. At very low budgets, performance degrades sharply for small γ.For example, at B = 0 .5% and γ = 0 .01 , the controller queries exactly 0.50% of the stream but reaches only 52 .68 ± 2.29% 
+
+accuracy. Here, the budget is too limited and variation ratio stays at its minimal threshold and avoids taking updates. Hence, matching the target budget does not allow to preserve enough queried samples to learn the task correctly. To sum up, we proposed an algorithm enabling online adaptation of the querying threshold with a constraint parameter setting how tight the budget should be kept and demonstrated results on par to static thresholding. 39 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+Table 19. Budget-driven adaptive variation ratio thresholding on OpenLORIS-Object (OCL; linear head) with 8,192-dimensional VGG19 features. The target budget B is the desired queried fraction. The exponent γ controls how aggressively the threshold reacts to the signed budget error. Queried samples are also the only samples used for backpropagation updates. Results are averaged over five runs. METHOD CONTROLLER SETTING DATA USED (%) ACCURACY (%) RANDOM QUERYING FULL STREAM 100 87 .76 ± 0.19 
+
+BUDGETED VR B = 0 .5% , γ = 0 .01 0.50 ± 0.00 52 .68 ± 2.29 
+
+BUDGETED VR B = 0 .5% , γ = 0 .10 1.11 ± 0.03 79 .84 ± 0.65 
+
+BUDGETED VR B = 0 .5% , γ = 0 .50 3.34 ± 0.05 89 .62 ± 0.43 
+
+BUDGETED VR B = 1 .0% , γ = 0 .01 1.00 ± 0.00 61 .95 ± 1.95 
+
+BUDGETED VR B = 1 .0% , γ = 0 .10 1.22 ± 0.01 79 .53 ± 1.40 
+
+BUDGETED VR B = 1 .0% , γ = 0 .50 3.34 ± 0.05 89 .88 ± 0.57 
+
+BUDGETED VR B = 2 .0% , γ = 0 .01 2.00 ± 0.01 70 .20 ± 1.72 
+
+BUDGETED VR B = 2 .0% , γ = 0 .10 2.03 ± 0.01 85 .64 ± 1.21 
+
+BUDGETED VR B = 2 .0% , γ = 0 .50 3.70 ± 0.02 89 .97 ± 0.74 
+
+BUDGETED VR B = 3 .0% , γ = 0 .01 3.00 ± 0.01 73 .90 ± 0.60 
+
+BUDGETED VR B = 3 .0% , γ = 0 .10 3.00 ± 0.01 86 .79 ± 0.71 
+
+BUDGETED VR B = 3 .0% , γ = 0 .50 3.96 ± 0.03 90 .79 ± 0.61 
+
+BUDGETED VR B = 4 .0% , γ = 0 .01 4.00 ± 0.01 76 .97 ± 0.76 
+
+BUDGETED VR B = 4 .0% , γ = 0 .10 4.00 ± 0.01 87 .94 ± 0.30 
+
+BUDGETED VR B = 4 .0% , γ = 0 .50 4.23 ± 0.03 90 .56 ± 0.30 
+
+BUDGETED VR B = 5 .0% , γ = 0 .01 5.00 ± 0.01 78 .34 ± 0.60 
+
+BUDGETED VR B = 5 .0% , γ = 0 .10 5.00 ± 0.01 87 .66 ± 0.85 
+
+BUDGETED VR B = 5 .0% , γ = 0 .50 5.01 ± 0.01 90 .87 ± 0.51 
+
+## O. Algorithm: Binary Metaplasticity from Uncertainty 
+
+Algorithm 1 Binary Metaplasticity from Uncertainty 
+
+Input: M Batches {D t}Mt=1 , Monte Carlo samples K, number of synapses s, temperature T , prior parameter λprior ,memory window N , maximum learning rate αmax 
+
+for t = 1 to M do for k = 1 to K do 
+
+Sample ϵ(1)  
+
+> k
+
+, . . . , ϵ (s)
+
+> k
+> i.i.d.
+
+∼ U (0 , 1) 
+
+δk = 12 (log( ϵk) − log(1 − ϵk)) 
+
+Compute the Gumbel-softmax trick ωk = tanh   1 
+
+> T
+
+(λt−1 + δk)
+
+Compute loss L(ωk, Dt)
+
+Compute gradient of the loss function ∂L(ωk ,Dt)
+
+> ∂ωk
+
+Compute gradient over λt−1
+
+∂L(ωk, Dt)
+
+∂λt−1
+
+← ∂L(ωk, Dt)
+
+∂ωk
+
+⊙ 1 − ω2
+
+> k
+
+T
+
+end for 
+
+Estimate expected gradients: 
+
+∂L(λ, Dt)
+
+∂λ λ=λt−1
+
+← 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+ ∂L(ωk, Dt)
+
+∂λt−1
+
+
+
+Compute adaptative learning rate: 
+
+η(λt−1) = 1 
+
+> 1cosh 2(λt−1)
+
++ 2 tanh( λt−1) ∂L(λ,Dt) 
+
+> ∂λλ=λt−1
+
++ 1 
+
+> αmax
+
++ 2 ∂L(λ,Dt) 
+
+> ∂λλ=λt−1
+
+Update parameters: 
+
+λt = λt−1 − η(λt−1) ⊙
+
+ ∂L(λ, Dt)
+
+∂λ λ=λt−1
+
++ (λt−1 − λprior )
+
+N · cosh 2(λt−1)
+
+
+
+end for 
+
+40 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+## P. Computational Cost Evaluation 
+
+The proposed active learning strategy presented in this paper relies on the fact that in binary neural networks, inference is substantially cheaper than gradient-based updates. BiMU exploits this asymmetrical cost by using repeated low-cost Bayesian inference passes to estimate uncertainty, while triggering expensive backpropagation updates only for informative samples. In this appendix, we ask whether the overhead induced by Monte Carlo Bayesian sampling remains smaller than the compute saved by avoiding most training updates. We evaluate this trade-off directly on an embedded device. We measure the inference and training costs of BiMU, BayesBiNN, STE, and Synaptic Metaplasticity on a microcontroller unit (MCU) implementation, and analyze the effective compute cost of active continual learning under realistic querying rates. More specifically, we address two claims: (i) binary inference is substantially cheaper than online training updates, even in Bayesian settings requiring multiple stochastic forward passes; (ii) BiMU reduces overall compute despite the overhead of Monte Carlo samples to estimate uncertainty. We implemented all methods on an STMicroelectronics STM32 NUCLEO-64 MCU board running at 216 MHz. Forward passes were implemented using 32-bit signed integers, while backward passes used 32-bit floating-point operations due to gradient estimation requiring non-integer values. The measurements in Table 20 were obtained on a reference layer with 
+
+Nin = 512 and Nout = 16 .To estimate the runtime of the OpenLORIS experiments, we project these measurements to the architecture used in the main benchmark, with Nin = 8192 and Nout = 19 . This corresponds to a 19 × increase in the number of layer operations relative to the measured reference layer. As all compared methods use the same classifier structure and the same MCU implementation constraints, this projection preserves the relative compute ratios between inference and training while reflecting the substantially larger dimensionality of the OpenLORIS feature space. We note that binary inference benefits from sub-byte operations and popcount instructions, whereas training remains dominated by floating-point computations and memory writes. Consequently, the gap measured here between inference and training cost in this appendix is likely conservative with respect to dedicated binary hardware accelerators. 
+
+Table 20. NUCLEO-64 benchmark results (216 MHz). Latency and CPU cycles correspond to the mean ± standard deviation over 400 iterations for a layer with Nin = 512 and Nout = 16 .INFERENCE TRAINING 
+
+ALGORITHM TIME (μs ) CYCLES TIME (μs ) CYCLES 
+
+BIMU 717 .93 ± 0.37 155,170 13991 .27 ± 3.72 3,022,211 BAYES BINN 718 .01 ± 0.37 155,195 13117 .61 ± 5.27 2,833,522 STE 310 .85 ± 0.83 67,233 3643 .02 ± 2.69 786,999 SYN . M ETA . 310 .91 ± 0.81 67,243 7723 .78 ± 3.82 1,668,432 
+
+Table 20 supports claim (i) by showing that, for BiMU specifically, the forward pass requires only Cinference = 0 .72 ms, whereas the backward update requires Ctrain = 14 .0 ms, making inference approximately 19 .4× cheaper than training. Similar trends are observed across all binary methods, confirming that the dominant computational cost arises from parameter updates rather than inference itself. 
+
+Table 21. Projected compute cost on the OpenLORIS-8192 architecture ( Nin = 8192 , Nout = 19 ). ALGORITHM INFERENCE (ms ) TRAINING (ms ) EXPECTED COMPUTE PER DATA POINT (ms ) ACCURACY (%)BIMU (A CTIVE LEARNING ) 13 .7 266 .0 45 .0 89 .30 
+
+BIMU 13 .7 266 .0 559 .4 90 .98 
+
+BAYES BINN 13 .6 249 .2 525 .6 84 .18 
+
+STE 5.9 62 .2 62 .2 77 .69 
+
+SYN . M ETA . 5.9 146 .7 146 .7 79 .28 
+
+41 Active Continual Learning with Metaplastic Binary Bayesian Neural Networks 
+
+We next evaluate whether the reduction in update frequency enabled by active learning compensates for the additional Monte Carlo forward passes required for uncertainty estimation. We consider the OpenLORIS-8192 setting used in the main text. Table 17 shows that BiMU reaches 89 .30% accuracy using only K = 2 Monte Carlo samples while querying and updating on only Brate = 3 .3% of the stream. We also consider K = 2 Monte Carlo samples for the backward pass of BiMU and BayesBiNN. Under this setting, the expected compute cost per incoming data point for BiMU with active learning is 
+
+CAL = K × (Cinference + Brate Ctrain ) , (72) where K is the number of Monte Carlo predictors and Brate the fraction of queried samples triggering backpropagation. By contrast, BiMU and BayesBiNN full online training performs one inference and one update for every Monte Carlo predictor: 
+
+CB = K × (Cinference + Ctrain ). (73) Finally, STE and Synaptic Metaplasticity only require their backward cost. Table 21 supports claim (ii) . Despite performing multiple stochastic forward passes per data point, BiMU with active learning reduces the expected compute cost to 45 .0 ms, compared to 559 .4 ms for full BiMU training and 525 .6 ms for BayesBiNN. This corresponds to approximately a 12 .4× reduction relative to full BiMU training while maintaining comparable accuracy (89 .30% versus 90 .98% ). STE remains computationally very cheap because it does not provide uncertainty estimates: this comes at a substantial accuracy degradation in accuracy ( 77 .69% ). Overall, the results show that the low cost of binary inference is sufficient to amortize the overhead of Bayesian uncertainty estimation when active querying significantly reduces the number of gradient updates, supporting claims (i) and (ii) .42
