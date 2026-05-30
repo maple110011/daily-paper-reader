@@ -1,0 +1,4553 @@
+Title: 11862_Approximate_Message_Pass.pdf
+
+URL Source: https://openreview.net/pdf?id=n33JVwCz38
+
+Number of Pages: 38
+
+Markdown Content:
+# Approximate Message Passing for Bayesian Neural Networks 
+
+Anonymous Author(s) 
+
+Affiliation Address 
+
+email 
+
+## Abstract 
+
+Bayesian methods have the ability to consider model uncertainty within a single 1
+
+framework and provide a powerful tool for decision-making. Bayesian neural 2
+
+networks (BNNs) hold great potential for better uncertainty quantification and data 3
+
+efficiency, making them promising candidates for more trustworthy AI in critical 4
+
+applications, and as backbones in data-constrained settings such as real-world 5
+
+reinforcement learning. However, current approaches often face limitations such as 6
+
+overconfidence, sensitivity to hyperparameters, and posterior collapse, highlighting 7
+
+the need for alternative approaches. In this paper, we introduce a novel method 8
+
+that leverages message passing (MP) to model the predictive posterior of BNNs 9
+
+as a factor graph. Unlike previous MP-based methods, our framework is the first 10 
+
+to support convolutional neural networks (CNNs) while addressing the issue of 11 
+
+double-counting training data, which has been a key source of overconfidence in 12 
+
+prior work. Multiple open datasets are used to demonstrate the general applicability 13 
+
+of the method and to illustrate its differences to existing inference methods. 14 
+
+## 1 Introduction 15 
+
+Deep learning models have achieved impressive results across various domains, including natural 16 
+
+language processing [Vaswani et al., 2023], computer vision [Ravi et al., 2024], and autonomous 17 
+
+systems [Bojarski et al., 2016]. Yet, they often produce overconfident but incorrect predictions, 18 
+
+particularly in ambiguous or out-of-distribution scenarios. Without the ability to effectively quantify 19 
+
+uncertainty, this can foster both overreliance and underreliance on models, as users stop trusting 20 
+
+their outputs entirely [Zhang et al., 2024], and in high-stakes domains like healthcare or autonomous 21 
+
+driving, its application can be dangerous [Henne et al., 2020]. To ensure safer deployment in these 22 
+
+settings, models must not only predict outcomes but also express how uncertain they are about those 23 
+
+predictions to allow for informed decision-making. 24 
+
+Bayesian neural networks (BNNs) offer a principled way to quantify uncertainty by capturing a 25 
+
+posterior distribution over the model’s weights, rather than relying on point estimates as in traditional 26 
+
+neural networks (NNs). This allows BNNs to express epistemic uncertainty, the model’s lack of 27 
+
+knowledge about the underlying data distribution. Current methods for posterior approximation 28 
+
+largely fall into two categories: sampling-based methods, such as Hamiltonian Monte Carlo (HMC), 29 
+
+and deterministic approaches like variational inference (VI). While sampling methods are usually 30 
+
+computationally expensive, VI has become increasingly scalable [Shen et al., 2024]. However, VI 31 
+
+is not without limitations: It often struggles with overconfidence [Papamarkou et al., 2024], and it 32 
+
+can struggle to break symmetry when multiple modes are close [Zhang et al., 2018]. Mean-field 33 
+
+approaches, commonly used in VI, are prone to posterior collapse [Kurle et al., 2022, Coker et al., 34 
+
+2022]. Additionally, VI often requires complex hyperparameter tuning [Osawa et al., 2019], which 35 
+
+complicates its practical deployment in real-world settings. These challenges motivate the need for 36 
+
+alternative approaches that can address shortcomings of VI while maintaining its scalability. 37 
+
+Submitted to 39th Conference on Neural Information Processing Systems (NeurIPS 2025). Do not distribute. In contrast, message passing (MP) [Minka, 2001] is a probabilistic inference technique that suffers 38 
+
+less from these problems. Belief propagation [Kschischang et al., 2001], the basis for many MP 39 
+
+algorithms, integrates over variables of a joint density p(x1, . . . , xn) that factorize into a product of 40 
+
+functions fj on subsets of random variables x1, . . . , xn. The corresponding factor graph is bipartite 41 
+
+and connects these factors fj with the variables they depend on. The following recursive equations 42 
+
+yield a computationally efficient algorithm to compute all marginals p(xi) for acyclic factor graphs: 43 
+
+p(x) = Y 
+
+> f∈Nx
+
+mf →x(x) and mf →x(x) =
+
+Z
+
+f (Nf ) Y 
+
+> y∈Nf\{ x}
+
+my→f (y) d(Nf \ { x}),
+
+where Nv denotes the neighborhood of vertex v and my→f (y) = Q   
+
+> f′∈Ny\{ f}
+
+mf ′→y(y). Since exact 44 
+
+messages are often intractable and factor graphs are rarely acyclic, belief propagation typically cannot 45 
+
+be applied directly. Instead, messages mf →X (·) and marginals pX (·) are typically approximated by 46 
+
+some family of distributions that has few parameters (e.g., Gaussians). However, applying MP in 47 
+
+practice presents two main challenges for practitioners: the need to derive (approximate) message 48 
+
+equations when mf →x falls outside the approximating family, and the complexity of implementing 49 
+
+MP compared to other methods. 50 
+
+Contributions Our contributions can be summarized as follows: 51 
+
+1. We propose a novel message-passing (MP) framework for BNNs and derive message equations 52 
+
+for various factors, which can benefit factor graph modeling across domains. 53 
+
+2. We implement our method in Julia for both CPU and GPU, and demonstrate its general applicability 54 
+
+to convolutional neural networks (CNNs) and multilayer perceptrons (MLPs) while avoiding the 55 
+
+double-counting problem. 56 
+
+3. Having advantages for cases with few data (due to the Bayesian framework), we find that that our 57 
+
+method is overall competitive with the SOTA baselines AdamW and IVON. 58 
+
+4. To the best of our knowledge, this is the first MP method to handle CNNs and to avoid double-59 
+
+counting training data, thereby preventing overconfidence and, eventually, posterior collapse. 60 
+
+## 2 Related Work 61 
+
+As the exact posterior is intractable for most practical NNs, approximate methods are essential for 62 
+
+scalable BNNs. These methods generally fall into two categories: sampling-based approaches and 63 
+
+those that approximate the posterior with parameterized distributions. 64 
+
+Markov Chain Monte Carlo (MCMC) methods attempt to draw representative samples from 65 
+
+posterior distributions. Although methods such as Hamiltonian Monte Carlo are asymptotically exact, 66 
+
+they become computationally prohibitive for large NNs due to their high-dimensional parameter 67 
+
+spaces and complex energy landscapes [Coker et al., 2022]. An adaptation of Gibbs sampling has 68 
+
+been scaled to MNIST, but on a very small network with only 8,180 parameters [Papamarkou, 2023]. 69 
+
+Approximate sampling methods can be faster but still require a large number of samples, which 70 
+
+complicates both training and inference. Although approaches like knowledge distillation [Korattikara 71 
+
+et al., 2015] attempt to speed up inference, MCMC remains generally too inefficient for large-scale 72 
+
+deep learning applications [Khan and Rue, 2024]. 73 
+
+Variational Inference (VI) aims to approximate the intractable posterior distribution p(θ | D ) by 74 
+
+a variational posterior q(θ). The parameters of q are optimized using gradients with respect 75 
+
+to an objective function, which is typically a generalized form of the reverse KL divergence 76 
+
+DKL [ q(θ) ∥ p(θ | D ) ] . Early methods like [Graves, 2011] and Bayes By Backprop [Blundell et al., 77 
+
+2015] laid the foundation for applying VI to NNs, but suffer from slow convergence and severe under-78 
+
+fitting, especially for large models or small dataset sizes [Osawa et al., 2019]. More recently, VOGN 79 
+
+[Osawa et al., 2019] achieved Adam-like results on ImageNet LSVRC by applying a Gauss-Newton 80 
+
+approximation to the Hessian matrix. IVON [Shen et al., 2024] improved upon VOGN by using 81 
+
+cheaper Hessian approximations and training techniques like gradient clipping, achieving Adam-like 82 
+
+performance on large-scale models such as GPT-2 while maintaining similar runtime costs. Despite 83 
+
+recent advancements, VI continues to face challenges such as overconfidence, posterior collapse, 84 
+
+and complex hyperparameter tuning (see introduction), motivating the exploration of alternative 85 
+
+approaches [Zhang et al., 2018]. 86 
+
+2Message Passing (MP) for Neural Networks : MP is a general framework that unifies several 87 
+
+algorithms [Kschischang et al., 2001, Minka, 2001], but its direct application to NNs has been limited. 88 
+
+Expectation backpropagation (EBP) [Soudry et al., 2014] approximates the posterior of 3-layer MLPs 89 
+
+by combining expectation propagation, an approximate MP algorithm, with gradient backpropagation. 90 
+
+Similarly, probabilistic backpropagation (PBP) [Hernández-Lobato and Adams, 2015] combines 91 
+
+belief propagation with gradient backpropagation and was found to produce better approximations 92 
+
+than EBP [Ghosh et al., 2016]. However, PBP treats the data as new examples in each consecutive 93 
+
+epoch (double-counting), which makes it prone to overconfidence. Furthermore, EBP and PBP were 94 
+
+both only deployed on small datasets and rely on gradients instead of pure MP. In contrast, Lucibello 95 
+
+et al. [2022] applied MP to larger architectures by modeling the posterior over NN weights as a 96 
+
+factor graph, but faced posterior collapse to a point measure due to also double-counting data. Their 97 
+
+experiments were mostly restricted to three-layer MLPs without biases and with binary weights. Our 98 
+
+approach builds on this by introducing an MP framework for BNNs that avoids double-counting, 99 
+
+scales to CNNs, and effectively supports continuous weights. 100 
+
+## 3 Theoretical Model 101 
+
+Our goal is to model the predictive posterior of a BNN as a factor graph and find a Gaussian 102 
+
+approximation of the predictive posterior via belief propagation. Essentially, factor graphs are 103 
+
+probabilistic modelling tools for approximating the marginals of joint distributions, provided that they 104 
+
+factorize sufficiently. For a more comprehensive introduction on factor graphs and the sum-product 105 
+
+algorithm, refer to Kschischang et al. [2001] BNNs, on the other hand, treat the parameters θ of 106 
+
+a model fθ : Rd −→ Ro as random variables with prior beliefs p(θ). Given a training dataset 107 
+
+D = {xi, yi}ni=1 of i.i.d. samples, a likelihood relationship p(y | x, θ) = p(y | fθ(x)) , and a new 108 
+
+input sample x, the goal is to approximate the predictive posterior distribution p(y | x, D), which can 109 
+
+be written as: 110 
+
+p(y | x, D) = 
+
+Z
+
+p(y | x, θ) p(θ | D ) dθ. (1) This means that the density of the predictive posterior is the expected likelihood under the posterior 111 
+
+distribution p(θ | D ), which is proportional 1 to the product of the prior and dataset likelihood: 112 
+
+p(θ | D ) ∝ p(θ) Yni=1 p(yi | fθ(x)) . (2) The integrand in Equation (1) exhibits a factorized structure that is well-suited to factor graph 113 
+
+modeling. However, directly modelling the relationship o = fθ(x) with a single Dirac delta factor 114 
+
+δ(o − fθ(x)) does not yield feasible message equations. Therefore, we model the NN at scalar level 115 
+
+by introducing intermediate latent variables connected by elementary Dirac delta factors. Figure 1 116 
+
+illustrates this construction for a simple MLP with independent weight matrices a priori. While the 117 
+
+abstract factor graph in the figure uses vector variables for simplicity, we actually derive message 118 
+
+equations where each vector component is treated as a separate scalar variable and all Dirac deltas 119 
+
+depend only on scalar variables. For instance, if d = 2 , the conceptual factor δ(o − W2a) is replaced 120 
+
+by four scalar factors: δ(pjk − wjk ak) for j, k = 1 , 2, with intermediate variables pjk , and two 121 
+
+factors δ(oj − (pj1 + pj2)) . By multiplying all factors in this expanded factor graph and integrating 122 
+
+over intermediate results, we obtain a function in x, y, θ that is proportional to the integrand in 123 
+
+Equation (1). Hence, the marginal of the unobserved target y is proportional to p(y | x, D). When y124 
+
+connects to only one factor, its marginal matches its incoming message. 125 
+
+## 4 Approximations 126 
+
+Calculating a precise representation of the message to the target of an unseen input is intractable for 127 
+
+large networks and datasets. The three primary reasons are, that a) nonlinearities and multiplication 128 
+
+produce highly complex exact messages which are difficult to represent and propagate, b) the 129 
+
+enormous size of the factor graph for large datasets, and c) the presence of various cycles in the 130 
+
+graph. These challenges shape the message approximations as well as the design of our training and 131 
+
+prediction procedures, which we address in the following sections. 132  
+
+> 1with a proportionality constant of 1/p (D)
+
+3xi
+
+x    
+
+> δ(zi−W1xi)
+> δ(z−W1x)
+
+zi
+
+z    
+
+> δ(ai−ϕ(zi))
+> δ(a−ϕ(z))
+
+ai
+
+a    
+
+> δ(oi−W2a)
+> δ(o−W2a)
+
+oi
+
+o    
+
+> p(yi|oi)
+> p(y|o)
+
+yi
+
+y
+
+> p(W1)
+
+W1
+
+> p(W2)
+
+W2
+
+i = 1 , . . . , n 
+
+Figure 1: Conceptual vector-valued factor graph for a simple MLP. Each training example has its own “branch” (a copy of the network), while predictions for an unlabeled input x are computed on a separate prediction branch. All branches are connected by the shared model parameters. Grayed-out variables are conditioned on (observed). Colored arrows indicate the three iteration orders: a forward / backward pass on training examples, and a forward pass for prediction. 
+
+4.1 Approximating Messages via Gaussian Densities 133 
+
+To work around the highly complex exact messages, we approximate them with a parameterized class 134 
+
+of functions. We desire this class to be closed under pointwise multiplication, as variable-to-factor 135 
+
+messages are the product of incoming messages from other factors. We choose positive scalar 136 
+
+multiples of one-dimensional Gaussian densities as our approximating family. Their closedness 137 
+
+follows immediately from the exponential function’s characteristic identity exp( x) exp( y) = exp( x +138 
+
+y) and the observation that for any s1, s 2 > 0 and μ1, μ 2 ∈ R, the function s1(x−μ1)2 +s2(x−μ2)2
+
+> 139
+
+in x can be represented as s(x − μ)2 + c for some s > 0 and μ,c ∈ R. The precise relation between 140 
+
+two scaled Gaussian densities and its product can be neatly expressed with the help of the so-141 
+
+called natural (re-)parameterization. Given a Gaussian N (μ, σ 2), we call ρ = 1 /σ 2 the precision 142 
+
+and τ = μ/σ 2 the precision-mean. Collectively, (τ, ρ ) are the Gaussian’s natural parameters, 143 
+
+G(x; τ, ρ ) := N (x; μ, σ 2), x ∈ R. For μ1, μ 2 ∈ R and σ1, σ 2 > 0 with corresponding natural 144 
+
+parameters ρi = 1 /σ 2 
+
+> i
+
+and τi = μiρi, i = 1 , 2, multiplying Gaussian densities simplifies to: 145 
+
+N (μ1; μ2, σ 21 + σ22 ) · G(x; τ1 + τ2, ρ 1 + ρ2)
+
+for all x ∈ R. Thus, multiplying Gaussian densities simplifies to the pointwise addition of their 146 
+
+natural parameters, aside from a multiplicative constant. Since we are only interested in the marginals, 147 
+
+which are re-normalized, this constant does not affect the final result. 148 
+
+Next, we present our message approximations for three factor types, each representing a deterministic 149 
+
+relationship between variables: (i) the sum of variables weighted by constants, (ii) the application of 150 
+
+a nonlinearity, and (iii) the multiplication of two variables. As we model the factor graph on a scalar 151 
+
+level, these three factors suffice to model complex modern network architectures such as ConvNeXt 152 
+
+Liu et al. [2022] 2. In Appendix F, we provide a comprehensive table of message equations, including 153 
+
+additional factors for modeling training labels. 154 
+
+Weighted Sum : The density transformation property of the Dirac delta allows us to compute the exact message without approximation. For the relationship s = c⊺v modeled by the factor f := δ(s−c⊺v),
+
+mf →s(s) = 
+
+Z
+
+δ(s − c⊺v) Yki=1 mvi→f (vi) dv 1 . . . v k
+
+is simply the density of c⊺v, where v ∼ Qki=1 mvi→f (vi). If mvi→f (vi) = N (vi; μi, σ 2 
+
+> i
+
+) are Gaussian, then v ∼ N (μ, diag (σ2)) and mf →s(s) becomes a scaled multivariate Gaussian: 
+
+mf →s(s) = N (s; c⊺μ, (c2)⊺σ2).
+
+The backward messages mf →vi can be derived similarly without approximation. 155 
+
+> 2
+
+with the exception of layer normalization, which can be substituted by orthogonal initialization schemes Xiao et al. [2018] or specific hyperparameters of a corresponding normalized network Nguyen et al. [2023] 
+
+4Nonlinearity : We model the application of a nonlinearity ϕ : R → R as a factor f := δ(a − ϕ(z)) .156 
+
+However, the forward and backward messages are problematic and require approximation–even for 157 
+
+well-behaved, injective ϕ such as LeakyReLU α:158 
+
+ma→f (a) = pdf ϕ(Z)(a) for Z ∼ N 
+
+mf →z(z) = 
+
+Z
+
+δ(a − ϕ(z)) · ma→f (a) da = ma→f (ϕ(z)) = N (ϕ(z); μa, σ 2 
+
+> a
+
+).
+
+For values of α̸ = 1 , the forward message is non-Gaussian and the backward message does not even integrate to 1. For ReLU (α = 0) , it is clearly not even integrable. Instead, we use moment matching 
+
+to fit a Gaussian approximation. Given any factor f and variable v, we can approximate the message 
+
+mf →v directly with a Gaussian if the moments mk := R vkmf →v(v) dv exist for k = 0 , 1, 2 and can be computed efficiently via mf →v(v) = N (v; m1/m 0, m 2/m 0 − (m1/m 0)2). However, direct moment matching of the message is impossible for non-integrable messages or when the mk are expensive to find. Instead, we can apply moment matching to the updated marginal of v. Let m0, m1,
+
+m2 be the moments of the “true” marginal 
+
+m(v) = 
+
+Z
+
+f (v, v1, ..., vk) dv1...d vk · Y 
+
+> i
+
+mgi→v(v),
+
+which is the product of the true message from f and the approximated messages from other factors 159 
+
+gi. Then we can approximate m with a Gaussian and obtain a message approximation 160 
+
+mf →v(v) := N (v; μv, σ 2 
+
+> v
+
+)/m v→f (v) ,
+
+which approximates mf →v so that it changes v ’s marginal in the same way as the actual message. 3
+
+> 161
+
+Since mv→f (v) is a Gaussian density, we can compute mf →v(v) efficiently by applying Gaussian 162 
+
+division in natural parameters, similar to Section 4.1. For LeakyReLU α, we found efficient direct 163 
+
+and marginal approximations that are each applicable to both the forward and backward message 164 
+
+when α̸ = 0 . The marginal approximation remains applicable even for the ReLU case of α = 0 . We 165 
+
+provide detailed derivations in Appendix B.2. 166 
+
+Product For the relationship c = ab , we employ variational MP as in Stern et al. [2009], in order to 167 
+
+break the vast number of symmetries in the true posterior of a BNN. By combining the variational 168 
+
+message equations for scalar products with the weighted sum, we can also construct efficient higher-169 
+
+order multiplication factors such as inner vector products, see Appendix F for detailed equations. 170 
+
+4.2 Training Procedure & Prediction 171 
+
+In pure belief propagation, the product of incoming messages for any variable equals its marginal 172 
+
+under the true posterior. With our aforementioned approximations, we can reasonably expect to 173 
+
+converge on a diagonal Gaussian ˇq that approximates one of the various permutation modes of the 174 
+
+true posterior by aligning the first two moments of the marginal. This concept can be elegantly 175 
+
+interpreted through the lens of relative entropy. As shown in A.2, among diagonal Gaussians 176 
+
+q(θ) = q1(θ1) · · · qk(θk), the relative entropy from the true posterior to q is minimized for ˇq:177 
+
+ˇq = argmin q DKL [ p(θ | D ) | q(θ) ] . (3) Another challenge in finding ˇq arises from cyclic dependencies. In acyclic factor graphs, each message 178 
+
+depends only on previous messages from its subtree, allowing for exact propagation. However, our 179 
+
+factor graph contains several cycles due to two primary reasons: (i) multiple training branches 180 
+
+interacting with shared parameters across linear layers, and (ii) the scalar-level modeling of matrix-181 
+
+vector multiplication in architectures with more than one hidden layer. These loops create circular 182 
+
+dependencies among messages. To address these challenges, we adopt loopy belief propagation, 183 
+
+where belief propagation is performed iteratively until messages converge. While exact propagation 184 
+
+works in acyclic graphs, convergence is then only guaranteed under certain conditions (e.g., Simon’s 185 
+
+condition [Ihler et al., 2005]) that are difficult to verify. Instead, we pass messages in an iteration 186 
+
+order that largely avoids loops by alternating forward and backward passes similarly to deterministic 187 
+
+NNs. Our message schedule is visualized in Figure 1. 188 
+
+> 3This is the central idea behind expectation propagation as defined in Minka [2001].
+
+5· · · a1 z1 · · · 
+
+· · · a2 z2 · · · 
+
+· · · 
+
+· · · ab zb · · · 
+
+> Active Batch
+> Prior
+
+Wp(W ) 
+
+> Batch k
+> · · ·
+> Batch 3
+> Batch 2
+> FactorGraph
+> Trainer
+
+Figure 2: A full FactorGraph models all messages for one batch of training examples. To iterate, we only need one joint message summarizing the prior and all other examples. When switching to a new batch, we aggregate messages from the previous batch and store them in the Trainer. 
+
+Batching: As the forward and backward messages depend on each other, we must store them to 189 
+
+compute message updates during message passing. Updating our messages in a sweeping “pass” 190 
+
+over a branch and running backward passes immediately after the forward pass on the same branch, 191 
+
+allows us to store many messages only temporarily, reducing memory requirements. This schedule 192 
+
+also ensures efficient propagation of updated messages despite the presence of loops. However, 193 
+
+some messages must still be retained permanently 4, leading to significant memory demand when 194 
+
+storing them for all n training examples. To address this, we adopt a batching strategy: Instead of 195 
+
+maintaining n training branches simultaneously, we update the factor graph using a batch (subset) of 196 
+
+b examples at a time. The factor graph then models b messages to the weights W , while the messages 197 
+
+to W from the remaining (inactive) examples are aggregated into batch-wise products and stored in a 198 
+
+trainer object. Figure 2 illustrates this setup. When switching batches, we divide the marginals by 199 
+
+the batch’s old aggregate message and multiply the updated messages into the marginal, ensuring 200 
+
+that data is not double-counted. Within each batch, we iterate through the examples and perform 201 
+
+a forward and backward pass on each in sequence. After all examples have been processed once, 202 
+
+we call it an “iteration”. Depending on the training stage, we either repeat this process within the 203 
+
+same batch or move to the next batch. As training progresses, we gradually increase the number of 204 
+
+iterations per batch to allow for finer updates as the overall posterior comes closer to convergence. 205 
+
+Prediction: Ultimately, our goal is to compute the marginal of the unobserved target y for some 206 
+
+unseen input x. Since the prediction branch in Figure 1 introduces additional loops, obtaining an 207 
+
+accurate approximation would require iterating over the entire factor graph, including the training 208 
+
+branches. In NN terms, this translates to retraining the whole network for every test input. Instead, 209 
+
+we pass messages only on the training branches in the batch-wise setup described above. At test 210 
+
+time, messages from the training branches are propagated to the prediction branch, but not vice versa. 211 
+
+Specifically, messages from the weights to the prediction branch are computed as the product of the 212 
+
+prior and the incoming messages from the training branches. This can be interpreted as approximating 213 
+
+the posterior over weights, p(θ | D ), with a diagonal Gaussian ˇq(θ) used as prior during inference. 214 
+
+4.3 Implementation 215 
+
+Scaling the approach to deep networks, the following challenges need to be addressed. 216 
+
+Factor Graph Implementation While batching effectively reduces memory requirements for large 217 
+
+datasets, a direct implementation of a factor graph still scales poorly for deep networks. Explicitly 218 
+
+modeling each scalar variable and factor as an instance is computationally expensive. To address this, 219 
+
+we propose the following design optimizations: First, rather than modeling individual elements of 220 
+
+the factor graph, we represent entire layers of the network. MP between layers is orchestrated by 221 
+
+an outer training loop. Second, each layer instance operates across all training branches within the 222 
+
+> 4For example, the backward message of the linear layer is needed to compute the marginal of the inputs, which the forward message depends on.
+
+6active batch, removing the need to duplicate layers for each example. Third, factors are stateless 223 
+
+functions, not objects. Each layer is responsible for computing its forward and backward messages 224 
+
+by calling the required functions. In this design, layer instances maintain their own state, but MP 225 
+
+and batching are managed in the outer loop. The stateless message equations are optimized for both 226 
+
+performance and numerical stability. As a result, the number of layer instances scales linearly with 227 
+
+network depth but remains constant regardless of layer size or batch size. This approach significantly 228 
+
+reduces computational and memory overhead—our implementation is approximately 300x faster 229 
+
+than a direct factor graph model in our tests. Additionally, we optimized our implementation for 230 
+
+GPU execution by leveraging Julia’s CUDA.jl and Tullio.jl libraries. Since much of the runtime 231 
+
+is spent on linear algebra operations (within linear or convolutional layers), we built a reusable, 232 
+
+GPU-compatible library for Gaussian multiplication. This design makes the implementation both 233 
+
+scalable and extendable. 234 
+
+Numerical Stability Maintaining numerical stability in the MP process is critical, particularly 235 
+
+as model size increases. Backward messages often exhibit near-infinite variances when individual 236 
+
+weights have minimal impact on the likelihood. Therefore, we compute them directly in natural 237 
+
+parameters, which also simplifies the equations. Special care is needed for LeakyReLU, as its 238 
+
+messages can easily diverge. To mitigate this, we introduced guardrails: when normalization constants 239 
+
+become too small, precision turns negative, or variance in forward messages increases, we revert to 240 
+
+either G(0 , 0) or use moment matching on messages instead of marginals (see Appendix F for details). 241 
+
+Another trick is to periodically recompute the weight marginals from scratch to maintain accuracy. By 242 
+
+leveraging the properties of Gaussians, we save memory by recomputing variable-to-factor messages 243 
+
+as needed 5. However, incremental updates to marginals can accumulates errors, so we perform a 244 
+
+full recomputation once per batch iteration. Lastly, we apply light message damping through an 245 
+
+exponential moving average to stabilize the training, but, importantly, only on the aggregated batch 246 
+
+messages, not on the individual messages of the active batch. 247 
+
+Weight Priors A zero-centered diagonal Gaussian prior with variance σ2 
+
+> p
+
+is a natural choice for 248 
+
+the prior over weights. However, as in traditional deep learning, setting all means to zero prevents 249 
+
+messages from breaking symmetry. To resolve this, we sample prior means according to spectral 250 
+
+parametrization [Yang et al., 2024], which facilitates feature learning independent of the network 251 
+
+width. Another challenge in prior choice is managing exploding variances. In a naive setup with 252 
+
+σ2 
+
+> p
+
+= 1 , forward message variances grow exponentially with the network depth. To find a principled 253 
+
+choice of σ2 
+
+> p
+
+, our initialization scheme is based on experimental data, see Appendix D. 254 
+
+## 5 Numerical Evaluation 255 
+
+Experiment 1: Application on MNIST dataset. In our experiments on the MNIST dataset, we 256 
+
+compare regression and classification-based versions of our message passing (MP) and SGD. Table 1 257 
+
+compares the test accuracy of MP and SGD for 3-layer MLPs and the LeNet-5 architecture [Lecun 258 
+
+et al., 1998] over a range of training set sizes. We found that R-MP is generally more effective 259 
+
+than AM-MP and that both consistently yield better accuracy than SGD, in particular for limited 260 
+
+training data. For instance, our regression-based MP (R-MP) achieves 85.69% accuracy on the 261 
+
+MLP with only 640 training samples, significantly outperforming softmax-based SGD’s (SM-SGD) 262 
+
+58.85%. We also trained a 3-layer MLP of width 2,000 with 5.6 million parameters, which reached a 263 
+
+test accuracy of 98.04%, whereas at width 256 the accuracy was 98.33%. Among related work on 264 
+
+message passing, results for MNIST-sized datasets were only published by Lucibello et al. [2022]. 265 
+
+Their method reached only 97.4% test accuracy and they published no metrics for evaluating their 266 
+
+predictive uncertainty. For VI, Bayes By Backprop reported an accuracy of 98.18% for their Gaussian 267 
+
+model and 98.64% for their mixture model, which are similar to the accuracy achieved by MP. 268 
+
+A key strength of our approach lies in the performance of its predictive uncertainty. Figure 3a 269 
+
+shows that for a training dataset of size 640, counterintuitively, SGD is underconfident (ECE of 270 
+
+0.3695) whereas R-MP and AM-MP are both decently calibrated with an ECE of 0.0216 and 0.0251 271 
+
+respectively. All methods achieve good calibration when trained on the whole training data, with 272 
+
+calibration errors of 0.0019 for SGD, 0.0014 for AM-MP, and 0.001 for R-MP. However, since most 273 
+
+examples have high confidence levels, calibration becomes less informative at larger dataset sizes. 274 
+
+> 5Each layer stores factor-to-weight-variable messages and the marginal, which is an aggregate that is continuously updated as individual messages change.
+
+7Num Data 80 160 320 640 1,280 2,560 5,120 10,240 60,000 
+
+> MLP
+
+R-MP 30.01 61.79 77.61 85.69 88.95 91.72 94.85 96.25 98.33 AM-MP 31.88 61.08 80.79 85.50 87.92 91.56 94.08 95.72 98.21 
+
+R-SGD 10.11 11.45 14.89 29.66 49.78 67.01 76.41 83.00 92.22 
+
+SM-SGD 21.47 30.38 46.18 58.83 76.67 85.55 89.10 91.17 96.36 LeNet-5  R-MP 27.75 25.58 38.02 94.72 95.36 96.32 97.40 98.12 99.02 AM-MP 17.32 10.42 10.28 93.48 96.19 96.44 97.70 98.05 98.95 
+
+R-SGD 14.06 14.51 14.07 13.99 16.02 31.16 49.43 69.84 94.12 
+
+SM-SGD 18.57 19.54 21.03 22.15 39.36 82.30 90.92 95.04 98.55 Table 1: Comparison of accuracies on MNIST (% correct). Our method (MP) consistently achieves better accuracy than SGD (Torch). Abbreviations: Regression (R), Argmax (AM), and Softmax (SM).     
+
+> (a) Calibration at n= 640 .(b) Relative calibration. (c) Out-of-distribution recognition.
+
+Figure 3: Uncertainty metrics for models trained on MNIST. Thus, we employ relative calibration curves to assess uncertainty further 6. Figure 3b compares the 275 
+
+relative calibration of R-MP and SM-SGD for LeNet-5. Overall, the R-MP predictions show excellent 276 
+
+relative calibration with an area under the curve (AUC) of 0.9949, 0.9986, 0.9998 for 640, 5120, 277 
+
+and 60 000 datapoints, whereas SM-SGD only achieved 0.4451, 0.9845, and 0.9995 respectively. 278 
+
+Finally, we evaluated out-of-distribution (OOD) recognition by training a model on MNIST and 279 
+
+then predicting on mixed examples from FashionMNIST and MNIST. Figure 3c shows the receiver 280 
+
+operating characteristic (ROC) curve for detecting OOD samples by the entropy of their predicted 281 
+
+class distribution. R-MP achieved an AUC of 0.9675 when trained on full MNIST and 0.9242 for 282 
+
+n = 640 , whereas SM-SGD only achieved 0.8872 even with the full training data. 283 
+
+A key strength of our approach lies in the performance of its predictive uncertainty. Figure 4a 284 
+
+shows that for a training dataset of size 640, counterintuitively, SGD is underconfident (ECE of 285 
+
+0.3695) whereas R-MP and AM-MP are both decently calibrated with an ECE of 0.0216 and 0.0251 286 
+
+respectively. All methods achieve good calibration when trained on the whole training data, with 287 
+
+calibration errors of 0.0019 for SGD, 0.0014 for AM-MP, and 0.001 for R-MP. However, since most 288 
+
+examples have high confidence levels, calibration becomes less informative at larger dataset sizes. 289 
+
+Thus, we employ relative calibration curves to assess uncertainty further6. Figure 4b compares the 290 
+
+relative calibration of R-MP and SM-SGD for LeNet-5. Overall, the R-MP predictions show excellent 291 
+
+relative calibration with an area under the curve (AUC) of 0.9949, 0.9986, 0.9998 for 640, 5120, 292 
+
+and 60 000 datapoints, whereas SM-SGD only achieved 0.4451, 0.9845, and 0.9995 respectively. 293 
+
+Finally, we evaluated out-of-distribution (OOD) recognition by training a model on MNIST and 294 
+
+then predicting on mixed examples from FashionMNIST and MNIST. Figure 4c shows the receiver 295 
+
+operating characteristic (ROC) curve for detecting OOD samples by the entropy of their predicted 296 
+
+class distribution. R-MP achieved an AUC of 0.9675 when trained on full MNIST and 0.9242 for 297 
+
+n=640, whereas SM-SGD only achieved 0.8872 even with the full training data. 298 
+
+Experiment 2: Application on CIFAR-10. To evaluate the applicability of our method on the 299 
+
+CIFAR-10 dataset, we trained a 6 layer deep convolutional network with roughly 890k parameters on 300 
+
+the full training dataset. As baseline methods we used the SOTA optimizers AdamW [Loshchilov 301 
+
+and Hutter, 2017] and IVON [Shen et al., 2024] each with a cosine annealing learning rate schedule 302 
+
+[Loshchilov and Hutter, 2016]. Across all methods, including ours, we trained for 25 epochs. In 303 
+
+> 6We order the test examples by their predicted max-class probability. For each uncertainty cutoff, we then plot the accuracy on the remaining (more certain) test set. The area under this curve is also reported under the name AUROC by Osawa et al. [2019].
+
+8Acc. ↑ Top-5 Acc. ↑ NLL ↓ ECE ↓ Brier ↓ OOD-AUROC ↑
+
+AdamW 0.783 0.984 1.736 0.046 0.38 0.792 IVON@mean 0.772 0.983 1.494 0.041 0.387 0.819 
+
+IVON 0.772 0.983 1.316 0.035 0.37 0.808 MP (Ours) 0.773 0.977 0.997 0.029 0.361 0.810 Table 2: Comparison of various validation statistics for a convolutional network of roughly 890k parameters trained on CIFAR-10. Out-of-distribution (OOD) detection was tested with SVHN. For IVON we used 100 samples for prediction at test time. IVON@mean are the results obtained from evaluating the model at the means of the learned distributions of the individual parameters. Appendix C, we give extensive details on the network architecture and the experimental setup in 304 
+
+general. Table 2 compares the performance of our method (MP) against AdamW and IVON across a 305 
+
+variety of standard metrics. In general, we see that MP can compete with these two strong baselines. 306 
+
+In the expected calibration error, our method even has a notable edge. The fact that the metrics are 307 
+
+overall worse than what is reported by Shen et al. [2024] is probably due to a difference in architecture; 308 
+
+Shen et al. only conduct experiments on ResNets equipped with filter response normalization [Singh 309 
+
+and Krishnan, 2019]. Neither residual connections nor normalization layers are yet implemented in 310 
+
+our factor graph library. Nevertheless, the potential of the approach becomes already visible. 311 
+
+Experiment 3: Further Evaluations on Tabular Benchmark Data. We use the UCI machine 312 
+
+learning repository, cf. Dua and Graff [2017], for various regression tasks. The results, see Ap-313 
+
+pendix E.1, show that our method is general applicable and effectively avoids overfitting. 314 
+
+## 6 Summary, Limitations & Future Work 315 
+
+Summary We presented a novel framework that advances message-passing (MP) for BNNs by 316 
+
+modeling the predictive posterior as a factor graph. To the best of our knowledge, this is the first 317 
+
+MP method to handle CNNs while avoiding double-counting training data, a limitation in previous 318 
+
+MP approaches like Soudry et al. [2014], Hernández-Lobato and Adams [2015], Lucibello et al. 319 
+
+[2022]. In our experiments on different datasets, our method proved to be competitive with the SOTA 320 
+
+baselines AdamW and IVON, even showing an edge in terms of calibration. 321 
+
+Limitations Despite recent advances, VI methods like IVON remain ahead in scale and performance 322 
+
+on larger datasets. Our approach’s runtime and memory requirements scale linearly with model 323 
+
+parameters and dataset size. While our inference at test time can keep up with IVON’s sampling 324 
+
+approach in terms of speed and memory requirements, training is up to two orders of magnitude 325 
+
+slower and more GPU-memory intensive compared to training deterministic networks using PyTorch 326 
+
+with optimizers like AdamW. The memory overhead stems from two key factors: First, each training 327 
+
+example stores messages proportional to the model’s parameter count, unlike AdamW’s batch-level 328 
+
+intermediate representations. Second, each parameter requires two 8-byte floating-point numbers, 329 
+
+contrasting with more efficient 4-byte or smaller formats. Runtime inflation results from several 330 
+
+performance bottlenecks: Our training schedule lacks parallel forward passes, our Tullio-based 331 
+
+CUDA kernel generation misses memory-layout and GPU optimizations present in mature libraries 332 
+
+like Torch, message equations involve complex computations beyond standard matrix multiplications, 333 
+
+and we use Julia’s default FP64 precision, which GPUs process less efficiently. 334 
+
+Future Work Regarding training efficiency, an altered message-update schedule with actual batched 335 
+
+computations would significantly reduce training time. Implementing our library in CUDA C++ with 336 
+
+efficiency in mind could also drastically cut down computational overhead. On the architectural front, 337 
+
+we deem it likely that our approach can be extended to most modern deep learning architectures. 338 
+
+Residual connections are straightforward to implement as they boil down to simple sum factors. For 339 
+
+normalization layers at the scalar level, only a division factor is missing, which can be approximated 340 
+
+by a “rotated” product factor. This would suffice to model ResNet-like architectures and more modern 341 
+
+convolutional networks like ConvNeXt. For transformers, the last ingredient needed is an efficient 342 
+
+softargmax factor. Given the division factor, only an exp factor is missing to model softargmax at the 343 
+
+scalar level. 344 
+
+Reproducibility All code is available at https://github.com/neurips-submission-19866/submission. 345 
+
+9References 346 
+
+Heart Failure Clinical Records. UCI Machine Learning Repository, 2020. DOI: 347 
+
+https://doi.org/10.24432/C5Z89R. 348 
+
+Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in neural 349 
+
+networks, 2015. URL https://arxiv.org/abs/1505.05424 .350 
+
+Mariusz Bojarski, Davide Del Testa, Daniel Dworakowski, Bernhard Firner, Beat Flepp, Prasoon Goyal, 351 
+
+Lawrence D. Jackel, Mathew Monfort, Urs Muller, Jiakai Zhang, Xin Zhang, Jake Zhao, and Karol Zieba. 352 
+
+End to end learning for self-driving cars, 2016. URL https://arxiv.org/abs/1604.07316 .353 
+
+Beau Coker, Wessel P. Bruinsma, David R. Burt, Weiwei Pan, and Finale Doshi-Velez. Wide mean-field bayesian 354 
+
+neural networks ignore the data, 2022. URL https://arxiv.org/abs/2202.11670 .355 
+
+Paulo Cortez and Anbal Morais. Forest Fires. UCI Machine Learning Repository, 2007. DOI: 356 
+
+https://doi.org/10.24432/C5D88D. 357 
+
+Paulo Cortez, A. Cerdeira, F. Almeida, T. Matos, and J. Reis. Wine Quality. UCI Machine Learning Repository, 358 
+
+2009. DOI: https://doi.org/10.24432/C56S3T. 359 
+
+Erik Daxberger, Agustinus Kristiadi, Alexander Immer, Runa Eschenhagen, Matthias Bauer, and Philipp Hennig. 360 
+
+Laplace redux – effortless bayesian deep learning, 2022. URL https://arxiv.org/abs/2106.14806 .361 
+
+Dheeru Dua and Casey Graff. Uci machine learning repository, 2017. URL http://archive.ics.uci.edu/ 362 
+
+ml .363 
+
+Hadi Fanaee-T. Bike Sharing. UCI Machine Learning Repository, 2013. DOI: https://doi.org/10.24432/C5W894. 364 
+
+Soumya Ghosh, Francesco Delle Fave, and Jonathan Yedidia. Assumed density filtering methods for learning 365 
+
+bayesian neural networks. Proceedings of the AAAI Conference on Artificial Intelligence , 30(1), Feb. 2016. doi: 366 
+
+10.1609/aaai.v30i1.10296. URL https://ojs.aaai.org/index.php/AAAI/article/view/10296 .367 
+
+Alex Graves. Practical variational inference for neural networks. In J. Shawe-Taylor, R. Zemel, P. Bartlett, 368 
+
+F. Pereira, and K.Q. Weinberger, editors, Advances in Neural Information Processing Systems , volume 24. 369 
+
+Curran Associates, Inc., 2011. URL https://proceedings.neurips.cc/paper_files/paper/2011/ 370 
+
+file/7eb3c8be3d411e8ebfab08eba5f49632-Paper.pdf .371 
+
+Maximilian Henne, Adrian Schwaiger, Karsten Roscher, and Gereon Weiss. Benchmarking uncertainty estima-372 
+
+tion methods for deep learning with safety-related metrics. In SafeAI@ AAAI , pages 83–90, 2020. 373 
+
+José Miguel Hernández-Lobato and Ryan P. Adams. Probabilistic backpropagation for scalable learning of 374 
+
+bayesian neural networks, 2015. URL https://arxiv.org/abs/1502.05336 .375 
+
+Alexander Ihler, John III, and Alan Willsky. Loopy belief propagation: Convergence and effects of message 376 
+
+errors. Journal of Machine Learning Research , 6:905–936, 05 2005. 377 
+
+Mohammad Emtiyaz Khan and Håvard Rue. The bayesian learning rule, 2024. URL https://arxiv.org/ 378 
+
+abs/2107.04562 .379 
+
+Anoop Korattikara, Vivek Rathod, Kevin Murphy, and Max Welling. Bayesian dark knowledge, 2015. URL 380 
+
+https://arxiv.org/abs/1506.04416 .381 
+
+F.R. Kschischang, B.J. Frey, and H.-A. Loeliger. Factor graphs and the sum-product algorithm. IEEE Transac-382 
+
+tions on Information Theory , 47(2):498–519, 2001. doi: 10.1109/18.910572. 383 
+
+Richard Kurle, Ralf Herbrich, Tim Januschowski, Yuyang Wang, and Jan Gasthaus. On the detrimental effect of 384 
+
+invariances in the likelihood for variational inference, 2022. URL https://arxiv.org/abs/2209.07157 .385 
+
+Y. Lecun, L. Bottou, Y. Bengio, and P. Haffner. Gradient-based learning applied to document recognition. 386 
+
+Proceedings of the IEEE , 86(11):2278–2324, 1998. doi: 10.1109/5.726791. 387 
+
+Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feichtenhofer, Trevor Darrell, and Saining Xie. A convnet 388 
+
+for the 2020s, 2022. URL https://arxiv.org/abs/2201.03545 .389 
+
+Ilya Loshchilov and Frank Hutter. SGDR: stochastic gradient descent with restarts. CoRR , abs/1608.03983, 390 
+
+2016. URL http://arxiv.org/abs/1608.03983 .391 
+
+Ilya Loshchilov and Frank Hutter. Fixing weight decay regularization in adam. CoRR , abs/1711.05101, 2017. 392 
+
+URL http://arxiv.org/abs/1711.05101 .393 
+
+10 Carlo Lucibello, Fabrizio Pittorino, Gabriele Perugini, and Riccardo Zecchina. Deep learning via message 394 
+
+passing algorithms based on belief propagation. Machine Learning: Science and Technology , 3(3):035005, 395 
+
+jul 2022. doi: 10.1088/2632-2153/ac7d3b. URL https://dx.doi.org/10.1088/2632-2153/ac7d3b .396 
+
+Thomas P. Minka. Expectation propagation for approximate bayesian inference. In Proceedings of the 397 
+
+Seventeenth Conference on Uncertainty in Artificial Intelligence , UAI’01, page 362–369, San Francisco, CA, 398 
+
+USA, 2001. Morgan Kaufmann Publishers Inc. ISBN 1558608001. 399 
+
+Warwick Nash, Tracy Sellers, Simon Talbot, Andrew Cawthorn, and Wes Ford. Abalone. UCI Machine Learning 400 
+
+Repository, 1994. DOI: https://doi.org/10.24432/C55C7W. 401 
+
+Khanh-Binh Nguyen, Jaehyuk Choi, and Joon-Sung Yang. Eunnet: Efficient un-normalized convolution layer for 402 
+
+stable training of deep residual networks without batch normalization layer. IEEE Access , 11:76977–76988, 403 
+
+2023. doi: 10.1109/ACCESS.2023.3244072. 404 
+
+Cameron Nugent. California housing prices, 2017. URL https://www.kaggle.com/datasets/camnugent/ 405 
+
+california-housing-prices . Dataset derived from the 1990 U.S. Census, originally published by Pace, 406 
+
+R. Kelley, and Ronald Barry in "Sparse Spatial Autoregressions", Statistics and Probability Letters, 33 (1997) 407 
+
+291-297. 408 
+
+Kazuki Osawa, Siddharth Swaroop, Anirudh Jain, Runa Eschenhagen, Richard E. Turner, Rio Yokota, and 409 
+
+Mohammad Emtiyaz Khan. Practical deep learning with bayesian principles, 2019. URL https://arxiv. 410 
+
+org/abs/1906.02506 .411 
+
+Theodore Papamarkou. Approximate blocked gibbs sampling for bayesian neural networks, 2023. URL 412 
+
+https://arxiv.org/abs/2208.11389 .413 
+
+Theodore Papamarkou, Maria Skoularidou, Konstantina Palla, Laurence Aitchison, Julyan Arbel, David Dunson, 414 
+
+Maurizio Filippone, Vincent Fortuin, Philipp Hennig, José Miguel Hernández-Lobato, Aliaksandr Hubin, 415 
+
+Alexander Immer, Theofanis Karaletsos, Mohammad Emtiyaz Khan, Agustinus Kristiadi, Yingzhen Li, 416 
+
+Stephan Mandt, Christopher Nemeth, Michael A. Osborne, Tim G. J. Rudner, David Rügamer, Yee Whye 417 
+
+Teh, Max Welling, Andrew Gordon Wilson, and Ruqi Zhang. Position: Bayesian deep learning is needed in 418 
+
+the age of large-scale ai, 2024. URL https://arxiv.org/abs/2402.00809 .419 
+
+Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Ronghang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, 420 
+
+Roman Rädle, Chloe Rolland, Laura Gustafson, Eric Mintun, Junting Pan, Kalyan Vasudev Alwala, Nicolas 421 
+
+Carion, Chao-Yuan Wu, Ross Girshick, Piotr Dollár, and Christoph Feichtenhofer. Sam 2: Segment anything 422 
+
+in images and videos, 2024. URL https://arxiv.org/abs/2408.00714 .423 
+
+Yuesong Shen, Nico Daheim, Bai Cong, Peter Nickl, Gian Maria Marconi, Clement Bazan, Rio Yokota, Iryna 424 
+
+Gurevych, Daniel Cremers, Mohammad Emtiyaz Khan, and Thomas Möllenhoff. Variational learning is 425 
+
+effective for large deep networks, 2024. URL https://arxiv.org/abs/2402.17641 .426 
+
+Saurabh Singh and Shankar Krishnan. Filter response normalization layer: Eliminating batch dependence in 427 
+
+the training of deep neural networks. CoRR , abs/1911.09737, 2019. URL http://arxiv.org/abs/1911. 428 
+
+09737 .429 
+
+Daniel Soudry, Itay Hubara, and Ron Meir. Expectation backpropagation: parameter-free training of multilayer 430 
+
+neural networks with continuous or discrete weights. In Proceedings of the 27th International Conference on 431 
+
+Neural Information Processing Systems - Volume 1 , NIPS’14, page 963–971, Cambridge, MA, USA, 2014. 432 
+
+MIT Press. 433 
+
+David Stern, Ralf Herbrich, and Thore Graepel. Matchbox: Large scale bayesian recommendations. In Proceed-434 
+
+ings of the 18th International World Wide Web Conference , January 2009. URL https://www.microsoft. 435 
+
+com/en-us/research/publication/matchbox-large-scale-bayesian-recommendations/ .436 
+
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, 437 
+
+and Illia Polosukhin. Attention is all you need, 2023. URL https://arxiv.org/abs/1706.03762 .438 
+
+Lechao Xiao, Yasaman Bahri, Jascha Sohl-Dickstein, Samuel S. Schoenholz, and Jeffrey Pennington. Dynamical 439 
+
+isometry and a mean field theory of cnns: How to train 10,000-layer vanilla convolutional neural networks, 440 
+
+2018. URL https://arxiv.org/abs/1806.05393 .441 
+
+Greg Yang, James B. Simon, and Jeremy Bernstein. A spectral condition for feature learning, 2024. URL 442 
+
+https://arxiv.org/abs/2310.17813 .443 
+
+I-Cheng Yeh. Real Estate Valuation. UCI Machine Learning Repository, 2018. DOI: 444 
+
+https://doi.org/10.24432/C5J30W. 445 
+
+11 Cheng Zhang, Judith Butepage, Hedvig Kjellstrom, and Stephan Mandt. Advances in variational inference, 2018. 446 
+
+URL https://arxiv.org/abs/1711.05597 .447 
+
+Zelun Tony Zhang, Sebastian S Feger, Lucas Dullenkopf, Rulu Liao, Lukas Süsslin, Yuanting Liu, and Andreas 448 
+
+Butz. Beyond recommendations: From backward to forward ai support of pilots’ decision-making process. 449 
+
+arXiv preprint arXiv:2406.08959 , 2024. 450 
+
+12 A Proof of Global Minimization Objective 451 
+
+A.1 Moment-Matched Gaussians Minimize Cross-Entropy 452 
+
+Consider a scalar density p and a Gaussian q(θ) = N (θ, μ, σ ). Then 453 
+
+min H(p, q ) = min 
+
+Z 
+
+p(θ) log 
+
+ p(θ)
+
+q(θ)
+
+
+
+dθ 
+
+
+
+= min 
+
+ 12σ2
+
+Z
+
+p(θ)( θ − μ)2 dθ + log(2 πσ 2)2
+
+
+
+.
+
+It is well known that expectations minimize the expected mean squared error. In other words, the 454 
+
+integral is minimized by setting μ to the expectation of p and is then equal to the variance of p. The 455 
+
+necessary condition of a local minimum then yields that σ2 must be the variance of p.456 
+
+A.2 Proof of Equation (3) Global Minimization Objective 457 
+
+Let p be an arbitrary probability density on Rk with marginals pi(θi) := R p(θ) d(θ \ θi) and denote 458 
+
+by Q the set of diagonal Gaussians. Then for every q(θ) = Qki=1 qi(θi) ∈ Q we can write the 459 
+
+relative entropy from p to q as 460 
+
+DKL [ p || q ] = 
+
+Z
+
+p(θ) log 
+
+ p(θ)
+
+q(θ)
+
+
+
+dθ = −
+
+> k
+
+X
+
+> i=1
+
+Z
+
+p(θ) log( q(θi)) dθ − H(p)= −
+
+> k
+
+X
+
+> i=1
+
+Z
+
+> θi
+
+log( qi(θi)) 
+
+Z
+
+> θ\θi
+
+p(θ)d(θ \ θi) − H(p) = 
+
+> k
+
+X
+
+> i=1
+
+H(pi, q i) − H(p).
+
+This shows that DKL [ p || q ] is minimized by independently minimizing the summands H(pi, q i). In 461 
+
+combination with A.1 this completes the proof. 462 
+
+## B Derivations of Message Equations 463 
+
+B.1 ReLU 464 
+
+A common activation function is the Rectified Linear Unit ReLU : R → R, z 7 → max (0 , z ).465 
+
+Forward Message: Since ReLU is not injective, we cannot apply the density transformation property of the Dirac delta to the forward message 
+
+mf →a(a) = 
+
+Z
+
+> z∈R
+
+δ(a − ReLU (z)) mz→f (z) dz.
+
+In fact, the random variable ReLU (Z) with Z ∼ mz→f does not even have a density. A positive amount of weight, namely Pr[ Z ≤ 0] , is mapped to 0. Therefore 
+
+mf →a(0) = lim 
+
+> t→0
+
+Z
+
+> z∈R
+
+N (ReLU (z); 0 , t 2)mz→f (z) dz ≥ lim  
+
+> t→0
+
+N (0; 0 , t 2) min  
+
+> z∈[−1,0]
+
+mz→f (z) = ∞.
+
+Apart from 0, the forward message is well defined everywhere, and technically null sets do not matter 466 
+
+under the integral. However, moment-matching mz→f while truncating at 0 does not seem reasonable 467 
+
+as it completely ignores the weight of mz→f on R≤0. Therefore, we refrain from moment-matching 468 
+
+the forward message of ReLU. 469 
+
+As an alternative, we consider a marginal approximation. That means, we derive formulas for 470 
+
+mk := 
+
+Z
+
+> a∈R
+
+akma→f (a)mf →a(a) da, k ∈ { 0, 1, 2} (4) and then set 
+
+mf →a(a) := N (a; m1/m 0, m 2/m 0 − (m1/m 0)2) / m a→f (a).
+
+13 By changing the integration order, we obtain 471 
+
+mk =
+
+Z
+
+> a∈R
+
+akma→f (a)
+
+Z
+
+> z∈R
+
+δ(a − ReLU (z)) mz→f (z) dz d a
+
+=
+
+Z
+
+> z∈R
+
+mz→f (z)
+
+Z
+
+> a∈R
+
+δ(a − ReLU (z)) akma→f (a) da dz 
+
+=
+
+Z
+
+> z∈R
+
+mz→f (z)ReLU k(z)ma→f (ReLU (z)) dz 
+
+Note that we end up with a well-defined and finite integral. Similar integrals arise in later derivations. 472 
+
+For this reason we encapsulate part of the analysis in basic building blocks. 473 
+
+Building Block 1. We can efficiently approximate integrals of the form 
+
+Z ∞
+
+> 0
+
+zkN (z; μ1, σ 21 )N (z; μ2, σ 22 ) dz 
+
+where μ1, μ 2 ∈ R, σ 1, σ 2 > 0 and k = 0 , 1, 2.474 
+
+Proof. By Section 4.1 the integral is equal to 475 
+
+S+ = N (μ1; μ2, σ 21 + σ22 )
+
+Z ∞
+
+> 0
+
+zkN  z; μ, σ 2 dz 
+
+= N (μ1; μ2, σ 21 + σ22 )
+
+E[ReLU k(N (μ, σ 2))] for k = 1 , 2Pr[ −Z ≤ 0] = ϕ(μ/σ ) for k = 0 
+
+where 
+
+μ = τρ , σ2 = 1
+
+ρ , τ = μ1
+
+σ21
+
++ μ2
+
+σ22
+
+and ρ = 1
+
+σ21
+
++ 1
+
+σ22
+
+.
+
+> 476
+
+This motivates the derivation of efficient formulas for the moments of an image of a Gaussian variable 477 
+
+under ReLU. 478 
+
+Building Block 2. Let Z ∼ N (μ, σ 2). The first two moments of ReLU (Z) are then given by 479 
+
+E[ReLU (Z)] = σφ (x) + μϕ (x) (5) 
+
+E[ReLU 2(Z)] = σμφ (x) + ( σ2 + μ2)ϕ(x), (6) where x = μ/σ and φ, ϕ denote the pdf and cdf of the standard normal distribution, respectively. 480 
+
+Proof. The basic idea is to apply R ze −z2/2 dz = −e−z2/2. Together with a productive zero, one 481 
+
+obtains 482 
+
+√2πσ E[ReLU (Z)] = 
+
+Z ∞
+
+> 0
+
+ze − (z−μ)22σ2 dz = σ2
+
+Z ∞
+
+> 0
+
+(z − μ)
+
+σ2 e− (z−μ)22σ2 dz + μ
+
+Z ∞
+
+> 0
+
+e− (z−μ)22σ2 dz 
+
+= σ2
+
+
+
+−e− (z−μ)22σ2
+
+∞
+
+> 0
+
++ √2πσμ Pr[ Z ≥ 0] = σ2e− μ22σ2 + √2πσμ Pr 
+
+ −Z + μσ ≤ μσ
+
+
+
+= √2πσ 2φ(x) + √2πσμϕ (x).
+
+Rearranging yields the desired formula for the first moment. For the second moment, we need to 483 
+
+complete the square and perform integration by parts: 484 
+
+E[ReLU 2(Z)] = 1
+
+√2πσ 
+
+Z ∞
+
+> 0
+
+z2e− (z−μ)22σ2 dz 
+
+= 1
+
+√2πσ 
+
+
+
+σ2
+
+Z ∞
+
+> 0
+
+(z − μ) z − μσ2 e− (z−μ)22σ2 dz + 2 μ
+
+Z ∞
+
+> 0
+
+ze − (z−μ)22σ2 dz − μ2
+
+Z ∞
+
+> 0
+
+e− (z−μ)22σ2 dz 
+
+
+
+= σ2
+
+√2πσ 
+
+ 
+
+−(z − μ)e− (z−μ)22σ2
+
+∞
+
+> 0
+
++
+
+Z ∞
+
+> 0
+
+e− (z−μ)22σ2
+
+
+
++ 2 μE[ReLU (Z)] − μ2ϕ(x)= −σμφ (x) + σ2ϕ(x) + 2 μE[ReLU (Z)] − μ2ϕ(x) = σμφ (x) + ( σ2 + μ2)ϕ(x).
+
+14 485 
+
+Building Block 3. Integrals of the form 
+
+S− := 
+
+Z 0
+
+> −∞
+
+zkN (z; μ1, σ 21 )N (0; μ2, σ 22 ) dz 
+
+where μ1, μ 2 ∈ R, σ 1, σ 2 > 0 and k = 0 , 1, 2 can be efficiently approximated. 486 
+
+Proof. Employing the substitution z = −t gives 487 
+
+S− = N (0; μ2, σ 22 )
+
+Z ∞
+
+> 0
+
+(−1) ktkN (−t; μ1, σ 21 ) dt = ( −1) kN (0; μ2, σ 22 )
+
+Z ∞
+
+> 0
+
+tkN (t; −μ1, σ 21 ) dt 
+
+= ( −1) kN (0; μ2, σ 22 )
+
+E[ReLU (N (−μ1, σ 21 ))] for k = 1 , 2Pr[ −Z ≥ 0] = ϕ(−μ1/σ 1) for k = 0 .
+
+> 488
+
+Now let mz→f (z) = N (z; μz , σ 2 
+
+> z
+
+), m a→f (a) = N (a; μa, σ 2 
+
+> a
+
+) and consider the decomposition 
+
+mk =
+
+Z ∞
+
+> 0
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (z; μa, σ 2 
+
+> a
+
+) dz 
+
+| {z }
+
+> S+
+
++
+
+Z 0
+
+> −∞
+
+ReLU k(z)N (z; μz , σ 2 
+
+> z
+
+)N (0; μa, σ 2 
+
+> a
+
+) dz 
+
+| {z }
+
+> S−
+
+.
+
+Note that S+ falls under Building Block 1 for any k = 0 , 1, 2. The other addend S− is equal to 0 for 489 
+
+k = 1 , 2, and is handled by Building Block 3 for k = 0 .490 
+
+Backward Message: By definition of the Dirac delta, the backward message is equal to 
+
+mf →z (z) = 
+
+Z
+
+> a∈R
+
+δ(a − ReLU (z)) ma→f (a) da = ma→f (ReLU (z)) 
+
+which is, of course, not integrable, so it cannot be interpreted as a scaled density. Instead, we apply marginal approximation by deriving formulas for 
+
+mk := 
+
+Z
+
+> z∈R
+
+zkmz→f (z)mf →z (z) dz, k ∈ { 0, 1, 2}
+
+and then setting 
+
+mf →z (z) := N (z; m1/m 0, m 2/m 0 − (m1/m 0)2) / m z→f (z).
+
+To this end, let mz→f (z) = N (z; μz , σ 2 
+
+> z
+
+) and ma→f (a) = N (a; μa, σ 2 
+
+> a
+
+). Then we have 
+
+mk =
+
+Z ∞
+
+> 0
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (z; μa, σ 2
+
+> a
+
+) dz 
+
+| {z }
+
+> S+
+
++
+
+Z 0
+
+> −∞
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (0; μa, σ 2
+
+> a
+
+) dz 
+
+| {z }
+
+> S−
+
+.
+
+The two addends S+ and S− are handled by Building Block 1 and Building Block 3, respectively. 491 
+
+B.2 Leaky ReLU 492 
+
+Another common activation function is the Leaky Rectified Linear Unit LeakyReLU α : R → R, z 7 →
+
+z for z ≥ 0
+
+αz for z < 0.
+
+It is parameterized by some α > 0 that is typically small, such as α = 0 .1. In contrast to ReLU, it is 493 
+
+injective (and even bijective). For this reason the forward and backward messages are both integrable 494 
+
+and can be approximated by both direct and marginal moment matching. The notation is shown in 495 
+
+Figure 4. 496 
+
+15 a
+
+δ(a − LeakyReLU α(z)) 
+
+z
+
+N (μa, σ 2 
+
+> a
+
+) N (μz, σ 2 
+
+> z
+
+)
+
+Figure 4: A deterministic factor corresponding to the LeakyReLU α activation function. 
+
+Forward Message: It is easy to show that the density of LeakyReLU α(N (μz , σ 2 
+
+> z
+
+)) is given by 
+
+p(a) = N (LeakyReLU 1/α (a); μz , σ 2 
+
+> z
+
+)
+
+1 for z ≥ 01/α for z < 0
+
+which only has one discontinuity point, namely 0. In particular, it is continuous almost everywhere. 497 
+
+So by the density transformation property of Dirac’s delta, we have mf →a(a) = p(a) for almost all 498 
+
+a. Under the integral we can therefore replace mf →a(a) by p(a). This justifies that the moments of 499 
+
+mf →a are exactly the moments of (LeakyReLU α)∗N (μz , σ 2 
+
+> z
+
+). Its expectation is equal to 500 
+
+E [LeakyReLU α(N (μz , σ 2 
+
+> z
+
+))] = 
+
+Z 0
+
+> −∞
+
+αz N (z; μz , σ 2 
+
+> z
+
+) dz +
+
+Z ∞
+
+> 0
+
+zN (z; μz , σ 2 
+
+> z
+
+) dz 
+
+= −α
+
+Z ∞
+
+> 0
+
+tN (t; −μz , σ 2 
+
+> z
+
+) dt +
+
+Z ∞
+
+> 0
+
+zN (z; μz , σ 2 
+
+> z
+
+) dz 
+
+= −αE[ReLU (N (−μz , σ 2 
+
+> z
+
+))] + E[ReLU (Z)] .
+
+Both addends are handled by Building Block 2. Yet we can get more insight by further substitution: 501 
+
+E[LeakyReLU α(Z)] = −α(σz φ(−μz /σ z ) − μz ϕ(−μz /σ z )) + σz φ(μz /σ z ) + μz ϕ(μz /σ z )= (1 − α)( σz φ(μz /σ z ) + μz ϕ(μz /σ z )) + αμ z
+
+= (1 − α)E[ReLU (Z)] + αE[Z].
+
+In the second to last equation, we use the identities φ(−x) = φ(x) and ϕ(−x) = 1 − ϕ(x). As such, 502 
+
+the mean of LeakyReLU α(Z) is a convex combination of the mean of ReLU (Z) and the mean of Z.503 
+
+The function LeakyReLU 1 the identity, and its mean is accordingly the mean of Z. For α = 0 , we 504 
+
+recover the mean of ReLU (Z).505 
+
+The second moment of LeakyReLU α(Z) decomposes to 506 
+
+E[LeakyReLU 2
+
+> α
+
+(Z)] = 
+
+Z 0
+
+> −∞
+
+α2z2N (z; μz , σ 2 
+
+> z
+
+) dz +
+
+Z ∞
+
+> 0
+
+z2N (z; μz , σ 2 
+
+> z
+
+) dz 
+
+= α2
+
+Z ∞
+
+> 0
+
+z2N (z; −μz , σ 2 
+
+> z
+
+) dz +
+
+Z ∞
+
+> 0
+
+z2N (z; μz , σ 2 
+
+> z
+
+) dz 
+
+= α2E[ReLU 2(N (−μz , σ 2 
+
+> z
+
+))] + E[ReLU 2(N (μz , σ 2 
+
+> z
+
+))] .
+
+Again, both addends are covered by Building Block 2, so approximating the forward message via 507 
+
+direct moment matching is feasible. 508 
+
+A marginal approximation can also be found. For all k = 0 , 1, 2 we have 509 
+
+Z
+
+> a∈R
+
+akma→f (a)mf →a(a) da =
+
+Z
+
+> a∈R
+
+akma→f (a)p(a) da 
+
+= 1
+
+α
+
+Z 0
+
+> −∞
+
+akN (a; μa, σ 2
+
+> a
+
+)N (a/α ; μz , σ 2 
+
+> z
+
+) da 
+
+| {z }
+
+> S−
+
++
+
+Z ∞
+
+> 0
+
+akN (a; μa, σ 2
+
+> a
+
+)N (a; μz , σ 2 
+
+> z
+
+) da 
+
+| {z }
+
+> S+
+
+The term S+ is handled by Building Block 1. The term S− is equal to 510 
+
+S− =
+
+Z 0
+
+> −∞
+
+akN (a; μa, σ 2
+
+> a
+
+)N (a; αμ z , (ασ z )2) da 
+
+= ( −1) k
+
+Z ∞
+
+> 0
+
+akN (a; −μa, σ 2
+
+> a
+
+)N (a; −αμ z , (ασ z )2) da 
+
+and therefore also covered by Building Block 1. 511 
+
+16 Backward Message: By the sifting property of the Dirac delta, the backward message is equal to 
+
+mf →z (z) = 
+
+Z
+
+> a∈R
+
+δ(a − LeakyReLU α(z)) ma→f (a) da = ma→f (LeakyReLU α(z)) .
+
+As opposed to ReLU, the backward message is integrable. That means, we can also apply direct 512 
+
+moment matching: For all k = 0 , 1, 2 we have 513 
+
+mf →z (z) = 
+
+Z 0
+
+> −∞
+
+zkN (αz ; μa, σ 2
+
+> a
+
+) dz +
+
+Z ∞
+
+> 0
+
+zkN (z; μa, σ 2
+
+> a
+
+) dz 
+
+= (−1) k
+
+α
+
+Z ∞
+
+> 0
+
+zkN (z; −μa/α, (σa/α )2) dz +
+
+Z ∞
+
+> 0
+
+zkN (z; μa, σ 2
+
+> a
+
+) dz 
+
+For k = 1 or k = 2 , the integrals fall under Building Block 2 again. If k = 0 , then 
+
+mf →z (z) = (−1) k
+
+α ϕ(−μa/σ a) + ϕ(μa/σ a).
+
+Again, we can also find a marginal approximation as well. For all k = 0 , 1, 2, we can write 514 
+
+Z
+
+> z∈R
+
+zkmz→f (z)mf →z (z) dz 
+
+=
+
+Z 0
+
+> −∞
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (αz ; μa, σ 2
+
+> a
+
+) dz +
+
+Z ∞
+
+> 0
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (z; μa, σ 2
+
+> a
+
+) dz 
+
+= (−1) k
+
+α
+
+Z ∞
+
+> 0
+
+zkN (z; −μz , σ 2 
+
+> z
+
+)N (z; −μa/α, (σa/α )2) dz +
+
+Z ∞
+
+> 0
+
+zkN (z; μz , σ 2 
+
+> z
+
+)N (z; μa, σ 2
+
+> a
+
+) dz 
+
+Since both integrals are covered by Building Block 1 we have derived direct and marginal approxima-515 
+
+tions of LeakyReLU messages using moment matching. 516 
+
+B.3 Softmax 517 
+
+We model the soft(arg)max training signal as depicted in Table 6. For the forward message on the prediction branch, we employ the so-called “probit approximation” [Daxberger et al., 2022]: 
+
+mf →c(i) = 
+
+Z
+
+softmax (a)iN (a; μ, diag (σ2) da ≈ softmax (t)i,
+
+where tj = μj /(1 + π 
+
+> 8
+
+σ2 
+
+> j
+
+), j = 1 , . . . , d . For the backward message on a training branch, to say 518 
+
+ad, we use marginal approximation. We hence need to compute the moments m0, m 1, m 2 of the 519 
+
+marginal of a d via: 520 
+
+mk =
+
+Z
+
+akd softmax (a)c N (a; μ, diag (σ2) da
+
+=
+
+Z
+
+> ad
+
+akd N (ad; μd, σ 2
+
+> d
+
+)
+
+Z
+
+> a\ad
+
+softmax (a)i
+
+Y 
+
+> j̸=i
+
+N (aj ; μj , σ 2 
+
+> j
+
+) d(a \ ad)dad.
+
+We can reduce the inner integral to the probit approximation by regarding the point distribution δad as 521 
+
+the limit of a Gaussian with vanishing variance: 522 
+
+Z
+
+> a\ad
+
+softmax (a)c
+
+Y 
+
+> j̸=d
+
+N (aj ; μj , σ 2 
+
+> j
+
+) d(a \ ad)=
+
+Z
+
+> a\ad
+
+Z
+
+> ˜ad
+
+δ(˜ ad − ad) softmax (a1, . . . , a d−1, ˜ad) Y 
+
+> j̸=d
+
+N (aj ; μj , σ 2 
+
+> j
+
+) d˜ad d(a \ ad)=
+
+Z
+
+> ˜a\˜ad
+
+lim 
+
+> σ→0
+
+Z
+
+> ˜ai
+
+softmax (˜ a)c N (˜ ad; ad, σ 2) Y 
+
+> j̸=d
+
+N (˜ aj ; μj , σ 2 
+
+> j
+
+) d˜ai d˜ai
+
+17 By Lebesgue’s dominated convergence theorem we obtain equality to 523 
+
+lim 
+
+> σ→0
+
+Z
+
+> ˜a
+
+softmax (˜ a)cN (˜ ad; ad, σ 2) Y 
+
+> j̸=i
+
+N (˜ aj ; μj , σ 2 
+
+> j
+
+) d˜a
+
+≈ lim  
+
+> σ→0
+
+softmax (t)i = softmax (t1, . . . , t d−1, ad) where tj =
+
+μj /(1 + π 
+
+> 8
+
+σ2 
+
+> j
+
+) for j̸ = d
+
+ad/(1 + π 
+
+> 8
+
+σ2) for j = d. 
+
+Hence, we can approximate mk by one-dimensional numerical integration of 
+
+mk ≈
+
+Z
+
+> ad
+
+akd N (ad; μd, σ 2
+
+> d
+
+) softmax (t1, . . . , t d−1, ad) dad.
+
+## C Experimental Setup 524 
+
+Synthetic Data - Depth Scaling: We generated a dataset of 200 points by randomly sampling x
+
+values from the range [0 , 2] . The true data-generating function was 
+
+f (x) = 0 .5x + 0 .2 sin(2 π · x) + 0 .3 sin(4 π · x).
+
+The corresponding y values were sampled by adding Gaussian noise: f (x) + N (0 , 0.05 2). For the architecture, we used a three-layer NN with the structure: 
+
+[Linear (1 , 16) , LeakyReLU (0 .1) , Linear (16 , 16) , LeakyReLU (0 .1) , Linear (16 , 1)] .
+
+A four-layer network has one additional [Linear (16 , 16) , LeakyReLU (0 .1)] block in the middle, and 525 
+
+a five-layer network has two additional blocks. For the regression noise hyperparameter, we used the 526 
+
+true noise β2 = 0 .05 2. The models were trained for 500 iterations over one batch (as all data was 527 
+
+processed in a single active batch). 528 
+
+Synthetic Data - Uncertainty Evaluation: The same data-generation process was used as in the depth-scaling experiment, but this time, x values were drawn from the range [−0.5, 0.5] . The network architecture remained the same as the three-layer network, but the width of the layers was increased to 32. We trained 100 networks with different random seeds on the same dataset. We define a p-credible interval for 0 ≤ p ≤ 1 as: 
+
+[cdf −1(0 .5 − p
+
+2 ), cdf −1(0 .5 + p
+
+2 )] .
+
+For each credible interval mass p (ranging from 0 to 1 in steps of 0.01), we measured how many of 529 
+
+the p-credible intervals (across the 100 posterior approximations) covered the true data-generating 530 
+
+function. This evaluation was done at each possible x value (ranging from -20 to 20 in steps of 0.05), 531 
+
+generating a coverage rate for each combination of p and x. For each p, we then computed the median 532 
+
+for x > 10 and the median for x < −10 . If we correlate the p values with the medians, we found 533 
+
+that for the median obtained from positive x values the correlation was 0.96, for negative x it was 534 
+
+0.99, and for the combined set of medians it was 0.9.535 
+
+CIFAR-10: For our CIFAR-10 experiments, we used the default train-test split and trained the 536 
+
+following feed-forward network: 537 
+
+c l a s s Net ( nn . Module ) : 538 
+
+d e f _ _ i n i t _ _ ( s e l f ) : 539 
+
+super ( Net , s e l f ) . _ _ i n i t _ _ ( ) 540 
+
+s e l f . model = nn . S e q u e n t i a l ( 541 
+
+# B l o c k 1542 
+
+nn . Conv2d ( 3 , 3 2 , 3 , p a d d i n g = 0 ) , 543 
+
+nn . LeakyReLU ( 0 . 1 ) , 544 
+
+nn . Conv2d ( 3 2 , 3 2 , 3 , p a d d i n g = 0 ) , 545 
+
+nn . LeakyReLU ( 0 . 1 ) , 546 
+
+nn . MaxPool2d ( 2 ) , 547 
+
+# B l o c k 2548 
+
+nn . Conv2d ( 3 2 , 6 4 , 3 , p a d d i n g = 0 ) , 549 
+
+nn . LeakyReLU ( 0 . 1 ) , 550 
+
+18 nn . Conv2d ( 6 4 , 6 4 , 3 , p a d d i n g = 0 ) , 551 
+
+nn . LeakyReLU ( 0 . 1 ) , 552 
+
+nn . MaxPool2d ( 2 ) , 553 
+
+# Head 554 
+
+nn . F l a t t e n ( ) , 555 
+
+nn . L i n e a r ( 6 4 * 5 * 5 , 5 1 2 ) , 556 
+
+nn . LeakyReLU ( 0 . 1 ) , 557 
+
+nn . L i n e a r ( 5 1 2 , 1 0 ) , 558 
+
+)559 560 
+
+d e f f o r w a r d ( s e l f , x ) : 561 
+
+r e t u r n s e l f . model ( x ) 562 
+
+In the case of AdamW and IVON we trained with a cross-entropy loss on the softargmax of the 563 
+
+network output. For our message passing method we used our argmax factor as a training signal 564 
+
+instead of softargmax, see Appendix F. The reason is that for softargmax we only have message 565 
+
+approximations relying on rather expensive numerical integration. In our library this factor graph can 566 
+
+be constructed via 567 
+
+f g = c r e a t e _ f a c t o r _ g r a p h ( [ 568 
+
+s i z e ( d . X _ t r a i n ) [ 1 : end − 1 ] , # ( 3 , 3 2 , 3 2 ) 569 
+
+# F i r s t B l o c k 570 
+
+( : Conv , 3 2 , 3 , 0 ) , # ( 3 2 , 3 0 , 3 0 ) 571 
+
+( : LeakyReLU , 0 . 1 ) , 572 
+
+( : Conv , 3 2 , 3 , 0 ) , # ( 3 2 , 2 8 , 2 8 ) 573 
+
+( : LeakyReLU , 0 . 1 ) , 574 
+
+( : MaxPool , 2 ) , # ( 3 2 , 1 4 , 1 4 ) 575 
+
+# Second B l o c k 576 
+
+( : Conv , 6 4 , 3 , 0 ) , # ( 6 4 , 1 2 , 1 2 ) 577 
+
+( : LeakyReLU , 0 . 1 ) , 578 
+
+( : Conv , 6 4 , 3 , 0 ) , # ( 6 4 , 1 0 , 1 0 ) 579 
+
+( : LeakyReLU , 0 . 1 ) , 580 
+
+( : MaxPool , 2 ) , # ( 6 4 , 5 , 5 ) 581 
+
+# Head 582 
+
+( : F l a t t e n , ) , # ( 6 4 * 5 * 5 = 1 6 0 0 ) 583 
+
+( : L i n e a r , 5 1 2 ) , # ( 5 1 2 ) 584 
+
+( : LeakyReLU , 0 . 1 ) , 585 
+
+( : L i n e a r , 1 0 ) , # ( 1 0 ) 586 
+
+( : Argmax , t r u e ) 587 
+
+] , b a t c h _ s i z e ) 588 
+
+For all methods we used a batch size of 128 and trained for 25 epochs with a cosine annealing 589 
+
+learning rate schedule. Concerning hyperparameters: For AdamW we found the standard parameters 590 
+
+of lr = 10 −3, β 1 = 0 .9, β 2 = 0 .999 , ϵ = 10 −8 and δ = 10 −4 to work best. For IVON we followed 591 
+
+the practical guidelines given in the Appendix of Shen et al. [2024]. 592 
+
+To measure calibration, we used 20 bins that were split to minimize within-bin variance. For OOD 593 
+
+recognition, we predicted the class of the test examples in CIFAR-10 (in-distribution) and SVHN 594 
+
+(OOD) and computed the entropy over softmax probabilities for each example. We then sort them by 595 
+
+negative entropy and test the true positive and false positive rates for each possible (binary) decision 596 
+
+threshold. The area under this ROC curve is computed in the same way as for relative calibration. 597 
+
+## D Prior Analysis 598 
+
+The strength of the prior determines the amount of data needed to obtain a useful posterior that fits 599 
+
+the data. Our goal is to draw prior means and set prior variances so that the computed variances 600 
+
+of all messages are on the order of O(1) regardless of network width and depth. It is not entirely 601 
+
+clear if this would be a desirable property; after all, adding more layers also makes the network more 602 
+
+expressive and more easily able to model functions with very high or low values. However, if we 603 
+
+let the predictive prior grow unrestricted, it will grow exponentially, leading to numerical issues. 604 
+
+19 In the following, we analyze the predictive prior under simplifying assumptions to derive a prior 605 
+
+initialization that avoids exponential variance explosion. While we fail to achieve this goal, our 606 
+
+current prior variances are still informed by this analysis. 607 
+
+In the following, we assume that the network inputs are random variables. Then, the parameters of 608 
+
+messages also become random variables, as they are derived from the inputs according to the message 609 
+
+equations. Our goal is to keep the expected value of the variance parameter of the outgoing message 610 
+
+at a constant size. We also assume that the means of the prior are sampled according to spectral 611 
+
+initialization, as described in Section 4.3. 612 
+
+FirstGaussianLinearLayer - Input is a Constant 613 
+
+Each linear layer transforms some d1-dimensional input x to some d2-dimensional output y according 614 
+
+to y = W x + b. In the first layer, x is the input data. For this analysis, we assume each element xi615 
+
+to be drawn independently from xi ∼ N (0 , 1) . Let x be a d1-dimensional input vector, mw be the 616 
+
+prior messages from one column of W , and z = w′x be the vector product before adding the bias. 617 
+
+During initialization of the weight prior, we draw the prior means using spectral parametrization and set the prior variances to a constant: 
+
+mwi = N (μwi , σ 2
+
+> w
+
+) with μwi ∼ N (0 , l 2),l = 1
+
+√k · min(1 ,
+
+r d2
+
+d1
+
+).
+
+By applying the message equations, we then approximate the forward message to the output with a normal distribution 
+
+mz = N (μz , σ 2 
+
+> z
+
+).
+
+Because σ2 
+
+> z
+
+depends on the random variables xi, it is also a random variable that follows a scaled 618 
+
+chi-squared distribution 619 
+
+σ2 
+
+> z
+
+=
+
+> d1
+
+X
+
+> i=1
+
+x2 
+
+> i
+
+· σ2
+
+> w
+
+σ2 
+
+> z
+
+∼ χ2 
+
+> d1
+
+· σ2
+
+> w
+
+and its expected value is 
+
+E[σ2 
+
+> z
+
+] = d1 · σ2
+
+> w
+
+.
+
+We conclude that we can control the magnitude of the variance parameter by choosing E[σ2 
+
+> z
+
+] and 620 
+
+setting σ2 
+
+> w
+
+= E[σ2  
+
+> z]
+> d1
+
+.621 
+
+GaussianLinearLayer - Input is a Variable 622 
+
+In subsequent linear layers, the input x is not observed and we receive an approximate forward message that consists of independent normal distributions 
+
+mxi = N (μxi , σ 2 
+
+> xi
+
+).
+
+Following the message equations, the outgoing forward message to z then has a variance 623 
+
+σ2 
+
+> z
+
+=
+
+> d1
+
+X
+
+> i=1
+
+(σ2 
+
+> xi
+
++ μ2 
+
+> xi
+
+) · (σ2 
+
+> w
+
++ μ2 
+
+> wi
+
+) − (μ2 
+
+> xi
+
+∗ μ2 
+
+> wi
+
+)=
+
+> d1
+
+X
+
+> i=1
+
+σ2 
+
+> xi
+
+· σ2
+
+> w
+
+| {z }
+
+> I
+
++ σ2 
+
+> xi
+
+· μ2
+
+> wi
+
+| {z }
+
+> II
+
++ μ2 
+
+> xi
+
+· σ2
+
+> w
+
+| {z }
+
+> III
+
+The layer’s prior variance σ2 
+
+> w
+
+is a constant, whereas all other elements are random variables according 624 
+
+to our assumptions. To make further analysis tractable, we also have to assume that the variances 625 
+
+20 σ2 
+
+> xi
+
+of the incoming forward messages are identical constants for all i, not random variables. We 626 
+
+furthermore assume that the means are drawn i.i.d. from: 627 
+
+μwi ∼ N (0 , l 2)
+
+μxi ∼ N (μμx , σ 2 
+
+> μx
+
+).
+
+The random variable σ2 
+
+> z
+
+then follows a generalized chi-squared distribution 
+
+σ2 
+
+> z
+
+∼
+
+ d1X
+
+> i=1
+
+σ2 
+
+> x
+
+· l2 · χ2(1 , 02)
+
+| {z }
+
+> II
+
++ σ2 
+
+> w
+
+· σ2 
+
+> μx
+
+· χ2(1 , μ 2 
+
+> μx
+
+)
+
+| {z }
+
+> III
+
+
+
++ d1 · σ2 
+
+> w
+
+· σ2
+
+> x
+
+| {z }
+
+> I
+
+and its expected value is 628 
+
+E[σ2 
+
+> z
+
+] = 
+
+ d1X
+
+> i=1
+
+σ2 
+
+> x
+
+· l2 · (1 + 0 2) + σ2 
+
+> w
+
+· σ2 
+
+> μx
+
+· (1 + μ2 
+
+> μx
+
+)
+
+
+
++ d1 · σ2 
+
+> w
+
+· σ2
+
+> x
+
+= d1 ·
+
+
+
+σ2 
+
+> x
+
+· l2 + σ2 
+
+> w
+
+· σ2 
+
+> μx
+
+· (1 + μ2 
+
+> μx
+
+) + σ2 
+
+> w
+
+· σ2
+
+> x
+
+
+
+= d1 · σ2 
+
+> x
+
+· l2
+
+| {z }
+
+> II
+
++ d1 · (σ2 
+
+> μx
+
+· (1 + μ2 
+
+> μx
+
+) + σ2
+
+> x
+
+) · σ2
+
+> w
+
+| {z }
+
+> I+III
+
+.
+
+As σ2 
+
+> w
+
+has to be positive, we conclude that if we choose E[σ2 
+
+> z
+
+] > d 1 · σ2 
+
+> x
+
+· l2, then we can set 
+
+σ2 
+
+> w
+
+= E[σ2 
+
+> z
+
+] − d1 · σ2 
+
+> x
+
+· l2
+
+d1 · (σ2 
+
+> μx
+
+· (1 + μ2 
+
+> μx
+
+) + σ2
+
+> x
+
+) .
+
+We know (or choose) d1, l2, and E[σ2 
+
+> z
+
+], but we require values for σ2
+
+> x
+
+, μ2 
+
+> μx
+
+, and σ2 
+
+> μx
+
+to be able to 629 
+
+choose σ2
+
+> w
+
+. We will find empirical values for these parameters in the next section. 630 
+
+Empirical Parameters + LeakyReLU 631 
+
+To inform the choice of the prior variances of the inner linear layers, we also need to analyze 632 
+
+LeakyReLU. We assume the network is an MLP that alternates between linear layers and LeakyReLU. 633 
+
+As the message equations of LeakyReLU are too complicated for analysis, we instead use empirical 634 
+
+approximation. Let ma = N (μa, σ 2
+
+> a
+
+) be an incoming message (from the pre-activation variable to 635 
+
+LeakyReLU). We assume that σ2 
+
+> a
+
+= t is a constant and that μa ∼ N (0 , 1) is a random variable. By 636 
+
+sampling multiple means and then computing the outgoing messages (after applying LeakyReLU), we 637 
+
+can approximate the average variance of the outgoing messages, as well as the average and empirical 638 
+
+variance over means of the outgoing messages. 639 
+
+We computed these statistics for 101 different leak settings with 100 million samples each, and found 640 
+
+that the relationship between leak and μμx (average mean of the outgoing message) is approximately 641 
+
+linear, while the relationships between leak and σ2 
+
+> μx
+
+or μσ2 
+
+> x
+
+are approximately quadratic. Using these 642 
+
+samples, we fitted coefficients with an error margin below 5 · 10 −5. For our network, we chose a 643 
+
+target variance of 1.5 and a leak of 0.1, resulting in 644 
+
+σ2 
+
+> x
+
+= 0 .8040586726631379 
+
+σ2 
+
+> μx
+
+· (1 + μ2 
+
+> μx
+
+) = 0 .44958619556324186 .
+
+These values are sufficient for now setting the prior variances of the inner linear layer according to 645 
+
+the equations above. Finally, we set the prior variance of the biases to 0.5, so that the output of each 646 
+
+linear layer achieves an overall target prior predictive variance of approximately t = 1 .5 + 0 .5 = 2 .0.647 
+
+Results in Practice 648 
+
+In practice, we found that the variance of the predictive posterior still goes up exponentially with 649 
+
+the depth of the network despite our derived prior choices. However, if we lower the prior variance 650 
+
+further to avoid this explosion, the network is overly restricted and unable to obtain a good fit during 651 
+
+training. We therefore set the prior variances as outlined here, but acknowledge that choosing a good 652 
+
+prior is a general known problem. 653 
+
+21 E Evaluation: Analysis on Tabular Data 654 
+
+E.1 Goal, Setup & Methods 655 
+
+In thefollowing, we benchmark the proposed Bayesian neural network (BNN) approach using 656 
+
+approximate message passing on a suite of classical regression tasks yet. It is crucial to understand 657 
+
+the behavior of BNNs on classic regression tasks of medium difficulty. Our goal is to assess the 658 
+
+strengths and weaknesses of BNNs, especially regarding performance and overfitting behavior. 659 
+
+We will analyze if our Bayesian neural networks keep their promise of delivering a good calibration, 660 
+
+in particular if the estimated uncertainty matches the errors we are seeing. We are using a suite of 661 
+
+regression problems mainly from the widespread UCI machine learning repository Dua and Graff 662 
+
+[2017]. This repository contains hundreds of publicly available datasets that are used by researchers 663 
+
+as standard benchmarks to test new algorithm approaches. We focus on regression tasks with up to 664 
+
+20 features. Here are the datasets used in our analysis: 665 
+
+• California Housing: The California Housing dataset comprises 8 numerical features derived 666 
+
+from the 1990 U.S. Census data. The aim is to estimate the median house value in a 667 
+
+specific area, based on nine features with information about the neighborhood. These 668 
+
+features include median income, median house age, total number of rooms, total number of 669 
+
+bedrooms, population, number of households, latitude, longitude, and a categorical variable 670 
+
+for ocean proximity. It has the options “near bay” (San Francisco Bay), “near ocean”, “less 671 
+
+than one hour to the ocean”, and “inland”. Challenges in modeling this dataset involve 672 
+
+capturing non-linear relationships and spatial dependencies, as well as influencing factors 673 
+
+that are not included in the feature set. Nugent [2017] 674 
+
+• Abalone: The Abalone dataset is about predicting the age of these specific snakes by 675 
+
+measurements. It contains 4,177 instances with 8 input features: one categorical feature 676 
+
+(sex) and seven continuous features (length, diameter, height, whole weight, shucked weight, 677 
+
+viscera weight, and shell weight). The target variable is the number of rings, which correlates 678 
+
+with the age of the abalone. A significant challenge is the non-linear relationship between 679 
+
+the physical measurements and age, as well as the presence of outliers and multicollinearity 680 
+
+among features. Nash et al. [1994] 681 
+
+• Wine Quality: This dataset includes two subsets related to red and white "Vinho Verde" 682 
+
+wines from Portugal, each with 11 physicochemical input variables such as fixed acidity, 683 
+
+volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, 684 
+
+density, pH, sulphates, and alcohol. All of these variables are continuous. Furthermore, there 685 
+
+is one binary variable indicating if the sample is a white or red whine. The target variable 686 
+
+is the wine quality score (0–10) rated by wine tasters. Challenges include class imbalance, 687 
+
+as most wines have medium quality scores, and the subjective nature of the quality ratings. 688 
+
+Cortez et al. [2009] 689 
+
+• Bike Sharing: The Bike Sharing dataset is about predicting the usage of rental bikes in an 690 
+
+area based on seasonal information, weather, and usage profiles. Specifically, it contains 691 
+
+contains hourly and daily counts of rental bikes in the Capital Bikeshare system from 692 
+
+2011 to 2012, along with 12 features including season, year, month, day, weekday, hour, 693 
+
+holiday, working day, weather situation, temperature, "feels like" temperature, humidity, 694 
+
+wind speed, number of casual users, and number of registered users. The target variable is 695 
+
+the count of total rental bikes. Modeling challenges involve capturing complex temporal 696 
+
+patterns, handling missing data, and accounting for external factors like weather and holidays. 697 
+
+Fanaee-T [2013] 698 
+
+• Forest Fires: This dataset comprises 517 instances with 12 features: spatial coordinates 699 
+
+(X, Y), temporal variables (month, day), and meteorological data (FFMC, DMC, DC, ISI, 700 
+
+temperature, relative humidity, wind, and rain). The target is to predict the burned area of the 701 
+
+forest (in hectares) in the northeast region of Portugal in wild fires. The primary challenge is 702 
+
+the high skewness of the target variable, with many instances having a burned area of zero, 703 
+
+making it difficult to model and evaluate performance accurately. Cortez and Morais [2007] 704 
+
+• Heart Failure: The Heart Failure Clinical Records dataset includes 299 patient records with 705 
+
+13 clinical features such as age, anaemia, high blood pressure, creatinine phosphokinase, 706 
+
+diabetes, ejection fraction, platelets, serum creatinine, serum sodium, sex, smoking, time, 707 
+
+22 and death event. The target variable is a binary indicator of death occurrence. Challenges 708 
+
+include the small dataset size, potential class imbalance, and missing values, which can 709 
+
+affect the generalizability of predictive models. hea [2020] 710 
+
+• Real Estate Taiwan: This dataset is about predicting house prices in New Taipei City, Taiwan. 711 
+
+It contains 414 instances with 6 features: transaction date, house age, distance to the nearest 712 
+
+MRT station, number of convenience stores, latitude, and longitude. The target variable 713 
+
+is the house price per unit area. Challenges in modeling this dataset involve capturing the 714 
+
+influence of location-based features and dealing with a low sample size. Yeh [2018] 715 
+
+Table 3: Summary of Regression Datasets 
+
+Dataset Samples Features Feature Types 
+
+California Housing 20,640 9 Numerical: latitude, longitude, house median age, total rooms, total bedrooms, population, households, median income; categorical: ocean proximity Abalone 4,177 8 1 categorical (sex), 7 numerical: length, diame-ter, height, whole weight, shucked weight, vis-cera weight, shell weight. Wine Quality (Red) 1,599 11 All numerical: fixed acidity, volatile acidity, cit-ric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sul-phates, alcohol. Wine Quality (White) 4,898 11 Same as red wine dataset. Bike Sharing 17,379 12 Mix of categorical and numerical: season, year, month, hour, holiday, weekday, working day, weather situation, temperature, feels-like tem-perature, humidity, wind speed. Forest Fires 517 12 2 categorical (month, day), 10 numerical: FFMC, DMC, DC, ISI, temperature, relative hu-midity, wind, rain, X, Y coordinates. Heart Failure 299 13 Mix of binary and numerical: age, anaemia, high blood pressure, creatinine phosphokinase, dia-betes, ejection fraction, platelets, serum creati-nine, serum sodium, sex, smoking, time, death event. Real Estate Taiwan 414 6 All numerical: transaction date, house age, dis-tance to nearest MRT station, number of conve-nience stores, latitude, longitude. For a quick comparison, the number of features and samples are shown in Table 3. As we can see, 716 
+
+the datasets have very different sizes. This is an important challenge where we want to evaluate the 717 
+
+Bayesian neural network. 718 
+
+For our training, we normalize the values in all columns. In particular, for each column c, we subtract 719 
+
+the mean of c from each entry, and divide by the empiric standard deviation. This applies to both 720 
+
+feature and target columns. The primary reason for us to do this is the fact that the BNN is designed 721 
+
+to handle input with a mean of zero and a standard deviation of one best. Standard neural networks 722 
+
+perform best with numbers in this range as well. Furthermore, normalization helps with the common 723 
+
+problem that different columns have values in different orders of magnitude before normalization, 724 
+
+for example tens of thousands for yearly income, and small numbers for number of bathrooms in 725 
+
+the case of California housing. An additional advantage is that performance can be compared across 726 
+
+datasets (approximately), highlighting strengths and weaknesses across different settings. 727 
+
+On these datasets, we apply a random split into training and test dataset, where we dedicate 80% 728 
+
+on the training dataset and 20% on the test dataset. Then, we run a pipeline where we evaluate the 729 
+
+performance on for each dataset both on the Bayesian neural network implemented in Julia, and on 730 
+
+the standard neural network implemented in PyTorch. 731 
+
+23 The Julia implementation uses a neural network with two hidden layers, and 64 neurons per layer. 732 
+
+LeakyReLy is the activation function, and the default standard deviation at the last layer is set to 0.4.733 
+
+The PyTorch network uses two hidden layers with 64 neurons per hidden layer as well. The only 734 
+
+difference in terms of architecture to the BNN is the fact that stardard ReLu is used. We train with 735 
+
+the same learning rate of 3 · 10 −3. When training with these static datasets which are relatively small, 736 
+
+overfitting is a huge challenge. It is especially the challenge of overfitting, that should be addressed 737 
+
+by our Bayesian neural networks. As the results will show, overfitting is a significant problem on 738 
+
+these datasets for the PyTorch network. To tackle overfitting, several regularization techniques have 739 
+
+been proposed. However, overfitting remains a fundamental flaw of the classical neural networks. To 740 
+
+aim for a fair comparison, we add a weight-decay regularization to the default setup of the PyTorch 741 
+
+networks. The specific weight decay parameter is 1 · 10 −4.742 
+
+For both candidates, we use a batch size of 256. Training is done over a horizon of 500 epochs 743 
+
+which corresponds to very different training lengths, due to the different sizes of the datasets. 744 
+
+Hyperparameter tuning was done for none of the datasets. 745 
+
+The primary metric to rate performance on our regression datasets is the root mean squared error 746 
+
+between the labels and the predicted values. Because we have a standardized output, trivial bench-747 
+
+marks like the constant zero function give an RMSE of one. Hence, we expect RMSE values from 748 
+
+the model to substantially improve over one. 749 
+
+E.2 Results 750 
+
+When running the training an evaluation pipeline, we measure the RMSE of the train and validation 751 
+
+dataset after each batch. That naturally comes with small fluctuations, and a slightly uneven-looking 752 
+
+learning curve. On the larger datasets, that implies a substantially lower variance of the loss estimation 753 
+
+for the validation dataset, and a much smoother learning curve. On the smaller datasets, the evaluation 754 
+
+set is quite small, and therefore, the variance is high. 755 
+
+Dataset BNN Train BNN Val PyTorch Train PyTorch Val BNN Val /PyTorch Val (%) Abalone 0.5748 0.5965 0.4643 0.6668 89.46% Wine Quality 0.7682 0.8095 0.3198 0.7722 104.83% California Housing 0.5455 0.5764 0.3427 0.4278 134.73% Bike Shar-ing 0.2219 0.2432 0.1557 0.216 112.58% Forest Fires 1.0537 1.2015 0.0302 0.4113 292.14% Heart Fail-ure 0.9957 0.9605 0.0034 0.9107 105.47% Real Estate Taiwan 0.6229 0.5823 0.1438 0.5431 107.22% Table 4: Comparison of minimum RMSE for BNN (Julia) and PyTorch approaches. The data was obtained by running the respective training scripts for 500 epochs and measuring the root mean squared error on training and validation splits. In Table 4, the best performances on the datasets along a training run are reported. For each of the 756 
+
+metrics, we are taking the minimum value over all trained batches. Due to the variance of these 757 
+
+estimations, the minimum underestimates the true minimal loss. But the calculation and batch sizes 758 
+
+are the the same for both setups, training and loss, so it does not affect the viability of the comparison. 759 
+
+Note that the minimum for train and test are not necessarily obtained at the same step. 760 
+
+As the comparison column in Table 4 show, the minimal root mean squared errors are similar for many 761 
+
+datasets. On wine quality , and California housing , bike sharing , and real estate Taiwan , the PyTorch 762 
+
+neural network has advantages in terms of pure regression performance, but only for California 763 
+
+24 housing this difference is considered strong. On the other datasets, PyTorch’s performance advantage 764 
+
+is only slight, and within the range of hyperparameter tuning. As we will see in the later analysis, 765 
+
+the BNN has not finished to learn after 500 epochs. Our experiment for 5,000 epochs reveils that 766 
+
+the performance difference actually shrinks to x percent. On Abalone, the BNN’s pure performance 767 
+
+is even superior. For forest fires , we see that the Bayesian neural network was not able to solve the 768 
+
+regression problem in this setup (RMSE is larger than 1), but PyTorch achieved respectable predictive 769 
+
+power. Neither of the two models was capable to actually solve the heart failure dataset, where both 770 
+
+models gave only slightly better RMSE performance than one. The detailed learning curves for these 771 
+
+four datasets with similar performance are plotted in Figure 5. 772 
+
+A general trend that is visible both in Table 4 and in Figure 5 is the fact BNNs show a minimal level 773 
+
+of overfitting, even without further regularization. Depending on the dataset, PyTorch shows high or 774 
+
+very high levels of overfitting, even though regularization was applied. 775 
+
+As one would expect, PyTorch’s overfitting problem is the least serious on California housing and 776 
+
+bike sharing (Figure 5a and 5d), the datasets with the most available samples (California housing 777 
+
+has 16,512 training samples, and bike sharing has 13,903 training samples). Over the course of the 778 
+
+training, the root mean squared error of the validation and train dataset decrease together, but at 779 
+
+around 1/5 of the entire training run, the validation loss stalls, and the training loss decreases further – 780 
+
+the model is just overfitting. 781 
+
+The BNN’s training on these datasets stays above PyTorch’s learning curves after the rapid first initial 782 
+
+improvement, and slowly improves towards PyTorch’s level. While it matches PyTorch’s performance 783 
+
+on bike sharing after 500 epochs, it still has a performance disadvantage on California Housing of 784 
+
+34%. Nevertheless, with additional training, this performance difference shrinks down to only x 785 
+
+percent after 5,000 epochs, a very respectable performance. However, the most notable feature on 786 
+
+these two training runs is the observation that the BNN only shows minimal overfitting. The training 787 
+
+and validation curve decrease on-par, the existing and expected slight overfitting does not increase 788 
+
+by time. The minimal train RMSE is 0.546 compared to a validation RMSE of 0.576 on California 789 
+
+housing in the first 500 epochs, only 5%! On PyTorch, we see 20% overfitting with increasing trend. 790 
+
+On bike sharing, the BNN overfits by 9% compared to 28% for the PyTorch network. The fact that 791 
+
+overfitting is not more severe on these datasets is thanks to the large number of samples, around three 792 
+
+to four times more than the number of parameters of the model. 7
+
+> 793
+
+Wine quality and abalone both have roughly the same sample size as number of parameters. Therefore, 794 
+
+we would expect that overfitting becomes a much more severe issue for these datasets. As Figure 5b 795 
+
+and 5c show, the overfitting problem on these two datasets has increased to a severe level. In both 796 
+
+cases, the overfitting starts right from the beginning, with a steady improvement of the train loss, but 797 
+
+a validation loss that soon finds its minimum, and increases again. In the case of wine quality, this 798 
+
+behavior is significant, but stable and smooth. On abalone however, the validation loss behaves very 799 
+
+unstable, and never comes close to the BNN’s performance. 800 
+
+The BNN gets close to its optimal performance very rapidly in both cases. The overall training is 801 
+
+much faster than for California housing. Again, we see minimal levels of overfitting, a behavior that 802 
+
+is very similar to the analysis of the previous two datasets. Moreover, the existing overfitting does not 803 
+
+increase with time but stays at a similar level throughout the training horizon of 500 epochs. 804 
+
+The last three datasets, forest fires, heart failure and real estate Taiwan, are quite important, and also 805 
+
+difficult to analyze. They only have a few hundred data points, and tend to be very imbalanced. On 806 
+
+the UCI repo and in the literature, they are marked as very difficult datasets. For example, most 807 
+
+samples in forest fires contain a fire with zero acres burned, and only very few samples with a high 808 
+
+amount of burned wood. Additionally, the validation datasets get so small, that biases could easily 809 
+
+find their way into the validation dataset. The concrete performance numbers must therefore be 810 
+
+treated with care, and the strange effect of smaller validation loss than train loss can be observed for 811 
+
+both PyTorch and BNN on some of the runs. For example, it seems very likely that PyTorch’s good 812 
+
+performance on forest fires was obtained randomly by lucky parameter initialization instead of actual 813 
+
+performance. Hence, based on Figure 5e, Figure 5f, and Table 4, we consider the forest fire dataset 814 
+
+and the heart failure datasets unsolved by both models. As we would expect for a model with more 815 
+
+than 10x more parameter than training samples, the train loss goes to zero for the PyTorch model. 816    
+
+> 7The models have two fully connected hidden layers, one transition to the first layer, and the transition to the regression output. Hence, the models have 64 + 64 2+ 64 = 4224 weights.
+
+25 (a) California Housing (b) Abalone 
+
+(c) Wine Quality (d) Bike Sharing 
+
+(e) Forest Fires (f) Heart Failure 
+
+(g) Real Estate Taiwan 
+
+Figure 5: Learning curves of approximate message-passing Bayesian neural networks against PyTorch neural networks 26 The Bayesian neural network is unable to learn the datasets as well, but it does not overfit. Its training 817 
+
+loss never creates the impression that the loss was any lower than it actually is. 818 
+
+The dataset on estimating Taiwanese real estate (learning curve Figure 5g) is the only of the small 819 
+
+datasets that actually gets solved to an acceptable level by both models. Again, we see very heavy 820 
+
+overfitting by the PyTorch model, and no overfitting by the BNN. (Actually, this is one of the 821 
+
+cases where the validation loss is lower than the train loss, probably due to a biased train/test split.) 822 
+
+Moreover, the BNN achieves this performance after only a few epochs. 823 
+
+From this analysis, we can note the following learnings: 824 
+
+1. Our approximate message-passing Bayesian neural networks can achieve similar perfor-825 
+
+mance like PyTorch neural networks with the same architecture. In most cases, they stay 826 
+
+slightly behind in terms of raw performance, but sometimes outperform the standard imple-827 
+
+mentation. 828 
+
+2. Our Bayesian neural networks apparently do not share the fundamental flaw of overfitting. 829 
+
+Their train loss often is slightly lower than the validation loss, as it is expected from any type 830 
+
+of machine learning model, but the train and validation loss do not detach and differences in 831 
+
+these two curves remain low. 832 
+
+3. Bayesian neural networks learn fast on small datasets, and learn slower on larger datasets 833 
+
+like California housing. 834 
+
+The last point is worth some deeper investigation. Why does the model learn the Taiwanese real 835 
+
+estate after a few epochs, and requires many more epochs for California housing, although one single 836 
+
+epoch is already 40 times larger than on the Taiwanese real estate dataset? Bayesian model’s learning 837 
+
+gets significantly slower over time. While the learning rate remains constant on the standard PyTorch 838 
+
+implementation, the speed of change of the weights in the BNN decreases with the variances of the 839 
+
+weights. And the variances decrease once more data has been learned. Therefore, a sample at the 840 
+
+end of a large dataset has less power to change the model’s parameters, and learning slows down. As 841 
+
+a conclusion, the BNNs are especially valuable when only few training samples are available, and 842 
+
+when overfitting should be avoided. 843 
+
+E.3 Can the BNNs estimate their own uncertainty? 844 
+
+The absence of overfitting on BNNs is a side product of the metric that Bayesian methods traditionally 845 
+
+try to optimize, the calibration. In contrast to classic neural networks, our BNNs output their mean 846 
+
+μ(x) together with an estimated standard deviation σ(x) expressing the uncertainty for an input x.847 
+
+We can use the ground truth yx to analyze how well the uncertainty was estimated. Because the 848 
+
+ground-truth values were normalized during pre-processing, we expect the μs to also have a mean 849 
+
+close to zero, with a variance of roughly one. 8 Specifically, we can calculate the z-score of the 850 
+
+observation as 851 
+
+z(x) = μ(x) − yx
+
+σ(x) . (7) If the model was perfectly calibrated, these z-scores would follow a perfect standard normal distribu-852 
+
+tion. That does not mean that the model perfectly predicts the ground truth, and it also does not mean 853 
+
+that the uncertainty estimation is correct every single time. Instead, it means that the errors follow the 854 
+
+same distribution as predicted by the model. As a rule of thumb, in 68% of the cases, yx should be 855 
+
+within [μ(x) − σ(x), μ (x) + σ(x)] , in 95% of the cases within [μ(x) − 2σ(x), μ (x) + 2 σ(x)] , and 856 
+
+in 99% within [μ(x) − 3σ(x), μ (x) + 3 σ(x)] .857 
+
+In our experiments, we take the model after 500 epochs for each of the datasets, and calculate 858 
+
+the z-scores. We can blindly take the last model because we do not see decreasing performance 859 
+
+or problematic overfitting for the BNNs. Then, we use kernel density estimation with Gaussian 860 
+
+kernels to obtain an empirical error distribution that is compared to the standard normal distribution. 861 
+
+To systematically compare the two distributions, we could report the approximate KL divergence. 862 
+
+However, few of our readers have an intuitive understanding of what specific KL numbers mean, 863 
+
+and we do not have a comparison partner. Hence, we illustrate the distributions in Figure 6 to best 864 
+
+communicate the calibration of the BNN. 865   
+
+> 8Of course, the empiric variance of these μs should not be mixed up with σ(x), which expresses a completely different concept, and it is usually much smaller than zero.
+
+27 (a) California Housing (b) Abalone   
+
+> (c) Wine Quality (d) Bike Sharing
+> (e) Forest Fires (f) Heart Failure
+> (g) Real Estate Taiwan
+
+Figure 6: Calibration of the BNN: For each of the datasets, we plot the empiric z-score distribution and a standard normal distribution for reference. All plots are obtained for the validation dataset. 28 As we can see, the calibration is quite good on most of these datasets. When it comes to California 866 
+
+housing (Figure 6a), and abalone (Figure 6b), the uncertainty of the model matches the errors quite 867 
+
+well. On wine quality (Figure 6c), the model underestimates the errors, but the uncertainty estimation 868 
+
+is still usable. The opposite is true for the bike sharing dataset. As previously discussed, the model 869 
+
+solves this dataset very well, and the predicted uncertainties underestimate the true errors (Figure 6d). 870 
+
+The wine quality dataset and the bike sharing dataset cannot be solved by the BNN. Hence, the error 871 
+
+distributions are rather weak (Figure 6e and 6d). In contrast, we see very strong calibration on the 872 
+
+Taiwanese real estate dataset (Figure 6g), although there are a few more outliers than included in the 873 
+
+distribution. 874 
+
+We can conclude that the BNN manages the task of uncertainty prediction quite well. Hence, we 875 
+
+recommend it to practitioners who are not satisfied with just a prediction, but also want a well-876 
+
+calibrated uncertainty estimation. 877 
+
+## F Tables of Message Equations 878 
+
+In the following, we provide tables summarizing all message equations used throughout our model. 879 
+
+The tables are divided into three categories: linear algebra operations (Table 5), training signals 880 
+
+(Table 6), and activation functions (Table 7). Each table contains the relevant forward and backward 881 
+
+message equations, along with illustrations of the corresponding factor graph where necessary. These 882 
+
+summaries serve as a reference for the mathematical operations performed during inference and 883 
+
+training, and they will be valuable for factor graph modeling across various domains beyond NNs. 884 
+
+29 Product 
+
+a
+
+b
+
+δ(z − ab )
+
+z N (μz, σ 2 
+
+> z
+
+)
+
+μ = E[a]E[b] σ2 = E[a2]E[b2] − E[a]2E[b]2
+
+τ = τz E[a] ρ = ρz E[a2]
+
+> Weighted Sum
+
+a1
+
+b1
+
+ad
+
+bd
+
+...
+
+δ (z − a⊺b)
+
+z
+
+N (μ1, σ 21 )
+
+N (μd, σ 2
+
+> d
+
+)
+
+N (μz , σ 2 
+
+> z
+
+)
+
+μ = a⊺μ σ2 =
+
+> d
+
+X
+
+> i=1
+
+a2 
+
+> i
+
+σ2
+
+> i
+
+μ = ( μz − μ + adμd)/a d τ = ad
+
+τz − ρz (μ − adμd)1 + ρz (σ2 − a2
+
+> d
+
+σ2
+
+> d
+
+)
+
+σ2 = ( σ2 
+
+> z
+
++ σ2 − a2
+
+> d
+
+σ2
+
+> d
+
+)/a 2 
+
+> d
+
+ρ = a2
+
+> d
+
+ρz
+
+1 + ρz (σ2 − a2
+
+> d
+
+σ2
+
+> d
+
+)
+
+> Inner Product
+
+a1
+
+b1
+
+p1
+
+ad
+
+bd
+
+pd
+
+...
+
+δ (p1 − a1b1)
+
+δ (pd − adbd)
+
+z
+
+δ
+
+
+
+z − Pdi=1 pi
+
+
+
+N (μz, σ 2 
+
+> z
+
+)
+
+μ = E[a]⊺E[b] σ2 =
+
+> d
+
+X
+
+> i=1
+
+E[a2 
+
+> i
+
+]E[b2 
+
+> i
+
+] − E[ai]2E[bi]2
+
+τbi = τz − ρz (μ − E[ad]E[bd]) 
+
+ρ∗
+
+> i
+
+E[ad]
+
+ρbi = ρz
+
+ρ∗
+
+> i
+
+E[a2
+
+> d
+
+]
+
+where ρ∗ 
+
+> i
+
+= 1 + ρz (σ2 − E[a2
+
+> d
+
+]E[b2
+
+> d
+
+] + E[ad]2E[bd]2)
+
+Table 5: Message equations for linear algebra: Calculating backward messages in natural parameters is preferable as it handles edge cases like ad = 0 or ρz = 0 where location-scale equations are ill-defined. This approach also enhances numerical stability by avoiding division by very small quantities. Note that the inner product messages are simply compositions of the product and weighted sum messages with a i = 1 , i = 1 , . . . , d. 
+
+30 Regression 
+
+a
+
+N (a; y, β 2)
+
+y
+
+> β
+
+N (μa, σ 2 
+
+> a
+
+)
+
+μ = μa σ2 = σ2 
+
+> a
+
++ β2
+
+mf →a(a) = 
+
+N (a; y, β 2) if y is known (training branch) 
+
+1 if y is unknown (prediction branch) 
+
+> Softmax
+
+a1
+
+...
+
+ad
+
+softmax (a)c
+
+c
+
+c ∈ { 1, . . . , d }
+
+N (μ1, σ 21 )
+
+N (μd, σ 2
+
+> d
+
+)
+
+mf →c(i) = 
+
+Z
+
+softmax (a)iN (a; μ, diag (σ)2) da
+
+≈ softmax (t)i (Daxberger et al. [2022] )
+
+where tj = μj
+
+1 + π 
+
+> 8
+
+σ2
+
+> j
+
+and j = 1 , . . . , d 
+
+mf →ad (ad) = N (ad; m1/m 0, m 2/m 0 − (m1/m 0)2)
+
+mad→f (ad)
+
+where mk =
+
+Z
+
+> ad
+
+akd N (ad; μd, σ 2
+
+> d
+
+) softmax (t1, ..., t d−1, ad)c dad
+
+is approximated via numerical integration 
+
+> Argmax
+
+a1
+
+...
+
+ad
+
+c
+
+z1
+
+zd
+
+δ(z1 − (ac − a1)) 
+
+...
+
+δ(zd − (ac − ad)) 
+
+1z1 ≥ 0
+
+1zd ≥ 0
+
+N (μ1, σ 21 )
+
+N (μd, σ 2
+
+> d
+
+)
+
+Z
+
+1zd ≥0δ(zd − (ac − ad)) N (ac; μc, σ 2 
+
+> c
+
+)N (ad; μd, σ 2
+
+> d
+
+) dacdaddz
+
+=
+
+1 for c = d
+
+Pr[ ac ≥ ad] = ϕ(0; μd − μc, σ 2 
+
+> d
+
++ σ2 
+
+> c
+
+) for c ̸ = d
+
+If c is known, many edges become constant and can be omitted. Assume w.l.o.g. c = d,then ad is connected to d − 1 factors and all other ai to only one each. The messages to a1, . . . , ad follow from the weighted sum factor, given Gaussian approximations of the messages from zi. We derive these by moment-matching the marginals of zi (see Building Block 2) and dividing by the message from the weighted sum factor. To stabilize training, we regularize the variance of mf →ai by a factor of ϕ(0; μc − μi, σ 2 
+
+> i
+
++ σ2 
+
+> c
+
+) and multiply 
+
+mf →ai (ai) by N (ac; 1 if i = c else − 1, γ 2), effectively mixing in one-hot regression factors during training. 
+
+Table 6: Message equations for training signals. Note that the backward messages only apply in the case in which the target is known, i.e., on the training branches. On the prediction branch we only do foward passes. 31 Auxiliary Equations 
+
+ReLUMoment k(μ, σ 2) = 
+
+E[ReLU (a)] with a ∼ N (μ, σ 2) for k = 1 
+
+E[ReLU 2(a)] with a ∼ N (μ, σ 2) for k = 2 =
+
+σφ (x) + μϕ (x) for k = 1 
+
+σμφ (x) + ( σ2 + μ2)ϕ(x) for k = 2 
+
+where φ and ϕ denote the pdf and cdf of N (0 , 1) , respectively. 
+
+ζk(μ1, σ 1, μ 2, σ 2) := 
+
+Z ∞
+
+> 0
+
+akN (a; μ1, σ 21 )N (a; μ2, σ 22 ) da
+
+= N (μ1; μ2, σ 21 + σ22 ) ·
+
+ReLUMoment k(μm, σ 2
+
+> m
+
+) for k = 1 , 2
+
+ϕ(μm/σ m) for k = 0 
+
+with τm = μ1
+
+σ21
+
++ μ2
+
+σ22
+
+, ρm = 1
+
+σ21
+
++ 1
+
+σ22
+
+, μm = τm
+
+ρm
+
+, and σ2 = 1
+
+ρm
+
+See Building Block 1 for the derivation of this equation. 
+
+> LeakyReLU
+
+a
+
+δ(a − LeakyReLU α(z)) 
+
+z
+
+N (μa, σ 2 
+
+> a
+
+) N (μz, σ 2 
+
+> z
+
+)
+
+We use marginal approximation while: 1. The outputs are finite and not NaN 2. Forward message: Precision of mf →z is ≥ precision of ma→f , and m0 > 10 −8
+
+3. Backward message: It has worked well to require (τz > 0) ∨ (ρz > 2 · 10 −8)
+
+Otherwise, we fall back to direct message approximation (forward) or G(0 , 0) (backward). 
+
+> Direct
+
+μ = (1 − α) · ReLUMoment 1(μa, σ 2 
+
+> a
+
+) + α · μa
+
+σ2 = (1 − α2) · ReLUMoment 2(μa, σ 2 
+
+> a
+
+) + α2 · (σ2 
+
+> a
+
++ μ2 
+
+> a
+
+) − μ2.
+
+> Marginal
+
+mf →z(z) = N (z; m1 
+
+> m0
+
+, m2 
+
+> m0
+
+− ( m1 
+
+> m0
+
+)2)
+
+mz→f (z)
+
+where mk = ( −1) k · ζk(−μa, σ 2
+
+> a
+
+, −α · μz, α 2 · σ2 
+
+> z
+
+) + ζk(μa, σ 2
+
+> a
+
+, μz, σ 2 
+
+> z
+
+)
+
+To compute the marginal backward message, set αback = α−1
+
+and swap ma→f and mz→f in the equation 
+
+Table 7: Message equations for LeakyReLU with ReLU as the special case α = 0 .
+
+## NeurIPS Paper Checklist 885 
+
+1. Claims 886 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the 887 
+
+paper’s contributions and scope? 888 
+
+Answer: [Yes] 889 
+
+Justification: We provide a novel method for message passing in Bayesian Neural Networks. 890 
+
+Guidelines: 891 
+
+• The answer NA means that the abstract and introduction do not include the claims 892 
+
+made in the paper. 893 
+
+• The abstract and/or introduction should clearly state the claims made, including the 894 
+
+contributions made in the paper and important assumptions and limitations. A No or 895 
+
+NA answer to this question will not be perceived well by the reviewers. 896 
+
+• The claims made should match theoretical and experimental results, and reflect how 897 
+
+much the results can be expected to generalize to other settings. 898 
+
+• It is fine to include aspirational goals as motivation as long as it is clear that these goals 899 
+
+are not attained by the paper. 900 
+
+32 2. Limitations 901 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? 902 
+
+Answer: [Yes] 903 
+
+Justification: We discuss limitations in Section 6, page 9. 904 
+
+Guidelines: 905 
+
+• The answer NA means that the paper has no limitation while the answer No means that 906 
+
+the paper has limitations, but those are not discussed in the paper. 907 
+
+• The authors are encouraged to create a separate "Limitations" section in their paper. 908 
+
+• The paper should point out any strong assumptions and how robust the results are to 909 
+
+violations of these assumptions (e.g., independence assumptions, noiseless settings, 910 
+
+model well-specification, asymptotic approximations only holding locally). The authors 911 
+
+should reflect on how these assumptions might be violated in practice and what the 912 
+
+implications would be. 913 
+
+• The authors should reflect on the scope of the claims made, e.g., if the approach was 914 
+
+only tested on a few datasets or with a few runs. In general, empirical results often 915 
+
+depend on implicit assumptions, which should be articulated. 916 
+
+• The authors should reflect on the factors that influence the performance of the approach. 917 
+
+For example, a facial recognition algorithm may perform poorly when image resolution 918 
+
+is low or images are taken in low lighting. Or a speech-to-text system might not be 919 
+
+used reliably to provide closed captions for online lectures because it fails to handle 920 
+
+technical jargon. 921 
+
+• The authors should discuss the computational efficiency of the proposed algorithms 922 
+
+and how they scale with dataset size. 923 
+
+• If applicable, the authors should discuss possible limitations of their approach to 924 
+
+address problems of privacy and fairness. 925 
+
+• While the authors might fear that complete honesty about limitations might be used by 926 
+
+reviewers as grounds for rejection, a worse outcome might be that reviewers discover 927 
+
+limitations that aren’t acknowledged in the paper. The authors should use their best 928 
+
+judgment and recognize that individual actions in favor of transparency play an impor-929 
+
+tant role in developing norms that preserve the integrity of the community. Reviewers 930 
+
+will be specifically instructed to not penalize honesty concerning limitations. 931 
+
+3. Theory Assumptions and Proofs 932 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and 933 
+
+a complete (and correct) proof? 934 
+
+Answer: [Yes] 935 
+
+Justification: See Appendix. 936 
+
+Guidelines: 937 
+
+• The answer NA means that the paper does not include theoretical results. 938 
+
+• All the theorems, formulas, and proofs in the paper should be numbered and cross-939 
+
+referenced. 940 
+
+• All assumptions should be clearly stated or referenced in the statement of any theorems. 941 
+
+• The proofs can either appear in the main paper or the supplemental material, but if 942 
+
+they appear in the supplemental material, the authors are encouraged to provide a short 943 
+
+proof sketch to provide intuition. 944 
+
+• Inversely, any informal proof provided in the core of the paper should be complemented 945 
+
+by formal proofs provided in appendix or supplemental material. 946 
+
+• Theorems and Lemmas that the proof relies upon should be properly referenced. 947 
+
+4. Experimental Result Reproducibility 948 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-949 
+
+perimental results of the paper to the extent that it affects the main claims and/or conclusions 950 
+
+of the paper (regardless of whether the code and data are provided or not)? 951 
+
+Answer: [Yes] 952 
+
+33 Justification: We use reproducible problem examples and provide supplemental code. 953 
+
+Guidelines: 954 
+
+• The answer NA means that the paper does not include experiments. 955 
+
+• If the paper includes experiments, a No answer to this question will not be perceived 956 
+
+well by the reviewers: Making the paper reproducible is important, regardless of 957 
+
+whether the code and data are provided or not. 958 
+
+• If the contribution is a dataset and/or model, the authors should describe the steps taken 959 
+
+to make their results reproducible or verifiable. 960 
+
+• Depending on the contribution, reproducibility can be accomplished in various ways. 961 
+
+For example, if the contribution is a novel architecture, describing the architecture fully 962 
+
+might suffice, or if the contribution is a specific model and empirical evaluation, it may 963 
+
+be necessary to either make it possible for others to replicate the model with the same 964 
+
+dataset, or provide access to the model. In general. releasing code and data is often 965 
+
+one good way to accomplish this, but reproducibility can also be provided via detailed 966 
+
+instructions for how to replicate the results, access to a hosted model (e.g., in the case 967 
+
+of a large language model), releasing of a model checkpoint, or other means that are 968 
+
+appropriate to the research performed. 969 
+
+• While NeurIPS does not require releasing code, the conference does require all submis-970 
+
+sions to provide some reasonable avenue for reproducibility, which may depend on the 971 
+
+nature of the contribution. For example 972 
+
+(a) If the contribution is primarily a new algorithm, the paper should make it clear how 973 
+
+to reproduce that algorithm. 974 
+
+(b) If the contribution is primarily a new model architecture, the paper should describe 975 
+
+the architecture clearly and fully. 976 
+
+(c) If the contribution is a new model (e.g., a large language model), then there should 977 
+
+either be a way to access this model for reproducing the results or a way to reproduce 978 
+
+the model (e.g., with an open-source dataset or instructions for how to construct 979 
+
+the dataset). 980 
+
+(d) We recognize that reproducibility may be tricky in some cases, in which case 981 
+
+authors are welcome to describe the particular way they provide for reproducibility. 982 
+
+In the case of closed-source models, it may be that access to the model is limited in 983 
+
+some way (e.g., to registered users), but it should be possible for other researchers 984 
+
+to have some path to reproducing or verifying the results. 985 
+
+5. Open access to data and code 986 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-987 
+
+tions to faithfully reproduce the main experimental results, as described in supplemental 988 
+
+material? 989 
+
+Answer: [Yes] 990 
+
+Justification: We provide supplemental code and will make it open access. 991 
+
+Guidelines: 992 
+
+• The answer NA means that paper does not include experiments requiring code. 993 
+
+• Please see the NeurIPS code and data submission guidelines ( https://nips.cc/ 994 
+
+public/guides/CodeSubmissionPolicy ) for more details. 995 
+
+• While we encourage the release of code and data, we understand that this might not be 996 
+
+possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not 997 
+
+including code, unless this is central to the contribution (e.g., for a new open-source 998 
+
+benchmark). 999 
+
+• The instructions should contain the exact command and environment needed to run to 1000 
+
+reproduce the results. See the NeurIPS code and data submission guidelines ( https: 1001 
+
+//nips.cc/public/guides/CodeSubmissionPolicy ) for more details. 1002 
+
+• The authors should provide instructions on data access and preparation, including how 1003 
+
+to access the raw data, preprocessed data, intermediate data, and generated data, etc. 1004 
+
+• The authors should provide scripts to reproduce all experimental results for the new 1005 
+
+proposed method and baselines. If only a subset of experiments are reproducible, they 1006 
+
+should state which ones are omitted from the script and why. 1007 
+
+34 • At submission time, to preserve anonymity, the authors should release anonymized 1008 
+
+versions (if applicable). 1009 
+
+• Providing as much information as possible in supplemental material (appended to the 1010 
+
+paper) is recommended, but including URLs to data and code is permitted. 1011 
+
+6. Experimental Setting/Details 1012 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyper-1013 
+
+parameters, how they were chosen, type of optimizer, etc.) necessary to understand the 1014 
+
+results? 1015 
+
+Answer: [Yes] 1016 
+
+Justification: We explain all chosen hyperparameters. 1017 
+
+Guidelines: 1018 
+
+• The answer NA means that the paper does not include experiments. 1019 
+
+• The experimental setting should be presented in the core of the paper to a level of detail 1020 
+
+that is necessary to appreciate the results and make sense of them. 1021 
+
+• The full details can be provided either with the code, in appendix, or as supplemental 1022 
+
+material. 1023 
+
+7. Experiment Statistical Significance 1024 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate 1025 
+
+information about the statistical significance of the experiments? 1026 
+
+Answer: [Yes] 1027 
+
+Justification: See Appendix. 1028 
+
+Guidelines: 1029 
+
+• The answer NA means that the paper does not include experiments. 1030 
+
+• The authors should answer "Yes" if the results are accompanied by error bars, confi-1031 
+
+dence intervals, or statistical significance tests, at least for the experiments that support 1032 
+
+the main claims of the paper. 1033 
+
+• The factors of variability that the error bars are capturing should be clearly stated (for 1034 
+
+example, train/test split, initialization, random drawing of some parameter, or overall 1035 
+
+run with given experimental conditions). 1036 
+
+• The method for calculating the error bars should be explained (closed form formula, 1037 
+
+call to a library function, bootstrap, etc.) 1038 
+
+• The assumptions made should be given (e.g., Normally distributed errors). 1039 
+
+• It should be clear whether the error bar is the standard deviation or the standard error 1040 
+
+of the mean. 1041 
+
+• It is OK to report 1-sigma error bars, but one should state it. The authors should 1042 
+
+preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis 1043 
+
+of Normality of errors is not verified. 1044 
+
+• For asymmetric distributions, the authors should be careful not to show in tables or 1045 
+
+figures symmetric error bars that would yield results that are out of range (e.g. negative 1046 
+
+error rates). 1047 
+
+• If error bars are reported in tables or plots, The authors should explain in the text how 1048 
+
+they were calculated and reference the corresponding figures or tables in the text. 1049 
+
+8. Experiments Compute Resources 1050 
+
+Question: For each experiment, does the paper provide sufficient information on the com-1051 
+
+puter resources (type of compute workers, memory, time of execution) needed to reproduce 1052 
+
+the experiments? 1053 
+
+Answer: [Yes] 1054 
+
+Justification: See Appendix. 1055 
+
+Guidelines: 1056 
+
+• The answer NA means that the paper does not include experiments. 1057 
+
+35 • The paper should indicate the type of compute workers CPU or GPU, internal cluster, 1058 
+
+or cloud provider, including relevant memory and storage. 1059 
+
+• The paper should provide the amount of compute required for each of the individual 1060 
+
+experimental runs as well as estimate the total compute. 1061 
+
+• The paper should disclose whether the full research project required more compute 1062 
+
+than the experiments reported in the paper (e.g., preliminary or failed experiments that 1063 
+
+didn’t make it into the paper). 1064 
+
+9. Code Of Ethics 1065 
+
+Question: Does the research conducted in the paper conform, in every respect, with the 1066 
+
+NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?1067 
+
+Answer: [Yes] 1068 
+
+Justification: Given the considered problem, there are no ethical issues. 1069 
+
+Guidelines: 1070 
+
+• The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics. 1071 
+
+• If the authors answer No, they should explain the special circumstances that require a 1072 
+
+deviation from the Code of Ethics. 1073 
+
+• The authors should make sure to preserve anonymity (e.g., if there is a special consid-1074 
+
+eration due to laws or regulations in their jurisdiction). 1075 
+
+10. Broader Impacts 1076 
+
+Question: Does the paper discuss both potential positive societal impacts and negative 1077 
+
+societal impacts of the work performed? 1078 
+
+Answer: [Yes] 1079 
+
+Justification: We point to potential applications of the solution. 1080 
+
+Guidelines: 1081 
+
+• The answer NA means that there is no societal impact of the work performed. 1082 
+
+• If the authors answer NA or No, they should explain why their work has no societal 1083 
+
+impact or why the paper does not address societal impact. 1084 
+
+• Examples of negative societal impacts include potential malicious or unintended uses 1085 
+
+(e.g., disinformation, generating fake profiles, surveillance), fairness considerations 1086 
+
+(e.g., deployment of technologies that could make decisions that unfairly impact specific 1087 
+
+groups), privacy considerations, and security considerations. 1088 
+
+• The conference expects that many papers will be foundational research and not tied 1089 
+
+to particular applications, let alone deployments. However, if there is a direct path to 1090 
+
+any negative applications, the authors should point it out. For example, it is legitimate 1091 
+
+to point out that an improvement in the quality of generative models could be used to 1092 
+
+generate deepfakes for disinformation. On the other hand, it is not needed to point out 1093 
+
+that a generic algorithm for optimizing neural networks could enable people to train 1094 
+
+models that generate Deepfakes faster. 1095 
+
+• The authors should consider possible harms that could arise when the technology is 1096 
+
+being used as intended and functioning correctly, harms that could arise when the 1097 
+
+technology is being used as intended but gives incorrect results, and harms following 1098 
+
+from (intentional or unintentional) misuse of the technology. 1099 
+
+• If there are negative societal impacts, the authors could also discuss possible mitigation 1100 
+
+strategies (e.g., gated release of models, providing defenses in addition to attacks, 1101 
+
+mechanisms for monitoring misuse, mechanisms to monitor how a system learns from 1102 
+
+feedback over time, improving the efficiency and accessibility of ML). 1103 
+
+11. Safeguards 1104 
+
+Question: Does the paper describe safeguards that have been put in place for responsible 1105 
+
+release of data or models that have a high risk for misuse (e.g., pretrained language models, 1106 
+
+image generators, or scraped datasets)? 1107 
+
+Answer: [NA] 1108 
+
+Justification: There are no such risks. 1109 
+
+36 Guidelines: 1110 
+
+• The answer NA means that the paper poses no such risks. 1111 
+
+• Released models that have a high risk for misuse or dual-use should be released with 1112 
+
+necessary safeguards to allow for controlled use of the model, for example by requiring 1113 
+
+that users adhere to usage guidelines or restrictions to access the model or implementing 1114 
+
+safety filters. 1115 
+
+• Datasets that have been scraped from the Internet could pose safety risks. The authors 1116 
+
+should describe how they avoided releasing unsafe images. 1117 
+
+• We recognize that providing effective safeguards is challenging, and many papers do 1118 
+
+not require this, but we encourage authors to take this into account and make a best 1119 
+
+faith effort. 1120 
+
+12. Licenses for existing assets 1121 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in 1122 
+
+the paper, properly credited and are the license and terms of use explicitly mentioned and 1123 
+
+properly respected? 1124 
+
+Answer: [NA] 1125 
+
+Justification: We cite relevant work. 1126 
+
+Guidelines: 1127 
+
+• The answer NA means that the paper does not use existing assets. 1128 
+
+• The authors should cite the original paper that produced the code package or dataset. 1129 
+
+• The authors should state which version of the asset is used and, if possible, include a 1130 
+
+URL. 1131 
+
+• The name of the license (e.g., CC-BY 4.0) should be included for each asset. 1132 
+
+• For scraped data from a particular source (e.g., website), the copyright and terms of 1133 
+
+service of that source should be provided. 1134 
+
+• If assets are released, the license, copyright information, and terms of use in the 1135 
+
+package should be provided. For popular datasets, paperswithcode.com/datasets 1136 
+
+has curated licenses for some datasets. Their licensing guide can help determine the 1137 
+
+license of a dataset. 1138 
+
+• For existing datasets that are re-packaged, both the original license and the license of 1139 
+
+the derived asset (if it has changed) should be provided. 1140 
+
+• If this information is not available online, the authors are encouraged to reach out to 1141 
+
+the asset’s creators. 1142 
+
+13. New Assets 1143 
+
+Question: Are new assets introduced in the paper well documented and is the documentation 1144 
+
+provided alongside the assets? 1145 
+
+Answer: [NA] 1146 
+
+Justification: The paper does not release new assets. 1147 
+
+Guidelines: 1148 
+
+• The answer NA means that the paper does not release new assets. 1149 
+
+• Researchers should communicate the details of the dataset/code/model as part of their 1150 
+
+submissions via structured templates. This includes details about training, license, 1151 
+
+limitations, etc. 1152 
+
+• The paper should discuss whether and how consent was obtained from people whose 1153 
+
+asset is used. 1154 
+
+• At submission time, remember to anonymize your assets (if applicable). You can either 1155 
+
+create an anonymized URL or include an anonymized zip file. 1156 
+
+14. Crowdsourcing and Research with Human Subjects 1157 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper 1158 
+
+include the full text of instructions given to participants and screenshots, if applicable, as 1159 
+
+well as details about compensation (if any)? 1160 
+
+37 Answer: [NA] 1161 
+
+Justification: The paper does not involve crowdsourcing nor research with human subjects. 1162 
+
+Guidelines: 1163 
+
+• The answer NA means that the paper does not involve crowdsourcing nor research with 1164 
+
+human subjects. 1165 
+
+• Including this information in the supplemental material is fine, but if the main contribu-1166 
+
+tion of the paper involves human subjects, then as much detail as possible should be 1167 
+
+included in the main paper. 1168 
+
+• According to the NeurIPS Code of Ethics, workers involved in data collection, curation, 1169 
+
+or other labor should be paid at least the minimum wage in the country of the data 1170 
+
+collector. 1171 
+
+15. Institutional Review Board (IRB) Approvals or Equivalent for Research with Human 1172 
+
+Subjects 1173 
+
+Question: Does the paper describe potential risks incurred by study participants, whether 1174 
+
+such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) 1175 
+
+approvals (or an equivalent approval/review based on the requirements of your country or 1176 
+
+institution) were obtained? 1177 
+
+Answer: [NA] 1178 
+
+Justification: The paper does not involve crowdsourcing nor research with human subjects. 1179 
+
+Guidelines: 1180 
+
+• The answer NA means that the paper does not involve crowdsourcing nor research with 1181 
+
+human subjects. 1182 
+
+• Depending on the country in which research is conducted, IRB approval (or equivalent) 1183 
+
+may be required for any human subjects research. If you obtained IRB approval, you 1184 
+
+should clearly state this in the paper. 1185 
+
+• We recognize that the procedures for this may vary significantly between institutions 1186 
+
+and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the 1187 
+
+guidelines for their institution. 1188 
+
+• For initial submissions, do not include any information that would break anonymity (if 1189 
+
+applicable), such as the institution conducting the review. 1190 
+
+38

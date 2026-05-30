@@ -1,0 +1,4184 @@
+Title: 12820_NeuralSurv_Deep_Survival.pdf
+
+URL Source: https://openreview.net/pdf?id=c768Z1FwDL
+
+Number of Pages: 53
+
+Markdown Content:
+# NeuralSurv : Deep Survival Analysis with Bayesian Uncertainty Quantification 
+
+Mélodie Monod ∗
+
+Imperial College London London, United Kingdom 
+
+melodie.monod18@imperial.ac.uk 
+
+Alessandro Micheli ∗
+
+Imperial College London London, United Kingdom 
+
+a.micheli19@imperial.ac.uk 
+
+Samir Bhatt 
+
+Imperial College London; University of Copenhagen London, United Kingdom; Copenhagen, Denmark 
+
+s.bhatt@imperial.ac.uk 
+
+## Abstract 
+
+We introduce NeuralSurv , the first deep survival model to incorporate Bayesian uncertainty quantification. Our non - parametric, architecture - agnostic framework captures time - varying covariate–risk relationships in continuous time via a novel two -stage data - augmentation scheme, for which we establish theoretical guarantees. For efficient posterior inference, we introduce a mean - field variational algorithm with coordinate -ascent updates that scale linearly in model size. By locally lineariz-ing the Bayesian neural network, we obtain full conjugacy and derive all coordinate updates in closed form. In experiments, NeuralSurv delivers superior calibration compared to state-of-the-art deep survival models, while matching or exceeding their discriminative performance across both synthetic benchmarks and real-world datasets. Our results demonstrate the value of Bayesian principles in data - scarce regimes by enhancing model calibration and providing robust, well - calibrated uncertainty estimates for the survival function. 
+
+## 1 Introduction 
+
+Survival analysis is a branch of statistics focused on the study of time-to-event data, usually called event times. This type of data appears in a wide range of applications such as medicine [ 33 ], engineering [ 35 ], and social sciences [ 42 ]. A key objective of survival analysis is to estimate the hazard function and the survival function that govern the distribution of event times. Traditional survival models like the Cox proportional hazards model [ 10 ] and accelerated failure time models [ 8] have long delivered reliable inference under strong parametric assumptions. However, such assumptions may fail to adequately capture complex and evolving baseline hazards, especially when risk relationships vary over time. To overcome these limitations, recent work has begun incorporating modern machine -learning techniques [ 48 ], and in particular deep architectures [ 49 , 24 , 32 ], which can learn rich, hierarchical representations directly from data. Yet most deep - survival approaches remain purely frequentist, optimizing point -estimate losses and offering no coherent uncertainty quantification. In high - stakes settings like medicine, this lack of reliable uncertainty estimates can undermine trust and impede adoption. Bayesian statistics, by contrast, inherently quantifies uncertainty: prior beliefs are combined with ob-served data to yield a posterior distribution over model parameters [ 15 ]. In survival analysis, Bayesian 
+
+> ∗
+
+Equal contribution. 39th Conference on Neural Information Processing Systems (NeurIPS 2025). methods can produce full posterior distributions for individual survival functions summarizable via credible intervals that communicate model confidence [ 21 ]. Traditional Bayesian survival tools, such as Gaussian processes (GPs) [ 13 , 25 ], offer nonparametric flexibility and built -in uncertainty but often falter in high-dimensional settings due to scalability issues. To date, no method has combined the representational power of deep learning with full Bayesian uncertainty quantification in a scalable survival framework. Such a synthesis would hold the potential to learn complex, high -dimensional survival dynamics while retaining principled probabilistic interpretations. In this work, we introduce NeuralSurv , an architecture -agnostic, Bayesian deep - learning framework for survival analysis which integrates with modern deep learning architectures. NeuralSurv leverages deep Neural Networks (NNs) to learn hierarchical representations from covariates and uses a princi-pled variational inference framework to provide rigorous uncertainty quantification over the survival function. We develop a two-stage data-augmentation strategy using latent marked Poisson processes and Pólya–Gamma variables to enable exact continuous-time likelihood computation, and provide novel theoretical guarantees for this approach. By locally linearizing the Bayesian Neural Network (BNN), we achieve conjugacy and derive closed - form coordinate - ascent updates that scale linearly with network size. Through extensive experiments on synthetic and real survival datasets, in data-scarce settings, Neu-ralSurv consistently delivers superior calibration compared to state -of -the -art deep survival models, and matches or exceeds their discriminative performance. Its Bayesian formulation captures epis-temic uncertainty to prevent overfitting, while informative priors induce a soft regularization that yields smooth, plausible survival functions. The code to reproduce our experiments is available on the GitHub repository https://github.com/MLGlobalHealth/neuralsurv under the MIT License. 
+
+## 2 NeuralSurv 
+
+In this section, we outline the main assumptions underlying NeuralSurv . We begin by briefly reviewing key concepts in survival analysis. Survival analysis focuses on modeling time-to-event data. Let T be a continuous nonnegative random variable with probability density f and cumulative distribution function F , representing the time until a particular event occurs. Its survival function 
+
+S(t) = P(T > t ) = 1 − F (t) gives the probability of not experiencing the event by time t, while the 
+
+hazard function λ(t) = f (t)/S (t) represents the instantaneous risk of the event at time t, conditional on having survived up to time t. In practice, the event time may not be observed for all individuals, because some observations are subject to right-censoring , where the event has not yet occurred by the end of the observation period. For each observation i = 1 , . . . , N , denote the event time by Ti and the censoring time by Ci. We observe yi = min( Ti, C i) and δi = 1{Ti≤Ci} where yi represents the observed time (which may correspond either to the event or to censoring), and δi indicates whether the event time was observed ( δi = 1 ) or the observation period was censored ( δi = 0 ). We assemble the dataset as D = {(yi, δ i) : i = 1 , . . . , N }. Each observation also carries a covariate vector xi ∈ Rp,gathered into X = {xi : i = 1 , . . . , N }. Throughout this paper, we assume that the censoring time 
+
+Ci is independent of the event time Ti given xi (known as non-informative censoring). Further details on survival analysis theory are provided in Appendix A. 
+
+2.1 Sigmoidal Hazard Function 
+
+Our goal is to model the hazard function λ, i.e. the instantaneous event rate at time t conditional on survival to t and covariates x. We employ the sigmoid function σ(z) = 1 /(1 + exp( −z)) , which maps real-valued inputs to the interval (0 , 1) . The sigmoidal hazard model is constructed as the product of a normalized baseline hazard function ( λ0) and a modulation function ( σ): 
+
+λ(t | x; ϕ, g (·; θ)) := λ0(t, x; ϕ) σ(g(t, x; θ)) , (1) where the normalized baseline hazard is given by 
+
+λ0(t, x; ϕ) := λ0(t; ϕ)
+
+Z(t, x) , (2) for the baseline hazard λ0 : R+ → R+, parametrized by ϕ ∈ R+, and a normalization factor Z(t, x)
+
+that depends on both time and covariates. The term λ0(t, x; ϕ) encodes our prior “best-guess” hazard 2profile over time. The flexible function g : R+ × Rp → R, parametrized by θ ∈ Rm, provides a data-driven adjustment: once passed through the sigmoid, it multiplicatively attenuates the baseline hazard, continuously scaling it between zero and λ0. The normalization factor Z(t, x) ensures that the overall hazard remains properly scaled after modulation by the sigmoidal function (see Section 2.3 for details). Modeling hazard and intensity functions using sigmoidal transformations is common in applications such as survival analysis [ 13 ] and point process models [ 52 , 12 , 45 , 1 , 2]. This approach is popular due to the balance it offers between modeling flexibility and analytical tractability. 
+
+2.2 Likelihood Distribution 
+
+Given the hazard function in (1) , the likelihood density for the observation corresponding to the ith 
+
+observation is given by: 
+
+p(yi, δ i | xi, ϕ, g (·; θ)) = 
+
+
+
+λ0(yi, xi; ϕ) σ(g(yi, xi; θ)) 
+
+δi
+
+exp 
+
+
+
+−
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ) σ(g(t, xi; θ))d t
+
+
+
+. (3) Assuming (yi, δ i) are i.i.d. conditional on (xi, ϕ, g (·; θ)) , the full-sample likelihood is simply the product 
+
+p(D | X, ϕ, g (·; θ)) = 
+
+> N
+
+Y
+
+> i=1
+
+p(yi, δ i | xi, ϕ, g (·; θ)) . (4) 
+
+2.3 Prior Distributions Prior Distribution on θ. We assume that g(·; θ) is a BNN parameterized by θ. Furthermore, denote by Im the m × m identity matrix. We place the following isotropic Gaussian prior with zero mean and identity covariance over the NN weights 
+
+pθ (θ) = N (θ; 0, Im). (5) This common choice [ 6] assumes weights are independently distributed and centered around zero, acting as an uninformative yet regularizing prior that discourages large weights and helps prevent overfitting via shrinkage. 
+
+Prior Distribution on ϕ. We adopt a Weibull-type baseline hazard 
+
+λ0(t; ϕ) = ϕt ρ−1, pϕ(ϕ) = Gamma (α0, β 0), ρ > 0 fixed , (6) where α0 is the shape and β0 is the rate of the Gamma distribution. The Weibull - type baseline hazard (6) is the hazard of a Weibull distribution, a common choice in survival analysis [ 13 ]. When 
+
+ρ = 1 , λ0(t; ϕ) becomes constant and the baseline hazard reduces to the hazard of the Exponential distribution. 
+
+Normalization Factor Z. We define the normalization factor introduced in (2) as 
+
+Z(t, x) := Eθ∼pθ [σ(g(t, x; θ))] 
+
+and refer the reader to Appendix D for further details on how it is computed. Introducing this normalization factor ensures that the prior mean of the sigmoidal hazard in (1) coincides with the prior mean of the baseline hazard, i.e. 
+
+Eϕ∼pϕ,θ∼pθ [λ(t | x; ϕ, g (·; θ))] = Eϕ∼pϕ [λ0(t; ϕ)] .
+
+This approach, similar to the technique used in [ 13 ], centers the distribution around the baseline hazard λ0(t; ϕ), favouring hazard trajectories that remain close to this prior “best-guess” profile while still permitting data-driven deviations. Notice that if g(·; θ) has a fully connected architecture, then 
+
+Z(t, x) ≡ 12 for all (t, x), resulting in the same normalization factor value as in [13]. 32.4 Posterior Distribution 
+
+Let p(ϕ, θ | D , X) denote the posterior density over the parameters ϕ and θ, defined with respect to the product measure dϕ × dθ. By Bayes’ rule, this posterior is proportional (up to normalization) to 
+
+p (ϕ, θ | D , X) ∝ p(D | X, ϕ, g (·; θ)) pϕ(ϕ) pθ (θ). (7) The posterior in (7) is generally intractable to compute for three reasons. First, its normalization constant is unavailable in closed form. Second, the likelihood from (3) requires evaluating N integrals, none of which admits an analytic solution. Finally, the sigmoid in (1) introduces an extra nonlinearity, rendering inference even more analytically challenging. 
+
+## 3 Data Augmentation Strategy 
+
+In this section, we present a data augmentation scheme that leverages the properties of Poisson processes and Pólya-Gamma random variables. Specifically, Poisson processes help overcome the challenges associated with computing the integrals of the continuous-time function to evaluate the likelihood, while the Pólya-Gamma random variables allow for exact handling of the sigmoid nonlinearity without relying on analytic approximations. This combined approach allows us to efficiently perform posterior inference from the model without resorting to discretization. This approach builds on analogous strategies previously applied in other settings, including Bayesian inference for Sigmoid Gaussian Cox Processes [ 12 ], nonparametric Hawkes processes [ 52 ], and, in the case of Pólya–Gamma augmentation alone, mutually regressive point processes [ 4]. To the best of our knowledge, this is the first application of such a data augmentation strategy in the context of survival analysis. Furthermore, we are the first to provide a rigorous theoretical framework that establishes the validity of a method belonging to this broader class of augmentation-based approaches (see Theorem 3.1). Detailed reviews of Pólya-Gamma random variables and Poisson processes are provided in Appen-dices B and C, respectively. 
+
+3.1 Pólya-Gamma Augmentation Scheme 
+
+A primary challenge in our model arises from the sigmoid function, whose inherent nonlinearity complicates the posterior inference. To overcome this, we adopt the Pólya-Gamma data augmentation scheme introduced in [ 38 ]. The key insight of this approach is that the sigmoid function can be represented in terms of Pólya-Gamma random variables. Define the function 
+
+f (ω, z ) := z
+
+2 − z2
+
+2 ω − log(2) . (8) Then, the following identity holds: 
+
+σ(z) = 
+
+Z ∞
+
+> 0
+
+ef (ω,z ) pPG (ω | 1, 0)d ω, (9) where pPG (ω | 1, 0) denotes the density of a Pólya-Gamma random variable with parameters (1 , 0) .Since our model considers N observations, we apply this augmentation scheme to each data point. Accordingly, we introduce N independent Pólya-Gamma random variables, denoted by ω = {ωi}Ni=1 ,each distributed according to pω (ωi) = pPG (ωi | 1, 0) and with a joint density 
+
+pω (ω) = 
+
+> N
+
+Y
+
+> i=1
+
+pω (ωi) = 
+
+> N
+
+Y
+
+> i=1
+
+pPG (ωi | 1, 0) . (10) 
+
+3.2 Poisson Process Augmentation Scheme 
+
+Evaluating the likelihood in (3) requires computing N integrals involving a sample function drawn from the BNN prior. This integral is generally analytically intractable, due to the nonparametric and highly non-linear nature of BNN sample paths. To address this, we leverage a Poisson process–based 4data augmentation scheme, drawing inspiration from methodologies proposed in [ 12 , 52 ]. By substituting the sigmoid identity from (9), the intractable integral for the ith data point becomes 
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ) σ(g(t, xi; θ))d t =
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+1 − ef (ω, −g(t, xi;θ)) 
+
+λ0(t, xi; ϕ)pPG (ω | 1, 0)d ωdt, (11) where pPG (ω|1, 0) is the density of a Pólya-Gamma random variable. The key insight here is that this double integral can be expressed as an expectation over a marked Poisson process. Before proceeding further, we briefly review the concept of a marked Poisson process. A marked Poisson process extends the standard Poisson process by associating each event (or location) with an additional random variable known as a mark. In our case, each event occurs at time t and is accompanied by a positive mark ω. With this in mind, consider the space [0 , y i] × R+ which consists of points (t, ω ) where t ∈ [0 , y i] and ω ∈ R+. We then denote by Ψi a marked Poisson process on 
+
+[0 , y i] × R+ with intensity 
+
+λi(t, ω ; ϕ) := λ0(t, xi; ϕ) pPG (ω | 1, 0) , (t, ω ) ∈ [0 , y i] × R+. (12) Under suitable assumptions on the BNN g(·; θ), Campbell’s theorem allows us to express the integral in (11) as 
+
+exp 
+
+
+
+−
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+1 − ef (ω, −g(t, xi;θ)) 
+
+λi(t, ω ; ϕ)d ωdt
+
+
+
+=
+
+EΨi∼PΨi|ϕ
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+ef (ωj ,−g(tj ,xi;θ)) 
+
+ , (13) where PΨi|ϕ is the path measure of the process Ψi. In (13) , we take the convention that an empty product equals 1. Equation (13) corresponds to the term with the intractable integral on the right-hand side of (3) . This representation enables us to avoid time discretization, allowing an exact and efficient evaluation of the integral. Since our model involves N observations, we apply this augmentation scheme to each data point by introducing N independent marked Poisson processes, denoted by 
+
+Ψ = {Ψi}Ni=1 .
+
+3.3 Augmented Likelihood 
+
+Leveraging both the Pólya–Gamma and the marked Poisson process augmentation schemes, we can reformulate the likelihood given in (3) in a tractable way. With these auxiliary variables, we define the augmented likelihood density for the ith observation as 
+
+p (yi, δ i | xi, ϕ, g (·; θ), ω i, Ψi) := 
+
+
+
+λ0(yi, xi; ϕ)ef (ωi,g (yi,xi;θ)) δi
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+ef (ωj ,−g(tj ,xi;θ)) 
+
+ , (14) where f (ω, z ) was defined in (8) . The following proposition formalizes the data augmentation scheme. 
+
+Theorem 3.1 (Data Augmentation) . Assume for each i = 1 , . . . , N that the function g(·, xi; ·) ∈
+
+C([0 , y i] × Rm). Let p(yi, δ i | xi, ϕ, g (·; θ)) be the likelihood density given in (3) . Additionally, let 
+
+p (yi, δ i | xi, ϕ, g (·; θ), ω i, Ψi) be the augmented likelihood density defined in (14) . Then, 
+
+p(yi, δ i | xi, ϕ, g (·; θ)) = Eωi∼pω ,Ψi∼PΨi|ϕ [p (yi, δ i | xi, ϕ, g (·; θ), ω i, Ψi)] .
+
+The proof of Theorem 3.1 is postponed to Appendix N.1. Existing augmentation schemes ap-proaches [ 12 , 52 , 4] do not offer any theoretical guarantees regarding the validity of the methodology. In contrast, Theorem 3.1 provides the first rigorous theoretical framework that establishes the sound-ness of a method within this class of data augmentation techniques. 5Using the assumption from Section 2.2 that (yi, δ i) are i.i.d. conditional on (xi, ϕ, g (·; θ)) , and given the structure of the data augmentation, we observe that (yi, δ i) are conditionally independent of ωj
+
+and Ψj for all j̸ = i. As a result, the full-sample augmented likelihood factorizes as a simple product: 
+
+p(D | X, ϕ, g (·; θ), ω, Ψ) = 
+
+> N
+
+Y
+
+> i=1
+
+p(yi, δ i | xi, ϕ, g (·; θ), ω i, Ψi). (15) 
+
+## 4 Variational Inference in the Augmented Space 
+
+In this section, we develop a novel variational inference algorithm based on this augmentation scheme. 
+
+4.1 Variational Mean–Field Approximation 
+
+Computing the posterior distribution P (ϕ, θ, ω, Ψ | D , X) is analytically intractable because its normalization constant is unavailable in closed form. We consider a variational inference algorithm that aims to find an approximating variational distribution Q(ϕ, θ, ω, Ψ) that minimizes the KL divergence from the true posterior distribution. To make the optimization tractable, we restrict our search to distributions that satisfy the following mean-field factorization: 
+
+Q(ϕ, θ, ω, Ψ) = Qϕ(ϕ) × Qθ (θ) × Qω (ω) × QΨ(Ψ).
+
+Here, we take Qϕ(ϕ), Qθ (θ) and Qω (ω) to admit densities qϕ(ϕ), qθ (θ) and qω (ω) with respect to the Lebesgue measures dϕ, dθ and dω. The remaining factor QΨ(Ψ) is a measure on the space of marked point-process paths, which does not admit a density with respect to the Lebesgue measures (see, e.g., a similar discussion for GPs in [34]). To handle this within the variational inference framework, we must introduce a reference measure 
+
+PΨ,∗, which plays the role of a “Lebesgue-like” base measure on path space (see Definition E.1 for details). We then assume our variational law QΨ is absolutely continuous with respect to PΨ,∗, so that it admits a strictly positive Radon–Nikodym derivative dQΨ 
+
+> dPΨ,∗
+
+which satisfies the normalization 
+
+EΨ∼PΨ,∗ [ dQΨ 
+
+> dPΨ,∗
+
+(Ψ)] = 1 . These conditions ensure that QΨ is a valid probability measure on the space of marked point-process paths (see Appendix E for further technical details). This formulation enables us to express the KL divergence between the variational distribution and the true posterior in terms of the ELBO: 
+
+DKL (Q(ϕ, θ, ω, Ψ) || P (ϕ, θ, ω, Ψ | D , X)) = −L ELBO (g) + const , (16) where the ELBO is defined as 
+
+LELBO (g) := 
+
+Eϕ∼qϕ,θ∼qθ ,ω∼qω ,Ψ∼QΨ
+
+log p (D | ϕ, g (·; θ), ω, Ψ) pϕ(ϕ)pθ (θ)pω (ω) dPΨ|ϕ 
+
+> dPΨ,∗
+
+(Ψ)
+
+qϕ(ϕ)qθ (θ)qω (ω) dQΨ 
+
+> dPΨ,∗
+
+(Ψ)
+
+ (17) and where dPΨ|ϕ 
+
+> dPΨ,∗
+
+is the Radon-Nykodim derivative of the true conditional law PΨ|ϕ with respect to PΨ,∗. From (16) , it follows that minimizing the KL divergence is equivalent to maximizing the ELBO. 
+
+4.2 Local Linearization of the Bayesian Neural Network 
+
+A crucial insight is that the data augmentation strategy transforms the intractable likelihood density in (3) into a form that is conditionally Gaussian, as shown below: 
+
+p (yi, δ i | xi, ϕ, g (·; θ), ω i, Ψi) ∝
+
+exp 
+
+
+
+δi
+
+g(yi, xi; θ)2 − δi
+
+g(yi, xi; θ)2
+
+2 ωi
+
+
+
+exp 
+
+ X 
+
+> (t,ω )j∈Ψi
+
+g(tj , xi; θ)2 − g(tj , xi; θ)2
+
+2 ωj
+
+ .
+
+6This transformation is particularly advantageous when placing a GP prior on g(·; θ), as it induces conjugacy in the model. Conjugacy is crucial for variational inference because it enables efficient computation of the ELBO (17) , which involves taking expectations over the distribution of θ.However, when g(·; θ) is a BNN, these expectations generally lack closed-form solutions, making exact Bayesian updates intractable. As a result, we seek to approximate g(·; θ) in a way that retains the expressive power of NNs while preserving Gaussian conjugacy to enable tractable inference. We adopt the local linearization approximation introduced in [22]. This approach approximates the BNN g(·; θ) using a first-order Taylor expansion around a reference point θ⋆:
+
+g(t, x; θ) ≈ glin (t, x; θ) := g(t, x; θ⋆) + Jθ⋆ (t, x)⊤(θ − θ⋆), (18) where [Jθ (t, x)] j = ∂g (t, x;θ) 
+
+> ∂θ j
+
+is the Jacobian of the BNN with respect to the parameters θ. Fol-lowing [ 22 ], we select θ⋆ = θMAP as the maximum a posteriori (MAP) estimate, which is defined as: 
+
+(θMAP , ϕ MAP ) := arg max  
+
+> θ,ϕ
+
+p(θ, ϕ | D , X), (19) where p(θ, ϕ | D , X) is the posterior density defined in (7) . By centering the linearization at θMAP ,we ensure maximal approximation accuracy precisely where Bayesian inference is most sensitive: in the high-probability region of the posterior that dominates both parameter uncertainty quantification and predictive distributions. The procedure used to obtain the MAP estimates of (19) is detailed in Appendix F. Under the assumption of a Gaussian prior on the BNN parameters (5) , the local linearization induces the GP prior 
+
+glin ∼ GP (μ, κ )
+
+with mean function μ and and covariance function κ given by: 
+
+μ(t, x) := g(t, x; θMAP ) + JθMAP (t, x)⊤(Eθ∼pθ [θ] − θMAP )
+
+κ(( t, x), (t′, x′)) := JθMAP (t, x)JθMAP (t′, x′)⊤.
+
+Incorporating this approximation into our variational framework allows us to exploit Gaussian conjugacy for fast, closed-form updates, while still preserving the flexibility of NNs. Concretely, we take a Taylor expansion of the ELBO around glin and, by truncating at the lowest order term, obtain the simple approximation 
+
+LELBO (g) ≈ L ELBO (glin ).
+
+Our approach is analogous to the method introduced in [ 47 , Section 3.2], where the authors apply Delta Method Variational Inference by approximating the ELBO around a fixed point in parameter space. In contrast, we extend this idea by approximating the ELBO around a reference function glin ,rather than a fixed point. 
+
+4.3 Coordinate Ascent Variational Inference 
+
+We adopt a Coordinate Ascent Variational Inference (CAVI) approach, allowing us to draw on stan-dard results from variational inference (see, e.g., [ 5, Chapter 10.1]). In this framework, the optimal variational distributions are derived by maximizing the linearized ELBO, LELBO (glin ), with each distribution depending on the current state of the others. The algorithm proceeds by cyclically updat-ing each variational distribution while keeping the others fixed. This iterative process progressively refines the optimal variational distributions, ultimately leading to the best possible approximation of the posterior distribution. A complete derivation of each optimal variational distribution is provided in Appendix G while the complete CAVI algorithm is presented in Appendix H. At the kth iteration the optimal variational distributions for the parameters ϕ and θ are given by 
+
+q(k) 
+
+> ϕ
+
+(ϕ) = Gamma 
+
+
+
+˜α(k), ˜β
+
+
+
+, q(k) 
+
+> θ
+
+(θ) = N
+
+
+
+˜μ(k), ˜Σ(k)
+
+,
+
+where (˜ α(k), ˜β) and ( ˜ μ(k), ˜Σ(k)) are given in Appendix G.3 and G.4, respectively. At the kth iteration, the optimal update for the auxiliary parameters ω is given by 
+
+q(k) 
+
+> ω
+
+(ω) = 
+
+> N
+
+Y
+
+> i=1
+
+pPG (ωi | 1, ˜c(k) 
+
+> i
+
+),
+
+7where ˜c(k) 
+
+> i
+
+is given in Appendix G.1. Finally, at the kth iteration, the optimal variational law Q(k)
+
+> Ψ
+
+is the probability measure under which each Ψi (i = 1 , . . . , N ) is a marked Poisson process on 
+
+[0 , y i] × R+ with intensity function λQ,(k) 
+
+> i
+
+, as given in Appendix G.2. It is important to emphasize that we did not impose a specific form on the variational distributions; for example, we did not assume qθ (θ) to be Gaussian. Instead, we derived our results by minimizing the KL divergence over the full space of distributions. This contrasts with methods that fix a parametric form and use the reparameterization trick with Monte Carlo gradient estimates. Finally, in Appendix I, we demonstrate that, by exploiting the Woodbury matrix identity, our inference updates require only O(m) time complexity ( m is the number of weights in the NN architecture). This linear scaling renders our Bayesian framework feasible for contemporary large-scale deep neural architectures, which are well suited to model high-dimensional data. 
+
+## 5 Experiments 
+
+Details on the experimental setup, including dataset descriptions, benchmark methods specifications and evaluation metrics definitions are provided in Appendix J. Moreover, the implementation details for NeuralSurv are provided in Appendix K. To comprehensively evaluate NeuralSurv , we compare its performance against the following set of benchmark models: MTLR [ 51 ], DeepHit [32 ], DeepSurv [ 24 ], Logistic Hazard [16 ], CoxTime [29 ], 
+
+CoxCC [ 29 ], PMF [ 28 ], PCHazard [ 28 ], BCESurv [ 30 ], and DySurv [ 36 ], Sumo-Net [ 43 ] and 
+
+DQS [ 50 ]. A detailed overview of these models is provided in Appendix L and summarized in Table A2. Except for DySurv , which employs an autoencoder framework, we adopt the same NN architecture across all benchmark models and NeuralSurv to parameterize the hazard function. For 
+
+DySurv , we use the original autoencoder architecture specified in its implementation. We assess discriminative performance using the Antolini’s concordance index (C-index) [ 3], and evaluate model calibration with the inverse probability of censoring weighting (IPCW) integrated Brier score (IBS) [ 17 ], the Distribution Calibration (D-Calibration) [ 18 ], and the Kaplan–Meier Calibration (KM Calibration) [ 9]. The C-index evaluates how well a model performs by measuring the concordance between the rankings of the predicted event times and the true event times. The C-index ranges from 0 to 1, where higher values indicate better discriminative performance; a value of 0.5 corresponds to random guessing. Similar to the mean squared error, the Brier score (BS) assesses the accuracy of an estimated survival function at some time t. The IPCW are observation-specific weights that account for censoring in survival data, ensuring that the BS remains unbiased. The IPCW IBS is the integral of the IPCW BS over the observational period. The D - Calibration test bins each individual’s predicted survival probability at their observed event time into equal-width bins over and applies a χ2 test to assess whether those predicted probabilities are uniform across bins. A well-calibrated model should yield a non-significant p -value. The KM-Calibration procedure compares the average predicted survival curve with the Kaplan–Meier estimate. For the KM-Calibration, the closer the two curves align, the better calibrated the model, where 0 indicates perfect calibration and 1 indicates maximal miscalibration and a random prediction yields 0.25. The C-index and the IPCW IBS metrics are computed using the TorchSurv package [ 37 ]. The D-Calibration and KM-Calibration metrics are computed using the SurvivalEVAL package [41]. 
+
+5.1 Synthetic Data Experiment 
+
+In this section, we present experiments conducted on synthetic data. The experimental setup was inspired by [ 13 ] and constitutes a broadly applicable evaluation benchmark. We simulate the training sets with increasing sizes N = 25 , 50 , 100 and 150 samples where the event time was drawn from two distributions: p0(T ) = LogNormal (3 , 0.82) and p1(T ) = LogNormal (3 .5, 12). Each observation includes a covariate indicating whether the event time is sampled from p0 or p1, along with three additional noisy covariates generated from a standard normal distribution. The censoring times are drawn from an exponential distribution with a rate of 0.025 yielding an average censoring rate of 54% across the four synthetic datasets. The test set is generated using the same data-generating process, fixed to 100 observations, and held constant across all experiments. Figure 1 presents the true survival function alongside the predicted functions from NeuralSurv and the two top-performing benchmark models, selected based on IPCW IBS. Each panel represents 80 50 100               
+
+> Time
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Survival Function
+> IPCW IBS ↓
+> SumoNet: 0.223 CoxCC: 0.268 Neuralsurv: 0.196
+> N= 25
+> 050 100
+> Time
+> IPCW IBS ↓
+> SumoNet: 0.179 CoxCC: 0.229 Neuralsurv: 0.160
+> N= 50
+> 050 100
+> Time
+> IPCW IBS ↓
+> SumoNet: 0.127 CoxCC: 0.128 Neuralsurv: 0.126
+> N= 100
+> 050 100
+> Time
+> IPCW IBS ↓
+> SumoNet: 0.113 CoxCC: 0.109 Neuralsurv: 0.106
+> N= 150
+
+Figure 1: Comparison of the true survival function (black) with the estimated survival functions from 
+
+NeuralSurv and the two top-performing benchmark models (colored) on synthetic data. The time axis is truncated at the maximum observed event time in the training data. Each panel represents a different training set size. The IPCW IBS score is reported for each method in each panel, with lower values indicating better predictive accuracy. NeuralSurv estimates the full posterior over survival functions, and the 90% credible interval is shown as a ribbon around its estimate. a different training set size. As the number of training samples increases, the predicted survival functions match more closely the true survival function. The results show that NeuralSurv consistently ranks as the best method according to IPCW IBS, and its predictive accuracy improves with larger sample sizes. Beyond its competitive performance, NeuralSurv also provides Bayesian credible intervals, offering uncertainty estimates for survival probabilities, an important feature absent in deep learning benchmark models. Notably, these credible intervals appropriately narrow as more data becomes available, demonstrating well-calibrated uncertainty quantification. Corresponding C-index, IPCW IBS score, D-Calibration p-values, and KM-Calibration scores for all methods are reported in Tables A3-A4. 
+
+5.2 Real Survival Data Experiments 
+
+To comprehensively evaluate NeuralSurv , we conduct experiments on eight real survival datasets: the chemotherapy for colon cancer (COLON), the Molecular Taxonomy of Breast Cancer International Consortium (METABRIC), the Rotterdam and German Breast Cancer Study Group (GBSG), the National Wilm’s Tumor Study (NWTCO), the Worcester Heart Attack Study (WHAS), the Study to Understand Prognoses and Preferences for Outcomes and Risks of Treatment (SUPPORT), the Veterans administration Lung Cancer trial (VLC) and the Sac 3 simulation study. Each dataset is subsampled to 125 observations to highlight the advantages of a Bayesian approach in data-scarce regimes. The data is randomly partitioned into five equally sized folds, with each fold serving as a distinct train/test split, comprising 100 training samples and 25 test samples per fold. Table 1 presents the C-index and IPCW IBS on the held-out test sets for three representative datasets, while results for the remaining datasets, as well as D-Calibration and KM-Calibration, are shown in Tables A5–A6. Across eight datasets, NeuralSurv achieves the best IPCW IBS score on seven, highlighting superior overall calibration compared to benchmarks. It consistently passes D-calibration, together with Sumo-Net as the only benchmark achieving this result, while it ranks fifth in KM-calibration. This strength arises from its Bayesian framework, which naturally models uncertainty and provides effective regularization in data-scarce settings. Beyond calibration, NeuralSurv also demonstrates strong discriminative performance, achieving the best C-index in four datasets and the second best in three. An ablation study using a larger training set of 250 observations is presented in Tables A7-A8. 
+
+NeuralSurv continues to outperform benchmark methods under this setting in terms of calibration performance demonstrating the robustness of the method to training size. Furthermore, we also include results from traditional survival models, such as the Cox Proportional Hazards model [ 10 ], the Weibull Accelerated Failure Time model [ 8], the Random Survival Forest [ 23 ], and the Survival Support Vector Machine [ 40 ] in Tables A9-A10. These models often achieve strong performance in data-scarce regimes. However, they are not designed to leverage high-dimensional or complex feature representations, which limits their applicability in modern deep learning contexts. Our focus remains on evaluating deep survival methods that can scale with data complexity, but we include these 9method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours)                                                 
+
+> COLON
+> C-index ↑IPCW IBS ↓
+> 0.562 0.298 0.478 0.28 0.572 0.326 0.490 0.321 0.578 0.277 0.584 0.289 0.509 0.324 0.538 0.297 0.491 0.302 0.488 0.536 0.485 0.241 0.635 0.246
+> 0.671 0.218 METABRIC
+> C-index ↑IPCW IBS ↓
+> 0.548 0.279 0.511 0.243 0.523 0.289 0.541 0.317 0.533 0.307 0.575 0.257 0.440 0.336 0.541 0.291
+> 0.616 0.277 0.561 0.465 0.447 0.223 0.564 0.261 0.584 0.212 GBSG
+> C-index ↑IPCW IBS ↓
+> 0.602 0.273 0.578 0.309 0.618 0.252 0.618 0.296 0.599 0.285 0.646 0.240 0.655 0.250 0.609 0.249 0.581 0.273 0.572 0.485 0.476 0.250 0.611 0.229
+> 0.657 0.188
+
+Table 1: Performance comparison of deep survival models over five different train/test splits of each dataset. The best results for each metric are shown in bold, and the second-best results are underlined. 
+
+↑ indicates higher is better; ↓ indicates lower is better. classical baselines for reference and completeness. A prior sensitivity analysis for the parameter ϕ,using priors with double and half the original variance, is presented in Table A11. While the posterior distributions under different priors largely overlapped, their central tendencies occasionally differed, indicating mild to moderate sensitivity to the choice of prior. Incorporating prior information remains important, as it helps strike a principled balance between model flexibility and regularization. 
+
+## 6 Conclusion 
+
+We propose the first fully Bayesian framework for deep survival analysis that models time-varying relationships between covariates and risk. On both synthetic and real-world datasets, in data-scarce regimes, our method consistently achieves better calibration than state-of-the-art deep survival models and matches or surpasses their discriminative performance. In contrast to previous approaches in deep survival analysis, which are either constrained to discrete-time settings [ 51 , 32 , 16 , 28 , 30 , 36 ] or lack the ability to provide Bayesian uncertainty quantification [ 51 , 32 , 24 , 16 , 29 , 30 , 36 ], NeuralSurv 
+
+introduces a continuous-time modeling framework that naturally incorporates Bayesian inference, enabling both accurate survival predictions and well-calibrated uncertainty estimates. Pólya–Gamma and Poisson data-augmentation schemes (Section 3.3) have been extensively employed with standard Gaussian process models [ 12 , 52 ]. Likewise, the local linearization of Bayesian neural networks, which yields a Gaussian process–based approximation, (Section 4.2), is a well established technique [ 22 ]. To our knowledge, this work is the first to integrate these two approaches into a unified framework that capitalizes on Gaussian process conjugacy. By combining these methods, we contribute a novel inference strategy at the intersection of Bayesian deep learning and Gaussian process modeling. Despite its strengths, NeuralSurv relies on three key simplifying assumptions. First, we assume a sigmoidal hazard function, a choice shared by prior work (e.g., [ 13 , 25 ]), which may not capture all risk dynamics. Second, our mean -field variational inference treats parameters ϕ and θ as independent, ignoring posterior correlations. Third, we linearize the network around the MAP estimate to enforce conjugacy. In real - world settings, however, the true posterior can be multimodal and strongly correlated, so this local, factorized approximation may overlook secondary modes or misestimate joint uncertainty. Concerning the computational efficiency of our method, the coordinate -ascent updates scale linearly with network size but still require full -dataset passes each iteration. For very large cohorts, this becomes a bottleneck. Extending the algorithm to use stochastic or mini -batch updates would preserve conjugacy benefits while improving scalability. We believe that NeuralSurv has the potential to make a positive societal impact. For instance, as healthcare data becomes increasingly diverse, there is a growing need for models that can handle multimodal data within time-to-event analyses effectively. NeuralSurv represents an important first step toward accommodating such data within a Bayesian deep learning framework. 10 Acknowledgments and Disclosure of Funding 
+
+SB acknowledges funding from the MRC Centre for Global Infectious Disease Analysis (reference MR/X020258/1), funded by the UK Medical Research Council (MRC). This UK funded award is car-ried out in the frame of the Global Health EDCTP3 Joint Undertaking. SB acknowledges support from the Novo Nordisk Foundation via The Novo Nordisk Young Investigator Award (NNF20OC0059309). SB acknowledges the Danish National Research Foundation (DNRF160) through the chair grant. SB acknowledges support from The Eric and Wendy Schmidt Fund For Strategic Innovation via the Schmidt Polymath Award (G-22-63345) which also supports AM and MM. 
+
+## References 
+
+[1] Ryan Prescott Adams, Iain Murray, and David J. C. MacKay. Tractable nonparametric bayesian inference in poisson processes with gaussian process intensities. Proceedings of the 26th Annual International Conference on Machine Learning , pages 9–16, 2009. [2] Virginia Aglietti, Edwin V Bonilla, Theodoros Damoulas, and Sally Cripps. Structured varia-tional inference in continuous cox process models. Advances in Neural Information Processing Systems , 32, 2019. [3] Laura Antolini, Patrizia Boracchi, and Elia Biganzoli. A time-dependent discrimination index for survival data. Statistics in Medicine , 24(24):3927–3944, 2005. [4] Ifigeneia Apostolopoulou, Scott Linderman, Kyle Miller, and Artur Dubrawski. Mutually Regressive Point Processes. Advances in Neural Information Processing Systems , 32, 2019. [5] Christopher Bishop. Pattern Recognition and Machine Learning . Information Science and Statistics. Springer, New York, NY, 2016. [6] Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight Uncertainty in Neural Network. Proceedings of the 32nd International Conference on Machine Learning ,37:1613–1622, 2015. [7] Pierre Bremaud. Point Processes and Queues . Springer Series in Statistics. Springer, 1981. [8] Kevin J. Carroll. On the use and utility of the Weibull model in the analysis of survival data. 
+
+Controlled Clinical Trials , 24(6):682–701, 2003. [9] Paidamoyo Chapfuwa, Chenyang Tao, Chunyuan Li, Irfan Khan, Karen J. Chandross, Michael J. Pencina, Lawrence Carin, and Ricardo Henao. Calibration and uncertainty in neural time-to-event modeling. IEEE Transactions on Neural Networks and Learning Systems , 34(4):1666– 1680, 2023. [10] D. R. Cox. Regression Models and Life-Tables. Journal of the Royal Statistical Society Series B: Statistical Methodology , 34(2):187–202, 1972. [11] Cameron Davidson-Pilon. lifelines: survival analysis in Python. Journal of Open Source Software , 4(40):1317, 2019. (version 0.30.0). [12] Christian Donner and Manfred Opper. Efficient Bayesian Inference of Sigmoidal Gaussian Cox Processes. Journal of Machine Learning Research , 19(67):1–34, 2018. [13] Tamara Fernandez, Nicolas Rivera, and Yee Whye Teh. Gaussian Processes for Survival Analysis. Advances in Neural Information Processing Systems , 29, 2016. [14] Jacob Gardner, Geoff Pleiss, Kilian Q Weinberger, David Bindel, and Andrew G Wilson. GPy-Torch: Blackbox Matrix-Matrix Gaussian Process Inference with GPU Acceleration. Advances in Neural Information Processing Systems , 31, 2018. [15] Andrew Gelman, John B Carlin, Hal S Stern, David B Dunson, Aki Vehtari, and Donald B Rubin. Bayesian Data Analysis . Chapman & Hall/CRC Texts in Statistical Science. Chapman & Hall/CRC, 3 edition, 2013. 11 [16] Michael F. Gensheimer and Balasubramanian Narasimhan. A scalable discrete-time survival model for neural networks. PeerJ , 7:e6257, 2019. [17] Erika Graf, Claudia Schmoor, Willi Sauerbrei, and Martin Schumacher. Assessment and comparison of prognostic classification schemes for survival data. Statistics in Medicine ,18(17–18):2529–2545, 1999. [18] Humza Haider, Bret Hoehn, Sarah Davis, and Russell Greiner. Effective ways to build and evaluate individual survival distributions. Journal of Machine Learning Research , 21(1), January 2020. [19] Frank E Harrell, Kerry L Lee, and Daniel B Mark. Multivariable Prognostic Models: Issues in Developing Models, Evaluating Assumptions and Adequacy, and Measuring and Reducing Errors. Statistics in Medicine , 15(4):361–387, 1996. [20] Nicholas J Higham. Functions of matrices: theory and computation . Cambridge University Press, 2008. [21] Joseph G Ibrahim, Ming-Hui Chen, and Debajyoti Sinha. Bayesian Survival Analysis . Springer series in statistics. Springer, 2010. [22] Alexander Immer, Maciej Korzepa, and Matthias Bauer. Improving predictions of bayesian neural nets via local linearization. Proceedings of The 24th International Conference on Artificial Intelligence and Statistics , 130:703–711, 2021. [23] Hemant Ishwaran, Udaya B. Kogalur, Eugene H. Blackstone, and Michael S. Lauer. Random survival forests. The Annals of Applied Statistics , 2(3), 2008. [24] Jared L. Katzman, Uri Shaham, Alexander Cloninger, Jonathan Bates, Tingting Jiang, and Yuval Kluger. DeepSurv: personalized treatment recommender system using a cox proportional hazards deep neural network. BMC Medical Research Methodology , 18(1), 2018. [25] Minyoung Kim and Vladimir Pavlovic. Variational Inference for Gaussian Process Models for Survival Analysis. UAI , pages 435–445, 2018. [26] J. F. C. Kingman. Poisson Processes . Oxford Studies in Probability. Clarendon Press, 1992. [27] Håvard Kvamme. pycox : Survival analysis with PyTorch. https://pypi.org/project/ pycox/ , 2024. (version 0.3.0). [28] Håvard Kvamme and Ørnulf Borgan. Continuous and discrete-time survival prediction with neural networks. Lifetime Data Analysis , 27(4):710–736, 2021. [29] Håvard Kvamme, Ørnulf Borgan, and Ida Scheel. Time-to-Event Prediction with Neural Networks and Cox Regression. Journal of Machine Learning Research , 20(129):1–30, 2019. [30] Håvard Kvamme and Ørnulf Borgan. The Brier Score under Administrative Censoring: Prob-lems and a Solution. Journal of Machine Learning Research , 24(2):1–26, 2023. [31] Jerald F Lawless. Statistical models and methods for lifetime data . Wiley Series in Probability and Statistics. John Wiley & Sons, 2 edition, 2002. [32] Changhee Lee, William Zame, Jinsung Yoon, and Mihaela Van der Schaar. DeepHit: A Deep Learning Approach to Survival Analysis With Competing Risks. Proceedings of the AAAI Conference on Artificial Intelligence , 32(1), 2018. [33] Jialiang Li and Shuangge Ma. Survival Analysis in Medicine and Genetics . Chapman & Hall/CRC Biostatistics Series. Chapman & Hall/CRC, 2023. [34] Alexander G de G Matthews, James Hensman, Richard Turner, and Zoubin Ghahramani. On sparse Variational Methods and the Kullback-Leibler Divergence between Stochastic Processes. In Artificial Intelligence and Statistics , pages 231–239, 2016. [35] J W McPherson. Reliability Physics and Engineering: Time-To-Failure Modeling . Springer International Publishing, 3 edition, 2019. 12 [36] Munib Mesinovic, Peter Watkinson, and Tingting Zhu. DySurv: dynamic deep learning model for survival analysis with conditional variational inference. Journal of the American Medical Informatics Association , page ocae271, 2024. [37] Mélodie Monod, Peter Krusche, Qian Cao, Berkman Sahiner, Nicholas Petrick, David Ohlssen, and Thibaud Coroller. TorchSurv: A Lightweight Package for Deep Survival Analysis. Journal of Open Source Software , 9(104):7341, 2024. (version 0.1.4). [38] James G. Scott Nicholas G. Polson and Jesse Windle. Bayesian Inference for Logistic Mod-els Using Pólya–Gamma Latent Variables. Journal of the American Statistical Association ,108(504):1339–1349, 2013. [39] Sebastian Pölsterl. scikit-survival: A Library for Time-to-Event Analysis Built on Top of scikit-learn. Journal of Machine Learning Research , 21(212):1–6, 2020. (version 0.24.0). [40] Sebastian Pölsterl, Nassir Navab, and Amin Katouzian. Fast Training of Support Vector Machines for Survival Analysis , page 243–259. Springer International Publishing, 2015. [41] Shi-ang Qi, Weijie Sun, and Russell Greiner. SurvivalEVAL: A comprehensive open-source python package for evaluating individual survival distributions. Proceedings of the AAAI Symposium Series , 2:453–457, 01 2024. [42] Alejandro Quiroz Flores. Survival Analysis: A New Guide for Social Scientists . Elements in Quantitative and Computational Methods for the Social Sciences. Cambridge University Press, 2022. [43] David Rindt, Robert Hu, David Steinsaltz, and Dino Sejdinovic. Survival regression with proper scoring rules and monotonic neural networks. Proceedings of the 25th International Conference on Artificial Intelligence and Statistics (AISTATS) 2022, Valencia, Spain , 2022. [44] Hugh Salimbeni and Marc Deisenroth. Doubly stochastic variational inference for deep gaussian processes. Advances in Neural Information Processing Systems , 30, 2017. [45] Yee Teh and Vinayak Rao. Gaussian process modulated renewal processes. Advances in Neural Information Processing Systems , 2011. [46] Terry M Therneau. survival: A package for survival analysis in R. https://CRAN.R-project. org/package=survival , 2024. (version 3.7.0). [47] Chong Wang and David M. Blei. Variational Inference in Nonconjugate Models. Journal of Machine Learning Research , 14(1):1005–1031, 2013. [48] Ping Wang, Yan Li, and Chandan K. Reddy. Machine Learning for Survival Analysis: A Survey. 
+
+ACM Computing Surveys , 51(6):1–36, 2019. [49] Simon Wiegrebe, Philipp Kopper, Raphael Sonabend, Bernd Bischl, and Andreas Bender. Deep learning for survival analysis: a review. Artificial Intelligence Review , 57(3), 2024. [50] Hiroki Yanagisawa. Proper scoring rules for survival analysis. Proceedings of the 40th International Conference on Machine Learning , 2023. [51] Chun-Nam Yu, Russell Greiner, Hsiu-Chin Lin, and Vickie Baracos. Learning Patient-Specific Cancer Survival Distributions as a Sequence of Dependent Regressors. Advances in Neural Information Processing Systems , 24, 2011. [52] Feng Zhou, Zhidong Li, Xuhui Fan, Yang Wang, Arcot Sowmya, and Fang Chen. Efficient Inference for Nonparametric Hawkes Processes Using Auxiliary Latent Variables. Journal of Machine Learning Research , 21(241):1–31, 2020. 13 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: The abstract and introduction clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. The claims made match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. Guidelines: • The answer NA means that the abstract and introduction do not include the claims made in the paper. • The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers. • The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. • It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: The conclusion points out all the assumptions made in the paper and reflects on how these assumptions might be violated in practice and what the implications would be. Moreover, the conclusion summarizes the computational efficiency of the proposed algorithms and how they scale with dataset size and Appendix I gives more details. Guidelines: • The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper. • The authors are encouraged to create a separate "Limitations" section in their paper. • The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be. • The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated. • The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon. • The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size. • If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness. • While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an impor-tant role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations. 14 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes] Justification: Theorem 3.1, as well as all the formulas, are numbered and cross-referenced. The assumptions of Theorem 3.1 are stated in the statement and the proof is presented in Appendix N.1. The theorems and Lemmas that the proof relies upon are properly referenced. Guidelines: • The answer NA means that the paper does not include theoretical results. • All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced. • All assumptions should be clearly stated or referenced in the statement of any theorems. • The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition. • Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material. • Theorems and Lemmas that the proof relies upon should be properly referenced. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: The paper fully discloses all information necessary to reproduce the main experimental results. Specifically: • Appendix J details how the benchmark results were obtained, the definitions of the evaluation metrics, and the specific software packages (along with their versions) used for model evaluation and metric computation. • Pseudocode in Algorithms 1 and 2 for NeuralSurv is provided to clarify the algorithmic steps. Additional implementation details for NeuralSurv are included Appendix K to facilitate replication. • The source code is made publicly available via a GitHub repository, enabling direct access to the implementation used to produce the reported results. Guidelines: • The answer NA means that the paper does not include experiments. • If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not. • If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable. • Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed. • While NeurIPS does not require releasing code, the conference does require all submis-sions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example 15 (a) If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm. (b) If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully. (c) If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset). (d) We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [Yes] Justification: The paper provides open access to both the data and code, along with sufficient instructions to faithfully reproduce the main experimental results: • The source code is made publicly available via a GitHub repository, enabling direct access to the implementation used to produce the reported results. • The generation process for the synthetic dataset is described in Section 5.1, and the resulting data are available for download from the accompanying GitHub repository. • The real-world data used in our experiments are publicly available open-source datasets. The source of these datasets, including the specific package and version used to obtain them, is detailed in Section J. Guidelines: • The answer NA means that paper does not include experiments requiring code. • Please see the NeurIPS code and data submission guidelines ( https://nips.cc/ public/guides/CodeSubmissionPolicy ) for more details. • While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark). • The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https: //nips.cc/public/guides/CodeSubmissionPolicy ) for more details. • The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc. • The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why. • At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable). • Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyper-parameters, how they were chosen, type of optimizer, etc.) necessary to understand the results? Answer: [Yes] Justification: The paper specifies all training and test details necessary to understand the results: 16 • The train-test data split for the synthetic experiment is described in Section 5.1. The train-test data split for the real data experiment is described in Section 5.2 and further elaborated in Appendix J.1. • The model architecture is detailed in Appendix K. • Hyperparameters for the benchmark models, including how they were selected, as well as the optimizer, batch size, and number of training epochs for the benchmark methods, are provided in Appendix J.2. • For the NeuralSurv model, the prior hyperparameters and the value of the regularization parameter ρ are specified in Appendix K. Guidelines: • The answer NA means that the paper does not include experiments. • The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them. • The full details can be provided either with the code, in appendix, or as supplemental material. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? Answer: [NA] Justification: The paper does not report statistical significance tests. It focuses on settings where statistical testing was not applicable for supporting the main claims. Guidelines: • The answer NA means that the paper does not include experiments. • The authors should answer "Yes" if the results are accompanied by error bars, confi-dence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper. • The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions). • The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.) • The assumptions made should be given (e.g., Normally distributed errors). • It should be clear whether the error bar is the standard deviation or the standard error of the mean. • It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified. • For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates). • If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] Justification: The information on the computer resources is provided in Appendix K. Guidelines: • The answer NA means that the paper does not include experiments. • The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage. 17 • The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute. • The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper). 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: To the best of our knowledge and judgment, the research complies fully with the NeurIPS Code of Ethics. In our view, the work does not pose potential harms caused by the research process, nor does it present any adverse societal impact or potentially harmful consequences. Guidelines: • The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics. • If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics. • The authors should make sure to preserve anonymity (e.g., if there is a special consid-eration due to laws or regulations in their jurisdiction). 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes] Justification: The potential positive societal impacts of the paper are summarized in the conclusion. No negative societal impacts have been identified. Guidelines: • The answer NA means that there is no societal impact of the work performed. • If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact. • Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations. • The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster. • The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology. • If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML). 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)? Answer: [NA] 18 Justification: The paper poses no such risks. Guidelines: • The answer NA means that the paper poses no such risks. • Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters. • Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images. • We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes] Justification: The benchmark methods used in the paper are properly credited, with citations to the original papers (where applicable) and detailed references to the software packages and their versions in Appendix J.2. For the datasets, any original studies associated with the data are cited, and the process for obtaining the data, including the relevant package names and versions, is explained in Appendix J.1. All licenses and terms of use have been respected. Guidelines: • The answer NA means that the paper does not use existing assets. • The authors should cite the original paper that produced the code package or dataset. • The authors should state which version of the asset is used and, if possible, include a URL. • The name of the license (e.g., CC-BY 4.0) should be included for each asset. • For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided. • If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets, paperswithcode.com/datasets 
+
+has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset. • For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided. • If this information is not available online, the authors are encouraged to reach out to the asset’s creators. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: The source code is made publicly available via a GitHub repository under the MIT License, enabling direct access to the implementation used to produce the reported results. This is explained in Appendix K. Guidelines: • The answer NA means that the paper does not release new assets. • Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc. • The paper should discuss whether and how consent was obtained from people whose asset is used. 19 • At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file. 14. Crowdsourcing and research with human subjects 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [NA] Justification: The paper does not involve crowdsourcing nor research with human subjects. Guidelines: • The answer NA means that the paper does not involve crowdsourcing nor research with human subjects. • Including this information in the supplemental material is fine, but if the main contribu-tion of the paper involves human subjects, then as much detail as possible should be included in the main paper. • According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [NA] Justification: The paper does not involve crowdsourcing nor research with human subjects. Guidelines: • The answer NA means that the paper does not involve crowdsourcing nor research with human subjects. • Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper. • We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution. • For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigorousness, or originality of the research, declaration is not required. Answer: [NA] Justification: The core method development in this research does not involve LLMs as any important, original, or non-standard components. Guidelines: • The answer NA means that the core method development in this research does not involve LLMs as any important, original, or non-standard components. • Please refer to our LLM policy ( https://neurips.cc/Conferences/2025/LLM )for what should or should not be described. 20 A Review of Survival Analysis 
+
+This appendix offers a concise summary of the survival-analysis framework on which our approach is built. For an in-depth review, the reader is referred to [31]. Survival data for each observation consist of three components: • Feature vector : A covariate vector x ∈ Rp capturing baseline characteristics; • Event time : a nonnegative random variable T measuring the time from baseline to the occurrence of the event of interest; • Event indicator : A binary variable δ, which takes the value 1 if the event is observed, and 0 if the event is not observed within the observational period. In the latter case, the observation’s data is said to be right-censored, meaning that the only available information is the time of the last follow-up before the event could occur. To handle censoring uniformly, we introduce a censoring time C and record the observed time 
+
+y = min( T, C ). The event indicator can then be written succinctly as δ = 1{T ≤C}. Throughout, we assume noninformative right - censoring, i.e. conditional on the covariates, the censoring time is independent of the event time: C ⊥ T | x. Conditional on x, we let the event time T have cumulative distribution function F (t | x) and probability density function f (t|x) such that 
+
+F (t | x) = P(T ≤ t | x) = 
+
+Z t
+
+> 0
+
+f (s | x) d s
+
+for t ∈ [0 , ∞). The survival function gives the probability of remaining event-free beyond time t:
+
+S(t | x) := P(T > t | x) = 1 − F (t | x) = 
+
+Z ∞
+
+> t
+
+f (s | x)d s, 
+
+for t ∈ [0 , ∞). An important modeling quantity is the hazard function, which represents the instantaneous event rate at time t given survival up to t:
+
+λ(t | x) := lim 
+
+> ∆t→0
+
+P t ≤ T < t + ∆ t | T ≥ t, x
+
+∆t = f (t | x)
+
+S(t | x) .
+
+Equivalently, 
+
+λ(t | x) = − ddt log S(t | x),
+
+so that the survival function can be written in terms of the hazard: 
+
+S(t | x) = exp 
+
+
+
+−
+
+Z t
+
+> 0
+
+λ(s | x) d s
+
+
+
+.
+
+21 B Review of Pólya-Gamma Random Variables 
+
+We follow [38] in defining the family of Pólya–Gamma distributions and their properties. 
+
+Definition B.1 (Pólya–Gamma Distribution) . A random variable ω is said to follow a Pólya–Gamma distribution with parameters b > 0 and c ∈ R, denoted by ω ∼ PG (b, c ), if 
+
+ω d
+
+= 12π2
+
+> ∞
+
+X
+
+> k=1
+
+gk
+
+ k − 12
+
+2 + c2
+
+> 4π2
+
+, with gk
+
+> i.i.d.
+
+∼ Gamma (b, 1) . (A1) The following result expresses the reciprocal of the hyperbolic cosine function raised to the power 
+
+b as an infinite Gaussian mixture. This representation is central to connecting the Pólya–Gamma density with a parameter c̸ = 0 to the case when c = 0 .
+
+Proposition B.2. The reciprocal of the hyperbolic cosine raised to the power b can be represented as an infinite Gaussian mixture: 
+
+h
+
+cosh 
+
+ c
+
+2
+
+i −b
+
+=
+
+Z ∞
+
+> 0
+
+exp 
+
+
+
+− c2
+
+2 ω
+
+
+
+pPG (ω | b, 0) dω. 
+
+Notice that Proposition B.2 can also be read as providing a closed-form expression for the expectation 
+
+Eω∼pPG (ω|b, 0) 
+
+h
+
+exp( − c2 
+
+> 2
+
+ω)
+
+i
+
+. Building on this representation, we can relate the density function of a Pólya–Gamma random variable with a non-zero parameter c through an exponential tilting of the Pólya–Gamma random density with c = 0 . This connection is summarized in the next proposition. 
+
+Proposition B.3. The Pólya–Gamma density (A1) can be re-written in the form 
+
+pPG (ω | b, c ) = exp 
+
+
+
+− c2
+
+2 ω
+
+
+
+(cosh( c/ 2)) b pPG (ω | b, 0) . (A2) The previous propositions not only establish key representations of the Pólya–Gamma density but also facilitate the derivation of its moment properties. In particular, one can derive the moment generating function, from which the first moment follows directly. This is captured in the next result. 
+
+Proposition B.4. Let pPG (ω | b, c ) denote the density function of the random variable ω ∼ PG (b, c ),with b > 0 and c ∈ R. Using Propositions B.2 and B.3, the moment generating function is given by 
+
+Z ∞
+
+> 0
+
+eξω pPG (ω | b, c ) dω = cosh b(c/ 2) cosh b 12
+
+pc2 − 2ξ
+
+ . (A3) 
+
+In particular, the first moment is obtained by differentiating (A3) with respect to ξ at ξ = 0 :
+
+Eω∼pPG (ω|b,c )[ω] = b
+
+2c tanh 
+
+ c
+
+2
+
+
+
+. (A4) Finally, the following theorem illustrates how the Pólya–Gamma distribution can be used to derive useful integral identities. 
+
+Theorem B.5. Let pPG (ω | b, 0) denote the density function of the random variable ω ∼ PG (b, 0) 
+
+with b > 0. Then, for all a ∈ R, the following integral identity holds: 
+
+eψa 
+
+(1 + eψ )b = 2 −beκψ 
+
+Z ∞
+
+> 0
+
+exp 
+
+
+
+− ωψ 2
+
+2
+
+
+
+pPG (ω | b, 0) dω, 
+
+where κ = a − b 
+
+> 2
+
+.
+
+The following corollary is a direct application of Theorem B.5. 
+
+Corollary B.6. Let f (ω, z ) := z 
+
+> 2
+
+− z2 
+
+> 2
+
+ω − log(2) . Then, 
+
+σ(z) = e z
+
+> 2
+
+2 cosh( z 
+
+> 2
+
+) =
+
+Z ∞
+
+> 0
+
+ef (ω,z )pPG (ω | 1, 0) dω. (A5) 22 C Review of Poisson Processes 
+
+This appendix briefly summarizes the properties of a Poisson process that are most relevant to our analysis. For a more comprehensive treatment, see Chapters 3 and 5 of [26]. 
+
+Definition C.1 (Poisson Process) . Let Z be a measurable space. A random countable subset 
+
+Ψ = {z ∈ Z} 
+
+is said to be a Poisson process on Z if it satisfies the following properties: 1. Independence: For any sequence of disjoint subsets {Z k ⊂ Z} Kk=1 , the counts 
+
+N (Zk) = |Ψ ∩ Z k|
+
+are mutually independent. 2. Poisson Counts: For each measurable subset Zk ⊂ Z , the count N (Zk) is Poisson distributed with mean Z
+
+> Zk
+
+λ(z) dz, 
+
+where λ : Z → R+ is the intensity function. Given a point process Ψ, we denote its path measure — that is, the probability measure induced on its sample - path space — by PΨ. If the intensity function λ(z) is constant, λ(z) ≡ λ, then Ψ is called 
+
+homogeneous ; otherwise, it is inhomogeneous . We now extend the concept of a Poisson process by incorporating additional random attributes, known as marks .
+
+Definition C.2 (Marked Poisson Process) . Let Ψ = {z ∈ Z} be a Poisson process on Z with intensity function λ : Z → R+. Suppose that for each point z, associate a random variable ω, such that ω ∼ pω|z (ω|z) , taking values in some space M. Then the collection 
+
+ΨM = {(z, ω ) ∈ Z × M} 
+
+defines a Poisson process on the product space Z × M . The resulting process is known as a marked Poisson process with intensity 
+
+λ(z, ω ) = λ(z) pω|z (ω|z).
+
+Next, we present Campbell’s Theorem, which describes the law of sums taken over the points of a Poisson process (see [26, Sec. 3.2]). 
+
+Theorem C.3 (Campbell’s Theorem) . Let ΨM be a marked Poisson process on Z × M with intensity function λ(z, ω ) and let f : Z × M → R be measurable. Then the sum 
+
+H(Ψ M) = X 
+
+> (z,ω )j∈ΨM
+
+f (zj , ω j )
+
+is absolutely convergent with probability one if and only if 
+
+Z
+
+> Z×M
+
+min( |f (z, ω )|, 1) λ(z, ω )d zdω < ∞.
+
+If this condition holds, then 
+
+EΨM∼PΨM
+
+h
+
+esH (Ψ M)i
+
+= exp 
+
+Z 
+
+> Z×M
+
+(esf (z,ω ) − 1) λ(z, ω )d zdω
+
+
+
+for any s ∈ C for which the integral on the right converges. Moreover 
+
+EΨM∼PΨM [H(Ψ M)] = 
+
+Z
+
+> Z×M
+
+f (z, ω )λ(z, ω )d zdω
+
+in the sense that the expectation exists if and only if the integral converges. 
+
+23 D Obtaining the Normalization Factor Z(t, x)
+
+In this appendix we derive an efficient approximation for the normalization factor 
+
+Z(t, x) = Eθ∼pθ
+
+σ(glin (t, x; θ))  , (A6) which is needed when computing the CAVI optimal updates (see Appendix G). Recall from (5) that θ has the following prior distribution 
+
+θ ∼ N (0, Im),
+
+where Im is the m × m identity matrix. Moreover, recall from Section 4.2 that we approximate the network output g(t, x; θ) around some reference θ⋆ by its first-order linearization 
+
+glin (t, x; θ) := g(t, x; θ⋆) + Jθ⋆ (t, x)⊤(θ − θ⋆),
+
+where Jθ⋆ (t, x) denotes the Jacobian of g(t, x; θ) with respect to θ. Because θ is Gaussian, the linearized output is also Gaussian: 
+
+glin (t, x; θ) ∼ N 
+
+
+
+g(t, x; θ⋆) − Jθ⋆ (t, x)⊤θ⋆, ∥Jθ⋆ (t, x)∥22
+
+
+
+.
+
+In order to approximate Z(t, x) we wish to leverage a well-known asymptotic approximation. Specifically, for a normal random variable X ∼ N (μ, σ 2) it holds that 
+
+EX∼N (μ,σ 2)[σ(X)] ≈ σ μ
+
+p1 + π 
+
+> 8
+
+σ2
+
+!
+
+. (A7) We can apply the result in (A7) to the normal random variable glin (t, x; θ) and approximate Z(t, x)
+
+as 
+
+Z(t, x) ≈ σ
+
+ g(t, x; θ⋆) − Jθ⋆ (t, x)⊤θ⋆
+
+q
+
+1 + π 
+
+> 8
+
+∥Jθ⋆ (t, x)∥22
+
+ .
+
+Since in (A6) we are taking the expectation under the prior pθ (θ), it is natural to linearize around the prior mean, therefore, we set θ⋆ = 0.24 E Combining Variational Inference with Poisson Processes 
+
+In this appendix, we outline how our variational-inference framework integrates marked Poisson processes — an essential part in the mean-field variational approximation of Section 4.1. For a fully rigorous, measure-theoretic treatment, the reader is referred to Brémaud’s text [ 7]. Our development relies in particular on Theorem T10 in Chapter VIII of that book, which shows how the law of a marked Poisson process arises via a change of measure using the appropriate Radon–Nikodym derivative. We begin by fixing a reference measure on path space: 
+
+Definition E.1 (Reference measure PΨ,∗). Let Ψ = (Ψ 1, . . . , ΨN ) be N independent marked Poisson processes, where each Ψi is defined on the product space [0 , y i] × R+. We define PΨ,∗ to be their joint law where each Ψi has intensity 
+
+λ∗,i (t, ω ) = tρ−1pPG (ω | 1, 0) for all (t, ω ) ∈ [0 , y i] × R+. (A8) Next, let γQ 
+
+> i
+
+(t) be a deterministic function on [0 , y i] and let hQ 
+
+> i
+
+(t, ω ) be a deterministic density on 
+
+[0 , y i] × R+ satisfying 
+
+Z ∞
+
+> 0
+
+hQ 
+
+> i
+
+(t, ω )pPG (ω|1, 0)d ω = 1 and 
+
+Z yi
+
+> 0
+
+γQ 
+
+> i
+
+(t)tρ−1dt < ∞ (A9) for all t ∈ [0 , y i] and i = 1 , . . . , N . It is convenient to introduce the function 
+
+λQ 
+
+> i
+
+(t, ω ) := γQ 
+
+> i
+
+(t)hQ 
+
+> i
+
+(t, ω )λ∗,i (t, ω ) for all (t, ω ) ∈ [0 , y i] × R+,
+
+as well as the functional 
+
+L(Ψ) := 
+
+> N
+
+Y
+
+> i=1
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+γQ 
+
+> i
+
+(tj )hQ 
+
+> i
+
+(tj , ω j )
+
+ exp 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+λ∗,i (t, ω ) − λQ 
+
+> i
+
+(t, ω )
+
+
+
+dωdt
+
+
+
+.
+
+By Theorem T10.b [ 7 , Chapter VIII], whenever EΨ∼PΨ,∗ [L(Ψ)] = 1 , the measure QΨ(Ψ) defined by dQΨ 
+
+> dPΨ,∗
+
+(Ψ) = L(Ψ) is exactly the law under which each Ψi is a marked Poisson process on 
+
+[0 , y i] × R+ with intensity λQ 
+
+> i
+
+(t, ω ). The above result underpins the analysis in Appendix G.2, where we show that the optimal variational measure QΨ coincides with the law of a collection of independent marked Poisson processes. Finally, the measure PΨ|ϕ also admits a Radon-Nykodim derivative with respect to PΨ,∗ which is given by : 
+
+dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ) = 
+
+> N
+
+Y
+
+> i=1
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+ϕZ(tj , xi)
+
+ exp 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+(λ∗,i (t, ω ) − λi(t, ω ; ϕ)) d ωdt
+
+
+
+.
+
+(A10) Notice that ϕZ(tj ,xi) = λi(tj ,ω j ;ϕ)   
+
+> λ∗,i (tj,ω j)
+
+, i.e. the ratio of the intensities of PΨ|ϕ and PΨ,∗.25 F Obtaining the Maximum a Posteriori θMAP 
+
+We seek the maximum a posteriori (MAP) estimates 
+
+(θMAP , ϕ MAP ) = arg max  
+
+> θ,ϕ
+
+log p(θ, ϕ | D , X).
+
+Applying Bayes’ rule gives the following expression for the posterior density 
+
+log p(θ, ϕ | D , X) ∝ log p(D | X, g (·; θ), ϕ ) + log pθ (θ) + log pϕ(ϕ),
+
+where the likelihood density p(D | X, g (·; θ), ϕ ) and the prior densities pθ (θ) and pϕ(ϕ) are specified in Equations (4) , (5) , and (6) , respectively. Since the log likelihood distribution is intractable, direct optimization of the posterior distribution is infeasible. 
+
+F.1 Approximating the Log Likelihood distribution Variational Mean–Field Approximation. Our aim is to approximate the log likelihood density 
+
+log p(D | X, g (·; θ), ϕ ). In order to do so, we introduce a variational distribution ˘Q(ω, Ψ | θ, ϕ ) to approximate the true distribution P(ω, Ψ | D , X, g (·; θ), ϕ ). Such variational distribution differs from the one used for full-model inference in Section 4.3 because it is conditioned on the values of θ
+
+and ϕ. Hence, we adopt the notation ˘Q (instead of Q) to highlight this difference. We restrict our search to distributions that satisfy the following mean-field factorization: 
+
+˘Q(ω, Ψ | θ, ϕ ) = ˘Qω|θ,ϕ (ω | θ, ϕ ) × ˘QΨ|θ,ϕ (Ψ | θ, ϕ ).
+
+Here, we take ˘Qω|θ,ϕ (ω | θ, ϕ ) to admit the density ˘qω|θ,ϕ (ω | θ, ϕ ) with respect to the Lebesgue measure dω.For the marked point process component, we assume that the variational law ˘QΨ|θ,ϕ is absolutely continuous with respect to PΨ,∗, so that it admits a strictly positive Radon–Nikodym derivative  
+
+> d ˘QΨ|θ,ϕ
+> dPΨ,∗
+
+which satisfies the normalization EΨ∼PΨ,∗
+
+h d ˘QΨ|θ,ϕ  
+
+> dPΨ,∗
+
+(Ψ)
+
+i
+
+= 1 . These two conditions guarantee that ˘QΨ|θ,ϕ is indeed a probability measure on the space of marked point-process paths. We decompose the log-likelihood as follows: 
+
+log p(D | X, g (·; θ), ϕ ) = 
+
+DKL 
+
+ ˘Qω,Ψ|θ,ϕ (ω, Ψ | θ, ϕ ) || P(ω, Ψ | D , X, g (·; θ), ϕ )
+
+
+
++ ˘LELBO , (A11) where the ELBO is given by: 
+
+˘LELBO := Eω∼˘qω|θ,ϕ ,Ψ∼ ˘QΨ|θ,ϕ 
+
+log p(D | X, g (·; θ), ϕ, ω, Ψ) pω (ω) dPΨ|ϕ 
+
+> dPΨ,∗
+
+(Ψ)˘qω|θ,ϕ (ω | θ, ϕ ) d ˘QΨ|θ,ϕ  
+
+> dPΨ,∗
+
+(Ψ | θ, ϕ )
+
+ , (A12) and where dPΨ|ϕ 
+
+> dPΨ,∗
+
+is the Radon-Nykodim derivative of the true conditional law PΨ|ϕ with respect to 
+
+PΨ,∗, cf. (A10). 
+
+Minimizing the KL Divergence. When the variational distribution ˘Q(ω, Ψ | θ, ϕ ) matches the true posterior P(ω, Ψ | D , X, g (·; θ), ϕ ), the KL divergence term in (A11) vanishes. Consequently, the ELBO becomes equal to the marginal log-likelihood, and maximizing the ELBO is equivalent to maximizing log-likelihood directly. In practice, we minimize the KL divergence so that our ELBO provides the closest possible lower bound to the true log-likelihood. Therefore, in order to obtain the closest lower bound to to the log-likelihood log p(D | X, g (·; θ), ϕ ) we must find the distribution 
+
+˘Q(ω, Ψ | θ, ϕ ) which minimizes the KL divergence in (A11). Using standard mean-field variational inference techniques (see, e.g., Chapter 10.1 of [ 5 ]), the optimal distribution for the latent variables ω given (θ(ℓ), ϕ (ℓ)) is obtained by computing the expectation of the joint log-density with respect to the other variational factors, that is 
+
+log ˘ qω|θ,ϕ (ω) = 
+
+EΨ∼ ˘QΨ|θ(ℓ),ϕ (ℓ)
+
+
+
+log p(D | X, g (·; θ(ℓ)), ϕ (ℓ), ω, Ψ) + log pω (ω) + log dPΨ|ϕ(ℓ)
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ const. 26 A similar update applies for Ψ given (θ(ℓ), ϕ (ℓ)),
+
+log d ˘QΨ|θ,ϕ 
+
+dPΨ,∗
+
+(Ψ) = 
+
+Eω∼˘qω|θ,ϕ 
+
+
+
+log p(D | X, g (·; θ(ℓ)), ϕ (ℓ), ω, Ψ) + log pω (ω) + log dPΨ|ϕ(ℓ)
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ const. Following the same derivation as in Appendix G.1, we find the optimal variational distribution of ω
+
+given (θ, ϕ )(ℓ):
+
+˘qω|θ(ℓ),ϕ (ℓ) (ω | θ(ℓ), ϕ (ℓ)) = 
+
+> N
+
+Y
+
+> i=1
+
+˘qωi|θ(ℓ),ϕ (ℓ) (ωi | θ(ℓ), ϕ (ℓ)) = 
+
+> N
+
+Y
+
+> i=1
+
+pPG 
+
+
+
+ωi | 1, ˘c(ℓ)
+
+> i
+
+
+
+, (A13) where 
+
+˘c(ℓ) 
+
+> i
+
+= δi |g(yi, xi; θ(ℓ))|. (A14) By mirroring the derivation in Appendix G.2, one shows that the optimal measure ˘QΨ|θ,ϕ (Ψ | θ, ϕ )
+
+is exactly the law under which each Ψi, for i = 1 , . . . , N , is a marked Poisson process on [0 , y i] × R+
+
+with intensity 
+
+λ˘Q 
+
+> i
+
+(t, ω | θ(ℓ), ϕ (ℓ)) = λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ))pPG 
+
+
+
+ω | 1, |g(t, xi; θ(ℓ))|
+
+
+
+,
+
+where we set 
+
+λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ)) := tρ−1
+
+Z(t, x) ϕ(ℓ)σ(|g(t, xi; θ(ℓ))|) exp − g(t, xi; θ(ℓ)) + |g(t, xi; θ(ℓ))|
+
+2
+
+!
+
+.
+
+(A15) 
+
+F.2 EM Algorithm for MAP Estimation EM Algorithm. The Expectation-Maximization (EM) algorithm provides an efficient framework to iteratively maximize the Q-function. At each iteration ℓ = 0 , 1, 2, . . . , we perform the following three steps: 1. Latent Variables Update. Given the current estimates (θ, ϕ )(ℓ), update ˘qω|θ(ℓ),ϕ (ℓ) (ω |
+
+θ(ℓ), ϕ (ℓ)) and ˘QΨ|θ(ℓ),ϕ (ℓ) (Ψ | θ(ℓ), ϕ (ℓ)) according to (A13) and (A15), respectively. 2. E-Step. Given current estimates (θ, ϕ )(ℓ), compute the Q-function: 
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)) = 
+
+Eω∼˘qω|θ(ℓ),ϕ (ℓ) ,Ψ∼ ˘QΨ|θ(ℓ),ϕ (ℓ)
+
+
+
+log 
+
+
+
+p(D | X, g (·; θ), ϕ, ω, Ψ) pω (ω) dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+ 
+
++ log pθ (θ) + log pϕ(ϕ). (A16) Note that the entropy term of the ELBO (i.e., the denominator) is not included as it does not depend on the parameters (θ, ϕ ) but on the current estimates (θ, ϕ )(ℓ), hence it is irrelevant to the parameters’ optimization. 3. M-Step. Update the parameters by maximizing the Q-function: 
+
+(θ, ϕ )(ℓ+1) = arg max  
+
+> θ,ϕ
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)).
+
+Steps 1-3 are repeated until a given convergence criterion is met. We provide an algorithmic description of our EM algorithm in Algorithm 1. 27 Algorithm 1 Expectation-Maximization (EM) for maximum a posteriori (MAP) Estimation 
+
+1: Initialize: Set initial value for (θ(ℓ), ϕ (ℓ)).
+
+2: Set: iteration counter ℓ ← 0
+
+3: repeat 
+
+4: ℓ ← ℓ + 1 
+
+5: Latent Variables Update: 
+
+6: Update ˘q(ℓ) 
+
+> ω
+
+:
+
+7: Update: 
+
+n
+
+˘c(ℓ)
+
+> i
+
+oNi=1 
+
+given θ(ℓ) following (A14). 
+
+8: Update ˘Q(ℓ) 
+
+> Ψ
+
+:
+
+9: Update: 
+
+n
+
+λ˘Q,(ℓ) 
+
+> i
+
+(·)
+
+oNi=1 
+
+given θ(ℓ) and ϕ(ℓ) following (A22). 
+
+10: E-step: Evaluate the Q-function Q (θ, ϕ ) | (θ, ϕ )(ℓ) given 
+
+n
+
+˘c(ℓ) 
+
+> i
+
+, λ ˘Q,(ℓ) 
+
+> i
+
+(·)
+
+oNi=1 
+
+, θℓ and ϕℓ
+
+following (A16) 
+
+11: M-step: Update parameters by 
+
+(θ, ϕ )(ℓ+1) = arg max  
+
+> θ, ϕ
+
+Q (θ, ϕ ) | (θ, ϕ )(ℓ)
+
+12: until Convergence criterion is met 
+
+13: return (θ(ℓ), ϕ (ℓ))
+
+28 Computing the Q-function. The optimal distributions which minimize the KL divergence can now be plugged in the ELBO of (A12) to obtain the closest lower bound to the log-likelihood. We now recast the MAP optimization problem in term of this lower bound. Specifically, define the following Q-function 
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)) = Eω∼˘qω|θ(ℓ),ϕ (ℓ) ,Ψ∼ ˘QΨ|θ(ℓ),ϕ (ℓ) [log p(D | X, g (·; θ), ϕ, ω, Ψ)] + Eω∼˘qω|θ(ℓ),ϕ (ℓ) ,Ψ∼ ˘QΨ|θ(ℓ),ϕ (ℓ)
+
+
+
+log( pω (ω) + log 
+
+ dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+ 
+
++ log pθ (θ) + log pϕ(ϕ).
+
+We now wish to derive a closed-form expression for the Q-function which can be used in the MAP optimization. Specifically, using the augmented likelihood factorization in (15), we obtain 
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)) = 
+
+> N
+
+X
+
+> i=1
+
+Eωi∼˘qωi|θ(ℓ),ϕ (ℓ) ,Ψi∼ ˘QΨi|θ(ℓ),ϕ (ℓ) [log p(D | X, g (·; θ), ϕ, ω i, Ψi)] +Eω∼˘qω|θ(ℓ),ϕ (ℓ) [log pω (ω)]+ EΨ∼ ˘QΨ|θ(ℓ),ϕ (ℓ)
+
+
+
+log dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++log pθ (θ)+log pϕ(ϕ)+ const. Next, by substituting the expression for the augmented likelihood in (14) , for the priors pθ (θ) in (5) and pϕ(ϕ) in (2) and for the Radon–Nikodym derivative of PΨ|ϕ with respect to PΨ,∗ from (A10) ,we obtain 
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)) = 
+
+> N
+
+X
+
+> i=1
+
+δi
+
+
+
+log ϕ + g(yi, xi; θ)2 − g(yi, xi; θ)2
+
+2 Eωi∼˘qωi|θ(ℓ),ϕ (ℓ) [ωi]
+
+
+
++ EΨi∼ ˘QΨi|θ(ℓ),ϕ (ℓ)
+
+ X 
+
+> (t,ω )j∈Ψi
+
+f (ωj , −g(tj , xi; θ)) 
+
+ −
+
+Z yi
+
+> 0
+
+λ0(yi, xi; ϕ)d t
+
++ EΨi∼ ˘QΨi|θ(ℓ),ϕ (ℓ)
+
+ X 
+
+> (t,ω )j∈Ψi
+
+log 
+
+ ϕZ(tj , xi)
+
+!
+
+− 12 θ⊤θ + log( ϕ)( α0 − 1) − ϕβ 0 + const. We apply Campbell’s theorem (see Theorem C.3), we substitute the expression for the baseline hazard 
+
+λi(·; ϕ) from (12) and we substitute the expectation using the optimal variational distribution of ωi
+
+from (A13), to obtain 
+
+Q(( θ, ϕ )|(θ, ϕ )(ℓ)) = 
+
+> N
+
+X
+
+> i=1
+
+"
+
+δi
+
+g(yi, xi; θ)2 − g(yi, xi; θ)2
+
+4˘ c(ℓ)
+
+> i
+
+tanh ˘c(ℓ)
+
+> i
+
+2
+
+!! 
+
+− 12
+
+Z yi
+
+> 0
+
+g(t, xi; θ)λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ))d t
+
+− 14
+
+Z yi
+
+> 0
+
+g(t, xi; θ)2
+
+|g(t, xi; θ(ℓ))| tanh |g(t, xi; θ(ℓ))|
+
+2
+
+!
+
+λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ))d t
+
+#
+
+− 12 θ⊤θ + log( ϕ) α0 +
+
+> N
+
+X
+
+> i=1
+
+
+
+δi +
+
+Z yi
+
+> 0
+
+λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ))d t
+
+
+
+− 1
+
+!
+
+− ϕ β0 +
+
+> N
+
+X
+
+> i=1
+
+Z yi
+
+> 0
+
+tρ−1
+
+Z(t, xi) dt
+
+!
+
++ const. ,
+
+where λ˘Q 
+
+> i
+
+(t | θ(ℓ), ϕ (ℓ)) is shown in (A15). 29 G Coordinate Ascent Variational Inference Optimal Updates 
+
+In this Appendix we present a heuristic derivation of the CAVI optimal updates presented in Sec-tion 4.3. Before presenting the next results, we define here for convenience 
+
+˜m(k) 
+
+> i
+
+(t) := Eθ∼q(k)
+
+> θ
+
+glin (t, xi; θ) , ˜s(k) 
+
+> i
+
+(t) := 
+
+q
+
+Eθ∼q(k)
+
+> θ
+
+[glin (t, xi; θ)2]
+
+for k ≥ 0.
+
+G.1 Optimal Update for ω
+
+Using standard mean-field variational inference techniques (see, e.g., Chapter 10.1 of [ 5 ]), the optimal update for the latent variables ω is obtained by computing the expectation of the joint log-density with respect to the other variational factors. In particular, we have 
+
+log q(k) 
+
+> ω
+
+(ω) = Eϕ∼q(k−1)   
+
+> ϕ,θ∼q(k−1)
+> θ,Ψ∼Q(k−1)
+> Ψ
+
+h
+
+log p  D | ϕ, g lin (·; θ), ω, Ψ i
+
++ log pω (ω) + const .
+
+Using the augmented likelihood factorization in (15), the expression decomposes as 
+
+log q(k) 
+
+> ω
+
+(ω) = 
+
+> N
+
+X
+
+> i=1
+
+Eϕ∼q(k−1)   
+
+> ϕ,θ∼q(k−1)
+> θ,Ψi∼Q(k−1) Ψi
+
+h
+
+log p  yi, δ i | xi, ϕ, g lin (·; θ), ω i, Ψi
+
+ i
+
++ log pω (ω) + const .
+
+Next, by substituting the expression for the prior pω (ω) from (10) and the augmented likelihood from (14), we obtain 
+
+log q(k) 
+
+> ω
+
+(ω) = 
+
+> N
+
+X
+
+> i=1
+
+
+
+− ωiδi
+
+2
+
+
+
+˜s(k−1)  
+
+> i
+
+(yi)
+
+2
+
++ log pPG (ωi|1, 0) 
+
+
+
++ const .
+
+Finally, by applying the identity in (A2) , we deduce that the optimal variational distribution factorizes as 
+
+q(k) 
+
+> ω
+
+(ω) = 
+
+> N
+
+Y
+
+> i=1
+
+q(k) 
+
+> ωi
+
+(ωi) = 
+
+> N
+
+Y
+
+> i=1
+
+pPG 
+
+
+
+ωi | 1, ˜c(k)
+
+> i
+
+
+
+,
+
+where 
+
+˜c(k) 
+
+> i
+
+= δi ˜s(k−1)  
+
+> i
+
+(yi) (A17) 
+
+Optimal Variational Expectations for ω. From Proposition B.4, we obtain the required expectation for updating the other variational factors with 
+
+Eωi∼q(k)
+
+> ωi
+
+[ωi] = 12˜ c(k)
+
+> i
+
+tanh ˜c(k)
+
+> i
+
+2
+
+!
+
+(A18) for i = 1 , . . . , N . Notably, since this expectation is always multiplied by δi when updating other variational factors, it remains well-defined in all cases. 
+
+G.2 Optimal Update for Ψ
+
+Using standard mean-field variational inference techniques (see, e.g., Chapter 10.1 of [ 5 ]), we obtain the optimal Radon-Nykodim derivative dQΨ 
+
+> dPΨ,∗
+
+by taking the expectation of the joint log-density with respect to the other variational factors. In particular, we have 
+
+log dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ) = Eϕ∼q(k−1)   
+
+> ϕ,θ∼q(k−1)
+> θ,ω∼q(k)
+> ω
+
+log p(D | ϕ, g lin (·; θ), ω, Ψ)
+
++ Eϕ∼q(k−1) 
+
+> ϕ
+
+
+
+log dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ const. , (A19) 30 where the constant term absorbs all terms irrelevant to the optimisation. Using the augmented likelihood factorization in (15), the expression in (A19) decomposes as 
+
+log dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ) = 
+
+> N
+
+X
+
+> i=1
+
+Eϕ∼q(k−1)   
+
+> ϕ,θ∼q(k−1)
+> θ,ω i∼q(k)
+> ωi
+
+log p(yi, δ i|ϕ, g lin (·; θ), ω i, Ψi)
+
++ Eϕ∼q(k−1) 
+
+> ϕ
+
+
+
+log dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ const. Next, by substituting the augmented likelihood from (14) and the Radon–Nikodym derivative of 
+
+PΨ|ϕ with respect to PΨ,∗ from (A10), we arrive at the unnormalised form 
+
+log dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ) = 
+
+> N
+
+X
+
+> i=1
+
+X 
+
+> (t,ω )j∈Ψi
+
+Eθ∼q(k−1) 
+
+> θ
+
+f (ωj , −glin (tj , xi; θ)) 
+
++
+
+> N
+
+X
+
+> i=1
+
+X 
+
+> (t,ω )j∈Ψi
+
+Eϕ∼q(k−1) 
+
+> ϕ
+
+
+
+log 
+
+ ϕZ(tj , xi)
+
+ 
+
++ const. (A20) Plugging in the definition of f (·, ·) from (8) simplifies (A20) to 
+
+log dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ) = −
+
+> N
+
+X
+
+> i=1
+
+X 
+
+> (t,ω )j∈Ψi
+
+"
+
+˜m(k) 
+
+> i
+
+(tj )2 + (˜ s(k) 
+
+> i
+
+(tj )) 2
+
+2 ωj + log(2) 
+
+#
+
++
+
+> N
+
+X
+
+> i=1
+
+X 
+
+> (t,ω )j∈Ψi
+
+h
+
+Eϕ∼q(k−1) 
+
+> ϕ
+
+[log ϕ] − log Z(tj , xi)
+
+i
+
++ const. To express this in closed form, define for each i = 1 , . . . , N and (t, ω ) ∈ [0 , y i] × R+ the functions 
+
+hQ,(k) 
+
+> i
+
+(t, ω ) := exp 
+
+−
+
+
+
+˜s(k−1)  
+
+> i
+
+(t)
+
+2
+
+2 ω
+
+ cosh ˜s(k−1)  
+
+> i
+
+(t)2
+
+!
+
+,γQ,(k) 
+
+> i
+
+(t) := 1
+
+Z(t, xi) σ(˜ s(k−1)  
+
+> i
+
+(t)) exp − ˜m(k−1)  
+
+> i
+
+(t) + ˜ s(k−1)  
+
+> i
+
+(t)2 + Eϕ∼q(k−1) 
+
+> ϕ
+
+[log ϕ]
+
+!
+
+,λQ,(k) 
+
+> i
+
+(t, ω ) := γQ,(k) 
+
+> i
+
+(t)hQ,(k) 
+
+> i
+
+(t, ω )λ∗,i (t, ω ),
+
+where λ∗,i (t, ω ) is the intensity defined in (A8). Furthermore, we define for convenience, 
+
+λQ,(k) 
+
+> i
+
+(t) := tρ−1γQ,(k) 
+
+> i
+
+(t). (A21) Notice that by using expression (A2), the function λQ,(k) 
+
+> i
+
+(t, ω ) can be written as 
+
+λQ,(k) 
+
+> i
+
+(t, ω ) = λQ,(k) 
+
+> i
+
+(t) pPG 
+
+
+
+ω | 1, ˜s(k−1)  
+
+> i
+
+(t)
+
+
+
+. (A22) Finally, enforcing the normalisation condition 
+
+EΨ∼PΨ,∗
+
+"
+
+dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ)
+
+#
+
+= 1 
+
+together with Campbell’s theorem (Theorem C.3) yields the normalized derivative 
+
+dQ(k)
+
+> Ψ
+
+dPΨ,∗
+
+(Ψ) = 
+
+> N
+
+Y
+
+> i=1
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+γQ,(k) 
+
+> i
+
+(tj )hQ,(k) 
+
+> i
+
+(tj , ω j )
+
+ exp 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+λ∗,i (t, ω ) − λQ,(k) 
+
+> i
+
+(t, ω )
+
+
+
+dωdt
+
+
+
+.
+
+31 Notice that the products γQ,(k) 
+
+> i
+
+(tj )hQ,(k) 
+
+> i
+
+(tj , ω j ) are all strictly positive 2, hence dQ(k) 
+
+> Ψ
+> dPΨ,∗
+
+is also strictly positive. Under suitable regularity conditions on g, one can show that hQ,(k) 
+
+> i
+
+(t, ω ) and γQ,(k) 
+
+> i
+
+(t)
+
+satisfy the integrability criteria of (A9) , so that Q(k) 
+
+> Ψ
+
+is the probability measure under which each Ψi
+
+(i = 1 , . . . , N ) is a marked Poisson Process on [0 , y i] × R+ with intensity function λQ,(k) 
+
+> i
+
+(t, ω ).
+
+Optimal Variational Expectations for Ψ. From Proposition B.4, we obtain the required integrals for updating the other variational factors 
+
+Z
+
+> R+
+
+λQ,(k) 
+
+> i
+
+(t, ω )d ω = λQ,(k) 
+
+> i
+
+(t),
+
+Z
+
+> R+
+
+λQ,(k) 
+
+> i
+
+(t, ω )ωdω = λQ,(k) 
+
+> i
+
+(t) 12˜ s(k−1)  
+
+> i
+
+(t) tanh ˜s(k−1)  
+
+> i
+
+(t)2
+
+!
+
+.
+
+G.3 Optimal Update for ϕ
+
+Using standard mean-field variational inference techniques (see, e.g., Chapter 10.1 of [ 5 ]), the optimal variational factor for the parameter ϕ is obtained by computing the expectation of the joint log-density with respect to the other variational factors. In particular, we have 
+
+log q(k) 
+
+> ϕ
+
+(ϕ) = Eθ∼q(k−1)   
+
+> θ,ω∼q(k)
+> ω,Ψ∼Q(k)
+> Ψ
+
+
+
+log p  D | ϕ, g lin (·; θ), ω, Ψ + log dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ log pϕ(ϕ) + const .
+
+Using the augmented likelihood factorization in (15), the expression decomposes as 
+
+log q(k) 
+
+> ϕ
+
+(ϕ) = 
+
+> N
+
+X
+
+> i=1
+
+Eθ∼q(k−1)   
+
+> θ,ω i∼q(k)
+> ωi,Ψi∼Q(k)Ψi
+
+[log p (yi, δ i|xi, ϕ, θ, ω i, Ψi)] + EΨ∼Q(k)
+
+> Ψ
+
+
+
+log dPΨ|ϕ
+
+dPΨ,∗
+
+(Ψ)
+
+
+
++ log pϕ(ϕ) + const .
+
+Next, by substituting the expression for the augmented likelihood from (14) , the Radon–Nikodym derivative of PΨ|ϕ with respect to PΨ,∗ from (A10), and the prior of ϕ from (2), we obtain, 
+
+log q(k) 
+
+> ϕ
+
+(ϕ) = 
+
+> N
+
+X
+
+> i=1
+
+δi log λ0(yi, xi; ϕ) −
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t
+
++ EΨi∼Q(k)Ψi
+
+ X 
+
+> (t,ω )j∈Ψi
+
+log 
+
+ ϕZ(tj , xi)
+
+!
+
++ ( α0 − 1) log( ϕ) − β0ϕ + const .
+
+We apply Campbell’s Theorem (Theorem C.3) and substitute the expression for the baseline hazard 
+
+λ0(·) from (2), to obtain 
+
+log q(k) 
+
+> ϕ
+
+(ϕ)= log( ϕ) α0 +
+
+> N
+
+X
+
+> i=1
+
+
+
+δi +
+
+Z yi
+
+> 0
+
+λQ,(k) 
+
+> i
+
+(t)d t
+
+
+
+− 1
+
+!
+
+− ϕ β0 +
+
+> N
+
+X
+
+> i=1
+
+Z yi
+
+> 0
+
+tρ−1
+
+Z(t, xi) dt
+
+!
+
++ const ., 
+
+where λQ,(k) 
+
+> i
+
+(t) is shown in (A21). We deduce that 
+
+q(k) 
+
+> ϕ
+
+(ϕ) = Gamma (˜ α(k), ˜β),
+
+where with shape ˜α(k) and rate ˜β given by 
+
+˜α(k) = α0 +
+
+> N
+
+X
+
+> i=1
+
+
+
+δi +
+
+Z yi
+
+> 0
+
+λQ,(k) 
+
+> i
+
+(t)d t
+
+
+
+, ˜β = β0 +
+
+> N
+
+X
+
+> i=1
+
+Z yi
+
+> 0
+
+tρ−1
+
+Z(t, xi) dt. (A23) 
+
+> 2
+
+See Lemma N.1 for a proof of the strict positivity of the normalization factor Z(t, xi).
+
+32 Optimal Variational Expectation for ϕ. We obtain the required expectation for updating the other variational factors with 
+
+Eϕ∼q(k)
+
+> ϕ
+
+[log ϕ] = ψ
+
+
+
+˜α(k)
+
+− log 
+
+ ˜β
+
+
+
+, (A24) where ψ(·) is the digamma function. 
+
+G.4 Optimal Update for θ
+
+Using standard mean-field variational inference techniques (see, e.g., Chapter 10.1 of [ 5]), the optimal variational factor for the parameters θ is obtained by computing the expectation of the joint log-density with respect to the other variational factors. In particular, we have 
+
+log q(k) 
+
+> θ
+
+(θ) = Eϕ∼q(k)  
+
+> ϕ,ω∼q(k)
+> ω,Ψ∼Q(k)
+> Ψ
+
+h
+
+log p  D | ϕ, g lin (·; θ), ω, Ψ i
+
++ log pθ (θ) + const .
+
+Using the augmented likelihood factorization in (15), we obtain 
+
+log q(k) 
+
+> θ
+
+(θ) = 
+
+> N
+
+X
+
+> i=1
+
+Eϕ∼q(k)  
+
+> ϕ,ω i∼q(k)
+> ωi,Ψi∼Q(k)Ψi
+
+log p  yi, δ i | xi, ϕ, g lin (·; θ), ω i, Ψi
+
+ 
+
++ log pθ (θ) + const .
+
+Next, by substituting the expression for the augmented likelihood (14) and for the prior for θ from (5) ,we obtain, 
+
+log q(k) 
+
+> θ
+
+(θ) = 
+
+> N
+
+X
+
+> i=1
+
+δi
+
+2
+
+
+
+glin (yi, xi; θ) − Eωi∼q(k)
+
+> ωi
+
+[ωi] glin (yi, xi; θ)2
+
++ EΨi∼Q(k)Ψi
+
+ X 
+
+> (t,ω )j∈Ψi
+
+f  ωj , −glin (tj , xi; θ)!
+
+− 12 θ⊤θ + const .
+
+We apply Campbell’s Theorem (Theorem C.3) to obtain, 
+
+log q(k) 
+
+> θ
+
+(θ) = 
+
+> N
+
+X
+
+> i=1
+
+δi
+
+2
+
+
+
+glin (yi, xi; θ) − Eωi∼q(k)
+
+> ωi
+
+[ωi]glin (yi, xi; θ)2
+
++ 12
+
+Z
+
+> Zi
+
+ −glin (t, xi; θ) − glin (t, xi; θ)2ω λQ,(k) 
+
+> i
+
+(t, ω )d tdω
+
+!
+
+− 12 θ⊤θ + const ., 
+
+where λQ,(k) 
+
+> i
+
+(t, ω ) is shown in Equation (A22) . Next, we recall the expression for glin (·; θ) from (18) and we notice that 
+
+glin (·; θ) = θ⊤JθMAP (·) + const. 
+
+glin (·; θ)2 = θ⊤JθMAP (·)  2g(·; θMAP ) − 2JθMAP (·)⊤θMAP 
+
+ + θ⊤JθMAP (·)JθMAP (·)⊤θ + const. ,
+
+where the constant term represents terms that do not depend on θ. We substitute the expression for 
+
+glin (·; θ) and glin (·; θ)2 and we obtain, 
+
+log q(k) 
+
+> θ
+
+(θ) = θT A(k) − θ⊤B(k)θ + const ., 
+
+where 
+
+A(k) =
+
+> N
+
+X
+
+> i=1
+
+12 δiJθMAP (yi, xi)
+
+
+
+1 − 2Eωi∼q(k)
+
+> ωi
+
+[ωi]  g(yi, xi; θMAP ) − JθMAP (yi, xi)⊤θMAP 
+
+
+
+−
+
+
+
+I(k)1,i + 2 
+
+
+
+I(k)2,i − I (k)3,i θMAP 
+
+ !
+
+(A25) 
+
+B(k) =
+
+> N
+
+X
+
+> i=1
+
+12
+
+
+
+δi Eωi∼q(k)
+
+> ωi
+
+[ωi]JθMAP (yi, xi)JθMAP (yi, xi)⊤ + I(k)3,i 
+
+
+
++ 12 Im (A26) 33 and 
+
+I(k)1,i =
+
+Z yi
+
+> 0
+
+JθMAP (t, xi)λQ,(k) 
+
+> i
+
+(t)d t
+
+I(k)2,i =
+
+Z yi
+
+> 0
+
+JθMAP (t, xi)g(t, xi; θMAP )λQ,(k) 
+
+> i
+
+(t)
+
+tanh 
+
+
+
+˜s(k−1)  
+
+> i
+
+(t)/2
+
+
+
+2˜ s(k−1)  
+
+> i
+
+(t) dt
+
+I(k)3,i =
+
+Z yi
+
+> 0
+
+JθMAP (t, xi)JθMAP (t, xi)⊤λQ,(k) 
+
+> i
+
+(t)
+
+tanh 
+
+
+
+˜s(k−1)  
+
+> i
+
+(t)/2
+
+
+
+2˜ s(k−1)  
+
+> i
+
+(t) dt. 
+
+A, I1,i and I2,i are vectors of the same length of θ. B and I3,i are square matrices for which each dimension is the length of θ, and Im is the identity matrix of length of θ. We deduce that 
+
+q(k) 
+
+> θ
+
+(θ) = N
+
+
+
+˜μ(k), ˜Σ(k)
+
+,
+
+where 
+
+˜μ(k) = 12
+
+
+
+B(k)−1
+
+A(k), ˜Σ = 12
+
+
+
+B(k)−1
+
+. (A27) 
+
+Optimal Variational Expectation for θ. We obtain the required expectation for updating the other variational factors, 
+
+Eθ∼q(k)
+
+> θ
+
+[glin (t, xi; θ)] = g(t, xi; θMAP ) + JθMAP (t, xi)⊤ 
+
+˜μ(k) − θMAP 
+
+
+
+,
+
+Eθ∼q(k)
+
+> θ
+
+[glin (t, xi; θ)2] = 
+
+
+
+g(t, xi; θMAP ) + JθMAP (t, xi)⊤ 
+
+˜μ(k) − θMAP 
+
+ 2
+
++ JθMAP (t, xi)⊤ ˜Σ(k)JθMAP (t, xi).
+
+(A28) 34 H Coordinate Ascent Variational Inference Algorithm 
+
+Algorithm 2 Coordinate Ascent Variational Inference (CAVI) 
+
+1: Compute: Compute ˜β following (A23). 
+
+2: Initialize: : Set initial values for ˜α(0) and 
+
+
+
+˜μ, ˜Σ
+
+(0) 
+
+.
+
+3: Compute: Eϕ∼q(0) 
+
+> ϕ
+
+[log ϕ] given 
+
+
+
+˜α(0) , ˜β
+
+
+
+following (A24). 
+
+4: Compute: ( ˜ mi(·), ˜si(·)) (0) Ni=1 given 
+
+
+
+˜μ, ˜Σ
+
+(0) 
+
+following (A28). 
+
+5: Set: iteration counter k ← 0
+
+6: repeat 
+
+7: k ← k + 1 
+
+8: Update q(k) 
+
+> ω
+
+:
+
+9: Update: 
+
+n
+
+˜c(k)
+
+> i
+
+oNi=1 
+
+given ˜si(·)(k−1) Ni=1 following (A17). 
+
+10: Compute: 
+
+n
+
+Eωi∼q(k)
+
+> ωi
+
+[ωi]
+
+oNi=1 
+
+given 
+
+n
+
+˜c(k)
+
+> i
+
+oNi=1 
+
+following (A18). 
+
+11: Update Q(k) 
+
+> Ψ
+
+:
+
+12: Update: 
+
+n
+
+λQ,(k) 
+
+> i
+
+(·)
+
+oNi=1 
+
+given 
+
+
+
+{( ˜ mi(·), ˜si(·)) (k−1) }Ni=1 , Eϕ∼q(k−1) 
+
+> ϕ
+
+[log ϕ]
+
+
+
+follow-ing (A22). 
+
+13: Update q(k) 
+
+> ϕ
+
+:
+
+14: Update: ˜α(k) given 
+
+n
+
+λQ,(k) 
+
+> i
+
+(·)
+
+oNi=1 
+
+following (A23). 
+
+15: Compute: Eϕ∼q(k)
+
+> ϕ
+
+[log ϕ] given (˜ α(k), ˜β) following (A24). 
+
+16: Update q(k) 
+
+> θ
+
+:
+
+17: Update: 
+
+
+
+˜μ, ˜Σ
+
+(k)
+
+given 
+
+n
+
+(Eωi∼q(k)
+
+> ωi
+
+[ωi], λ Q,(k) 
+
+> i
+
+(·)
+
+oNi=1 
+
+following (A27). 
+
+18: Compute: ( ˜ mi(·), ˜si(·)) (k) Ni=1 given 
+
+
+
+˜μ, ˜Σ
+
+(k)
+
+following (A28). 
+
+19: until Convergence criterion is met 
+
+20: Return: Optimized variational distributions q(k⋆) 
+
+> θ
+
+(θ) = N
+
+
+
+˜μ(k⋆), ˜Σ(k⋆)
+
+and qk⋆ 
+
+> ϕ
+
+(ϕ) = 
+
+Gamma 
+
+
+
+˜α(k⋆), ˜β
+
+
+
+, where k⋆ is the final iteration after convergence. 35 I Computational Speed-Ups 
+
+Survival-analysis cohorts often comprise only a few hundred to a few thousand observations, yet modern deep learning models may involve millions of parameters, putting us in the N ≪ m regime. To exploit this disparity, we develop two complementary strategies that avoid any expensive m-dimensional inversions or factorizations by leveraging the fact that the nontrivial part of our key matrix is low-rank relative to the full parameter dimension m. We also show how heavy censoring further reduces the computational burden. To streamline what follows, let us introduce the shorthand 
+
+Ji := JθMAP (yi, xi) ∈ Rm×1
+
+for i = 1 , . . . , N . With this notation (and dropping the CAVI-iteration index for clarity), the matrix 
+
+B ∈ Rm×m defined in (A25) becomes 
+
+B =
+
+> N
+
+X
+
+> i=1
+
+12
+
+
+
+δi Eωi∼qωi [ωi] Ji JTi + I3,i 
+
+
+
++ 12 Im.
+
+Here, each I3,i is the integral 
+
+I3,i =
+
+Z yi
+
+> 0
+
+JθMAP (t, xi) JθMAP (t, xi)T λQ 
+
+> i
+
+(t) tanh (˜ si(t)/2) 2˜ si(t) dt
+
+and in general admits no closed-form solution. We therefore approximate it by any standard quadrature rule (e.g. trapezoid, Simpson’s, or Gauss–Legendre). In what follows, we will illustrate the argument with the trapezoid rule, though the same steps apply to any other quadrature method. We begin by introducing a uniform grid of points along the time axis: 
+
+t1, t 2, . . . , t K ,
+
+where t1 := 0 and tK := max {yi}Ni=1 .We associate a set of quadrature weights {vik }Kk=1 to the time grid points, tailored for each observation i. These weights correspond to the trapezoidal rule for numerical integration on the interval [0 , y i], and are defined as: 
+
+vik =
+
+ 
+
+> t2−t1
+> 2
+
+, if k = 1 and t1 < y i, 
+
+> tk+1 −tk−1
+> 2
+
+, if 1 < k < K i and tk < y i,  
+
+> tKi−tKi−1
+> 2
+
+, if k = Ki,
+
+0, k > K i,
+
+where Ki = max {k ∈ { 1, . . . , K } : tk < y i}. Further we denote by Vi the collection of quadrature weights for observation i, such that 
+
+Vi :=  vi1, . . . , v iK 
+
+ ∈ RK .
+
+We collect the Jacobian evaluations into the matrices 
+
+Qi := [ JθMAP (t1, xi) JθMAP (t2, xi) · · · JθMAP (tK , xi)] ∈ Rm×K .
+
+With these definitions in hand, any K-point quadrature rule yields the approximation 
+
+I3,i ≈
+
+> K
+
+X
+
+> k=1
+
+vik JθMAP (tk, xi) JθMAP (tk, xi)T = Qi Vi QTi .
+
+Likewise, each term 
+
+δiEωi∼qωi [ωi]JiJTi
+
+can be written in the form JiCiJTi , where the scalar Ci = δiEωi∼qωi [ωi].We collect all contributions into a single matrix U ∈ Rm×R, where R = N + N K . This matrix is constructed by horizontally concatenating the vectors Ji and Qi for i = 1 , . . . , N , as follows: 
+
+U := 
+
+ J1
+
+|{z} 
+
+> (m×1)
+
+, J2, . . . , JN , Q1
+
+|{z} 
+
+> (m×K)
+
+, Q2, . . . , QN
+
+ .
+
+36 Further, we define the block-diagonal weight matrix 
+
+C := diag (δ1Eω1∼qω1 [ω1], . . . , δ N EωN ∼qωN [ωN ]
+
+| {z } 
+
+> (N)
+
+, V1
+
+|{z} 
+
+> (K)
+
+, . . . , VN ) ∈ RR×R.
+
+It is straightforward to verify that 
+
+B = 12
+
+ Im + UCU ⊤ .
+
+Applying the Woodbury identity (see [ 20 , Appendix B.10]) then reduces the inversion of B to that of an R × R matrix: 
+
+B−1 = 2  Im + U C U T −1 = 2 
+
+h
+
+Im − U C−1 + UT U−1UT i
+
+.
+
+Forming the Gram matrix UT U requires O(mR 2) operations (each of its R2 entries is an inner product of two length-m vectors) while inverting the resulting dense R × R matrix costs O(R3).Therefore, assembling and solving the small system costs 
+
+O(mR 2) + O(R3) = O(mR 2 + R3)
+
+instead of O(m3) for a full m × m inversion. Whenever R ≪ m, this yields a dramatic speed-up. By replacing the direct O(R3) factorization with a Conjugate-Gradient (CG) solver — as is commonly done in Gaussian-process toolkits such as GPyTorch [14] — we reduce the cost to O(R2).Finally, many survival datasets exhibit censoring, i.e. δi = 0 for a fraction of observations. Since censored observations contribute only through the integral term, we may further partition the low-rank factor U into blocks for uncensored and censored cases. The effective rank becomes R′ =
+
+Nuncensored + N K where Nuncensored is the number of uncensored observations, so that any Cholesky or CG solve scales with (Nuncensored + N K ) rather than (N + N K ). When Nuncensored ≪ N , this yields an additional, potentially large reduction in computational cost. 37 J Experiment Set-Up 
+
+J.1 Real Survival Data 
+
+The real survival data used in Section 5.2 are presented below. In the central experiment, each dataset was subsampled to contain 125 observations in total. In an ablation experiment, each dataset was subsampled to contain 250 observations in total. Then, we performed 5-fold cross-validation, where the dataset was randomly divided into five equal parts. In each fold, one part (20%) was used as the test set (central experiment: 25 samples, ablation experiment: 50 samples), while the remaining four parts (80%) formed the training set (central experiment: 100 samples, ablation experiment: 200 samples). From the training set, 20% (central experiment: 20 samples, ablation experiment: 40 samples) was further attributed to the validation set. 
+
+Colon. The first successful trials of adjuvant chemotherapy for colon cancer dataset was obtained from the survival package [ 46 ]. The dataset contains records of 1,822 observations with 15 covariates among which 49.23% are censored. All rows with missing values were excluded from the dataset. 
+
+NWTCO. The National Wilm’s Tumor Study (NWTCO) was obtained from the pycox pack-age [ 27 ]. The dataset contains records of 4,028 observations with 7 covariates among which 14.18% are censored. 
+
+GBSG. The Rotterdam and German Breast Cancer Study Group (GBSG) was obtained from the 
+
+pycox package [ 27 ]. The dataset contains records of 2,232 observations with 7 covariates among which 43.23% are censored. 
+
+METABRIC. The Molecular Taxonomy of Breast Cancer International Consortium (METABRIC) dataset was obtained from the pycox package [ 27 ]. The dataset contains records of 1,904 observations with 9 covariates among which 42.07% are censored. 
+
+WHAS. The Worcester Heart Attack Study (WHAS) dataset was obtained from the sksurv pack-age [ 39 ]. The dataset contains records of 500 observations with 14 covariates among which 43.00% are censored. 
+
+SUPPORT. The Study to Understand Prognoses and Preferences for Outcomes and Risks of Treatment (SUPPORT) dataset was obtained from the pycox package [ 27 ]. The dataset contains records of 8,873 observations with 14 covariates among which 31.97% are censored. 
+
+VLC. The Veterans administration Lung Cancer trial (VLC) dataset was obtained from the sksurv 
+
+package [ 39 ]. The dataset contains records of 137 observations with 8 covariates among which 6.57% are censored. 
+
+SAC 3. The Sac 3 dataset from the simulation study in [ 28 , Appendix A.1] was obtained from the 
+
+pycox package [ 27 ]. The dataset contains records of 100,000 observations with 45 covariates among which 37.20% are censored. 
+
+J.2 Benchmark Methods J.2.1 Benchmark Deep Survival Methods 
+
+All deep learning methods share the same neural network architecture, which is detailed in Section K. The benchmark deep survival models were trained using the Adam optimizer with a learning rate selected via grid search. Batch normalization was applied, and a dropout rate of 0.1 was used. Training was conducted for 1,000 epochs with a batch size of 256. 
+
+MTLR. The Multi-Task Logistic Regression [ 51 ] was implemented using the MTLR class from the 
+
+pycox package [27]. 38 DeepHit. The DeepHit method [ 32 ] was implemented using the DeepHitSingle class from the 
+
+pycox package [ 27 ]. The hyperparameters α and σ were set to 0.2 and 0.1, respectively. Those are the default values. 
+
+DeepSurv. The DeepSurv model [ 24 ] was implemented using the CoxPH class from the pycox 
+
+package [27]. 
+
+Logistic Hazard. The Logistic Hazard method [ 51 ] was implemented using the LogisticHazard 
+
+class from the pycox package [27]. 
+
+CoxTime. The CoxTime method [ 29 ] was implemented using the CoxTime class from the pycox 
+
+package [27]. 
+
+CoxCC. The CoxCC method [ 29 ] was implemented using the CoxCC class from the pycox pack-age [27]. 
+
+PMF. The PMF method [28] was implemented using the PMF class from the pycox package [27]. 
+
+PCHazard. The PCHazard method [ 28 ] was implemented using the PCHazard class from the 
+
+pycox package [27]. 
+
+BCESurv. The BCESurv method [ 28 ] was implemented using the BCESurv class from the pycox 
+
+package [27]. 
+
+DySurv. The DySurv method [ 36 ] was implemented using the official code provided by the authors, available at https://github.com/munibmesinovic/DySurv/blob/main/Models/Results/ Static_Benchmarks_GBSG_Example.ipynb (Accessed on May 13 2025). 
+
+Sumo-Net. The Sumo-Net method [ 43 ] was implemented using the official code provided by the authors, available at https://github.com/MrHuff/Sumo-Net (Accessed on July 25 2025). 
+
+DQS. The DQS method [ 50 ] was implemented using the official code provided by the authors, available at https://github.com/IBM/dqs (Accessed on July 25 2025). 
+
+J.2.2 Traditional Survival Methods CoxPH. The Cox Proportional Hazards model [ 10 ] was implemented using the CoxPHFitter class from the lifelines package [ 11 ]. The Breslow method was used to compute the survival function. 
+
+Weibull AFT. The Weibull Accelerated Failure Time model [ 8] was implemented using the 
+
+WeibullAFTFitter class from the lifelines package [11]. 
+
+RSF. The Random Survival Forest [ 23 ] was implemented using the RandomSurvivalForest class from the sksurv package [ 39 ]. The number of trees in the forest is set to 1,000. The minimum number of samples required to split an internal node is 10, and the minimum number of samples required to be at a leaf node is 15. Those were the same hyperparameters as used in [36]. 
+
+SSVM. The Survival Support Vector Machine [ 40 ] was implemented using the FastSurvivalSVM 
+
+class from the sksurv package [ 39 ]. The optimal regularization hyperparameter α was selected via grid search by evaluating model performance on the training set using the C-index. This method does not allow for estimation of the survival function. Predicted ranks were used as risk scores for computing the C-index. 39 J.3 Evaluation metrics C-index. Let ˆqi(t) be the predicted risk score of observation with covariates xi at time t. The C-index estimate [19] is given by C-index =
+
+PNi=1 
+
+P  
+
+> j̸=i
+
+δi 1{yi<y i}
+
+ 1{ˆqi(yi)>ˆqj (yi)} + 12 1{ˆqi(yi)=ˆ qj (yi)}
+
+PNi=1 
+
+P  
+
+> j̸=i
+
+δi 1{yi<y j }
+
+.
+
+Let ˆSi(t) be the predicted survival function of observation with covariates xi at time t. When the predicted risk score is taken to be the negative of the survival function, i.e., ˆqi(t) = − ˆSi(t), the C-index is referred to as the Antolini’s C-index [3] and is found with C-index =
+
+PNi=1 
+
+P  
+
+> j̸=i
+
+δi 1{yi<y i}
+
+
+
+1{ ˆSi(yi)< ˆSj (yi)} + 12 1{ ˆSi(yi)= ˆSj (yi)}
+
+PNi=1 
+
+P  
+
+> j̸=i
+
+δi 1{yi<y j }
+
+.
+
+The C-index is obtained using the ConcordanceIndex class from the TorchSurv package [37]. 
+
+IPCW Integrated Brier Score. Let ˆSi(t) be the predicted survival function of observation with covariates xi at time t. Let the inverse probability censoring weight (IPCW) at time t be defined as the inverse of the probability of being uncensored, ξ(t) = 1 / ˆC(t), where ˆC(t) denotes the Kaplan–Meier estimate of the censoring survival function. Under right censorship, the IPCW Brier score (BS) [ 17 ]at time t is given by IPCW BS (t) = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ξ(yi)1{yi≤t,δ i=1 }(0 − ˆSi(t)) 2 + ξ(t)1{yi>t }(1 − ˆSi(t)) 2. (A29) The IBS is the integral of the Brier Score in (A29) . The IPCW weights and the IPCW IBS are com-puted using the get_ipcw function and the BrierScore class from the TorchSurv package [37]. 
+
+Distribution Calibration. D-Calibration [ 18 ] evaluates whether predicted survival probabilities at observed times are uniformly distributed. For an individual i, let ˆSi(yi) be the predicted survival probability at their event or censoring time yi. Under perfect calibration, we expect: 
+
+ˆSi(yi) ∼ Uniform (0 , 1) . (A30) The predicted probabilities are binned into B quantiles, and a histogram is constructed over both event and censored observations. For censored data, the probability is distributed proportionally across bins beyond the censoring time. A chi-squared test compares the resulting histogram to the expected uniform distribution, and the p-value reflects how well the survival model is calibrated. The D-Calibration is obtained using the LifelinesEvaluator.d_calibration() class from the 
+
+SurvivalEVAL package [41]. 
+
+Kaplan-Meier Calibration. Kaplan-Meier (KM)-Calibration, as introduced by [ 9], evaluates how well the average predicted survival curve from a model aligns with the empirical KM survival curve. Let ˆSavg (t) denote the model’s average survival probability at time t, and ˆSKM (t) the KM estimate. The KM calibration score is defined as the normalized integrated mean squared error (MSE): KM-Calibration = 1
+
+Tmax 
+
+Z Tmax 
+
+> 0
+
+ ˆSavg (t) − ˆSKM (t)
+
+2
+
+dt. (A31) This score lies in [0 , 1] , where 0 indicates perfect calibration, and values near 0.25 represent uninformative predictions. The KM-Calibration is obtained using the 
+
+LifelinesEvaluator.km_calibration() class from the SurvivalEVAL package [41]. 40 K Implementation Details 
+
+Code availability. The code is available on the GitHub repository https://github.com/ MLGlobalHealth/neuralsurv under the MIT License. 
+
+Architecture. We employed a feedforward neural network with two hidden layers, each containing 16 neurons and using ReLu activations. The input of the network for observation i = 1 , . . . , N is the pair (t, xi).
+
+Time normalization. The observation period is normalized to the interval [0 , 1] by dividing each time value by the maximum observed time in the training set. 
+
+EM algorithm. The parameters are initialized so that they match their prior expected values. Specifically, we set θ(0) = 0 and ϕ(0) = α0/β 0. The maximization step of the EM algorithm is performed using the L-BFGS-B algorithm. The EM algorithm is considered to have converged when the relative change in the Q-function between consecutive iterations falls below a tolerance threshold of 10 −6 for two successive iterations. 
+
+CAVI algorithm. The hyperparameters are initialized so that the expected values of the model parameters match the MAP estimates. Specifically, we set ˜α(0) = ϕMAP × ˜β, and ( ˜ μ, ˜Σ)(0) =(θMAP , Im). The CAVI algorithm is considered to have converged when the relative change between successive parameter estimates falls below a tolerance threshold of 10 −6.
+
+Integral approximation. The integrals required to compute the Q-function in the EM algorithm, as well as those involved in the optimal variational updates of ϕ and θ in the CAVI algorithm, are approximated using the trapezoidal rule. 
+
+Prior and ρ. For all experiments, we fix the hyperparameters of the prior distribution over ϕ, given in (6), to be α0, β 0 = 1 . Furthermore, we fix ρ = 1 .
+
+Machine. The experiments were conducted on NVIDIA RTX A6000 GPUs with 48GB of memory. 
+
+Running time Table A1 reports the running time for a single fold on the Colon dataset at varying sample sizes. All folds and datasets were processed in parallel across multiple GPUs to ensure consistent timing.                                                                                        
+
+> method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours)
+> N= 25
+> 1L 2L-6U 2L-16U 0.104 0.102 0.100 0.164 0.139 0.140 0.082 0.098 0.072 0.077 0.079 0.076 0.139 0.167 0.114 0.130 0.118 0.094 0.129 0.119 0.094 0.083 0.102 0.083 0.081 0.082 0.092 0.050 0.064 0.040 0.058 0.058 0.060 0.019 0.020 0.024 0.621 1.165 0.566
+> N= 125
+> 1L 2L-6U 2L-16U 0.075 0.093 0.118 0.120 0.126 0.142 0.063 0.079 0.072 0.070 0.090 0.072 0.113 0.175 0.134 0.100 0.119 0.114 0.069 0.104 0.095 0.087 0.092 0.084 0.060 0.078 0.092 0.048 0.040 0.049 0.062 0.071 0.070 0.023 0.025 0.025 3.926 16.454 22.673
+> N= 250
+> 1L 2L-6U 2L-16U 0.075 0.099 0.091 0.122 0.145 0.135 0.071 0.080 0.101 0.072 0.078 0.079 0.136 0.135 0.186 0.107 0.132 0.149 0.072 0.087 0.125 0.091 0.091 0.091 0.062 0.087 0.079 0.048 0.045 0.041 0.073 0.073 0.078 0.029 0.030 0.030 7.373 87.098 141.389
+
+Table A1: Inference runtime for the Colon dataset (in minutes). The central analysis presented in Table A5-A6 is for N = 125 and a MNP with 2 layers (2L) and 16 units (16U). The ablation study presented in Table A7-A8 is for N = 250 and a MNP with 2L and 16U. 41 L Related Work 
+
+Survival analysis methodologies have evolved significantly over the past decades, encompassing parametric, semi-parametric, non-parametric, and more recently, deep learning-based approaches. We review these developments, focusing on their applicability to high-dimensional data and uncertainty quantification capabilities. 
+
+Parametric and Semi-parametric Traditional Models. Traditional survival models often impose parametric or semi-parametric assumptions on the hazard function. The Accelerated Failure Time (AFT) model [ 8 ] assumes a linear relationship between covariates and the logarithm of survival time, with parametric baseline distributions (e.g., Weibull). While interpretable, such models struggle with high-dimensional data and nonlinear covariate effects. The Cox Proportional Hazards (CoxPH) model [ 10 ], a semi-parametric approach, avoids specifying the baseline hazard but assumes propor-tional hazards. Though widely adopted, CoxPH’s linear predictor and proportionality constraints limit its flexibility in complex data regimes. 
+
+Non-parametric Traditional Models. To mitigate parametric assumptions, non-parametric meth-ods like Random Survival Forests (RSF) [ 23 ] and Survival Support Vector Machines (SSVM) [ 40 ]emerged. RSF leverages ensemble learning for risk stratification but faces challenges in high-dimensional settings due to greedy tree induction. GP survival models [ 13 ] offer flexibility by modeling the hazard function nonparametrically, with inherent uncertainty quantification. Existing work has sought to address the cubic complexity in sample size of GPs by introducing variational inference techniques [ 25 ]. However, GPs remain fundamentally limited in scalability, particularly struggling with high-dimensional inputs and lacking the capacity to learn hierarchical representations, such as those required in image-based tasks [44]. 
+
+Deep Survival Models. The advent of deep learning revolutionized survival analysis by enabling automatic feature learning from high-dimensional inputs. DeepSurv [ 24 ] extended CoxPH with neural networks, while DeepHit [ 32 ] employed multi-task learning for competing risks via discrete-time hazards. Discrete-time methods, including MTLR [ 51 ] and PCHazard [ 28 ], discretize the time axis to simplify likelihood computation, with recent advances like DySurv [ 36 ] incorporating conditional variational inference for dynamic prediction. Sumo - Net [ 43 ] introduces a partially monotonic NN that directly optimizes the right - censored log -likelihood, which is proven to be a strictly proper scoring rule—achieving strong log - likelihood performance. DQS [ 50 ] formulates survival prediction using extensions of strictly proper scoring rules that remain proper under discrete-time survival settings. Despite their predictive prowess, these models rely on frequentist training, yielding point estimates without uncertainty quantification, a significant shortcoming in safety-critical applications. Comprehensive reviews [ 49 ] highlight the rapid growth of deep survival methods but underscore their neglect of probabilistic uncertainty. 
+
+Bayesian and Uncertainty-Aware Approaches. Bayesian methods provide a natural framework for uncertainty quantification but have seen limited integration with deep survival models. GP-based approaches [ 13 , 25 ] inherit GP limitations in scalability and high-dimensional processing. Recent works like BCESurv [ 30 ] explore bootstrap confidence intervals, yet these post-hoc approximations lack the coherence of Bayesian posteriors. Consequently, existing Bayesian survival models either sacrifice scalability for uncertainty quantification or compromise on model flexibility, leaving a critical gap in high-dimensional, uncertainty-aware survival analysis. 
+
+Summary. While parametric and semi-parametric models provide interpretability, they falter in high-dimensional, nonlinear regimes. Non-parametric methods like RSF and GP improve flexibility but face scalability challenges. Deep learning approaches excel at feature extraction yet lack princi-pled uncertainty quantification. Bayesian methods, though theoretically sound, remain confined to traditional architectures or partial approximations. Our work bridges this divide by proposing the first scalable, deep Bayesian survival model that harmonizes neural networks with full probabilistic uncertainty, addressing a critical need in modern applications. 42 Method Uncertainty (Bayesian) Continuous Time Deep Learning 
+
+CoxPH [10] ✓ ✓ ✗
+
+AFT [8] ✓ ✓ ✗
+
+RSF [23] ✗ ✓ ✗
+
+SSVM [40] ✗ ✓ ✗
+
+GP survival models [13, 25] ✓ ✓ ✗
+
+MTLR [51] ✗ ✗ ✓
+
+DeepHit [32] ✗ ✗ ✓
+
+DeepSurv [24] ✗ ✓ ✓
+
+Logistic Hazard [16] ✗ ✗ ✓
+
+CoxTime [29] ✗ ✓ ✓
+
+CoxCC [29] ✗ ✓ ✓
+
+PMF [28] ✗ ✗ ✓
+
+PCHazard [28] ✗ ✓ ✓
+
+BCESurv [30] ✗ ✗ ✓
+
+DySurv [36] ✗ ✓ ✓
+
+Sumo-Net [43] ✗ ✓ ✓
+
+DQS [50] ✗ ✓ ✓
+
+NeuralSurv (Ours) ✓ ✓ ✓
+
+Table A2: Summary of Survival Analysis methods: Bayesian Uncertainty Quantification, Time Domain, and Deep-Learning Status. 43 M Further Results 
+
+M.1 Synthetic Data Experiment 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+N = 25 
+
+C-index ↑ IPCW IBS ↓
+
+0.560 0.284 0.473 0.239 0.492 0.313 0.477 0.297 0.424 0.284 0.421 0.268 
+
+0.573 0.261 0.477 0.337 0.545 0.287 0.399 0.237 0.473 0.223 0.435 0.326 0.378 0.196 
+
+N = 50 
+
+C-index ↑ IPCW IBS ↓
+
+0.505 0.239 0.469 0.214 0.471 0.241 0.498 0.256 0.532 0.273 0.497 0.229 0.551 0.334 0.501 0.249 
+
+0.585 0.256 0.491 0.239 0.503 0.179 0.48 0.232 0.554 0.160 
+
+N = 100 
+
+C-index ↑ IPCW IBS ↓
+
+0.491 0.171 0.502 0.171 0.507 0.169 0.507 0.199 0.52 0.184 0.526 0.128 0.523 0.168 0.467 0.174 0.558 0.185 0.459 0.218 0.588 0.127 0.525 0.131 
+
+0.589 0.126 
+
+N = 150 
+
+C-index ↑ IPCW IBS ↓
+
+0.542 0.17 0.574 0.114 0.517 0.169 0.499 0.176 0.575 0.118 0.513 0.109 
+
+0.607 0.184 0.486 0.193 0.559 0.16 0.489 0.174 0.495 0.113 0.556 0.124 0.589 0.106 
+
+Table A3: Performance comparison of survival models over synthetic data. The best results for each metric are shown in bold, and the second-best results are underlined. ↑ indicates higher is better; ↓
+
+indicates lower is better. 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+N = 25 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.032 0.000 ( ×) 0.029 0.000 ( ×) 0.009 0.000 ( ×) 0.037 0.000 ( ×) 0.010 0.000 ( ×) 0.008 
+
+0.000 ( ×) 0.032 0.000 ( ×) 0.037 0.000 ( ×) 0.022 0.000 ( ×) 0.201 0.132 ( ✓) 0.011 0.000 ( ×) 0.051 0.833 ( ✓) 0.014 
+
+N = 50 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.056 0.000 ( ×) 0.168 0.000 ( ×) 0.036 0.000 ( ×) 0.062 0.000 ( ×) 0.021 0.000 ( ×) 0.028 0.000 ( ×) 0.071 0.000 ( ×) 0.073 0.000 ( ×) 0.014 0.000 ( ×) 0.241 0.051 ( ✓) 0.036 0.000 ( ×) 0.048 0.539 ( ✓) 0.012 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+N = 100 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.034 0.000 ( ×) 0.030 0.000 ( ×) 0.003 0.000 ( ×) 0.034 0.000 ( ×) 0.011 0.000 ( ×) 0.001 
+
+0.000 ( ×) 0.033 0.000 ( ×) 0.056 0.000 ( ×) 0.038 0.000 ( ×) 0.172 0.683 ( ✓) 0.004 0.005 ( ×) 0.032 0.419 ( ✓) 0.004 
+
+N = 150 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.035 0.000 ( ×) 0.040 0.007 ( ×) 0.003 0.000 ( ×) 0.062 0.346 ( ✓) 0.005 0.001 ( ×) 0.001 
+
+0.000 ( ×) 0.034 0.000 ( ×) 0.066 0.000 ( ×) 0.034 0.000 ( ×) 0.183 0.345 ( ✓) 0.003 0.000 ( ×) 0.031 0.639 ( ✓) 0.004 
+
+Table A4: Performance comparison of survival models over synthetic data (part 2). A checkmark (✓) indicates that the null hypothesis of perfect D-Calibration was not rejected at α = 0 .05 (model considered well-calibrated); a cross ( ×) indicates rejection of D-Calibration (model considered not well-calibrated). The best results for the KM-Calibration are shown in bold, and the second-best results are underlined. ↓ indicates lower is better. 44 M.2 Real Data Experiment M.2.1 Central Analysis 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+COLON 
+
+C-index ↑ IPCW IBS ↓
+
+0.562 0.298 0.478 0.28 0.572 0.326 0.490 0.321 0.578 0.277 0.584 0.289 0.509 0.324 0.538 0.297 0.491 0.302 0.488 0.536 0.485 0.241 0.635 0.246 
+
+0.671 0.218 METABRIC 
+
+C-index ↑ IPCW IBS ↓
+
+0.548 0.279 0.511 0.243 0.523 0.289 0.541 0.317 0.533 0.307 0.575 0.257 0.440 0.336 0.541 0.291 
+
+0.616 0.277 0.561 0.465 0.447 0.223 0.564 0.261 0.584 0.212 GBSG 
+
+C-index ↑ IPCW IBS ↓
+
+0.602 0.273 0.578 0.309 0.618 0.252 0.618 0.296 0.599 0.285 0.646 0.240 0.655 0.250 0.609 0.249 0.581 0.273 0.572 0.485 0.476 0.250 0.611 0.229 
+
+0.657 0.188 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+NWTCO 
+
+C-index ↑ IPCW IBS ↓
+
+0.592 0.301 0.516 0.296 0.527 0.248 0.512 0.298 0.550 0.199 0.531 0.237 0.482 0.312 0.551 0.209 0.530 0.272 0.402 0.683 0.595 0.170 0.567 0.242 
+
+0.712 0.166 WHAS 
+
+C-index ↑ IPCW IBS ↓
+
+0.490 0.315 0.510 0.303 0.654 0.281 0.545 0.315 
+
+0.678 0.250 0.654 0.281 0.520 0.299 0.527 0.291 0.548 0.292 0.424 0.523 0.556 0.260 0.590 0.269 0.602 0.233 SUPPORT 
+
+C-index ↑ IPCW IBS ↓
+
+0.432 0.357 0.452 0.341 0.505 0.354 0.536 0.378 0.547 0.327 0.566 0.312 0.512 0.399 0.514 0.335 0.446 0.398 0.525 0.342 0.444 0.289 
+
+0.538 0.331 
+
+0.599 0.333 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+VLC 
+
+C-index ↑ IPCW IBS ↓
+
+0.432 0.299 0.409 0.236 0.642 0.186 0.413 0.272 
+
+0.671 0.212 0.645 0.169 0.445 0.284 0.502 0.294 0.428 0.263 0.436 0.162 0.527 0.157 0.568 0.218 0.667 0.142 SAC3 
+
+C-index ↑ IPCW IBS ↓
+
+0.471 0.276 0.456 0.289 0.530 0.264 0.480 0.348 0.485 0.276 
+
+0.533 0.261 0.472 0.270 0.527 0.276 0.440 0.300 0.476 0.303 0.457 0.237 0.481 0.293 0.532 0.204 
+
+Table A5: Performance comparison of deep survival models over five different train/test splits of each dataset. The best results for each metric are shown in bold, and the second-best results are underlined. 
+
+↑ indicates higher is better; ↓ indicates lower is better. 45 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+COLON 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.016 0.001 ( ×) 0.089 0.047 ( ×) 0.024 0.002 ( ×) 0.019 0.014 ( ×) 0.011 
+
+0.011 ( ×) 0.011 
+
+0.001 ( ×) 0.017 0.007 ( ×) 0.029 0.000 ( ×) 0.012 0.000 ( ×) 0.362 0.741 ( ✓) 0.014 0.381 ( ✓) 0.017 0.594 ( ✓) 0.020 
+
+METABRIC 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.023 0.101 ( ✓) 0.064 0.006 ( ×) 0.012 0.000 ( ×) 0.026 0.012 ( ×) 0.012 0.013 ( ×) 0.019 0.002 ( ×) 0.017 0.008 ( ×) 0.036 0.000 ( ×) 0.021 0.000 ( ×) 0.306 0.600 ( ✓) 0.008 
+
+0.135 ( ✓) 0.020 0.661 ( ✓) 0.012 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+GBSG 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.011 0.000 ( ×) 0.149 0.084 ( ✓) 0.009 0.008 ( ×) 0.017 0.247 ( ✓) 0.009 0.256 ( ✓) 0.005 
+
+0.003 ( ×) 0.015 0.063 ( ✓) 0.024 0.001 ( ×) 0.015 0.000 ( ×) 0.369 0.524 ( ✓) 0.010 0.234 ( ✓) 0.012 0.735 ( ✓) 0.009 
+
+NWTCO 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.570 ( ✓) 0.011 0.575 ( ✓) 0.014 0.887 ( ✓) 0.003 
+
+0.397 ( ✓) 0.012 0.883 ( ✓) 0.003 
+
+0.954 ( ✓) 0.003 
+
+0.487 ( ✓) 0.013 0.697 ( ✓) 0.008 0.312 ( ✓) 0.010 0.000 ( ×) 0.260 0.991 ( ✓) 0.004 0.916 ( ✓) 0.005 0.920 ( ✓) 0.007 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+WHAS 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.001 ( ×) 0.035 0.195 ( ✓) 0.067 0.076 ( ✓) 0.025 0.013 ( ×) 0.033 0.035 ( ×) 0.017 
+
+0.106 ( ✓) 0.019 0.003 ( ×) 0.031 0.125 ( ✓) 0.022 0.000 ( ×) 0.025 0.000 ( ×) 0.281 0.735 ( ✓) 0.021 0.081 ( ✓) 0.033 0.335 ( ✓) 0.031 
+
+SUPPORT 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.099 0.000 ( ×) 0.124 0.000 ( ×) 0.015 
+
+0.000 ( ×) 0.095 0.000 ( ×) 0.016 0.000 ( ×) 0.020 0.000 ( ×) 0.084 0.000 ( ×) 0.070 0.000 ( ×) 0.088 0.000 ( ×) 0.099 0.143 ( ✓) 0.017 0.002 ( ×) 0.038 0.063 ( ✓) 0.083 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+VLC 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.072 0.000 ( ×) 0.107 0.004 ( ×) 0.006 
+
+0.000 ( ×) 0.078 0.021 ( ×) 0.010 0.004 ( ×) 0.011 0.000 ( ×) 0.077 0.000 ( ×) 0.080 0.000 ( ×) 0.074 0.077 ( ✓) 0.028 0.131 ( ✓) 0.011 0.000 ( ×) 0.054 0.436 ( ✓) 0.013 
+
+SAC3 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.020 0.003 ( ×) 0.094 0.000 ( ×) 0.020 0.000 ( ×) 0.039 0.000 ( ×) 0.014 
+
+0.000 ( ×) 0.016 0.000 ( ×) 0.016 0.000 ( ×) 0.029 0.000 ( ×) 0.021 0.000 ( ×) 0.146 0.478 ( ✓) 0.016 0.021 ( ×) 0.034 0.624 ( ✓) 0.016 
+
+Table A6: Performance comparison of deep survival models over five different train/test splits of each dataset (part 2). A checkmark ( ✓) indicates that the null hypothesis of perfect D-Calibration was not rejected at α = 0 .05 (model considered well-calibrated); a cross ( ×) indicates rejection of D-Calibration (model considered not well-calibrated). The best results for the KM-Calibration are shown in bold, and the second-best results are underlined. ↓ indicates lower is better. 46 M.2.2 Ablation Study with N = 250 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+COLON 
+
+C-index ↑ IPCW IBS ↓
+
+0.545 0.291 0.564 0.284 0.600 0.295 0.501 0.289 0.621 0.259 
+
+0.640 0.277 0.541 0.291 0.549 0.280 0.537 0.289 0.478 0.543 0.529 0.273 0.593 0.267 0.601 0.215 METABRIC 
+
+C-index ↑ IPCW IBS ↓
+
+0.572 0.290 0.545 0.301 0.605 0.265 0.553 0.252 
+
+0.621 0.264 0.610 0.254 0.554 0.300 0.561 0.246 0.565 0.289 0.516 0.491 0.473 0.27 0.600 0.228 0.543 0.198 GBSG 
+
+C-index ↑ IPCW IBS ↓
+
+0.567 0.312 0.563 0.272 0.531 0.277 0.562 0.287 
+
+0.578 0.255 0.565 0.244 0.537 0.304 0.524 0.295 0.554 0.301 0.506 0.508 0.471 0.255 0.562 0.237 0.546 0.212 
+
+Table A7: Performance comparison of deep survival models on the ablation study with 250 observa-tions, over five different train/test splits of each dataset. The best results for each metric are shown in bold, and the second-best results are underlined. ↑ indicates higher is better; ↓ indicates lower is better. 
+
+method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+COLON 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.007 0.000 ( ×) 0.068 0.001 ( ×) 0.006 0.000 ( ×) 0.012 0.022 ( ×) 0.005 0.001 ( ×) 0.003 
+
+0.000 ( ×) 0.008 0.001 ( ×) 0.018 0.000 ( ×) 0.012 0.000 ( ×) 0.376 0.323 ( ✓) 0.007 0.086 ( ✓) 0.009 0.404 ( ✓) 0.011 
+
+METABRIC 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.017 0.044 ( ×) 0.072 0.001 ( ×) 0.007 0.000 ( ×) 0.017 0.001 ( ×) 0.008 0.000 ( ×) 0.006 
+
+0.000 ( ×) 0.008 0.003 ( ×) 0.027 0.000 ( ×) 0.013 0.000 ( ×) 0.273 0.192 ( ✓) 0.007 0.137 ( ✓) 0.013 0.708 ( ✓) 0.013 method Method MTLR [51] DeepHit [32] DeepSurv [24] Logistic Hazard [16] CoxTime [29] CoxCC [29] PMF [28] PCHazard [28] BCESurv [30] DySurv [36] Sumo-Net [43] DQS [50] NeuralSurv (Ours) 
+
+GBSG 
+
+D-Calibration (p-value) KM-Calibration ↓
+
+0.000 ( ×) 0.010 0.159 ( ✓) 0.134 0.052 ( ✓) 0.006 0.000 ( ×) 0.016 0.171 ( ✓) 0.004 0.059 ( ✓) 0.006 0.000 ( ×) 0.010 0.004 ( ×) 0.015 0.000 ( ×) 0.013 0.000 ( ×) 0.336 0.337 ( ✓) 0.004 0.084 ( ✓) 0.008 0.617 ( ✓) 0.003 
+
+Table A8: Performance comparison of deep survival models on the ablation study with 250 obser-vations, over five different train/test splits of each dataset (part 2). A checkmark ( ✓) indicates that the null hypothesis of perfect D-Calibration was not rejected at α = 0 .05 (model considered well-calibrated); a cross ( ×) indicates rejection of D-Calibration (model considered not well-calibrated). The best results for the KM-Calibration are shown in bold, and the second-best results are underlined. 
+
+↓ indicates lower is better. 47 M.2.3 Comparison to Traditional Survival Models 
+
+method Method CoxPH [10] Weibull AFT [8] RSF [23] SSVM [40] 
+
+COLON 
+
+C-index ↑ IPCW IBS ↓
+
+0.669 0.192 0.681 0.198 0.590 0.210 0.654 -
+
+NWTCO 
+
+C-index ↑ IPCW IBS ↓
+
+0.710 0.136 0.697 0.134 0.604 0.156 0.734 -
+
+GBSG 
+
+C-index ↑ IPCW IBS ↓
+
+0.694 0.171 0.673 0.179 0.588 0.193 0.695 -method Method CoxPH [10] Weibull AFT [8] RSF [23] SSVM [40] 
+
+METABRIC 
+
+C-index ↑ IPCW IBS ↓
+
+0.653 0.171 0.658 0.172 0.587 0.189 0.649 -
+
+WHAS 
+
+C-index ↑ IPCW IBS ↓
+
+0.655 0.207 0.622 0.224 0.683 0.209 0.653 -
+
+SUPPORT 
+
+C-index ↑ IPCW IBS ↓
+
+0.653 0.225 0.650 0.239 0.601 0.225 0.636 -method Method CoxPH [10] Weibull AFT [8] RSF [23] SSVM [40] 
+
+VLC 
+
+C-index ↑ IPCW IBS ↓
+
+0.697 0.125 0.690 0.127 0.687 0.139 0.698 -
+
+SAC3 
+
+C-index ↑ IPCW IBS ↓
+
+0.569 0.190 0.607 0.287 0.487 0.182 0.504 -
+
+Table A9: Performance comparison of traditional survival models over five different train/test splits of each dataset. ↑ indicates higher is better; ↓ indicates lower is better. The SSVM method does not provide estimates of the survival function; the predicted ranks are used for the corresponding C-index evaluations while the IPCW-IBS metric cannot be computed. 
+
+method Method CoxPH [10] Weibull AFT [8] RSF [23] 
+
+COLON 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.913 ( ✓) 0.006 0.788 ( ✓) 0.010 0.791 ( ✓) 0.009 
+
+NWTCO 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.979 ( ✓) 0.003 0.986 ( ✓) 0.004 0.999 ( ✓) 0.002 
+
+GBSG 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.950 ( ✓) 0.004 0.767 ( ✓) 0.008 0.854 ( ✓) 0.003 method Method CoxPH [10] Weibull AFT [8] RSF [23] 
+
+METABRIC 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.846 ( ✓) 0.008 0.759 ( ✓) 0.006 0.746 ( ✓) 0.009 
+
+WHAS 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.730 ( ✓) 0.017 0.650 ( ✓) 0.018 0.625 ( ✓) 0.022 
+
+SUPPORT 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.354 ( ✓) 0.010 0.420 ( ✓) 0.012 0.593 ( ✓) 0.010 method Method CoxPH [10] Weibull AFT [8] RSF [23] 
+
+VLC 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.597 ( ✓) 0.008 0.759 ( ×) 0.007 0.414 ( ×) 0.013 
+
+SAC3 
+
+D-Calibration KM-Calibration ↓
+
+(p-value) 0.357 ( ✓) 0.005 0.038 ( ✓) 0.018 0.706 ( ✓) 0.012 
+
+Table A10: Performance comparison of traditional survival models over five different train/test splits of each dataset (part 2). A checkmark ( ✓) indicates that the null hypothesis of perfect D-Calibration was not rejected at α = 0 .05 (model considered well-calibrated); a cross ( ×) indicates rejection of D-Calibration (model considered not well-calibrated). The best results for the KM-Calibration are shown in bold, and the second-best results are underlined. ↓ indicates lower is better. 48 M.3 Prior Sensitivity Analysis 
+
+method Gamma Prior of ϕ
+
+(α0 = 1 , β 0 = 1) (α0 = 2 , β 0 = 2) (α0 = 0 .5, β 0 = 0 .5) 
+
+COLON 
+
+Gamma Posterior of ϕ Posterior Median C-index ↑ IPCW IBS ↓ D-Calibration KM-Calibration ↓
+
+and 95% CI (p-value) ( ˜α = 60.877, ˜β = 78.789) 0.768 [0.591, 0.978] 0.671 0.218 0.594 ( ✓) 0.020 
+
+( ˜α = 45.865, ˜β = 79.789) 0.571 [0.421, 0.753] 0.593 0.237 0.601 ( ✓) 0.025 ( ˜α = 38.333, ˜β = 78.289) 0.485 [0.347, 0.656] 0.512 0.229 0.715 ( ✓) 0.023 method Gamma Prior of ϕ
+
+(α0 = 1 , β 0 = 1) (α0 = 2 , β 0 = 2) (α0 = 0 .5, β 0 = 0 .5) 
+
+METABRIC 
+
+Gamma Posterior of ϕ Posterior Median C-index ↑ IPCW IBS ↓ D-Calibration KM-Calibration ↓
+
+and 95% CI (p-value) ( ˜α = 48.406, ˜β = 70.176) 0.685 [0.509, 0.897] 0.584 0.212 0.661 ( ✓) 0.012 ( ˜α = 48.034, ˜β = 71.176) 0.670 [0.498, 0.879] 0.536 0.201 0.819 ( ✓) 0.009 
+
+( ˜α = 47.347, ˜β = 69.676) 0.675 [0.500, 0.886] 0.553 0.200 0.802 ( ✓) 0.009 
+
+method Gamma Prior of ϕ
+
+(α0 = 1 , β 0 = 1) (α0 = 2 , β 0 = 2) (α0 = 0 .5, β 0 = 0 .5) 
+
+GBSG 
+
+Gamma Posterior of ϕ Posterior Median C-index ↑ IPCW IBS ↓ D-Calibration KM-Calibration ↓
+
+and 95% CI (p-value) ( ˜α = 58.650, ˜β = 85.462) 0.682 [0.522, 0.873] 0.657 0.188 0.735 ( ✓) 0.009 
+
+( ˜α = 62.386, ˜β = 86.462) 0.718 [0.554, 0.911] 0.602 0.195 0.808 ( ✓) 0.010 ( ˜α = 57.549, ˜β = 84.962) 0.673 [0.514, 0.863] 0.665 0.189 0.772 ( ✓) 0.010 
+
+Table A11: Prior sensitivity analysis on ϕ using priors with double and half the original variance.. 49 N Proofs 
+
+N.1 Proof of Theorem 3.1 
+
+Before proving Theorem 3.1 we must show some intermediate results. 
+
+Lemma N.1. Assume that for each i = 1 , . . . , N the function g(·, xi; ·) ∈ C([0 , y i] × Rm). Then, it follows that Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t < ∞
+
+for every i = 1 , . . . , N .Proof. Fix an arbitrary index i ∈ { 1, . . . , N }. From Section 2.3, recall that pθ (θ) is the probability density function of a multivariate normal distribution with zero mean and identity covariance matrix 
+
+Im. Our goal is to show that the normalization factor Z(t, xi) admits a strictly positive lower bound on [0 , y i], from which the integrability of λ0(t, xi; ϕ) will follow. 
+
+Step 1: Continuity of Z(t, xi) on [0 , y i]. Fix any t0 ∈ [0 , y i], and let (tn)n≥1 be a sequence in 
+
+[0 , y i] such that tn → t0 as n → ∞ . Define, for each n, the functions 
+
+hn(θ) := σ(g(tn, xi; θ)) pθ (θ), n ≥ 1,h(θ) := σ(g(t0, xi; θ)) pθ (θ).
+
+Since g(·, xi; ·) ∈ C([0 , y i] × Rm) and the sigmoid σ(·) is a continuous function, it follows that 
+
+lim  
+
+> n→∞
+
+hn(θ) = h(θ)
+
+pointwise for all θ ∈ Rm. Furthermore, observe that 
+
+|hn(θ)| ≤ pθ (θ)
+
+since 0 < σ (·) < 1. Because pθ (θ) integrates to 1 over Rm, we may apply the Dominated Convergence Theorem (DCT) to conclude that: 
+
+lim  
+
+> n→∞
+
+Z(tn, xi) = lim 
+
+> n→∞
+
+Z
+
+> Rm
+
+hn(θ)d θ DCT 
+
+=
+
+Z
+
+> Rm
+
+h(θ)d θ = Z(t0, xi).
+
+Since t0 was arbitrary in [0 , y i], Z is continuous everywhere on that interval. 
+
+Step 2: Strict positivity of Z(t, xi) on [0 , y i]. For each fixed t ∈ [0 , y i], since σ(g(t, xi; θ)) > 0
+
+and pθ (θ) > 0 for all θ ∈ Rm, we have: 
+
+Z(t, xi) = 
+
+Z
+
+> Rm
+
+σ(g(t, xi; θ)) pθ (θ)d θ > 0.
+
+Since Z(t, xi) is a continuous and strictly positive function on the compact interval [0 , y i], the Weierstrass Extreme Value Theorem ensures that Z attains a minimum on this interval. Define: 
+
+z∗ = min  
+
+> t∈[0 ,y i]
+
+Z(t, xi) > 0
+
+Step 3: Integrability of λ0(t, xi; ϕ). Note that for all t ∈ [0 , y i], we have 
+
+λ0(t, xi; ϕ) = λ0(t; ϕ)
+
+Z(t, xi) ≤ λ0(t; ϕ)
+
+z∗ .
+
+It is straightforward to verify that λ0(t; ϕ) is integrable on [0 , y i], therefore it follows that 
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t ≤ 1
+
+z∗
+
+Z yi
+
+> 0
+
+λ0(t; ϕ)d t < ∞.
+
+This completes the proof. 50 Our next result verifies a condition needed for applying Campbell’s Theorem in the proof of Theo-rem 3.1. To establish this, we will use the following Pólya–Gamma identity: 
+
+Eω∼pPG (ω|1,0) [ω] = 14 , (A32) which follows by taking the limit c → 0 in equation (A4) . Alternatively, to prove (A32) , one can start from the representation in equation (A1) , apply Tonelli’s theorem to interchange expectation and infinite summation, and then invoke the series identity 
+
+> ∞
+
+X
+
+> k=1
+
+1(k − 12 )2 = π2
+
+2 .
+
+We are now ready to present our next result. 
+
+Lemma N.2. Assume that for each i = 1 , . . . , N the function g(·, xi; ·) ∈ C([0 , y i] × Rm). Then, with probability 1 the sum 
+
+H(Ψ i) = X 
+
+> (t,ω )j∈Ψi
+
+f (ωj , −g(tj , xi; θ)) 
+
+is absolutely convergent for every i = 1 , . . . , N .Proof. Fix an arbitrary index i ∈ { 1, . . . , N }. Recall the definition of f (ω, z ) from (8) . From Theorem C.3, it suffices to show 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+min( |f (ω, −g(t, xi; θ)) |, 1) λi(t, ω ; ϕ)d ωdt < ∞. (A33) Since ω ∈ R+, then it follows from the triangle inequality that 
+
+min( |f (ω, −g(t, xi; θ)) |, 1) ≤ | f (ω, −g(t, xi; θ)) |≤ |g(t, xi; θ)|
+
+2 + g(t, xi; θ)2
+
+2 ω + log(2) .
+
+Hence it remains to prove finiteness of three integrals: 
+
+I1 := 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+|g(t, xi; θ)|
+
+2 λi(t, ω ; ϕ)d tdω, 
+
+I2 := 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+g(t, xi; θ)2
+
+2 ωλ i(t, ω ; ϕ)d ωdt, 
+
+I3 := log(2) 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+λi(t, ω ; ϕ)d ωdt. 
+
+I1 is finite. Since g(t, xi; θ) is continuous on the compact interval [0 , y i], it is bounded by some 
+
+M > 0. Then, 
+
+I1 =
+
+Z ∞
+
+> 0
+
+pPG (ω|1, 0)d ω
+
+ Z yi
+
+> 0
+
+|g(t, xi; θ)|
+
+2 λ0(t, xi; ϕ)d t ≤ M
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t < ∞,
+
+where the last inequality is Lemma N.1. 
+
+I2 is finite. Likewise g(t, xi; θ)2 is bounded by some C > 0 over [0 , y i] and Eω∼pPG (ω|1,0) [ω] = 14
+
+(see (A32)), so 
+
+I2 =  Eω∼pPG (ω|1,0) [ω] Z yi
+
+> 0
+
+g(t, xi; θ)2
+
+2 λ0(t, xi; ϕ)d t ≤ C
+
+8
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t
+
+
+
+< ∞,
+
+where the last inequality is Lemma N.1. 51 I3 is finite. Finally, 
+
+I3 = log(2) 
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t < ∞,
+
+again by Lemma N.1. Since I1, I2, I3, are all finite, the condition in (A33) is satisfied and the sum H(Ψ i) converges absolutely with probability 1. The next result presents an integral identity which is key to proving the data augmentation scheme of Theorem 3.1. 
+
+Lemma N.3. Assume that for each i = 1 , . . . , N the function g(·, xi; ·) ∈ C([0 , y i] × Rm). Then the double integral 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+1 − ef (ω, −g(t, xi;θ)) 
+
+pPG (ω|1, 0) λ0(t, xi; ϕ)d ωdt
+
+converges, and in fact 
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+1 − ef (ω, −g(t, xi;θ)) 
+
+pPG (ω|1, 0) λ0(t, xi; ϕ)d ωdt =
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ) σ(g(t, xi; θ))d t (A34) 
+
+for every i = 1 , . . . , N .Proof. Fix an arbitrary index i ∈ { 1, . . . , N }. By Lemma N.1 
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)d t < ∞.
+
+Since 0 < σ (·) < 1, we have 
+
+0 ≤ λ0(t, xi; ϕ)σ(g(t, xi; θ)) < λ 0(t, xi; ϕ)
+
+and therefore Z yi
+
+> 0
+
+λ0(t, xi; ϕ)σ(g(t, xi; θ))d t < ∞. (A35) This shows the finiteness of the right-hand side of (A34) . By combining σ(z) = 1 − σ(−z) with (A5) we obtain that 
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ) σ(g(t, xi; θ))d t =
+
+Z yi
+
+> 0
+
+Z ∞
+
+> 0
+
+
+
+1 − ef (ω, −g(t, xi;θ)) 
+
+pPG (ω|1, 0) λ0(t, xi; ϕ)d ωdt. (A36) Putting together the finiteness from (A35) with the equality of (A36) completes the proof. We are now ready to prove Theorem 3.1. 
+
+Proof of Theorem 3.1. Fix an arbitrary index i ∈ { 1, . . . , N }. The joint expectation factors into two independent pieces: 1. Expectation over ωi: This term recovers λ0(yi, xi; ϕ)δi σ(g(yi, xi; θ)) δi ;2. Expectation over Ψi: This term recovers exp  − R yi 
+
+> 0
+
+λ0(t, xi; ϕ)σ(g(t, xi; θ))d t.52 Step (1): Expectation over ωi. Since δi ∈ { 0, 1},
+
+
+
+ef (ωi,g (yi,xi;θ)) δi
+
+=
+
+ef (ωi,g (yi,xi;θ)) , δi = 1 ,
+
+1, δi = 0 .
+
+Hence, 
+
+Z ∞
+
+> 0
+
+
+
+ef (ωi,g (yi,xi;θ)) δi
+
+pPG (ωi|1, 0)d ωi =
+
+Z ∞
+
+> 0
+
+ef (ωi,g (yi,xi;θ)) pPG (ωi|1, 0)d ωi
+
+δi
+
+.
+
+By the Pólya–Gamma identity (Eq. (A5) ), the bracketed integral equals σ(g(yi, xi; θ)) . Multiplying by λ0(yi, xi; ϕ)δi gives exactly 
+
+λ0(yi, xi; ϕ)δi σ(g(yi, xi; θ)) δi .
+
+Step (2): Expectation over Ψi. By Lemma N.2 the random sum 
+
+H(Ψ i) = X 
+
+> (t,ω )j∈Ψi
+
+f (ωj , −g(tj , xi; θ)) 
+
+is absolutely convergent with probability 1, and by Lemma N.3 the corresponding integral converges. Therefore, we may apply Campbell’s Theorem (Theorem C.3) together with the PG-sigmoid identity from (A34) to conclude 
+
+EΨi∼PΨi|ϕ
+
+ Y 
+
+> (t,ω )j∈Ψi
+
+ef (ωj ,−g(tj ,xi;θ)) 
+
+ = exp 
+
+
+
+−
+
+Z yi
+
+> 0
+
+λ0(t, xi; ϕ)σ(g(t, xi; θ))d t
+
+
+
+.
+
+Putting Steps (1) and (2) together reproduces precisely the two factors of the original likelihood 
+
+p(yi, δ i|xi, ϕ, g ). This completes the proof. 53
