@@ -1,0 +1,1833 @@
+Title: Linearization Turns Neural Operators into Function-Valued Gaussian Processes
+
+URL Source: https://openreview.net/pdf?id=4Z04wVQ9FY
+
+Number of Pages: 32
+
+Markdown Content:
+# Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Emilia Magnani * 1 Marvin Pförtner * 1 Tobias Weber * 1 Philipp Hennig 1
+
+# Abstract 
+
+Neural operators generalize neural networks to learn mappings between function spaces from data. They are commonly used to learn solution operators of parametric partial differential equa-tions (PDEs) or propagators of time-dependent PDEs. However, to make them useful in high-stakes simulation scenarios, their inherent predic-tive error must be quantified reliably. We intro-duce LUNO, a novel framework for approximate Bayesian uncertainty quantification in trained neu-ral operators. Our approach leverages model lin-earization to push (Gaussian) weight-space un-certainty forward to the neural operator’s pre-dictions. We show that this can be interpreted as a probabilistic version of the concept of cur-rying from functional programming, yielding a function-valued (Gaussian) random process be-lief. Our framework provides a practical yet theo-retically sound way to apply existing Bayesian deep learning methods such as the linearized Laplace approximation to neural operators. Just as the underlying neural operator, our approach is resolution-agnostic by design. The method adds minimal prediction overhead, can be applied post-hoc without retraining the network, and scales to large models and datasets. We evaluate these as-pects in a case study on Fourier neural operators. 
+
+# 1. Introduction 
+
+Scientific computing increasingly demands efficient repre-sentations of complex non-linear maps between functions. Examples include solution operators of parametric partial differential equations (PDEs) or the propagators of time-dependent PDEs. Operator learning is an approach to this problem that generalizes regression algorithms from finite-dimensional to infinite-dimensional function-space input-    
+
+> *Equal contribution 1Tübingen AI Center, University of Tübin-gen, Tübingen, Germany. Correspondence to: Emilia Magnani <emilia.magnani@uni-tuebingen.de>.
+> Proceedings of the 42 nd International Conference on Machine Learning , Vancouver, Canada. PMLR 267, 2025. Copyright 2025 by the author(s).
+
+output pairs (Boullé & Townsend, 2023). Neural operators, including Fourier neural operators, have emerged as a pow-erful class of models for operator learning, particularly for the solution operators of PDEs (Kovachki et al., 2023). They have been applied successfully across domains including weather forecasting (Pathak et al., 2022; Bonev et al., 2023), fluid dynamics (Grady et al., 2022; Renn et al., 2023; Li et al., 2022), and automotive aerodynamics (Li et al., 2023b). Instead of learning to solve a specific PDE, these models learn the operator that maps a functional parameter of the PDE (such as initial values, boundary conditions, force fields, or material parameters) to the corresponding solution. This approach amortizes computational cost by learning to solve entire families of PDEs. Although neural operators have demonstrated strong pre-dictive capabilities, they are unable to quantify the inherent uncertainty in their predictions. Predictive uncertainty quan-tification is indispensable for many downstream tasks, such as decision-making in safety-critical scenarios. For exam-ple, a neural operator trained on past climate data should increase predictive uncertainty under distribution shifts due to climate change, reflecting potential losses in accuracy. Furthermore, uncertainty quantification is also useful for improving neural operator training via active learning strate-gies (Musekamp et al., 2025), potentially reducing the cost of generating computationally expensive numerical simula-tions as training data. Extensive previous work has shown that the structured uncer-tainty provided by Gaussian process (GP) models is particu-larly suitable for such downstream tasks, including closed-form acquisition functions for active learning and Bayesian optimization for optimal selection of future queries or exper-iments (Garnett, 2023); enabling online model adaptation to continuously update with new data while preserving consis-tency with prior knowledge (Sliwa et al., 2024); facilitating sensitivity analysis through the GP’s kernel structure reveal-ing system responses to parameter changes; and seamlessly integrating with probabilistic numerical computation (Hen-nig et al., 2022; Pförtner et al., 2022) to quantify, marginal-ize, and propagate computational uncertainty. Motivated by the capabilities of GPs, we propose LUNO, a practical yet theoretically sound framework that provides lin-earized predictive uncertainty in neural operators . LUNO 1Linearization Turns Neural Operators into Function-Valued Gaussian Processes                  
+
+> Currying
+> Probabilistic Currying
+> Linearization
+> +weight uncertainty LUNO
+> Step 0 Step 1
+> Step 2 Step 3
+> a∈Aa∈A
+> a∈Aa∈A
+> ×
+> x∈DU
+> ×
+> x∈DU
+> w∈W
+
+ ...
+
+  
+
+> w∈W
+
+ ...
+
+  
+
+> w∈W
+
+ ...
+
+  
+
+> w∈W
+
+ ...
+
+         
+
+> u∈Uu(x)∈Rd′
+> U
+> u(x)∈Rd′
+> Uu∈U
+
+u = F (a, w) u(x) = f (( a, x), w)= F (a, w)( x)
+
+u(x) = f (a, x)= f lin  
+
+> μ
+
+(( a, x), w)
+
+u = F( a) = f (a, · )= f lin  
+
+> μ
+
+(( a, · ), w)
+
+Figure 1: Illustration of the steps involved in LUNO. A trained neural operator F (top left ) is converted into an equivalent neural network f with outputs in Rd′ 
+
+> U
+
+using (reverse) currying ( top right ). Linearizing f around the mean of the Gaussian weight belief results in a Gaussian process posterior f quantifying the uncertainty about the function learned by f (bottom right ). Finally, probabilistic currying transforms f into a function-valued Gaussian process posterior F over the operator learned by the neural operator F (bottom left ). quantifies uncertainty over the mapping learned by the neu-ral operator via a Gaussian process with values in a separable Banach space of functions—a higher-order generalization of GPs that, when evaluated, returns a Gaussian random function rather than a finite-dimensional Gaussian random variable, as in standard GPs. This function -valued GP is constructed through model linearization from a Gaussian distribution quantifying uncertainty in the neural operator’s (finite-dimensional) weight space. We show that LUNO can be interpreted as a probabilistic generalization of the concept of currying in functional programming. This con-nection makes LUNO compatible with established methods for quantifying weight-space uncertainty in deep neural net-works, including the Laplace approximation (Ritter et al., 2018; Daxberger et al., 2021a; Kristiadi et al., 2020; Papa-markou et al., 2024), SWAG (Maddox et al., 2019), or mean-field variational inference (Blundell et al., 2015). LUNO is practical, introduces minimal computational overhead, and can be applied post-hoc, without requiring to retrain the neural operator. It scales to large models and datasets and, like neural operators, is inherently resolution-agnostic. We demonstrate the capabilities of the framework in a case study on Fourier neural operators. LUNO is designed to be compatible with arbitrary (non-Gaussian) weight-space beliefs (see e.g. Appendix A.4). Nevertheless, we focus our exposition and experiments on Gaussian weight-space uncertainty, as, in the future, we aim to explore the use of the resulting function-valued Gaus-sian process in downstream tasks such as the ones outlined above. In Section 2, we review the fundamentals of neural operators and (multi-output) Gaussian processes. Section 3 presents our main contribution. We first develop Gaussian processes that take values in (infinite-dimensional) Banach spaces of functions, along with the notion of probabilistic currying ,which formalizes their equivalence to (multi-output) Gaus-sian processes. Using probabilistic currying, we construct function-valued Gaussian processes from neural operators with Gaussian weight beliefs. In Section 4, we discuss prior work on operator learning and related uncertainty quantifica-tion. Finally, we demonstrate in Section 5 the effectiveness of LUNO in common PDE learning settings. 2Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+# 2. Background 
+
+We first review neural operators, with emphasis on Fourier neural operators, which serve as the primary case study for our analysis. Then, we provide an overview of multi-output Gaussian processes. 
+
+2.1. Neural Operators 
+
+Neural operators (NOs) (Kovachki et al., 2023) are neural network architectures that map between (infinite-dimensional) Banach spaces of functions. A neural operator is a function F : A × W → U, where • A is a (separable) Banach space of functions a : DA →
+
+Rd′ 
+
+> A
+
+with domain DA ⊂ RdA ,• U is a (separable) Banach space of functions u : DU →
+
+Rd′ 
+
+> U
+
+with domain DU ⊂ RdU ,• W is a set of parameters (typically W ⊂ Rp or W ⊂
+
+Cp). To keep training tractable, neural operators are trained on datasets {(a(i)(X(i) 
+
+> A
+
+), u(i)(X(i) 
+
+> U
+
+)) }ni=1 consisting of pairs of input and corresponding output functions (a(i), u(i)) ∈
+
+A × U that are discretized at finitely many points X(i) 
+
+> A
+
+∈
+
+(DA)n(i) 
+
+> A
+
+and X(i) 
+
+> U
+
+∈ (DU)n(i) 
+
+> U
+
+, respectively. The training objective is typically given by the empirical risk 
+
+R(w) = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+L(u(i)(X(i) 
+
+> U
+
+), F (a(i)(X(i) 
+
+> A
+
+), w)( X(i) 
+
+> U
+
+)) 
+
+or a regularized version of the empirical risk. Neural opera-tors were originally developed, and are commonly used, to learn the solution operator of non-linear, parametric partial differential equations. In this case, typically, DA = DU, the input functions a ∈ A correspond to parameters and/or ini-tial conditions of the PDE, and the output functions u ∈ U
+
+are the corresponding solutions of the PDE (at later time points). There are many different realizations of the abstract neural operator framework, including low-rank neural op-erators (Kovachki et al., 2023), (multipole) graph neural operators (Li et al., 2020b;a), and (spherical) Fourier neural operators (Li et al., 2021; Bonev et al., 2023). 
+
+Example 2.1 (Fourier Neural Operators) . As a case study we will focus on Fourier neural operators (FNOs) (Li et al., 2021), a popular variant of the neural operator ar-chitecture that applies all spatially global operations in the spectral domain. An FNO F transforms a periodic input function a into a periodic output function F (a, w)( x) := 
+
+q(v(L)(x), wq ) with 
+
+v(l+1)  
+
+> i
+
+(x) := σ(l)
+
+> d′
+> v
+
+X
+
+> j=1
+
+F−1
+
+
+
+R(l) 
+
+> kij
+
+F
+
+
+
+v(l)
+
+> j
+
+
+
+> k
+
+kmax 
+
+> k=1
+
+
+
+(x)+ W (l) 
+
+> ij
+
+v(l) 
+
+> j
+
+(x)
+
+!
+
+for l = 1 , . . . , L − 1 and v(1) (x) = p(a(x), wp) ∈ Rd′ 
+
+> v
+
+,where F denotes the Fourier transform of a periodic func-tion. 1 p : Rd′ 
+
+> A
+
+× Wp → Rd′ 
+
+> v
+
+and q : Rd′ 
+
+> v
+
+× Wq → Rd′
+
+> U
+
+are parametric functions called lifting and projection , re-spectively. R(l) ∈ Ckmax ×d′  
+
+> v×d′
+> v
+
+and W (l) ∈ Rd′  
+
+> v×d′
+> v
+
+, and 
+
+w = ( wp, W (1) , R(1) , . . . , W (L−1) , R(L−1) , wq ). The map v(l) → v(l+1) is the l-th Fourier layer . If the inputs a
+
+are discretized on a regular grid, F can be computed by a real fast Fourier transform (RFFT). 
+
+2.2. (Gaussian) Random Processes 
+
+Aiming to generalize the notion of a Gaussian process later, we provide its formal definition from mathematical statis-tics that is rarely used in machine learning. For a set Ω
+
+and a set F of functions on Ω with values in a measur-able space, we denote by σ(F ) the smallest σ-algebra for which all f ∈ F are measurable. The Borel σ-algebra 
+
+on a topological space Ω is denoted by B (Ω) . A random process on a probability space (Ω , A, P) with index set A
+
+and values in a measurable space (S, AS ) is a function 
+
+f : A × Ω → S such that f( a, · ) is A-AS -measurable for all a ∈ A. We use the shorthand f( a) := f( a, ·). One can show that ω 7 → f( ·, ω ) is a function-valued random vari-able with values in (RA, σ (δA)) , where δA denotes the set of point evaluation functionals on the set BA of functions from A to B. A random process is called Gaussian or a 
+
+Gaussian process (GP) if it has values in (R, B (R)) and 
+
+ω 7 → (f( a1, ω ), . . . , f( an, ω )) is an Rn-valued Gaussian ran-dom variable for all n ∈ N and a1, . . . , a n ∈ A. The mean function of f is given by a 7 → EP [f( a)] and the covariance function of f is given by (a1, a 2) 7 → Cov P [f( a1), f( a2)] .We denote by f ∼ GP (m, k ) that f is a Gaussian process with mean function m and covariance function k.It is common to extend the concept of a GP to finitely many output dimensions. A d′-output Gaussian process f is a random process with values in (Rd, B  Rd) such that ω 7 →
+
+ f (a1, ω )⊤ · · · f (an, ω )⊤⊤ is an Rn·d′
+
+-valued Gaus-sian random variable for all n ∈ N, and a1, . . . , a n ∈ A.We use the shorthand f (a) := f (a, ·). The mean function of 
+
+f is given by a 7 → EP [f (a)] ∈ Rd′
+
+and the covariance func-tion of f is (a1, a 2) 7 → Cov P [f (a1), f (a2)] ∈ Rd′×d′
+
+. We 
+
+> 1
+
+More precisely, the operator F : L 2(Td, R) → ℓ2(C) maps a real-valued square-integrable function on the d-dimensional torus to the coefficients of the corresponding Fourier series. 
+
+3Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+denote by f ∼ GP (m, K) that f is a multi-output Gaussian process with mean function m and covariance function K.While the notion of a multi-output Gaussian process might seem more general than the notion of a Gaussian process, it is possible to “emulate” a function with multiple outputs by augmenting the input space of a Gaussian process: 
+
+Lemma 2.1. Let (Ω , A, P) be a probability space, f : A ×
+
+Ω → Rd′
+
+, I = {1, . . . , d ′}, and f : ( A × I) × Ω → R with 
+
+(f (a, ·)) i = f(( a, i ), ·) for all a ∈ A and i ∈ I (P-almost surely). Then f ∼ GP (m, K) if and only if f ∼ GP (m, k ),where, for all a ∈ A and i ∈ I,
+
+(m(a)) i = m(a, i ),
+
+as well as, for all a1, a 2 ∈ A and i, j ∈ I,
+
+(K(a1, a 2)) ij = k(( a1, i ), (a2, j )) .
+
+# 3. LUNO: Linearized Predictive Uncertainty in Neural Operators 
+
+In this section, we show how to obtain linearized predic-tive uncertainty in neural operators (LUNO). We lever-age model linearization to propagate Gaussian weight-space uncertainty through the neural operator to its pre-dictions. LUNO can be applied to trained models as a post-processing step, and does not require expensive re-training. Furthermore, LUNO employs the framework of function-valued Gaussian processes. To that end, we first develop the concept of a function-valued Gaussian process and draw an important parallel with currying in functional programming, which offers a natural interpretation of our method. Figure 1 illustrates the main steps comprising our methodology. 
+
+3.1. Function-Valued Gaussian Processes and Probabilistic Currying 
+
+We want to use model linearization to extend the Gaussian belief over the parameters of a neural network f : Rd ×
+
+Rp → Rd′
+
+into a (multi-output) Gaussian process belief over the function learned by the neural network. However, this is not immediately applicable to neural operators, since their outputs do not lie in Rd′
+
+, but in a potentially infinite-dimensional Banach space of functions. Hence, we need to generalize (multi-output) Gaussian processes to the notion of a Banach-valued Gaussian process .
+
+Definition 3.1 (Banach-Valued Gaussian Process) . Let U
+
+be a real separable Banach space and L a set 2 of linear functionals on U. A random process F : A × Ω → U on a probability space (Ω , A, P) with index set A and values in (U, σ (L)) is called Gaussian or a Gaussian process if     
+
+> 2Technically, Lneeds to separate the points in U.See Ap-pendix A.1 for additional details.
+
+ω 7 → (F(a1, ω ), . . . , F(an, ω )) is a jointly Gaussian ran-dom variable 3 for all n ∈ N and a1, . . . , a n ∈ A.As above, we use the shorthand F(a) := F(a, ·). Moreover, the map ω 7 → F(·, ω ) is a random variable with values in the space of (linear and non-linear) operators (UA, σ (δA)) . This warrants the interpretation of U-valued Gaussian processes as Gaussian random operators .In the context of neural operators, U is a Banach space of 
+
+Rd′ 
+
+> U
+
+-valued functions on a common domain DU. In this case, we can show that U-valued Gaussian processes are closely related to multi-output Gaussian processes with an augmented input space. This is in analogy to Lemma 2.1, but requires some additional technical assumptions. 
+
+Theorem 3.2 (Probabilistic Currying in Banach Spaces; proof in Appendix A.3) . Let (Ω , A, P) be a probability space and U a real separable Banach space of Rd′
+
+-valued functions with domain DU. Let F : A × Ω → U and f : ( A ×
+
+DU) × Ω → Rd′
+
+such that F(a, ·)( x) = f (( a, x), ·) for all a ∈ A and x ∈ DU (P-almost surely). Then (i) F is a random process with values in (U, σ (δU)) if and only if 
+
+f is a Rd′
+
+-valued random process, (ii) F is Gaussian if and only if f is Gaussian, and (iii) if all evaluation maps 
+
+δx : U → Rd′
+
+, u 7 → u(x) are continuous, then (i) holds for 
+
+F with values in (U, B (U)) .
+
+Theorem 3.2 reveals an insight into the abstract concept of function-valued Gaussian processes: Function-valued Gaus-sian processes are equivalent to (multi-output) Gaussian processes with augmented input spaces. This equivalence enables the translation of real-valued GPs, a computationally feasible structure, into infinite-dimensional function-valued objects. 
+
+Probabilistic Currying We note that Theorem 3.2 con-stitutes a probabilistic analogue of the concept of cur-rying from functional programming (and category the-ory more generally). The Theorem shows the equiva-lence of the vector-valued (Gaussian) random function 
+
+f : A × DU → Rd′
+
+and the (Gaussian) random operator 
+
+F : A → (DU → Rd′
+
+) with F(a)( x) a.s. 
+
+= f (a, x).
+
+Example 3.1 (Currying a Continuous Bivariate Gaussian Process) . Let f ∼ GP (m, k ) be a bivariate 2-output Gaus-sian process with compact index set X1 × X2 ⊂ R2 on 
+
+(Ω , A, P) with ( P-almost surely) continuous paths. For in-stance, this assumption is fulfilled if m is continuous and 
+
+k is a multivariate Matérn covariance function (Da Costa et al., 2023). Then a 7 → f( a, ·) is a function-valued Gaussian process. More precisely, Theorem 3.2 shows that the map 
+
+F : X1 × Ω → C(X2), (a, ω ) 7 → (x 7 → f(( a, x ), ω )) is a 
+
+C(X2)-valued Gaussian process with index set X1.
+
+> 3See Definition A.4 and Remark A.5.
+
+4Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Thus, an intuitive way to understand function-valued Gaus-sian processes is as objects that, when evaluated, return a Gaussian process. Currying can also be used to relate the mean and covariance functions of function-valued or more general vector-valued (Gaussian) random processes, and their counterparts defined on the corresponding multi-output (Gaussian) random process. As this discussion is rather technical, we defer it to Appendix A.3. Appendix A provides an in-depth explanation of our theoret-ical framework and contains a plethora of theoretical results on Gaussian processes with values in arbitrary (infinite-dimensional) vector spaces that are not necessarily Banach or function spaces. For example, such results are vital for quantifying uncertainty in neural operators applied to PDEs that only admit weak solutions (see Appendix A.4). 
+
+3.2. Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+We use the notion of function-valued Gaussian processes to develop LUNO. We delineate the key components into different steps, visually represented in Figure 1. 
+
+Step 0 Let F : A × W → U ⊂ (Rd′ 
+
+> U
+
+)DU be a neural operator as in Section 2.1 with W = Rp.
+
+Step 1 By uncurrying F , we define the function 
+
+f : ( A × DU) × W → Rd′ 
+
+> U
+
+, (( a, x), w) 7 → F (a, w)( x).
+
+Step 2 We obtain a Gaussian belief w ∼ N (μ, Σ) over the parameters of the network. In Bayesian deep learning, a common way to obtain this Gaussian belief is by plac-ing a Gaussian prior p(w) on the network’s parameters and then approximating the posterior distribution given the data 
+
+p(w | D ). Well-established (approximate) inference tech-niques to obtain the posterior over w include the Laplace approximation (Ritter et al., 2018; Daxberger et al., 2021a; Immer et al., 2021), variational inference (Graves, 2011; Blundell et al., 2015; Khan et al., 2018), and SWAG (Mad-dox et al., 2019). Since f has values in Rd′ 
+
+> U
+
+, following Khan et al. (2019); Immer et al. (2021) and Appendix B, we can linearize the model around μ:
+
+f (( a, x), w) ≈ f lin  
+
+> μ
+
+(( a, x), w):= f (( a, x), μ) + D wf (( a, x), w)|μ (w − μ)
+
+to arrive at an induced approximate d′
+
+> U
+
+-output Gaussian process belief f := f lin  
+
+> μ
+
+(·, w) ∼ GP (m, K) with index set 
+
+A × DU, m(a, x) = f (( a, x), μ), and 
+
+K(( a1, x1), (a2, x2)) = D wf (( a1, x1), w)|μ Σ Dwf (( a2, x2), w)|⊤ 
+
+> μ
+
+.
+
+The function f lin  
+
+> μ
+
+is linear in the weights, but it re-mains highly nonlinear in the input. Moreover, we have 
+
+f lin  
+
+> μ
+
+(·, μ) = f (·, μ), which means that the mean function of f matches the prediction of the trained neural operator (before linearization) if we set μ to the weights w⋆ found during training. 
+
+Step 3 Probabilistic currying constructs a Gaussian ran-dom operator from f . Namely, we define the function 
+
+F : A × Ω → U, (a, ω ) 7 → (x 7 → f (( a, x), ω )) .
+
+(For this F to be well-defined, we need to assume that 
+
+f (( a, · ), ω ) is ∈ U for all a ∈ A. See also Appendix A.4). Theorem 3.2 then shows that F is a U-valued Gaussian process. Moreover, E [F(a)( x)] = F (a, μ)( x), and 
+
+Cov [ F(a1)( x1), F(a2)( x2)] = D wF (a1, w)( x1)|μ Σ DwF (a2, w)( x2)|⊤ 
+
+> μ
+
+.
+
+The entire construction, in particular Theorem 3.2, still ap-plies if w is not Gaussian. In this case, f and F are no longer Gaussian, but the formulae for the mean and covari-ance functions remain valid. We derive a generalization of the method for general separable Banach spaces U in Appendix A.4. For instance, this is useful if the functions in U are not pointwise defined, such as weak solutions of PDEs. 3.2.1. C ASE STUDY : F OURIER NEURAL GAUSSIAN 
+
+RANDOM OPERATORS 
+
+The exposition so far applies generally to neural operators. For Fourier neural operators, a particularly efficient repre-sentation of the function-valued posterior process is avail-able. To simplify the exposition, we focus on the case where the Gaussian belief is restricted to the parameters of the final Fourier block wL−1 := ( R(L−1) , W (L−1) ). This is a common approach in the context of last-layer Laplace approximation (Kristiadi et al., 2020). In Appendix C.1, we show that the function-valued GP obtained by applying LUNO in this case takes the form 
+
+F( a)( x) = ˜ q(mz(L−1) (x)) + 
+
+
+
+D ˜ q (mz(L−1) (x)) 
+
+· (z(L−1) (x) − mz(L−1) (x)) 
+
+
+
+,
+
+i.e., F( a) ∼ GP (ma, Ka) with 
+
+ma(x) = F (a, w⋆)( x), and 
+
+Ka(x1, x2) = D ˜ q (mz(L−1) (x1)) Kz(L−1) (x1, x2)
+
+· D ˜ q (mz(L−1) (x2)) ⊤ ,
+
+where z(L−1) ∼ GP (mz(L−1) , Kz(L−1) ) is a multi-output 
+
+parametric Gaussian process whose moments only depend on v(L−1) , μ, and Σ, and ˜q = q( · , wq ) ◦ σ(L−1) .5Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+There are two practical benefits arising from this representa-tion. First, computing the moments of, and drawing samples from F( a) only needs access to the hidden state v(L−1) 
+
+of the neural operator. We can thus evaluate the Gaussian process belief at arbitrary output points x ∈ DU, without the need to compute more than one (full) forward pass of the neural operator. Secondly, since the Gaussian process belief F( a) over the output function is parametric, we can efficiently sample entire functions from it that can then be lazily evaluated at arbitrary points. This is in contrast to gen-eral non-parametric Gaussian processes, where one typically discretizes the GP before drawing samples of the function values at the given finite set of points. Such lazy functional samples can be used e.g. for active experimental design and Bayesian optimization (Wilson et al., 2021). 
+
+# 4. Related Work 
+
+Azizzadenesheli et al. (2024) provide a comprehensive overview of neural operator architectures. These include graph neural operators (Li et al., 2020a), physics-informed neural operators (Li et al., 2024), multi-wavelet neural oper-ators (Gupta et al., 2021) and the widely used Fourier neural operators (Li et al., 2021). FNOs have gained particular prominence, finding applications across various PDE prob-lems (Pathak et al., 2022; Zhang et al., 2023; Li et al., 2023a; Rashid et al., 2022; Qin et al., 2024; Kossaifi et al., 2023; Bonev et al., 2023). Theoretical foundations for FNOs have been established, with Kovachki et al. (2021) proving their universal approximation capabilities for continuous oper-ators, and Lanthaler et al. (2024) analyzing discretization-induced aliasing errors. While neural operator architectures have advanced, incorpo-rating uncertainty estimation remains challenging. Recent work has approached this problem from different angles. Garg & Chakraborty (2023) applied variational inference to estimate Bayesian posteriors in DeepONets. More closely related to our work, Magnani et al. (2022) developed uncer-tainty estimates for graph neural operators using Laplace approximation, though their approach does not extend to FNOs, nor does it consider function space formulations. Kumar et al. (2024) combined Gaussian Process priors with Wavelet Neural Operators, optimizing hyperparameters through negative log-marginal likelihood minimization. Ad-ditional Bayesian operator frameworks have been explored by Garg & Chakraborty (2022); Batlle et al. (2024); Zou et al. (2024); Mora et al. (2025). Function-valued Gaussian processes have been studied in the Hilbert space setting by Owhadi (2023); Batlle et al. (2024). Our approach formulates the theory natively within the context of Banach spaces, as neural operators are defined as mappings between such spaces. In the Appendix we prove that, when restricted to the Hilbert space setting, the theoretical framework Owhadi (2023); Batlle et al. (2024) embeds into ours. To generate a probabilistic belief over a neural network’s weights, various Bayesian posterior approximation tech-niques are available. One of the most popular is the Laplace approximation, introduced to deep learning by Mackay (1992), which has gained popularity in the Bayesian deep learning community (Ritter et al., 2018; Daxberger et al., 2021a; Kristiadi et al., 2020; Papamarkou et al., 2024). This is also due to its scalability, achieved through various strate-gies including using log-posterior Hessian approximations (Ritter et al., 2018; Martens, 2020), treating only a subset of the model probabilistically (Daxberger et al., 2021b), em-ploying linearized Laplace (Foong et al., 2019; Immer et al., 2021), or using scalable Gaussian processes methods (Deng et al., 2022; Ortega et al., 2024). Other Bayesian deep learn-ing methods include variational inference (Graves, 2011; Blundell et al., 2015; Khan et al., 2018; Zhang et al., 2018), Markov Chain Monte Carlo (Neal, 1996; Welling & Teh, 2011; Zhang et al., 2020), SWAG (Maddox et al., 2019), or heuristic methods (Gal & Ghahramani, 2016; Maddox et al., 2019). Finally, a widely used approach for uncertainty quan-tification in deep learning is ensembles (Lakshminarayanan et al., 2017; Hansen & Salamon, 1990), that train multiple independent neural networks with different random initial-izations and aggregate the predictions. 
+
+# 5. Experiments 
+
+We evaluate linearized predictive uncertainty (LUNO-∗)against sample-based approaches (Sample-∗), which require additional approximations to impose a Gaussian Process structure over the output space. To be precise, in the Sample-
+
+∗ methods, we draw samples from the weight-space belief, map the samples through the (nonlinear) map w 7 → F (·, w),and compute a function-valued Gaussian process belief over the prediction by moment matching the empirical mean and covariance function. We consider isotropic Gaussian (∗-Iso) and low-rank Laplace approximated ( ∗-LA) weight-space uncertainties, in both their sample-based (Sample) and linearized (LUNO) forms. We compare these weight-space-Gaussian methods against input perturbations (Pathak et al., 2022), and deep ensembles. Deep ensembles were trained 10 times with different random seeds on the original Fourier neural operator (FNO) architecture. We evaluate our model on time-dependent PDEs in one and two spatial dimensions, predicting the next time step autoregressively from the pre-vious ten. We assess uncertainty quantification in two key settings: (1) a low-data regime, where the model is trained on a limited number of trajectories, and (2) out-of-distribu-tion (OOD) scenarios, where physical phenomena unseen during training are introduced at test time. We evaluate the predictive uncertainty using standard met-6Linearization Turns Neural Operators into Function-Valued Gaussian Processes −0.50.00.5   
+
+> Input Perturbations Ensemble Sample-LA LUNO -LA
+> −0.04 0.00.04
+
+Figure 2: FNO predictive uncertainty quantified by several different methods. Top row: target function ( ), mean ( ) and 1.96 standard deviations ( ) of, as well as samples ( ) from, the predictive belief. For the ensemble, the samples are four of the ensemble members. Bottom row: spread of the predictive distribution around the mean. For the sample-/ensemble-based methods, we construct a Gaussian distribution from the empirical covariance matrix and draw four samples ( ). We plot 1.96 standard deviations ( ) of the predictive belief, as well as the top-three eigenfunctions ( ) and a heatmap of the predictive covariance matrix (top right corner of panels). rics: the expected root mean squared error (RMSE) of the mean predictions, the expected marginal χ2 statistics, and the expected marginal negative log-likelihood (NLL) over 250 test input-output pairs. Hyperparameters are optimized via grid search using the expected marginal NLL on a valida-tion set as the target. Full details, including data generation, training procedures, uncertainty estimation methods, and more detailed results are provided in the Appendix. 
+
+Code. We provide an efficient implementation of the LUNO framework in JAX (Bradbury et al., 2018) at 
+
+ / MethodsOfMachineLearning / luno. The code for our experiments can be found at 
+
+ / 2bys / luno-experiments. 
+
+Low data regime. We train an FNO for 100 epochs on 25 simulated solutions of Burgers’ equation with 59-time steps and evaluate their uncertainty on 250 unseen test pairs. Figure 2 visualizes the predictive uncertainty for input per-turbations, deep ensemble, Sample-LA, and LUNO-LA on a single test data point of Burgers’ equation. Table 1 shows that LUNO-LA outperforms the other approaches. This trend holds across two other one-dimensional time-dependent PDE datasets, which are included in the Ap-pendix (Table 4 and Table 5). While all methods produce marginal confidence bands around the network prediction, their sample path covariances differ qualitatively. 
+
+Out-of-Distribution. To assess OOD robustness, we train an FNO (or an ensemble of 10 FNOs) on a two-dimensional Advection-Diffusion equation with initial conditions sam-pled from Gaussian blobs and a random constant velocity                                  
+
+> Method RMSE ( ↓)χ2NLL ( ↓)Input Perturbations 3.63 ×10 −20.894 −1.8720
+> Ensemble 3.49 ×10 −25.597 −0.8145
+> Sample-Iso 3.72 ×10 −20.977 −1.9341
+> LUNO-Iso 3.62 ×10 −20.864 −1.9488
+> Sample-LA 5.59 ×10 −22.774 −1.1572
+> LUNO-LA 3.62 ×10 −21.022 −2.0787
+
+Table 1: Comparison of UQ methods for an FNO trained on 25 trajectories of Burgers’ equation.                      
+
+> Method Base Flip Pos-Neg-Flip Input Perturbations −2.586 2.573 494 .935
+> Ensemble −5.313 −3.825 −1.014
+> Sample-Iso −2.921 4.071 43 .362
+> LUNO-Iso −2.892 3.450 37 .733
+> Sample-LA −2.576 4.395 27 .046
+> LUNO-LA −2.934 −1.126 1.164
+
+Table 2: Expected marginal NLL evaluation across OOD datasets for different methods. Lower is better. field. We introduce various additional physical phenomena to the test set. These include reversing the velocity field at the center (Flip), introducing a triangular heat source (Pos), and a cloud-shaped heat sink (Neg). Table 2 reports ex-pected marginal NLL over a variation of out-of-distribution datasets. Additional and more granular results can be found in the Appendix. While LUNO-LA outperforms the other weight space methods and input perturbations, deep ensem-bles achieve the lowest expected marginal NLL in next-step prediction. However, their uncertainty representation is fun-damentally different. Figure 3 compares deep ensemble 7Linearization Turns Neural Operators into Function-Valued Gaussian Processes Target Residual Pred. Std. Residual Pred. Std.      
+
+> √χ2Sample Null space projection √χ2Sample
+> 0.00.5
+> 0.10.2
+> 0.10.2
+> 0123
+> 0.00.5
+> 0.025 0.050 0.075
+> 0.10.20.3
+> 0.03 0.04
+> 01510
+> 0.00.51.0
+> Ensemble LUNO -LA
+
+Figure 3: Comparing an ensemble (left), LUNO-LA (right). Top row shows target, residuals, and the predictive standard deviation. Bottom row shows the absolute ratio of the pointwise residual and the predictive standard deviation as well as a sample from the predictive belief. Since the uncertainty structure of the ensemble prediction is of low rank, we also include its unexplained error by projecting the residual vector onto the null space of the predictive covariance. with LUNO-LA. Deep ensembles approximate uncertainty using a small set of discrete hypotheses, represented by a col-lection of point masses in parameter space. While this repre-sentation is not confined to the analytic form of a Gaussian distribution, it has other constraints: For example, although marginal uncertainty estimates (panel 3 in the figure) can be relatively well-structured, the associated empirical covari-ance across the ensemble is fundamentally rank-deficient. This limitation is critical, as it leaves certain types of errors entirely unaccounted for (panel 8, which projects residuals onto the null space of the ensemble covariance). By contrast, LUNO-LA constructs a covariance matrix whose rank is (in theory) only bounded by the number of parameters con-sidered. 4 As a result, a plot like panel 8 in Figure 3 does not make sense for LUNO-LA, since, in principle, it explains any variation in the data (albeit with varying calibration). This behavior is also evident in full-trajectory evaluations. Although FNOs are trained for next-step prediction, they are often used for auto-regressive roll-outs, where predictions are recursively fed back as inputs. Such roll-outs cause a subtle yet significant distribution shift, as prediction errors accumulate and are treated as ground truth for subsequent steps. While the deep ensemble improves upon the network prediction in terms of RMSE, its uncertainty estimate does not adapt to the increasing error, as reflected in the NLL (cf. Figure 4). Wall-clock times for single-trajectory predictions across all 
+
+> 4Numerical instabilities and (near) singular Jacobians might reduce the rank in practice.
+
+methods are reported in the Appendix. Due to the efficiency of Jacobian-vector products and analytical tractability of the inverse real fast Fourier transform, LUNO-∗ methods outperform their Samples-∗ counterparts, with LUNO-Iso being even faster than the deep ensemble in our implemen-tation. Each method comes with its own additional cost. While deep ensembles need fully separate training runs with different random seeds, LUNO-LA’s main computational bottleneck is computing the low-rank approximation of the generalized Gauss–Newton matrix (GGN). This cost is dom-inated by network size, the selected rank, and the amount of data used for the GGN approximation. 
+
+# 6. Conclusion 
+
+We introduced LUNO, a framework for predictive uncer-tainty quantification in neural operators using function-valued Gaussian processes. LUNO can be interpreted as a probabilistic generalization of currying in functional pro-gramming. By leveraging model linearization, it offers a computationally efficient and theoretically grounded ap-proach to incorporating weight-space uncertainties in neural operators. The framework endows neural operators with structured weight-space uncertainty quantification capabili-ties while preserving their resolution-agnostic nature. We demonstrate this for LUNO-LA in the FNO setting under low-data regimes and out-of-distribution scenarios. LUNO’s main limitation lies in the challenges associated with modeling weight-space covariances. Nevertheless, by successfully constructing a structured Gaussian process over 8Linearization Turns Neural Operators into Function-Valued Gaussian Processes 0.20.4    
+
+> RMSE
+> 10 20 30 40 50
+> Time step
+> 10 1
+> 10 2
+> 10 3
+> NLL
+
+Figure 4: Averaged performance of different UQ methods on an autoregressive rollout of the FNO on 50 trajectories from the Pos-Neg-Flip dataset. We compare input perturbations ( ), deep ensembles ( ), Sample-Iso ( ), LUNO-Iso ( ), Sample-LA ( ), LUNO-LA ( ). the output space, LUNO paves the way for future applica-tions of GP-valued neural operators in scientific and engi-neering domains. 
+
+# Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+# Acknowledgments 
+
+The authors gratefully acknowledge financial support by the European Research Council through ERC CoG Ac-tion 101123955 ANUBIS ; the DFG Cluster of Excellence “Machine Learning - New Perspectives for Science”, EXC 2064/1, project number 390727645; the German Federal Ministry of Education and Research (BMBF) through the Tübingen AI Center (FKZ: 01IS18039A); the DFG SPP 2298 (Project HE 7114/5-1), and the Carl Zeiss Founda-tion, (project "Certification and Foundations of Safe Ma-chine Learning Systems in Healthcare"), as well as funds from the Ministry of Science, Research and Arts of the State of Baden-Württemberg. The authors thank the Interna-tional Max Planck Research School for Intelligent Systems (IMPRS-IS) for supporting Emilia Magnani, Marvin Pfört-ner and Tobias Weber. We would like to thank Nathaël Da Costa for invaluable feedback on the theoretical aspects of this work. 
+
+# References 
+
+Aliprantis, C. D. and Border, K. C. Infinite Dimensional Analysis: A Hitchhiker’s Guide . Springer-Verlag, Berlin, Heidelberg, third edition, 2006. doi:10.1007/3-540-29587-9. Azizzadenesheli, K., Kovachki, N., Li, Z., Liu-Schiaffini, M., Kossaifi, J., and Anandkumar, A. Neural operators for accelerating scientific simulations and design. Nature Reviews Physics , pp. 1–9, 2024. Batlle, P., Darcy, M., Hosseini, B., and Owhadi, H. Kernel methods are competitive for operator learning. Journal of Computational Physics , 496:112549, 2024. Blundell, C., Cornebise, J., Kavukcuoglu, K., and Wierstra, D. Weight uncertainty in neural network. In ICML , 2015. Bogachev, V. I. Gaussian Measures , volume 62 of Mathe-matical Surveys and Monographs . American Mathemati-cal Society, Providence, Rhode Island, 1998. Bonev, B., Kurth, T., Hundt, C., Pathak, J., Baust, M., Kashinath, K., and Anandkumar, A. Spherical Fourier neural operators: Learning stable dynamics on the sphere. In ICML , 2023. Boullé, N. and Townsend, A. A mathematical guide to oper-ator learning. arXiv preprint arXiv:2312.14688 , 2023. Bradbury, J., Frostig, R., Hawkins, P., Johnson, M. J., Leary, C., Maclaurin, D., Necula, G., Paszke, A., VanderPlas, J., Wanderman-Milne, S., and Zhang, Q. JAX: composable transformations of Python+NumPy programs, 2018. URL 
+
+http://github.com/jax-ml/jax .Conway, J. B. A Course in Functional Analysis , volume 96 of Graduate Texts in Mathematics . Springer, New York, second edition, 1997. doi:10.1007/978-1-4757-4383-8. Da Costa, N., Pförtner, M., Da Costa, L., and Hennig, P. Sample path regularity of Gaussian processes from the co-variance kernel. arXiv preprint arXiv:2312.14886 , 2023. doi:10.48550/arXiv.2312.14886. Dangel, F., Tatzel, L., and Hennig, P. ViViT: Curvature access through the generalized Gauss-Newton’s low-rank structure. TMLR , 2022. Daxberger, E., Kristiadi, A., Immer, A., Eschenhagen, R., Bauer, M., and Hennig, P. Laplace redux-effortless Bayesian deep learning. NeurIPS , 2021a. Daxberger, E., Nalisnick, E., Allingham, J. U., Antoran, J., and Hernandez-Lobato, J. M. Bayesian deep learning via subnetwork inference. In ICML , 2021b. 9Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Deng, Z., Zhou, F., and Zhu, J. Accelerated linearized Laplace approximation for Bayesian deep learning. 
+
+NeurIPS , 2022. Foong, A. Y., Li, Y., Hernández-Lobato, J. M., and Turner, R. E. ’In-Between’ uncertainty in Bayesian neural net-works. arXiv preprint arXiv:1906.11537 , 2019. Gal, Y. and Ghahramani, Z. Dropout as a Bayesian approxi-mation: Representing model uncertainty in deep learning. In ICML , 2016. Garg, S. and Chakraborty, S. Variational Bayes deep opera-tor network: a data-driven Bayesian solver for parametric differential equations. arXiv preprint arXiv:2206.05655 ,2022. Garg, S. and Chakraborty, S. VB-DeepONet: A Bayesian operator learning framework for uncertainty quantifica-tion. Engineering Applications of Artificial Intelligence ,118:105685, 2023. ISSN 0952-1976. Garnett, R. Bayesian Optimization . Cambridge University Press, 2023. doi:10.1017/9781108348973. Grady, T., Khan, R., Louboutin, M., Yin, Z., Witte, P. A., Chandra, R., Hewett, R. J., and Herrmann, F. J. Towards large-scale learned solvers for parametric PDEs with model-parallel Fourier neural operators. arXiv preprint arXiv:2204.01205 , 2022. Graves, A. Practical variational inference for neural net-works. In NeurIPS , 2011. Gupta, G., Xiao, X., and Bogdan, P. Multiwavelet-based operator learning for differential equations. In NeurIPS ,2021. Hansen, L. K. and Salamon, P. Neural network ensem-bles. IEEE transactions on pattern analysis and machine intelligence , 12(10):993–1001, 1990. Hennig, P., Osborne, M. A., and Kersting, H. P. Proba-bilistic Numerics: Computation as Machine Learning .Cambridge University Press, 2022. Immer, A., Korzepa, M., and Bauer, M. Improving predic-tions of Bayesian neural networks via local linearization. In AISTATS , 2021. Kabri, S., Roith, T., Tenbrinck, D., and Burger, M. Resolution-invariant image classification based on Fourier neural operators. In Calatroni, L., Donatelli, M., Morigi, S., Prato, M., and Santacesaria, M. (eds.), Scale Space and Variational Methods in Computer Vision , pp. 236–249, Cham, 2023. Springer International Publishing. doi:10.1007/978-3-031-31975-4_18. Khan, M. E., Nielsen, D., Tangkaratt, V., Lin, W., Gal, Y., and Srivastava, A. Fast and scalable Bayesian deep learning by weight-perturbation in adam. In ICML , 2018. Khan, M. E., Immer, A., Abedi, E., and Korzepa, M. Ap-proximate inference turns deep networks into Gaussian processes. In NeurIPS , 2019. Klenke, A. Probability Theory: A Comprehensive Course .Universitext. Springer, London, second edition, 2014. Koehler, F., Niedermayr, S., Westermann, R., and Thuerey, N. APEbench: A benchmark for autoregressive neural emulators of PDEs. In NeurIPS , 2024. Kossaifi, J., Kovachki, N., Azizzadenesheli, K., and Anandkumar, A. Multi-grid tensorized Fourier neu-ral operator for high-resolution PDEs. arXiv preprint arXiv:2310.00120 , 2023. Kovachki, N., Lanthaler, S., and Mishra, S. On univer-sal approximation and error bounds for Fourier neural operators. JMLR , 22(290):1–76, 2021. Kovachki, N., Li, Z., Liu, B., Azizzadenesheli, K., Bhat-tacharya, K., Stuart, A., and Anandkumar, A. Neural operator: Learning maps between function spaces with applications to PDEs. JMLR , 24(89):1–97, 2023. Kristiadi, A., Hein, M., and Hennig, P. Being Bayesian, even just a bit, fixes overconfidence in relu networks. In 
+
+ICML , 2020. Kumar, S., Nayek, R., and Chakraborty, S. Neural operator induced Gaussian process framework for probabilistic solution of parametric partial differential equations. Com-puter Methods in Applied Mechanics and Engineering ,431:117265, 2024. Lakshminarayanan, B., Pritzel, A., and Blundell, C. Simple and scalable predictive uncertainty estimation using deep ensembles. In NeurIPS , 2017. Lanthaler, S., Stuart, A. M., and Trautner, M. Discretiza-tion error of Fourier neural operators. arXiv preprint arXiv:2405.02221 , 2024. Li, Z., Kovachki, N., Azizzadenesheli, K., Liu, B., Bhat-tacharya, K., Stuart, A., and Anandkumar, A. Multipole graph neural operator for parametric partial differential equations. In NeurIPS , 2020a. Li, Z., Kovachki, N., Azizzadenesheli, K., Liu, B., Bhat-tacharya, K., Stuart, A., and Anandkumar, A. Neural operator: Graph kernel network for partial differential equations. In ICLR 2020 Workshop on Integration of Deep Neural Models and Differential Equations , 2020b. 10 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Li, Z., Kovachki, N. B., Azizzadenesheli, K., Liu, B., Bhat-tacharya, K., Stuart, A., and Anandkumar, A. Fourier neural operator for parametric partial differential equa-tions. In ICLR , 2021. Li, Z., Peng, W., Yuan, Z., and Wang, J. Fourier neu-ral operator approach to large eddy simulation of three-dimensional turbulence. Theoretical and Applied Me-chanics Letters , 12(6):100389, 2022. Li, Z., Huang, D. Z., Liu, B., and Anandkumar, A. Fourier neural operator with learned deformations for PDEs on general geometries. JMLR , 24(388):1–26, 2023a. Li, Z., Kovachki, N., Choy, C., Li, B., Kossaifi, J., Otta, S., Nabian, M. A., Stadler, M., Hundt, C., Azizzadenesheli, K., et al. Geometry-informed neural operator for large-scale 3D PDEs. NeurIPS , 2023b. Li, Z., Zheng, H., Kovachki, N., Jin, D., Chen, H., Liu, B., Azizzadenesheli, K., and Anandkumar, A. Physics-informed neural operator for learning partial differential equations. ACM/JMS Journal of Data Science , 1(3):1–27, 2024. Loshchilov, I. and Hutter, F. Decoupled weight decay regu-larization. In ICLR , 2019. MacKay, D. J. Bayesian interpolation. Neural computation ,4(3):415–447, 1992a. MacKay, D. J. The evidence framework applied to classi-fication networks. Neural computation , 4(5):720–736, 1992b. Mackay, D. J. C. Bayesian methods for adaptive models .California Institute of Technology, 1992. Maddox, W., Garipov, T., Izmailov, P., Vetrov, D. P., and Wilson, A. G. A simple baseline for Bayesian uncertainty in deep learning. In NeurIPS , 2019. Magnani, E., Krämer, N., Eschenhagen, R., Rosasco, L., and Hennig, P. Approximate Bayesian neural operators: Uncertainty quantification for parametric PDEs. arXiv preprint arXiv:2208.01565 , 2022. Martens, J. New insights and perspectives on the natural gradient method. JMLR , 21(146):1–76, 2020. Martens, J. and Grosse, R. Optimizing neural networks with Kronecker-factored approximate curvature. In ICML ,2015. Mora, C., Yousefpour, A., Hosseinmardi, S., Owhadi, H., and Bostanabad, R. Operator learning with Gaussian processes. Computer Methods in Applied Mechanics and Engineering , 434:117581, 2025. ISSN 0045-7825. Musekamp, D., Kalimuthu, M., Holzmüller, D., Takamoto, M., and Niepert, M. Active learning for neural PDE solvers. ICLR , 2025. Neal, R. M. Bayesian Learning for Neural Networks .Springer-Verlag, Berlin, Heidelberg, 1996. ISBN 0387947248. Ortega, L. A., Santana, S. R., and Hernández-Lobato, D. Variational linearized Laplace approximation for bayesian deep learning. ICML , 2024. Owhadi, H. Do ideas have shape? Idea registration as the continuous limit of artificial neural networks. Physica D: Nonlinear Phenomena , 444, 2023. Owhadi, H. and Scovel, C. Operator-Adapted Wavelets, Fast Solvers, and Numerical Homogenization: From a Game Theoretic Approach to Numerical Approximation and Al-gorithm Design . Cambridge Monographs on Applied and Computational Mathematics. Cambridge University Press, Cambridge, 2019. doi:10.1017/9781108594967. Papamarkou, T., Skoularidou, M., Palla, K., Aitchison, L., Arbel, J., Dunson, D., Filippone, M., Fortuin, V., Hennig, P., Hernández-Lobato, J. M., Hubin, A., Immer, A., Kar-aletsos, T., Khan, M. E., Kristiadi, A., Li, Y., Mandt, S., Nemeth, C., Osborne, M. A., Rudner, T. G. J., Rügamer, D., Teh, Y. W., Welling, M., Wilson, A. G., and Zhang, R. Position: Bayesian deep learning is needed in the age of large-scale AI. In ICML , 2024. Pathak, J., Subramanian, S., Harrington, P., Raja, S., Chattopadhyay, A., Mardani, M., Kurth, T., Hall, D., Li, Z., Azizzadenesheli, K., et al. FourCastNet: Aglobal data-driven high-resolution weather model us-ing adaptive Fourier neural operators. arXiv preprint arXiv:2202.11214 , 2022. Pförtner, M., Steinwart, I., Hennig, P., and Wenger, J. Physics-informed Gaussian process regression general-izes linear PDE solvers. arXiv preprint arXiv:2212.12474 ,2022. Qin, S., Lyu, F., Peng, W., Geng, D., Wang, J., Gao, N., Liu, X., and Wang, L. L. Toward a better understanding of Fourier neural operators: Analysis and improvement from a spectral perspective. arXiv preprint arXiv:2404.07200 ,2024. Rashid, M. M., Pittie, T., Chakraborty, S., and Krishnan, N. A. Learning the stress-strain fields in digital com-posites using Fourier neural operator. Iscience , 25(11), 2022. Renn, P. I., Wang, C., Lale, S., Li, Z., Anandkumar, A., and Gharib, M. Forecasting subcritical cylinder wakes with Fourier neural operators. arXiv preprint arXiv:2301.08290 , 2023. 11 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Ritter, H., Botev, A., and Barber, D. A scalable Laplace approximation for neural networks. In ICLR , 2018. Schraudolph, N. Fast curvature matrix-vector products for second-order gradient descent. Neural computation , 14: 1723–38, 2002. Sliwa, J., Schneider, F., Bosch, N., Kristiadi, A., and Hennig, P. Efficient weight-space Laplace-Gaussian filtering and smoothing for sequential deep learning. arXiv preprint arXiv:2410.06800 , 2024. Steinwart, I. Conditioning of Banach space valued Gaussian random variables: An approximation approach based on martingales. arXiv preprint arXiv:2404.03453 , 2024. Welling, M. and Teh, Y. W. Bayesian learning via stochastic gradient Langevin dynamics. In ICML , 2011. Wilson, J. T., Borovitskiy, V., Terenin, A., Mostowsky, P., and Deisenroth, M. P. Pathwise conditioning of Gaussian processes. JMLR , 22(105):1–47, 2021. Zhang, G., Sun, S., Duvenaud, D., and Grosse, R. B. Noisy natural gradient as variational inference. In ICML , 2018. Zhang, R., Li, C., Zhang, J., Chen, C., and Wilson, A. G. Cyclical stochastic gradient MCMC for Bayesian deep learning. In ICLR , 2020. Zhang, T., Trad, D., and Innanen, K. Learning to solve the elastic wave equation with Fourier neural operators. 
+
+Geophysics , 88(3):T101–T119, 2023. Zou, Z., Meng, X., Psaros, A. F., and Karniadakis, G. E. NeuralUQ: A comprehensive library for uncertainty quan-tification in neural differential equations and operators. 
+
+SIAM Review , 66(1):161–190, 2024. 12 Linearization Turns Neural Operators into Function-Valued Gaussian Processes: Supplementary Materials 
+
+# A. Theoretical Results 
+
+A.1. Dual Spaces 
+
+We aim to quantify epistemic uncertainty about learned (nonlinear) operators F : A → U, where U is a (typically infinite-dimensional) real vector space of functions. If U is a space of real-valued functions, at the very least, we want to be able to express a probabilistic belief over all point evaluations F (a)( x) =: δx(F (a)) . Note that point evaluation δx : U → R of functions in U is a linear map, since δx(α1u1 +α2u2) = ( α1u1 +α2u2)( x) = α1u1(x)+ α2u2(x) = α1δx(u1)+ α2δx(u2).Many interesting operations that map functions into real numbers like (point-evaluated) derivatives and integrals are linear. Now let U be an arbitrary real vector space. Real-valued linear maps on U are referred to as linear functionals . The set of all linear functionals on U is referred to as the algebraic dual (space) of U and denoted by U#. A subset L of U# is said to be total or to separate the points in U if for any u1, u 2 ∈ U with u1̸ = u2, there is ℓ ∈ L such that ℓ(u1)̸ = ℓ(u2). Such subsets are useful, since they allow us to identify elements from the primal space U uniquely. For instance, the set of all point evaluation functionals on a vector space of real-valued functions separates the points in the space. If U is a topological vector space (for instance a separable Banach space in the context of neural operators), then the subspace of continuous linear functionals is denoted by U′ ⊂ U#.
+
+Remark A.1 (The Bidual Embedding) . The algebraic dual space U# with pointwise addition and scalar multiplication is a real vector space itself. Hence, any subspace L ⊂ U#, has an algebraic dual space L#. The elements ϕ ∈ L# of this space are linear functions mapping linear functionals into real numbers, i.e., ϕ(ℓ) ∈ R for ℓ ∈ L ⊂ U#. L is a vector space of real-valued functions, so we can consider its point evaluation functionals δu : L → R, ℓ 7 → ℓ(u). Note that the map ιU,L# : U → L#, u 7 → δu is linear and, if L separates the points in U, injective. Hence, U is isomorphic to its image 
+
+δU := ιU,L# (U) under ιU,L# . We refer to the map ιU,L# as the bidual embedding . Abusing notation, we write U ⊂ L#,
+
+u ∈ L# for u ∈ U, etc. 
+
+A.2. Probability Measures on Vector Spaces 
+
+Our framework models the predictive uncertainty over an output of a neural operator as a random variable with values in an (infinite-dimensional) vector space U of functions. As noted before, we at least want to quantify the uncertainty about a given set L ⊂ U# of linear functionals. Hence, we need to make the linear functionals in L measurable. Let (Ω , A, P) be a probability space, U a real vector space and L ⊂ U# a vector subspace of linear functionals separating the points in U. We equip U with the smallest σ-algebra σ(L) that makes all the functionals in L measurable. A random variable u with values in (U, σ (L)) (U-valued for short) is an A-σ(L)-measurable function u : Ω → U.Similar to their finite-dimensional counterparts, probability measures on and random variables with values in (infinite-dimensional) vector spaces admit the definition of a mean and a (cross-)covariance operator. 
+
+Definition A.2 (Mean and Covariance Operator (see e.g., Bogachev, 1998, Definition 2.2.7)) . Let γ be a probability measure on σ(L).(a) If L ⊂ L1(γ), then mγ ∈ L# defined by 
+
+mγ (ℓ) := Eγ [ℓ] = 
+
+Z
+
+> U
+
+ℓ(u)γ(d u) ∀ℓ ∈ L
+
+is called the mean of γ. The mean mu of a random variable u : Ω → U with values in (U, σ (L)) is defined as the mean 
+
+mP◦u−1 of its law. 13 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+(b) If L ⊂ L2(γ), then the linear operator Cγ : L → L# defined by 
+
+Cγ (ℓ1)( ℓ2) := Cov γ [ℓ1, ℓ 2] = 
+
+Z
+
+> U
+
+(ℓ1(u) − mγ (ℓ1)) ( ℓ2(u) − mγ (ℓ2)) γ(d u) ∀ℓ1, ℓ 2 ∈ L
+
+is called the covariance operator of γ. The covariance operator Cu of a random variable u : Ω → U with values in 
+
+(U, σ (L)) is defined as the covariance operator CP◦u−1 of its law. 
+
+Definition A.3 (Cross-Covariance Operator) . Let u1, u2 : Ω → U be random variables with values in (U, σ (L)) such that 
+
+L ⊂ L2(U, σ (L), P ◦ u−1 
+
+> i
+
+) for i = 1 , 2. The operator Cu1,u2 : L → L# defined by 
+
+Cu1,u2 (ℓ1)( ℓ2) := Cov [ ℓ1(u 1), ℓ 2(u 2)] = 
+
+Z
+
+> U
+
+(ℓ1(u 1(ω)) − mu1 (ℓ1)) ( ℓ2(u 2(ω)) − mu2 (ℓ2)) P(d ω)
+
+is called the cross-covariance operator between u1 and u2.Gaussian measures on U are defined by generalizing the closure properties of Gaussian measures on Rd.
+
+Definition A.4 (Gaussian Measure (see e.g., Bogachev, 1998, Definition 2.2.1(a))) . A probability measure γ on (U, σ (L)) 
+
+is called Gaussian if every linear functional ℓ ∈ L is a univariate Gaussian random variable on (U, σ (L), γ ). A random variable u : Ω → U with values in (U, σ (L)) is called Gaussian if its law P ◦ u−1 is Gaussian. If L is not a vector space, then we say that a random variable is Gaussian with values in (U, σ (L)) if and only if it is Gaussian with values in (U, σ (span L)) . Note that σ(span L) = σ(L) for any subset L ⊂ U# (by Klenke, 2014, Definition 1.79 and Theorem 1.91). 
+
+Remark A.5 (Jointly Gaussian Measures) . To define Gaussian processes with values in U, we need the notion of a joint Gaussian measure on Un. Fortunately, we can also leverage Definition A.4 for this. Un is a vector space under elementwise addition and scalar multiplication. Its algebraic dual space (Un)# is isomorphic to (U#)n, i.e. ℓ ∈ (Un)# if and only if there are ℓ1, . . . , ℓ n ∈ U# such that 
+
+ℓ(u1, . . . , u n) = 
+
+> n
+
+X
+
+> i=1
+
+ℓi(ui) ∀u1, . . . , u n ∈ U.
+
+It follows that σ(Ln) = σ(L)⊗n, where the latter denotes the product σ-algebra. Hence, following Definition A.4, we call a probability measure γ on (Un, σ (L)⊗n) Gaussian if every ℓ ∈ Ln is a univariate Gaussian random variable on 
+
+(Un, σ (L)⊗n, γ ).
+
+Remark A.6 (Probability Measures on Separable Banach Spaces) . The case where U is a real separable Banach space is of particular interest in the context of neural operators. In this case, we choose L = U′, i.e. all linear functionals that are continuous with respect to the norm topology. Then the σ-algebra σ(U′) coincides with the Borel σ-algebra B (U) generated by the norm topology (Bogachev, 1998, Theorem A.3.7). For Gaussian random variables u with values in (U, B (U)) (and Gaussian measure on B (U)), the mean mu is an element of U and the covariance operator maps into U (Bogachev, 1998, Theorem 3.2.3). Moreover, for jointly Gaussian random variables u1, u2 with values in (U, B (U)) , the cross-covariance operator Cu1,u2 maps from U′ to U (Bogachev, 1998, Theorem 3.2.4). 
+
+A.3. Random Processes with Values in Vector Spaces 
+
+Now we have all the necessary preliminaries to define a Gaussian process with values in (U, σ (L)) .
+
+Definition A.7 (Gaussian Process) . A Gaussian process with index set A and values in (U, σ (L)) on (Ω , A, P) is a function 
+
+F : A × Ω → U such that ω 7 → (F( a1, ω ), . . . , F( an, ω )) is a joint, i.e., (Un, σ (L)⊗n)-valued, Gaussian random variable for all n ∈ N and a1, . . . , a n ∈ A.As for real-valued or Rd-valued processes, we can also define mean and covariance functions for random processes with values in arbitrary real vector spaces. However, their definition is more technically involved. 
+
+Definition A.8. Let F be a random process with index set A and values in (U, σ (L)) on (Ω , A, P) .(a) If L ⊂ L1(P ◦ F( a, · )−1) for all a ∈ A, then the function 
+
+M : A → L#, a 7 → mF( a, · )
+
+is called the mean function of F.14 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+(b) If L ⊂ L2(P ◦ F( a, · )−1) for all a ∈ A, then the function 
+
+K : A × A → (L → L#), (a1, a 2) 7 → C F( a1, · ),F( a2, · )
+
+is referred to as the covariance function of F.
+
+Remark A.9 (Moments of Banach-Valued Gaussian Processes) . If U is a separable Banach space, then mean function M
+
+takes values in U and the covariance function K takes values in the space of nuclear operators U′ → U (Bogachev, 1998, Theorem 3.11.24). In the following, we aim to establish a correspondence between (Gaussian) random processes with values in (U, σ (L)) 
+
+and (Gaussian) random processes with values in (R, B (R)) , which we dub (generalized) probabilistic currying . Unlike in Lemma 2.1, we need additional technical assumptions for this to work both ways. Denote by scl w∗(ˆL) := {ℓ ∈ L |∃{ ℓi}i∈N ⊂ ˆL : ℓi →w∗ ℓ} the weak-* sequential closure of a set ˆL ⊂ L, where ℓi →w∗ ℓ if and only if ℓi(u) → ℓ(u) for all u ∈ U (Aliprantis & Border, 2006, Section 5.14). 
+
+Assumption A.10. Let ˆL ⊂ L a set of linear functionals on U such that there is an nscl ∈ N0 with scl nscl  
+
+> w∗
+
+(span ˆL) = L.
+
+Theorem A.11 (Generalized Probabilistic Currying) . Let ˆL ⊂ L be a set of linear functionals separating the points in U.Let F : A × Ω → U and f : ( A × ˆL) × Ω → R such that ℓ(F( a, ω )) = f(( a, ℓ ), ω ) for all a ∈ A, ℓ ∈ ˆL, and P-almost all 
+
+ω ∈ Ω.(i) If F is a random process with values in (U, σ (L)) , then f is a random process with values in (R, B (R)) , and (ii) if F is Gaussian, then so is f.If Assumption A.10 is satisfied, then the reverse implications hold as well. 
+
+We will need the following generalization of Theorem B.6 from (Pförtner et al., 2022). 
+
+Lemma A.12. Let ˆL ⊂ L such that Assumption A.10 holds. Then ˆL separates the points in U. Moreover, a function 
+
+u : Ω → U is (a) A-σ(L)-measurable if ℓ ◦ u is A-B (R)-measurable for all ℓ ∈ ˆL,(b) a Gaussian random variable with values in (U, σ (L)) if (ℓ1 ◦ u, . . . , ℓ n ◦ u) is jointly Gaussian for all n ∈ N and 
+
+ℓ1, . . . , ℓ n ∈ ˆL.Proof. Define {ˆLn}nscl  
+
+> n=0
+
+with ˆL0 := span ˆL and ˆLn+1 := scl w∗(ˆLn). By assumption, ˆLnscl = L.Assume that ˆL does not separate the points in U. Then there is u ∈ U such that ℓ(u) = 0 for all ℓ ∈ ˆL. We proceed by induction. Pick ℓ ∈ ˆL0. Then there are α1, . . . , α m ∈ R and ℓ1, . . . , ℓ m ∈ ˆL such that ℓ = Pmi=1 αiℓi. Hence, 
+
+ℓ(u) = 
+
+> m
+
+X
+
+> i=1
+
+αiℓi(u) = 0 .
+
+Now assume that ℓ(u) = 0 for n < n scl and all ℓ ∈ ˆLn. Fix ℓ ∈ ˆLn+1 . Then there is {ℓi}i∈N ⊂ ˆLn such that ℓi →w∗ ℓ.Hence, 
+
+ℓ(u) = lim  
+
+> i→∞
+
+ℓi(u) = 0 .
+
+All in all, it follows that L = ˆLnscl does not separate the points in U, which is a contradiction. Hence ˆL separates the points in U.(a) We need to show that ℓ ◦ u is measurable 5 for all ℓ ∈ L (Klenke, 2014, Theorem 1.81). We proceed by induction. Let ℓ ∈ ˆL0. Then there are α1, . . . , α m ∈ R and ℓ1, . . . , ℓ m ∈ ˆL such that ℓ = Pmi=1 αiℓi. By assumption, ℓi ◦ u is measurable for all i = 1 , . . . , m . Hence, ℓ is measurable by Theorem 1.91 in (Klenke, 2014). Now assume that ℓ ◦ u is measurable for all ℓ ∈ ˆLn with n < n scl . Fix ℓ ∈ ˆLn+1 . Then there is a sequence {ℓi}i∈N ⊂ ˆLn such that ℓiw∗
+
+−−→ ℓ.This implies that ℓi ◦ u → ℓ ◦ u pointwise, where, by the inductive hypothesis, ℓi ◦ u is measurable for all i ∈ N. Hence, 
+
+ℓ ◦ u is measurable for all ℓ ∈ ˆLn+1 (Klenke, 2014, Theorem 1.92).    
+
+> 5We will drop the A-B(R)prefix for real-valued functions in this proof.
+
+15 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+(b) By (a), u is A-σ(L)-measurable. It suffices to show that u is Gaussian with values in (U, σ (ˆLn)) (Bogachev, 1998, Definition 2.2.1(i)) for all n = 0 , . . . , n scl , which is well-defined, since ˆL separates the points in U. Again, we proceed by induction on n. Let ℓ ∈ ˆL0. Then there are α1, . . . , α m ∈ R and ℓ1, . . . , ℓ m ∈ ˆL such that ℓ = Pmi=1 αiℓi. By the closure properties of Gaussians under linear maps, we have that ℓ ◦ u is Gaussian. Hence, u is Gaussian with values in (U, σ (ˆL0)) . Now assume that u is Gaussian with values in (U, σ (ˆLn)) for n < n scl . Fix ℓ ∈ ˆLn+1 . Then there is a sequence {ℓi}i∈N ⊂ ˆLn such that ℓiw∗
+
+−−→ ℓ. This implies that ℓi ◦ u → ℓ ◦ u pointwise, where, by the inductive hypothesis, ℓi ◦ u is Gaussian for all i ∈ N. Since pointwise limits of Gaussians random variables are Gaussian, ℓ ◦ u is Gaussian. Hence, u is Gaussian with values in (U, σ (ˆLn+1 )) .
+
+Proof of Theorem A.11. ⇒ (i) Holds by definition. (ii) Let a1, . . . , a n ∈ A and ℓ1, . . . , ℓ n ∈ L. By Remark A.5, the linear functionals 
+
+˜ℓi : Un → R, (u1, . . . , u n) 7 → ℓi(ui)
+
+are measurable with respect to σ(L)⊗n. Moreover, ω 7 → (F( a1, ω ), . . . , F( an, ω )) is Gaussian by assumption. Hence, 
+
+ω 7 →
+
+˜ℓi(F( a1, ω ), . . . , F( an, ω )) 
+
+ni=1 
+
+= ( ℓi(F( ai, ω ))) ni=1 
+
+= (f(( ai, ℓ i), ω )) ni=1 
+
+is Gaussian with values in Rn.
+
+⇐ (i) Follows directly by applying Lemma A.12(a) to each F( a, · ) individually. (ii) Let a1, . . . , a n ∈ A. We have to show that ω 7 → (F( a1, ω ), . . . , F( an, ω )) is a Gaussian random variable with values in Un. It is easy to check that Assumption A.10 holds for ˆLn ⊂ Ln. Hence, by Lemma A.12(b), 
+
+ω 7 → (F( a1, ω ), . . . , F( an, ω )) is Gaussian with values in Un.The following Corollary shows that Assumption A.10 is automatically fulfilled for L = U′ in separable Banach spaces. 
+
+Corollary A.13 (Generalized Probabilistic Currying in Separable Banach Spaces) . Let U be a real separable Banach space and ˆL ⊂ U′ a set of continuous linear functionals separating the points in U. Let F : A × Ω → U and f : ( A × ˆL) × Ω → R
+
+such that ℓ(F( a, ω )) = f(( a, ℓ ), ω ) for all a ∈ A, ℓ ∈ ˆL, and P-almost all ω ∈ Ω.(i) F is a random process with values in (U, B (U)) if and only if f is a random process with values in (R, B (R)) , and (ii) F is Gaussian if and only if f is Gaussian. Proof. We will show that Assumption A.10 is fulfilled for L = U′ and nscl = 1 . Let ι : U → (ˆL → R), u 7 → (ℓ 7 → ℓ(u)) ,which is linear and injective, since ˆL separates the points in U. Then ˜U := ι(U) is isomorphic to U (as a vector space). Hence, ˜U equipped with the norm ∥ϕ∥˜U := ∥ι−1(ϕ)∥U is a real separable Banach space which is isometrically isomorphic to U. Moreover, ˜U is a space of functions with continuous point evaluation functionals, since 
+
+|δℓ(ι(u)) | = |ℓ(u)| ≤ ∥ ℓ∥U′ ∥u∥U = ∥ℓ∥U′ ∥ι(u)∥˜U.
+
+Thus, there is a sequence {δℓi }i∈N ⊂ ˜U′ separating the points in U (Steinwart, 2024, Theorem 4.10). This implies that 
+
+{ℓi}i∈N ⊂ ˆL separates the points in U. Finally, it follows that U′ = scl w∗(span ˆL) (Steinwart, 2024, Proposition 4.3). 16 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+If U ⊂ RDU is a vector space of real-valued 6 functions and L = span δDU , then Theorem A.11 and Corollary A.13 become substantially sharper. 
+
+Corollary A.14 (Probabilistic Currying) . Let U ⊂ RDU be a vector space of real-valued functions, F : A × Ω → U, and 
+
+f : ( A × DU) × Ω → R such that F( a, ω )( x) = f(( a, x ), ω ) for all a ∈ A, x ∈ DU, and P-almost all ω ∈ Ω. Then (i) F is a random process with values in (U, σ (δDU )) if and only if f is a random process with values in (R, B (R)) ,(ii) F has a mean function M with values in U if and only if f has a mean function m, where M(a) = m(a, · ) for all 
+
+a ∈ A,(iii) F has a covariance function K with values in span δDU → U if and only if f has a covariance function k, where 
+
+K(a1, a 2)( δx) = k(( a1, x ), (a2, · )) for all a1, a 2 ∈ A, and x ∈ DU, and (iv) F is Gaussian if and only if f is Gaussian. If U is a separable Banach space with continuous point evaluation functionals, then (v) (i) and (iv) hold for F with values in (U, B (U)) , and, (vi) if it exists, then the covariance function K in (iii) has values in U′ → U, where 
+
+K(a1, a 2)( ℓ)( x) = ℓ(k(( a1, · ), (a2, x ))) 
+
+for all ℓ ∈ U′ and x ∈ DU.Proof. Follows from Theorem A.11 and Corollary A.13. Finally, Theorem 3.2 from the main text is merely a corollary of the results developed above. 
+
+Theorem 3.2 (Probabilistic Currying in Banach Spaces; proof in Appendix A.3) . Let (Ω , A, P) be a probability space and U
+
+a real separable Banach space of Rd′
+
+-valued functions with domain DU. Let F : A × Ω → U and f : ( A × DU) × Ω → Rd′
+
+such that F(a, ·)( x) = f (( a, x), ·) for all a ∈ A and x ∈ DU (P-almost surely). Then (i) F is a random process with values in (U, σ (δU)) if and only if f is a Rd′
+
+-valued random process, (ii) F is Gaussian if and only if f is Gaussian, and (iii) if all evaluation maps δx : U → Rd′
+
+, u 7 → u(x) are continuous, then (i) holds for F with values in (U, B (U)) .Proof. Follows from Corollary A.14 and Lemma 2.1. 
+
+A.4. Banach-Valued Gaussian Processes from Linearized Neural Operators 
+
+For simplicity of the exposition, we limited the construction of the LUNO framework in Section 3.2 to neural operators, which map into a Banach space of functions with continuous point evaluation functionals. This limits its applicability, especially for solving PDEs, whose solutions are often not defined pointwise, but rather elements of Sobolev spaces 
+
+W p,k (DU) ⊂ Lp(DU). Hence, in this section, we extend LUNO to neural operators that map into abstract separable Banach 7 spaces U.
+
+Step 0 Let U be a real separable Banach space, A a set, W ⊂ Rp a subspace, and F : A × W → U a neural operator. 
+
+Step 1 First, we select a subset ˆL ⊂ U′ of continuous linear functionals separating the points in U, for which we want to quantify predictive uncertainty under the neural operator. Define 
+
+f : ( A × ˆL) × W → R, (( a, ℓ ), w) 7 → ℓ(F (a, w)) .
+
+This is an uncurried version of the neural operator. To see this, note that a neural operator F : A × W → U can be uniquely identified with the function ˜F : A × W → (ˆL → R), (a, w) 7 → (ℓ 7 → ℓ(F (a, w))) . 
+
+> 6By a generalization of Lemma 2.1, an analogous result holds in vector spaces of Rd′
+> -valued functions.
+> 7With minor modifications, the construction below works in arbitrary real vector spaces.
+
+17 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Proof. Let F1, F 2 : A × W → U be neural operators with F1̸ = F2. Then there are a ∈ A and w ∈ W such that 
+
+F1(a, w)̸ = F2(a, w). Since ˆL separates the points in U, this implies that there is ℓ ∈ ˆL such that ˜F1(a, w)( ℓ) := 
+
+F1(a, w)̸ = F2(a, w) =: ˜ F2(a, w)( ℓ). Hence, ˜F1̸ = ˜F2.
+
+Step 2 We model the uncertainty over the parameters as a random variable w : Ω → W on a probability space (Ω , A, P) 
+
+with supp( w) = W. As in Section 3.2, we will now linearize f in w around a point w0 ∈ W. To achieve this, we assume that the directional derivatives 
+
+∂wf (( a, ℓ ), · ) ( w0) = lim 
+
+> h→0
+
+f (( a, ℓ ), w0 + hw) − f (( a, ℓ ), w0)
+
+h
+
+at w0 exist for all a ∈ A, ℓ ∈ ˆL, and w ∈ W, and are linear in w. For instance, this is the case if f (( a, ℓ ), · ) is differentiable at w0. In this case, the linearization of f is given by 
+
+f (( a, ℓ ), w) ≈ f lin  
+
+> μ
+
+(( a, ℓ ), w) := f (( a, ℓ ), w0) + ∂w−w0 f (( a, ℓ ), · ) ( w0) .
+
+Then the function 
+
+f : ( A × ˆL) × Ω → R, (( a, ℓ ), ω ) 7 → f lin  
+
+> μ
+
+(( a, ℓ ), w(ω)) 
+
+is a random process. If w has a mean μ, then f has a mean function 
+
+m : A × ˆL → R, (a, ℓ ) 7 → f (( a, ℓ ), w0) + ∂μ−w0 f (( a, ℓ ), · ) ( w0) ,
+
+and if w has a covariance matrix Σ, then f has a covariance function given by 
+
+k : ( A × ˆL) × (A × ˆL) → R, (( a1, ℓ 1), (a2, ℓ 2)) 7 →
+
+> p
+
+X
+
+> i,j =1
+
+∂if (( a, ℓ 1), · )( w0)Σij ∂j f (( a, ℓ 2), · )( w0).
+
+Note that f and m are linear in ℓ and k is bilinear in (ℓ1, ℓ 2). Moreover, if w is Gaussian, then f is a Gaussian process. 
+
+Step 3 Finally, we construct a U-valued (Gaussian) random process F : A × Ω → U by probabilistically currying f.However, this is more challenging for an abstract U. Intuitively, we want to undo the uncurrying operation from Step 1. To this end, we assume 8 that there is F : A × Ω → U with ℓ(F( a, ω )) = f(( a, ℓ ), ω ) for all a ∈ A, ℓ ∈ ˆL, and P-almost all 
+
+ω ∈ Ω. In this case, Corollary A.13 ensures that (i) F is a random process with values in (U, B (U)) ,(ii) F has a mean function M : A → U with 
+
+ℓ(M(a)) = m(a, ℓ ) = f (( a, ℓ ), w0) + ∂μ−w0 f (( a, ℓ ), · ) ( w0)
+
+if w has a mean vector μ,(iii) F has a covariance function K : A × A → (U′ → U) with 
+
+ℓ2(K(a1, a 2)( ℓ1)) = k(( a1, ℓ 1), (a2, ℓ 2)) = 
+
+> p
+
+X
+
+> i,j =1
+
+∂if (( a, ℓ 1), · )( w0)Σij ∂j f (( a, ℓ 2), · )( w0)
+
+if w has a covariance matrix Σ, and (iv) F is a Gaussian process if w is Gaussian. 
+
+> 8See Appendices A.4.1 and A.4.2 for more details on this assumption.
+
+18 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+A.4.1. W EAK GÂTEAUX DIFFERENTIABILITY 
+
+The existence of F : A × Ω → U with ℓ(F( a, ω )) = f(( a, ℓ ), ω ) for all a ∈ A, ℓ ∈ ˆL, and P-almost all ω ∈ Ω is equivalent to F (a, · ) being τ (U, ˆL#)-Gâteaux differentiable at w0, i.e., there is a linear operator δF (a, · ) ( w0) : W → U such that 
+
+δF (a, · ) ( w0) ( w) = lim 
+
+> h→0
+
+F (a, w0 + hw) − F (a, w0)
+
+h in (U, τ (U, ˆL#)) (A.1) for all w ∈ W, where τ (U, ˆL#) is the smallest topology on U for which all functionals in ˆL are continuous. 
+
+Proof. Note that, since W is a metric space, we can take sequential limits in Equation (A.1) without loss of generality. 
+
+⇒ Fix a ∈ A. We will constuct the Gâteaux derivative from ˜F( a, ω ). Since ˜F( a, ω ) ∈ ιU,ˆL# (U) for P-almost all ω ∈ Ω,there is N ∈ A with P( N ) = 0 and ˜F( a, ω ) ∈ ιU,ˆL# (U) for all ω ∈ Ω \ N . We have supp w = W and hence there are ω1, . . . , ω d ∈ Ω such that {bi}di=1 with bi := w(ωi) − w0 is a basis of W. Let λ : W → U be the unique linear operator with 
+
+λ(bi) := ι−1 
+
+> U,ˆL#
+
+(˜F( a, ω i)) − F (a, w0)= ι−1 
+
+> U,ˆL#
+
+(f(( a, · ), ω i) − f (( a, ·), w0)) = ι−1 
+
+> U,ˆL#
+
+(ℓ 7 → ∂w(ωi)−w0 f (( a, ℓ ), · ) ( w0)) = ι−1 
+
+> U,ˆL#
+
+(ℓ 7 → ∂bi f (( a, ℓ ), · ) ( w0)) ,
+
+i.e. λ(w) = ι−1 
+
+> U,ˆL#
+
+(ℓ 7 → ∂wf (( a, ℓ ), · ) ( w0)) forall w ∈ W. Since W is finite dimensional, λ is τW-τ (U, ˆL#)-continuous, where τW is the norm topology on W. Let {hn}n∈N ⊂ R be any null sequence. Then for any ℓ ∈ ˆL we have 
+
+ℓ
+
+ F (a, w0 + hnw) − F (a, w0)
+
+hn
+
+
+
+= f (( a, ℓ ), w0 + hnw) − f (( a, ℓ ), w0)
+
+hnn→∞ 
+
+−−−−→ ∂wf (( a, ℓ ), · ) ( w0) = ℓ(λ(w)) .
+
+Hence, F (a, · ) is τ (U, ˆL#)-Gâteaux differentiable at w0 with Gâteaux derivative δF (a, · ) ( w0) = λ.
+
+⇐ If F (a, · ) is τ (U, ˆL#)-Gâteaux differentiable at w0 for all a ∈ A, then we can construct F as 
+
+F : A × Ω → U, (a, ω ) 7 → F (a, w0) + δF (a, · ) ( w0) ( w(ω) − w0) (A.2) Then 
+
+ℓ(F( a, ω )) = ℓ(F (a, w0)) + ∂w(ω)−w0 ℓ(F (a, · )) ( w0)= f (( a, ℓ ), w0) + ∂w(ω)−w0 f (( a, ℓ ), · ) ( w0)= f lin  
+
+> μ
+
+(( a, ℓ ), w(ω)) = f(( a, ℓ ), ω )
+
+for all a ∈ A, ℓ ∈ ˆL, and ω ∈ Ω.A stronger condition, namely (norm) Fréchet differentiability, has been verified for Fourier neural operators mapping between Lp spaces (Kabri et al., 2023). Note that we can also use the properties of the Gâteaux derivative to verify the conclusions of Corollary A.13. Since W is finite-dimensional, the Gâteaux derivative δF (a, · ) ( w0) is continuous with respect to any TVS topology on U. Hence, F
+
+19 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+as defined in Equation (A.2) is a random process with values in (U, σ (U′)) = ( U, B (U)) . If w has a mean μ, then the mean function M : A → U of F is given by 
+
+M(a) = F (a, w0) + δF (a, · ) ( w0) ( μ − w0),
+
+and, if w has a covariance matrix Σ, then the covariance function K : A × A → (U′ → U) of F is given by 
+
+K(a1, a 2) = δF (a1, · ) ( w0) ΣδF (a2, · ) ( w0)′ .
+
+By the closure properties of Banach-valued Gaussian random variables under continuous affine maps (Bogachev, 1998, Lemma 2.2.2), F is a Gaussian process if w is Gaussian. While this construction is somewhat more direct, the currying approach outlined above mimics more closely how F is constructed on a computer, especially when U ⊂ (Rd′ 
+
+> U
+
+)DU and ˆL = {δx,i : x ∈ DU, i = 1 , . . . , d ′
+
+> U
+
+} as in Section 3.2, and does not require knowledge of Banach-valued derivatives. A.4.2. B IDUAL RANDOM PROCESSES 
+
+If there is no F : A × Ω → U with ℓ(F( a, ω )) = f(( a, ℓ ), ω ) for all a ∈ A, ℓ ∈ ˆL, and P-almost all ω ∈ Ω, we can construct a weaker version of F. Note that, if ℓ = α1ℓ1 + α2ℓ2 ∈ ˆL, then f(( a, ℓ ), ω ) = α1f(( a, ℓ 1), ω ) + α2f(( a, ℓ 2), ω ). This means that f(( a, · ), ω ) can always be uniquely linearly extended to L = span ˆL. Define 
+
+˜F : A × Ω → L#, (a, ω ) 7 → (ℓ 7 → f(( a, ℓ ), ω )) .
+
+We can use Corollary A.14 to show that ˜F is a random process with values in the algebraic dual L# of L equipped with the smallest σ-algebra σ(δL# ) that makes all point evaluation functionals measurable. We refer to such random processes as 
+
+bidual random processes .Recall the bidual embedding ιU,L# from Remark A.1. If F exists, then ˜F( a, ω ) = ιU,L# (F( a, ω )) .
+
+A.5. Operator-Valued Gaussian Processes as Hilbert-Valued Gaussian Processes 
+
+Finally, we show that operator-valued Gaussian processes (Owhadi, 2023; Batlle et al., 2024; Mora et al., 2025) can be embedded in the theoretical framework outlined above. Since operator-valued Gaussian processes are only defined on separable Hilbert spaces, in this section, we let A, U be separable Hilbert spaces with inner products ⟨· , ·⟩ A and ⟨· , ·⟩ U,respectively. In this case, the continuous dual U′ is identified with the primal space U via the Riesz isomorphism. We start by reviewing the building blocks of operator-valued Gaussian processes. 
+
+Definition A.15 (Operator-Valued Kernel (Owhadi, 2023, Definition 9.1)) . A function K : A × A → (U → U) is called an operator-valued kernel if K(a1, a 2) is a bounded linear operator with K(a1, a 2) = K(a2, a 1)∗ for all a1, a 2 ∈ A and Pmi,j =1 ⟨ui, K(ai, a j )uj ⟩U ≥ 0 for all m ∈ N, a1, . . . , a m ∈ A, and u1, . . . , u m ∈ U.
+
+Definition A.16 (Gaussian Hilbert Space (Owhadi & Scovel, 2019, Definition 7.1)) . A closed subspace H of L2(Ω , A, P) is called a Gaussian Hilbert space if every h ∈ H is a univariate Gaussian random variable. 
+
+Definition A.17 (Operator-Valued Gaussian Process (Owhadi, 2023, Definition 5.1)) . Let M : A → U, K : A × A → (U →
+
+U) an operator-valued kernel, and H a Gaussian Hilbert space over (Ω , A, P) . A function Ξ : A → (U → H) is called an operator-valued Gaussian process if Ξ( a) is a bounded linear operator for all a ∈ A. Ξ is said to have mean M and covariance kernel K if Ξ( a)( u) ∼ N (⟨u, M(a)⟩U, ⟨u, K(a, a )( u)⟩U) for all a ∈ A and u ∈ U, and 
+
+Cov P [Ξ( a1)( u1), Ξ( a2)( u2)] = ⟨u1, K(a1, a 2)( u2)⟩U.
+
+Generally, operator-valued Gaussian processes are “equivalent to” a subset of Gaussian processes with values in (U′)# = U#
+
+(see Appendix A.4.2). 
+
+Proposition A.18. Let ˜F : A × Ω → U#, H ⊂ L2(Ω , A, P) a Gaussian Hilbert space, and Ξ : A → (U → H) such that 
+
+˜F( a, · )( u) ∈ Ξ( a)( u) for all a ∈ A and u ∈ U. Then Ξ is an operator-valued Gaussian process with mean function 
+
+M : A → U and covariance kernel K : A × A → (U → U) if and only if (a) ˜F is a (U#, σ (δU)) -valued Gaussian process with mean ˜M : A → U′ and covariance function ˜K : A×A → (δU → U′),
+
+20 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+(b) (u, ω ) 7 → ˜F( a, ω )( u) is mean-square continuous 9 for all a ∈ A, and (c) u 7 → ˜K(a1, a 2)( δu) ∈ U′ is norm-continuous for all a1, a 2 ∈ A.We have ⟨M (a), · ⟩ U = ˜M(a) for a ∈ A, and ⟨K (a1, a 2)( u), · ⟩ U = ˜K(a1, a 2)( δu) for all a1, a 2 ∈ A and u ∈ U.Proof. This follows from Corollary A.14. Moreover, the following results show that operator-valued Gaussian processes whose kernels map into the trace-class are “equivalent to” Gaussian processes with values in (U, B (U)) .
+
+Proposition A.19. Let F be a U-valued Gaussian process on (Ω , A, P) with index set A, mean function M, and covariance function K. Define H as the L2(Ω , A, P) closure of span {ω 7 → ⟨ u, F( a, ω )⟩U | a ∈ A, u ∈ U} ⊂ L2(Ω , A, P) . Then 
+
+Ξ : A → (U → H), a 7 → (u 7 → ⟨ u, F( a, ·)⟩U)
+
+is an operator-valued Gaussian process with mean M and covariance kernel K. Moreover, K(a, a ) is trace-class for all 
+
+a ∈ A.Proof. Let a ∈ A. For all u ∈ U we have 
+
+∥Ξ( a)( u)∥2 
+
+> H
+
+=
+
+Z
+
+> Ω
+
+(⟨u, F( a, ·)⟩)2 P(d ω) ≤ ∥ u∥2
+
+> U
+
+Z
+
+> Ω
+
+∥F( a, ·)∥2
+
+> U
+
+P(d ω)
+
+| {z }
+
+> <∞
+
+by the Cauchy-Schwarz inequality and Fernique’s theorem (Bogachev, 1998, Theorem 2.8.5), i.e. Ξ( a) is a bounded linear operator. 
+
+Theorem A.20. Let Ξ be an operator-valued Gaussian process with Gaussian Hilbert space H ⊂ L2(Ω , A, P) , mean function M, and covariance kernel K such that K(a, a ) is trace class for all a ∈ A. Then there is a U-valued Gaussian process F ∼ GP (M, K) on (Ω , A, P) such that ⟨u, F( a)⟩U ∈ Ξ( a)( u) for all a ∈ A and u ∈ U.Proof. First, we will construct F : A × Ω → U. Let a ∈ A. Since U is separable and K(a, a ) is self-adjoint, positive-semidefinite, and trace class (and hence compact), there is an ONB {ψai }i∈I of U consisting of eigenvectors of K(a, a )
+
+(Conway, 1997, Corollary 5.4). For every i ∈ I, fix zai ∈ (Ξ( a)( ψai ) − ⟨ ψai , M(a)⟩). We will now show that the series 
+
+X
+
+> i∈I
+
+zai ψai (A.3) converges P-almost surely in U. The {zai }i∈I are centered, independent Gaussian random variables with variances given by the eigenvalues λai of K(a, a ), since 
+
+EP [z ai ] = EP [Ξ( a)( ψai )] − ⟨ ψai , M(a)⟩ = 0 
+
+and 
+
+Cov P
+
+zai , zaj
+
+ = Cov P
+
+Ξ( a)( ψai ), Ξ( a)( ψaj ) = ⟨ψai , K(a, a )( ψaj )⟩U = ⟨ψai , λ aj ψaj ⟩U = λaj δij .
+
+We have P 
+
+> i∈I
+
+λai < ∞ because the operator K(a, a ) is trace-class. By Theorem 1.1.4 in Bogachev (1998), this means that 
+
+X
+
+> i∈I
+
+zai = X
+
+> i∈I
+
+zai ∥ψai ∥U
+
+converges P-almost surely, and hence Equation (A.3) P-almost surely absolutely convergent in U. Define 
+
+F( a) a.s.
+
+:= M(a) + X
+
+> i∈I
+
+zai ψai .           
+
+> 9˜F( a, ·)( u)L2
+> −→˜F( a, ·)( u0)as uU
+> −→u0
+
+21 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Then ⟨u, F( a)⟩ ∈ Ξ( a)( u) for u ∈ span {ψai }i∈I .We will now show that ⟨u, F( a)⟩ ∈ Ξ( a)( u) for all a ∈ A and u ∈ U. To this end, fix u ∈ U and ya,u ∈ Ξ( a)( u).There is {un}∞ 
+
+> n=1
+
+⊂ span {ψai }i∈I such that u = lim n→∞ un. Boundedness of Ξ( a) implies ⟨un, F( a)⟩ L2
+
+−→ ya,u 
+
+and, by Remark 6.11 and Corollary 6.13 in Klenke (2014), there exists a subsequence {unk }∞ 
+
+> k=1
+
+⊂ { un}∞ 
+
+> n=1
+
+such that 
+
+⟨unk , F( a)⟩ a.s.
+
+−−→ ya,u . Moreover, by continuity of the inner product, we know that ⟨unk , F( a, ω )⟩ → ⟨ u, F( a, ω )⟩ for all 
+
+ω ∈ Ω, and hence ⟨unk , F( a)⟩ a.s.
+
+−−→ ⟨ u, F( a)⟩. Since almost sure limits are unique up to almost sure equality (Klenke, 2014), we have ya,u 
+
+> a.s.
+
+= ⟨u, F( a)⟩. Hence, ⟨u, F( a)⟩ ∈ Ξ( a)( u).The rest of the claim now follows from Corollary A.13 with f(( a, u ), ω ) := ⟨u, F( a, ω )⟩ and ˆL = U′.
+
+# B. Linearized Laplace Approximation 
+
+The linearized Laplace approximation (LLA) (MacKay, 1992a;b; Immer et al., 2021) is a conceptually simple, yet effective (Daxberger et al., 2021a) method for obtaining an approximate posterior distribution over the parameters w ∈ Rp of a neural network f : Rd × Rp → Rd′
+
+. It applies whenever the objective function R used to train the neural network is (equivalent to) a negative log-posterior 
+
+R(w) = − log p(w | D ) = − log p(w) −
+
+> n
+
+X
+
+> i=1
+
+log p(y(i) | f (x(i), w)) + const. of the network parameters given data D = {(x(i), y(i))}ni=1 . It is common for the prior over the parameters to be Gaussian, in which case − log p(w) acts as an L2 -regularizer on the parameters. During training, we attempt to find a local minimum 
+
+w⋆ of the objective function R, i.e. a maximum a-posteriori (MAP) estimator of the network parameters given the data. Following Immer et al. (2021), we approximate the posterior of the network weights as follows: First, we linearize the model using a first-order Taylor approximation in the weights around the MAP estimator w⋆
+
+f (x, w) ≈ f lin  
+
+> w⋆
+
+(x, w) := f (x, w⋆) + D wf (x, w)|w⋆ (w − w⋆).
+
+Afterwards, we compute a second-order Taylor approximation of the negative log-posterior Rlin  
+
+> w⋆
+
+of the linearized network at the MAP w⋆
+
+Rlin  
+
+> w⋆
+
+(w) := − log p(w) −
+
+> n
+
+X
+
+> i=1
+
+log p(y(i) | f lin  
+
+> w⋆
+
+(x(i), w)) + const. 
+
+≈ R(w⋆) + ∇R (w⋆)⊤
+
+| {z }
+
+> ≈0
+
+(w − w⋆) + 12 (w − w⋆)⊤P (w − w⋆)= 12 (w − w⋆)⊤P (w − w⋆) + const. (B.1) with P := − Hw log p(w)|w⋆ + G, where 
+
+G := −
+
+> n
+
+X
+
+> i=1
+
+Dwf (x(i), w) w⋆
+
+Hf log p(y(i) | f ) f (x(i),w⋆)
+
+Dwf (x(i), w) ⊤
+
+> w⋆
+
+(B.2) is the so-called generalized Gauss-Newton (GGN) matrix (Schraudolph, 2002). The GGN is guaranteed to be positive-semidefinite. Equation (B.1) is the negative log-density of a (potentially degenerate) multivariate Gaussian distribution with mean w⋆ and covariance matrix P †, i.e. 
+
+p(w = w | D ) = exp R(w) ≈ exp Rlin  
+
+> w⋆
+
+(w) ≈ N  w; w⋆, P †.
+
+This Gaussian distribution is referred to as the linearized Laplace approximation of p(w = w | D ). Under the linearized model, the approximate Gaussian posterior over the weights induces a tractable posterior predictive over the output of the neural network (Khan et al., 2019; Immer et al., 2021). More precisely, using closure properties of Gaussian distributions under affine maps, one can show that the pushforward of the LLA posterior through w 7 → f lin  
+
+> w⋆
+
+(x, w) defines a ( d′-output) Gaussian process 
+
+f | D ∼ GP 
+
+
+
+f ( · , w⋆), (x1, x2) 7 → Dwf (x1, w)|w⋆ P † Dwf (x2, w)|⊤
+
+> w⋆
+
+
+
+.
+
+22 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+# C. Implementation Details 
+
+C.1. Last-Layer LUNO for FNOs 
+
+For an input a ∈ A, we can factorize the FNO as 
+
+F (a, w)( x) = ( q(·, wq ) ◦ σ(L−1) )
+
+| {z }
+
+> =: ˜ q
+
+
+
+z(L−1) (x, wL−1)
+
+
+
+,
+
+with 
+
+z(L−1)  
+
+> i
+
+(x, wL−1) := 
+
+> d′
+> v
+
+X
+
+> j=1
+
+F−1
+
+R(L−1) :ij ⊙ ˆv(L−1) :j
+
+
+
+(x) + 
+
+> d′
+> v
+
+X
+
+> j=1
+
+W (L−1)  
+
+> ij
+
+v(L−1)  
+
+> j
+
+(x)=
+
+> d′
+> v
+
+X
+
+> j=1
+> kmax
+
+X
+
+> k=1
+
+Re( R(L−1)  
+
+> kij
+
+) Re(ˆ v(L−1)  
+
+> kj
+
+) cos ( ⟨ωk, x⟩)
+
+| {z } 
+
+> =: ϕkj (x)
+
++
+
+> d′
+> v
+
+X
+
+> j=1
+> kmax
+
+X
+
+> k=1
+
+Im( R(L−1)  
+
+> kij
+
+) ( −1) Im(ˆ v(L−1)  
+
+> kj
+
+) sin ( ⟨ωk, x⟩)
+
+| {z } 
+
+> =: φkj (x)
+
++
+
+> d′
+> v
+
+X
+
+> j=1
+
+W (L−1)  
+
+> ij
+
+v(L−1)  
+
+> j
+
+(x)
+
+| {z } 
+
+> =: ψj(x)
+
+,
+
+where ˆv(L−1)  
+
+> kj
+
+:= F(v(L−1)  
+
+> j
+
+)k ∈ C for k ∈ { 1, . . . , k max }. We note that z(L−1) (x, wL−1) is linear in wL−1. Thus, assuming a Gaussian belief over 
+
+wL−1 ∼= (Re( R(L−1) ), Im( R(L−1) ), W (L−1) )
+
+induces a (multi-output) GP over z(L−1) :
+
+z(L−1) ∼ GP (mz(L−1) , Kz(L−1) ) with 
+
+mz(L−1) = z(L−1) (x, w⋆L−1).
+
+Moreover, z(L−1) is the sum of three (dependent) parametric Gaussian processes with feature functions ϕkj , φkj , and ψj ,respectively. Consequently, the function-valued GP induced by the linearized FNO is given by 
+
+F( a)( x) = ˜ q(mz(L−1) (x)) + D ˜ q (mz(L−1) (x)) ( z(L−1) (x) − mz(L−1) (x)) ,
+
+i.e. F( a) ∼ GP (ma, Ka) with 
+
+ma(x) = F (a, w⋆)( x), and 
+
+Ka(x1, x2) = D ˜ q (mz(L−1) (x1)) Kz(L−1) (x1, x2)D ˜ q (mz(L−1) (x2)) ⊤ .
+
+If the input function a ∈ A is discretized on a grid X(i) 
+
+> A
+
+∈ (DA)n(i) 
+
+> A
+
+, we set ˆv(L−1)  
+
+> kj
+
+:= rfft( v(L−1)  
+
+> j
+
+(X(i) 
+
+> A
+
+)) k ∈ C and ψj (x)
+
+interpolates v(L−1)  
+
+> j
+
+(X(i) 
+
+> A
+
+) (e.g. spline interpolation or Fourier interpolation). 23 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+# D. Experimental details 
+
+D.1. Data: PDE trajectories 
+
+D.1.1. L OW DATA GENERATION USING APEB ENCH 
+
+To evaluate the performance of the uncertainty quantification methods discussed, we utilize the code in the APEBench for generating data from Burgers’, Hyper Diffusion and Kuramoto-Sivashinsky equation (conservative) (cf. (Koehler et al., 2024) for more details). Table 3 summarizes the characteristics of the datasets we use, the number of trajectories for training, and testing, as well as the spatial and temporal resolutions.                         
+
+> PDE Name Dimensions Training Traj. Valid. Traj. Test Traj. Spatial Res. Temp. Res.
+> Burgers 1D 25 250 250 256 59
+> Hyper Diffusion 1D 25 250 250 256 59
+> Kuramoto-Sivashinsky (cons.) 1D 25 250 250 256 59
+
+Table 3: Summary of PDE datasets generated using APEBench. D.1.2. O UT -OF -D ISTRIBUTION DATA GENERATION 
+
+We generated additional datasets based on the advection-diffusion-reaction equation 
+
+∂u ∂t + v · ∇ u = α∇2u + R, (D.1) to evaluate the robustness of the uncertainty quantification methods under out-of-distribution (OOD) scenarios. Here u
+
+represents the scalar field (e.g., concentration or temperature), v is the velocity field, α is the diffusion coefficient, and R is the reaction term, where α = 0 .026 was held constant throughout the datasets. The following specifications guided this process: • Datasets: Trajectories for five variations of the advection-diffusion-reaction equation were generated (cf. Figure 5): 1. Base 
+
+– Random number (1-10) of Gaussian blobs as an initial condition. 
+
+– Constant random velocity field. 
+
+– No reaction terms. 2. Flip 
+
+– Random number (1-10) of Gaussian blobs as an initial condition. 
+
+– Constant random velocity field, which is reversed at the center of the domain. 
+
+– No reaction terms. 3. Pos 
+
+– Random number (1-10) of Gaussian blobs as an initial condition. 
+
+– Constant random velocity field. 
+
+– Randomly placed triangular heat source. 4. Pos-Neg 
+
+– Random number (1-10) of Gaussian blobs as an initial condition. 
+
+– Constant random velocity field. 
+
+– Randomly placed triangular heat source; randomly placed cloud-shaped heat sink. 5. Pos-Neg-Flip 
+
+– Random number (1-10) of Gaussian blobs as an initial condition. 
+
+– Constant random velocity field, which is reversed at the center of the domain. 
+
+– Randomly placed triangular heat source; randomly placed cloud-shaped heat sink. • PDE Solver: We utilized a custom implementation to solve the advection-diffusion-reaction equation, relying on a 9-point stencil with Runge-Kutta 4 (RK4) with fine spatial and temporal resolutions. 24 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+• Simulation Parameters: – Spatial resolution: 100 × 100 grid. 
+
+– Temporal resolution: ∆t = 5 × 10 −10 over 200-time steps, from which 59 are sub-sampled. We train a Fourier neural operator on 1000 training trajectories of the Base dataset and calibrate uncertainty quantification methods - if necessary - on a corresponding validation dataset with 250 input-output pairs. For the evaluation, we consider 250 random test pairs from some of the datasets. In Figure 5, we depict a single trajectory for each of these 5 datasets generated. To seamlessly evaluate the various OOD datasets, we pad the training set with constant zeros for the velocity field and reaction terms as a placeholder. 
+
+D.2. Model and training 
+
+For all experiments, we consider the original Fourier neural operator architecture (Li et al., 2021) with the hyperparameter suggestions following (Koehler et al., 2024), i.e. 12 modes (per spatial dimension) and 18 hidden dimensions constant throughout the network, with a total of 4 Fourier blocks. For the training, we consider 10 initial time steps and train to predict the following time step. The velocity field and the reaction term are glued to the input. Furthermore, the input is always padded by two constant zero grid points to reduce artifacts at the borders. Networks for the low data experiment are trained for 100 epochs, all remaining networks are trained for 1000 epochs—where one epoch corresponds to iterating through a single input-output pair per trajectory in the training set. During training the mean squared error loss was minimized using AdamW (Loshchilov & Hutter, 2019) combined with a cosine decay learning rate scheduler with warmup. All training implementations rely on jax (Bradbury et al., 2018), Flax NNX and optax. 
+
+D.3. Uncertainty quantification methods 
+
+D.3.1. I NPUT PERTURBATIONS 
+
+Input Perturbations involve augmenting input data with small, random perturbations to introduce diversity into the model’s predictions. This approach exploits the model’s sensitivity to input variations to approximate uncertainty in the output space. Following the approach of Pathak et al. (2022), ensemble predictions are generated by forwarding a batch of pointwise perturbed versions of a single input un. Perturbations are sampled as ϵx,t ∼ N (0 , σ 2) for each input value of the discretized function state un(x, t ). The parameter σ is calibrated to achieve accurate marginal uncertainty predictions. D.3.2. E NSEMBLES 
+
+Deep ensembles rely on training multiple independent instances of a model, each initialized with different random seeds and potentially trained on different subsets of the data (Lakshminarayanan et al., 2017). The diversity in the learned weight configurations leads to a variety of predictions for a given input, enabling the computation of both mean predictions and marginal uncertainty estimates. From a Bayesian perspective these weights represent close to true samples from the weight space posterior distribution, that can only be found through the high cost of additional training runs. D.3.3. I SOTROPIC GAUSSIAN (∗-I SO )The isotropic Gaussian covariance structure represents the weight space uncertainty as: 
+
+N (w⋆, Σ := σ2I) (D.2) where σ2 is the variance parameter and I is the identity matrix, reflecting independence and identical uncertainty across all dimensions in the weight space. To calibrate the uncertainty, we tune the parameter σ2 as outlined below. From a Bayesian perspective, as seen in methods such as Laplace, this can be viewed as just considering a calibrated prior over the selected weight space. D.3.4. L APLACE APPROXIMATION (∗-LA) In the linearized setting, a natural choice for a posterior Gaussian belief in weight space is given by the linearized Laplace approximation, where the Hessian is given by the Generalized Gauss-Newton (GGN) HGGN (Immer et al., 2021). For further details, see Equation (B.1). 25 Linearization Turns Neural Operators into Function-Valued Gaussian Processes Base Initial condition t = 20 t = 40 t = 59 (end of traj.) 
+
+> Flip Pos Pos-Neg Pos-Neg-Flip
+
+Figure 5: Initial condition and three-time steps of a single trajectory per generated dataset (Base, Flip, Pos, Pos-Neg, Pos-Neg-Flip). 26 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+For high-dimensional parameter spaces, approximations of the GGN are required. Common techniques include diagonal approximations (Daxberger et al., 2021a), K-FAC (Martens & Grosse, 2015), or low-rank approximations (Dangel et al., 2022). Since diagonal and K-FAC approximations do not capture correlations between weights acting on different Fourier modes, we focus on a low-rank approximation of the GGN instead. We extend the approach in (Dangel et al., 2022) by selecting the largest eigenspaces of the GGN and placing an isotropic Gaussian prior over all weights instead of approximating the posterior covariance directly. This allows regions of uncertainty to fall back to the prior belief. For a fixed input function and evaluation grid, the push-forward with the low-rank approximation HGGN = V V T yields the normal distribution: 
+
+N (F(x·, θ), Jθ ΣJ T 
+
+> θ
+
+), (D.3) where Σ = ( nV V T + σI)−1, n is the number of input-output pairs used to train the neural operator, and Jθ is the Jacobian of the model with respect to the weights. In all experiments, we consider a low rank of 500. For the low data regime, we consider all input-output pairs, while for the OOD experiment only a minibatch of 1000 input-output pairs. D.3.5. S AMPLE -∗
+
+For each weight-space covariance method and the input perturbation approach, we consider a sample-based pushforward which generates an ensemble of predictions in the output space. This aligns with the way most weight-space covariance methods are introduced in the literature (cf. Maddox et al., 2019). In our experiments, we generate 200 samples that are propagated through the network. The empirical mean and standard deviation are then estimated using the set of predictions in the output space. D.3.6. LUNO-∗
+
+The core implementation of LUNO leverages matrix-free Jacobian-vector products and the algebraic structure of the chosen Gaussian covariance matrix in weight space. Our framework supports fully lazy evaluations, enabling efficient sampling, marginal variance estimation, and matrix-vector products with the covariance of the output space. When restricting the weight space uncertainty to only the last Fourier block, we can explicitly derive the matrix action of the Jacobian of the inverse Fast Fourier Transform (IFFT). Additionally, we exploit the fact that the final linear layer is applied pointwise in the spatial domain, significantly improving computational efficiency and reducing memory requirements compared to traditional implementations of linearized pushforwards (Daxberger et al., 2021a). 
+
+D.4. Evaluation 
+
+We use the following metrics to evaluate model performance on 250 input-output pairs from the respective test trajectories. Here, yi denotes the ground truth, ˆyi represents the predicted mean, and σi is the predicted standard deviation for the i-th sample. All reported numbers are the expected value over the test samples. D.4.1. R OOT MEAN SQUARED ERROR (RMSE) The root mean squared error RMSE =
+
+vuut 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+(yi − ˆyi)2
+
+measures the average magnitude of the errors between ensemble mean/linearized mean and ground truth values. Lower RMSE indicates better predictive accuracy, with zero being the ideal value. D.4.2. M ARGINAL NEGATIVE LOG -LIKELIHOOD (NLL) The marginal NLL quantifies how well the predictive distribution fits the data under the assumption of Gaussian uncertainty. Lower NLL values indicate better calibration of the uncertainty estimates and higher likelihood of the observed data under the predictive model. It represents a trade-off between lower variances and how much of the error is accurately captured by the uncertainty. NLL = −
+
+> n
+
+X
+
+> i=1
+
+log 1
+
+p2πσ 2
+
+> i
+
+exp 
+
+
+
+− (yi − ˆyi)2
+
+2σ2
+
+> i
+
+!
+
+27 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+D.4.3. χ2 -STATISTIC 
+
+The χ2-statistic measures the average squared error normalized by the predicted variance. A value close to 1 indicates well-calibrated uncertainty predictions. Q = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+(yi − ˆyi)2
+
+σ2
+
+> i
+
+Values above one suggest overconfidence, while values below one indicate underconfident predictive uncertainty. From a UQ perspective underconfidence is better than overconfidence. 
+
+D.5. Calibration 
+
+All hyperparameters of the discussed UQ methods (mostly σ2 in the above definitions) were calibrated using 250 input-output pairs of the validation set to minimize the marginal negative log-likelihood. We calibrate each method’s hyperparameters separately using grid search over a logarithmically spaced grid with 500 points centered around the relevant value. 
+
+D.6. Additional results 
+
+D.6.1. L OW DATA REGIME 
+
+Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 1.98 × 10 −2 1.203 −2.3927 
+
+Ensemble 1.95 × 10 −2 12 .674 1.8957 
+
+Sample-Iso 2.02 × 10 −2 1.237 −2.4391 
+
+LUNO-Iso 1.99 × 10 −2 1.155 −2.4677 
+
+Sample-LA 2.18 × 10 −2 2.097 −2.2312 
+
+LUNO-LA 1.99 × 10 −2 0.984 −2.5248 
+
+Table 4: Performance metrics comparison for UQ methods evaluated on an FNO trained on 25 trajectories of the Hyper-Diffusion equation. Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 7.84 × 10 −2 0.938 −1.0385 
+
+Ensembles 6.82 × 10 −2 7.618 0.8489 
+
+Sample-Iso 7.88 × 10 −2 1.211 −1.0862 
+
+LUNO-Iso 7.82 × 10 −2 0.922 −1.0995 
+
+Sample-LA 1.46 × 10 −1 2.758 −0.1699 
+
+LUNO-LA 7.82 × 10 −2 1.058 −1.1653 
+
+Table 5: Performance metrics comparison for UQ methods evaluated on an FNO trained on 25 trajectories of the Kuramoto-Sivashinsky (conservative) equation. 28 Linearization Turns Neural Operators into Function-Valued Gaussian Processes −1.501.5   
+
+> Input Perturbations Ensemble Sample-LA LUNO -LA
+> −0.15 0.00.15
+
+(a) Kuramoto-Sivashinsky (cons). −0.500.5   
+
+> Input Perturbations Ensemble Sample-LA LUNO -LA
+> −0.04 0.00.04
+
+(b) Hyper-Diffusion. 
+
+Figure 6: FNO predictive uncertainty quantified by several different methods. Top row: target function ( ), mean ( ) and 1.96 standard deviations ( ) of, as well as samples ( ) from, the predictive belief. For the ensemble, the samples are four of the ensemble members. Bottom row: spread of the predictive distribution around the mean. For the sample-/ensemble-based methods, we construct a Gaussian distribution from the empirical covariance matrix and draw four samples ( ). We plot 1.96 standard deviations ( ) of the predictive belief, as well as the top-three eigenfunctions ( ) and a heatmap of the predictive covariance matrix (top right corner of panels). 29 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Method Base Flip Pos Pos-Neg Pos-Neg-Flip Input Perturbations −2.586 2.573 −1.174 69 .346 494 .935 
+
+Ensemble −5.313 −3.825 −4.802 −1.257 −1.014 
+
+Sample-Iso −2.921 4.071 −1.226 9.457 43 .362 
+
+LUNO-Iso −2.892 3.450 −1.260 7.636 37 .733 
+
+Sample-LA −2.576 4.395 −1.183 7.369 27 .046 
+
+LUNO-LA −2.934 −1.126 −1.742 −0.818 1.164 
+
+Table 6: Negative Log-Likelihood (NLL) across different OOD datasets. Lower is better. D.6.2. O UT -O F-D ISTRIBUTION 
+
+Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 1.46 × 10 −2 1.497 −2.5861 
+
+Ensemble 1.51 × 10 −3 0.162 −5.3134 
+
+Sample-Iso 1.44 × 10 −2 1.217 −2.9214 
+
+LUNO-Iso 1.46 × 10 −2 1.189 −2.8919 
+
+Sample-Iso 1.73 × 10 −2 1.910 −2.5756 
+
+LUNO-LA 1.46 × 10 −2 0.841 −2.9340 
+
+Table 7: Metrics evaluated on OOD dataset Base. Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 4.36 × 10 −2 12 .255 2.5727 
+
+Ensemble-Sample 4.43 × 10 −3 0.215 −3.8249 
+
+Sample-Iso 4.37 × 10 −2 15 .321 4.0715 
+
+LUNO-Iso 4.36 × 10 −2 13 .983 3.4502 
+
+Sample-LA 4.62 × 10 −2 15 .868 4.3953 
+
+LUNO-LA 4.36 × 10 −2 3.475 −1.1257 
+
+Table 8: Metrics evaluated on OOD dataset Flip. Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 2.94 × 10 −2 4.292 −1.1744 
+
+Ensemble 4.93 × 10 −3 0.549 −4.8023 
+
+Sample-Iso 2.91 × 10 −2 4.552 −1.2261 
+
+LUNO-Iso 2.94 × 10 −2 4.408 −1.2596 
+
+Sample-LA 2.79 × 10 −2 4.622 −1.1835 
+
+LUNO-LA 2.94 × 10 −2 3.001 −1.7416 
+
+Table 9: Metrics evaluated on OOD dataset Pos. 30 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 
+
+Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 5.55 × 10 −2 145 .561 69 .3458 
+
+Ensemble 9.79 × 10 −2 1.161 −1.2569 
+
+Sample-Iso 5.55 × 10 −2 25 .961 9.4566 
+
+LUNO-Iso 5.52 × 10 −2 22 .231 7.6355 
+
+Sample-LA 5.94 × 10 −2 21 .685 7.3688 
+
+LUNO-LA 5.52 × 10 −2 4.182 −0.8180 
+
+Table 10: Metrics evaluated on OOD dataset Pos-Neg. Method RMSE ( ↓) χ2 NLL ( ↓)Input Perturbations 1.10 × 10 −1 997 .143 494 .9350 
+
+Ensemble 1.39 × 10 −1 1.006 −1.0140 
+
+Sample-Iso 1.10 × 10 −1 93 .712 43 .3620 
+
+Prior-Iso 1.10 × 10 −1 82 .367 37 .7331 
+
+Sample-LA 1.15 × 10 −1 60 .728 27 .0460 
+
+LUNO-LA 1.10 × 10 −1 7.127 1.1642 
+
+Table 11: Metrics evaluated on OOD dataset Pos-Neg-Flip. D.6.3. E VALUATION OF A SINGLE TRAJECTORY 
+
+Run-Time comparison 
+
+Method LUNO-∗ Sample-∗
+
+Input Perturbations – 10 .19 ± 0.006 
+
+Ensemble – 0.85 ± 0.004 
+
+∗-Iso 0.53 ± 0.004 14 .00 ± 0.008 
+
+∗-LA 5.75 ± 0.017 27 .70 ± 0.006 
+
+Table 12: Comparison of run-time performance between sampling-based (Sample-∗) and linearization-based (LUNO-∗)methods across different uncertainty quantification techniques when out-rolling a single trajectory iteratively. 31 Linearization Turns Neural Operators into Function-Valued Gaussian Processes 0.00.10.20.30.4
+
+> Base
+
+RMSE 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+
+NLL 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+
+χ20.00.10.20.30.4    
+
+> Flip
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 0.00.10.20.30.4
+> Pos
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 0.00.10.20.30.4
+> Pos-Neg
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 20 30 40 50
+
+Time step     
+
+> 0.00.10.20.30.4
+> Pos-Neg-Flip
+> 10 20 30 40 50
+
+Time step     
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 20 30 40 50
+
+Time step 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+
+Figure 7: Averaged performance of different UQ methods on an autoregressive rollout of the FNO on 50 trajectories from the Base, Flip, Pos, Pos-Neg, and Pos-Neg-Flip datasets. We compare input perturbations ( ), deep ensembles ( ), Sample-Iso ( ), LUNO-Iso ( ), Sample-LA ( ), LUNO-LA ( ). 32

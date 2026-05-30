@@ -1,0 +1,1728 @@
+Title: A Bayesian Approach to Online Planning
+
+URL Source: https://openreview.net/pdf?id=NS8z5FinYl
+
+Number of Pages: 27
+
+Markdown Content:
+# A Bayesian Approach to Online Planning 
+
+Nir Greshler 1 David Ben Eli 1 Carmel Rabinovitz 1 Gabi Guetta 1 Liran Gispan 1 Guy Zohar 1 Aviv Tamar 2
+
+# Abstract 
+
+The combination of Monte Carlo tree search and neural networks has revolutionized online planning. As neural network approximations are often imperfect, we ask whether uncertainty estimates about the network outputs could be used to improve planning. We develop a Bayesian planning approach that facilitates such uncertainty quantification, inspired by classical ideas from the meta-reasoning literature. We propose a Thompson sampling based algorithm for searching the tree of possible actions, for which we prove the first (to our knowledge) finite time Bayesian regret bound, and propose an efficient implementation for a restricted family of posterior distributions. In addition we propose a variant of the Bayes-UCB method applied to trees. Empirically, we demonstrate that on the ProcGen Maze and Leaper environments, when the uncertainty estimates are accurate but the neural network output is inaccurate, our Bayesian approach searches the tree much more effectively. In addition, we investigate whether popular uncertainty estimation meth-ods are accurate enough to yield significant gains in planning. Our code is available at: 
+
+https://github.com/nirgreshler/ bayesian-online-planning .
+
+# 1. Introduction 
+
+Online planning is fundamental to various decision making problems, ranging from game playing, such as Chess and Go (Silver et al., 2018), to robotic manipulation and naviga-tion (Finn & Levine, 2017; Shim et al., 2003), autonomous driving (Williams et al., 2017; Cesari et al., 2017), and more          
+
+> 1General Motors, Advanced Technical Center, Israel
+> 2Department of Electrical and Computer Engineering, Tech-nion - Israel Institute of Technology, Haifa, Israel. Correspon-dence to: Nir Greshler <nir.greshler@gm.com >, Aviv Tamar
+> <avivt@technion.ac.il >.
+> Proceedings of the 41 st International Conference on Machine Learning , Vienna, Austria. PMLR 235, 2024. Copyright 2024 by the author(s).
+
+Q = 15 ± 10 Q = 20 ± 2 
+
+> Figure 1. Example of value estimation errors during search
+
+recently, planning with large language models (Zhang et al., 2023; Mankowitz et al., 2023). In the standard problem setting, as we consider here, a model of the world is known, its state is fully observed, and an agent must sequentially take actions that yield a high cumulative reward. For almost all realistic problems, calculating the optimal sequence of actions is intractable, and some approximations must be made. For the past two decades, the dominant ap-proximation approach has been Monte-Carlo Tree Search (MCTS) – a stochastic traversal of the search tree that bal-ances exploration and exploitation using an upper confi-dence bound (UCB) (Kocsis & Szepesv ´ari, 2006). Break-through performance in several games was achieved by the seminal AlphaZero, an extension of MCTS with neural net-work approximations of a value function and a policy, which considerably cut down the search effort (Silver et al., 2018). When the online search has a limited budget, as is the case in any real-time application, errors in the neural network approximations can be problematic for MCTS. As an ex-ample, consider the situation in Figure 1, where the search has reached a state with two possible actions, with action-value estimates of 15 and 20 . MCTS will choose the second, higher value action repeatedly, until the low visit count of the unexplored action in the UCB term will dominate, and only then will it explore the first action. However, if we were to know in advance that the uncertainty in the action-value estimates are ±10 and ±2, respectively, then we should ex-plore the first action much more frequently, as its low-value estimate may likely be wrong. Unfortunately, MCTS, and its AlphaZero variants are frequentist methods, and do not naturally take such uncertainty information into account. 1    
+
+> 1We are mainly interested in epistemic uncertainty here (Der Ki-ureghian & Ditlevsen, 2009). For aleatoric uncertainty, frequentist methods such as Audibert et al. (2009) are well suited.
+
+1A Bayesian Approach to Online Planning 
+
+We advocate here a Bayesian approach to online search. Our premise is that the Bayesian method can naturally exploit uncertainty estimates of the neural network approximations, to yield better performance, especially under modest search budgets and inaccurate neural network predictions. Bayesian search algorithms were explored in the planning literature already in the 1990s (Russell & Wefald, 1991b; Dearden et al., 1998). For single stage decision making, Bayesian optimization (Shahriari et al., 2015; Frazier, 2018; Chen et al., 2018) can be seen as a modern incarnation of similar ideas, and meta reinforcement learning is essentially a Bayesian approach to multi-task RL (Zintgraf et al., 2019). The work of Tesauro et al. (2010) pioneered the Bayesian approach to MCTS. However, to our knowledge, during the recent deep learning-fueled revival of online planning (Sil-ver et al., 2017; Anthony et al., 2017; Silver et al., 2018; Schrittwieser et al., 2020), Bayesian methods have so far been ignored. In this work, we aim to rectify this matter. We develop both the fundamental and practical aspects of a Bayesian approach to online planning and learning. Our first contribution is a Bayesian formulation of the tree search problem, and a corresponding Thompson sampling based tree search algorithm. We establish a Bayesian regret bound for our algorithm, based on modern analysis tech-niques (Russo & Van Roy, 2016), which to our knowledge is the first regret analysis of a Bayesian tree search approach. Importantly, our bound shows that when the Shannon en-tropy of the prior is small (equivalent to high certainty in the neural net approximation), the expected regret is small. Our second contribution is a practical implementation of Thomp-son sampling tree search, by incorporating efficient methods for sampling from and updating the posterior. Interestingly, our methods bear resemblance to techniques suggested in previous works such as Tesauro et al. (2010); our formula-tion establishes them as concrete instances of the Thompson sampling method. In addition, we propose an adaptation of the Bayes-UCB method of Kaufmann et al. (2012) to tree search, which we find to work very well in practice. Finally, in the spirit of AlphaZero and Expert Iteration (An-thony et al., 2017; Silver et al., 2018), we incorporate deep learning of value functions into our approach using self play. Different from prior work, however, our Bayesian planning algorithms make explicit use of uncertainty estimates about the neural network predictions, and we discuss how such could be obtained. We evaluate our method on procedurally generated Maze and Leaper environments from the ProcGen bench-mark (Cobbe et al., 2020). In the setting we investigate, the agent is tested on domains it has not been trained on, and therefore we expect some errors in its neural network approximations. With access to accurate uncertainty esti-mates (which can easily be computed for the maze domain), our Bayesian approaches significantly outperform MCTS, validating our main premise. However, with two popular methods for learning the epistemic uncertainty, we could not obtain predictions accurate enough to translate to per-formance gains in planning, suggesting that more research is required to fully harness the potential of the Bayesian paradigm. 
+
+# 2. Bayesian Online Planning 
+
+We consider an agent that sequentially interacts with a dy-namic environment in discrete time steps. At each time step, the agent observes the current environment state and per-forms an action. Subsequently, the environment transitions to a new state according to some transition law. We assume that the agent has a model of the environment, and at each step can use the model to plan the next course of action. For the sake of planning, we assume that the environment model is deterministic. However, we note that since the agent re-plans at each time step, our solution can also be applied to non-deterministic systems (Yoon et al., 2007). In the fol-lowing, we focus on the planning problem that needs to be solved at each time step, and propose a Bayesian approach for it. 
+
+2.1. Bayesian Tree Search 
+
+Consider a deterministic decision process T with an initial (root) state s0, and a finite action set A. Let 
+
+sn+1 = f (sn, a n) denote the deterministic dynamics, and let r(sn, a n) ∈ [−Rmax , R max ] denote a deterministic re-ward for a state-action pair. We consider decision processes of depth H, that is, we wish to maximize: 
+
+max 
+
+> a0,...,a H−1
+> H−1
+
+X
+
+> n=0
+
+r(sn, a n),
+
+s.t. sn+1 = f (sn, a n), ∀n ∈ 0, . . . , H − 1.
+
+(1) A decision process is equivalent to a tree of depth H, and henceforth we will refer to it as such. While we do not denote it explicitly, we assume that states at different levels of the tree are distinct (e.g., by having the level of the tree be part of the state). Naively, one can solve (1) by evaluating all the AH possible H-length action sequences (e.g., using breadth first search). We will be interested in problems where A and H are such that this approach is not tractable. Intuitively, we would like to focus the search on the more promising parts of the search tree, assuming that we have some prior knowledge about where the optimal solution may lie. In the following, we cast this idea within a formal probabilistic interpretation. Our main insight, inspired by the meta reasoning literature (Russell & Wefald, 1991b), is that each edge expansion during the tree search is equivalent to querying the rewards for the actions of a state. Thus, 2A Bayesian Approach to Online Planning   
+
+> S0
+> S1
+> S2S3
+> S4
+> S5S6
+> z∗
+> ztz∗
+> t
+
+# T A∗
+
+Figure 2. Illustration of the formulation in Section 2.1. A tree T
+
+of depth H = 3 is shown. Let the action {L, R } correspond to the left and right transitions, respectively. Assume that the optimal branch is (S0, R ) → (S1, L ) → (S2, R ). Then, z∗ =(S2, R ). At time t = 4 , the state-action pairs that have already been explored are marked in solid line, and the next state-action to be explored is zt = ( S1, R ). The set Zt is marked in purple. Note that z∗ is indicative of the optimal branch, and also of z∗ 
+
+> t
+
+, and of the optimal action at the root, A∗.
+
+in terms of the number of computations required, finding the optimal action sequence when rewards are known is equivalent to identifying the rewards of the optimal action sequence when rewards are not known. The latter, however, is much more convenient to interpret probabilistically. A tree is completely characterized by the rewards r(s, a ).We assume a prior distribution over the rewards, which induces a distribution over the trees, which we denote as 
+
+P (T ).2 For a tree T , let Qn(s, a ; T ) denote its correspond-ing state-action value function, defined as follows: 
+
+Qn(s, a ) = max 
+
+> an+1 ,...,a H−1
+> H−1
+
+X 
+
+> τ=n+1
+
+r(sτ , a τ ),
+
+s.t. sn = s, an = a, sτ +1 = f (sτ , a τ ), ∀τ ∈ n, . . . H − 1.
+
+The prior distribution over value functions is given by 
+
+P (Qn(s, a ) = α) = P 
+
+> T
+
+P (T )1 {Qn(s, a ; T ) = α} .
+
+We consider a sequential and stochastic discovery of the tree that takes place over T iterations ( T will be termed the 
+
+search budget ), where at each iteration t ∈ { 1, . . . , T }, a reward for a particular leaf state-action pair zt = ( st, a t)
+
+is revealed; an illustration is provided in Figure 2. Recall that this sequential discovery relates to the planning that happens at each time step of the online planning scheme described above, and should yield the optimal action to take at the root node, which is the current state of the en-vironment. Let Z denote the set of all state-action pairs in the tree, and let Zt denote the set of leaf state-action pairs in the tree that has been discovered up to iteration 
+
+t. That is, we have that for all t, zt ∈ Z t, and Zt ⊂ Z .
+
+> 2
+
+For simplicity, we assume that P (T ) is a discrete distribution, but our derivations extend to continuous distributions by replacing sums with integrals. 
+
+Let Ot = {(st, a t), r (st, a t)} ≡ { zt, r (zt)} denote the ob-servation at time t, and let Ft = {O0, . . . , O t−1}, where 
+
+O0 = {} , denote the history ( σ-algebra) of the discovery process at time t.3 We will consider the posterior distribu-tions P (T |F t) and P (Qn(s, a )|F t), which are well defined. Given T , an optimal action at the root is well defined: 
+
+A∗ ∈ arg max 
+
+> a∈A
+
+Q0(s0, a ; T ). (2) For simplicity, we will assume that for any possible tree, the optimal action at the root is unique. For a leaf state-action pair zt that is explored at iteration t, let Aroot (zt) ∈ A
+
+denote the action at the root that leads to zt. Also, let z∗
+
+> t
+
+denote the leaf available at time t that is on the optimal branch (if the branch is unique, then the leaf is unique), and let z∗ denote the leaf of the complete tree on the optimal branch. Note that Aroot (z∗ 
+
+> t
+
+) = Aroot (z∗) = A∗.We define the T period regret of the sequence of state-action pairs z1, . . . , z T as the random variable, Regret (T ) = 
+
+PTt=1 [Q0(s0, A ∗) − Q0(s0, A root (zt))] . Note that mini-mizing regret is equivalent to minimizing the error due to a suboptimal action at the root , which, as explained above, is what ultimately matters for the online planning scheme. We shall study the expected regret, a.k.a. Bayesian regret, 
+
+E [Regret (T )] = E
+
+" TX
+
+> t=1
+
+[Q0(s0, A ∗)−Q0(s0, A root (zt))] 
+
+#
+
+,
+
+(3) where the expectation is taken over the randomness in the action selection, and over the prior distribution over T .We shall now propose a general tree search algorithm, and then analyse its Bayesian regret. Our tree search algorithm is based on the Thompson Sampling idea (Thompson, 1933), and selects leaves according to their posterior probability of being on the optimal branch: 
+
+P (zt = z|F t) = P (z∗ 
+
+> t
+
+= z|F t). (4) For a random variable X, let H(X) denote its Shannon en-tropy. The next theorem bounds the regret of our algorithm. 
+
+Theorem 1. The regret of the leaf selection rule defined in Eq. (4) satisfies: E [Regret (T )] ≤ HR max 
+
+q 12 |Z|H (z∗)T . 
+
+Note the dependence on H(z∗) – if the prior over z∗ has low entropy, i.e., it is an informative prior, the problem becomes easier. This is a property of the Bayesian analysis. To further demonstrate this point, the following example compares the performance of Thompson Sampling based tree search to a search of the tree that is agnostic to the prior (e.g., breadth first search or depth first search). 
+
+> 3
+
+While we assume here that rewards are deterministic, our derivation extends to stochastic rewards, where each observation reveals an i.i.d. sample from the reward. 
+
+3A Bayesian Approach to Online Planning 
+
+Example 1. Consider a distribution of trees where each tree has exactly one state-action pair with non-zero reward, equal to 1. Without loss of generality, at each time step t be-fore the non-zero reward is found, the agnostic search has a probability of 1/(|Z|− t+1) to discover the reward, and the regret is 1. After the reward has been found, the regret is 0.This leads to expected regret E [Regret (T )] = T (1 − T 
+
+> 2|Z|
+
+).In particular, for T = |Z| , we have E [Regret (T = |Z| )] =  
+
+> |Z|
+> 2
+
+. The bound in Theorem 1, on the other hand, gives 
+
+E [Regret (T = |Z| )] = |Z| 
+
+q H(z∗)2 , where we ignore the 
+
+HR max terms as each trajectory can have at most reward 
+
+1. When the prior is uniform, H(z∗) = log |Z| , giving a worse regret than for the agnostic search. However, if the prior is such that H(z∗) < 0.5, Thompson sampling will exploit this structure to obtain a lower regret. 
+
+The proof of Theorem 1 builds on the information theoretic analysis of Thompson Sampling for multi armed bandits (MABs) by Russo & Van Roy (2016), and is detailed in Section G. We adapt their analysis to our case by defining a MAB problem that has similar regret as (3) , but with non i.i.d. rewards, and exploit the fact that their analysis does not depend on the rewards being i.i.d. 4
+
+2.2. Practical Thompson Sampling Tree Search 
+
+The previous section established that the Thompson sam-pling strategy is a sound exploration method for tree search. Practically, however, each iteration of Thompson sampling involves sampling a leaf in the tree from the posterior 
+
+P (z∗ 
+
+> t
+
+|F t). In general, computing the posterior probabil-ity and sampling from it can be computationally demanding. In the following, we propose an efficient method for the special family of independent Q value posteriors. We shall use the following notation. For indepen-dent random variables X1, . . . , X n with distributions 
+
+P (X1), . . . , P (Xn) we denote by P (max i∈1,...,n {Xi})
+
+the distribution of their maximum order statistic. For a scalar b, we denote by P (X1 + b) the distribution of the random variable X1 + b.Given T , Bellman’s optimality equation states that, 
+
+Qn(s, a ; T ) = r(s, a ) + max a′ {Qn+1 (f (s, a ), a ′; T )} .
+
+Consider that at iteration t − 1 of our Thompson sampling algorithm, action at−1 was chosen at state 
+
+st−1, and r(st−1, a t−1) was revealed. Assume that the posteriors for the next state and action values 
+
+P (Qn+1 (f (st−1, a t−1), a ′)|F t) are independent (with re-spect to the different actions). Then, we have that the poste-
+
+> 4While Russo & Van Roy (2016) do consider a case of i.i.d. rewards, their analysis does not actually use this property at all. We note that this fact was previously observed in other studies such as Bubeck & Eldan (2016).
+
+Algorithm 1 Thompson Sampling Tree Search 
+
+Require: Pquery (Q(s, a )) , rquery (s, a ).Init known set Sknown := {s0}
+
+Init value P (Q(s0, a )) := Pquery (Q(s0, a )) ∀a ∈ A.
+
+for t = 1,2,. . . ,T do 
+
+# Forward sampling Set s := s0, s′ := ∅
+
+while True do 
+
+For each a ∈ A, sample Q(s, a ) ∼ P (Q(s, a )) [*] Set s′ := f (s, arg max a∈A Q(s, a )) [**] 
+
+if s′ /∈ Sknown then 
+
+Set Sknown := Sknown ∪ { s′}
+
+Break 
+
+end if 
+
+Set s := s′
+
+end while 
+
+Set value distribution for leaf P (Q(s′, a ′)) =
+
+Pquery (Q(s′, a ′)) ∀a′ ∈ A.# Max-Backup 
+
+while True do 
+
+Set (s, a ) := f −1(s′)
+
+Set P (Q(s, a )) := P (r(s, a ) + max a′∈A Q(s′, a ′)) 
+
+if s = s0 then 
+
+Break 
+
+end if 
+
+Set s′ := s
+
+end while end for 
+
+rior for Qn(st−1, a t−1) is given by, 5
+
+P (Qn(st−1, a t−1)|F t) = 
+
+P
+
+
+
+r(st−1, a t−1)+max  
+
+> a′
+
+{Qn+1 (f (st−1, a t−1), a ′)} Ft
+
+
+
+.
+
+(5) If we further assume that the posterior for branches that do not involve (st−1, a t−1) does not change, we can apply the rule in (5) recursively to update all the posteriors in the tree. We refer to this update as the max-backup method. After updating the posterior Q values, sampling from P (z∗ 
+
+> t
+
+|F t) can be done by noting that for any state s, we have that P (( s, a ) ∈ optimal branch ) =
+
+P (Q(s, a ) > Q (s, ˜a) ∀˜a̸ = a). Therefore, we can sam-ple from the optimal branch distribution by sequentially sampling Q values, and choosing the optimal action w.r.t. the sampled Q. We term this the forward sampling method. The Thompson Sampling Tree Search method ( TSTS ) in Algorithm 1 combines forward sampling and max-backup into a complete tree search routine. Figure 3 further illus-trates the different steps in the algorithm. Our algorithm requires that when we explore a leaf (s, a ), we can directly    
+
+> 5Eq. (5) also holds for dependent posteriors. For ease of exposition, however, we focus on the independent case.
+
+4A Bayesian Approach to Online Planning 
+
+query its reward and next state-action value posteriors, de-noted rquery (s, a ) and Pquery (Q(s, a )) , respectively. 6 In the sequel, we will realize the posterior query using various learned neural network approximations. We mention that the max-backup rule was proposed by Tesauro et al. (2010), but without a formal derivation. In our formulation, max-backup, when combined with forward sampling, and under the independent posterior distribution assumption, emerges as a natural implementation of the TSTS method. We estab-lish this formally in the following proposition. 
+
+Proposition 1. Assume that at each iteration t, the posterior of values for state-actions on the leaves are independent, i.e., 
+
+P (Q(s, a ) : ( s, a ) ∈ Z t|F t) = Q 
+
+> (s,a )∈Z t
+
+P (Q(s, a )|F t).Then Algorithm 1 samples leaves from the TS distribution, 
+
+P (z∗ 
+
+> t
+
+|F t).
+
+Let us discuss the validity of the independent posteriors assumption. Indeed, it is easy to imagine problems where inferring a reward in a particular state action is informative about the value of different actions in the same state, or even about the value of other states in the tree. Unfortunately, designing an efficient posterior update and sampling method for this case is non-trivial, and we leave it as an open prob-lem for future work. Empirically, we have found that even under the independent posteriors assumption, our Bayesian approach can yield significant performance improvements. 
+
+2.3. Improved Exploration via Bayes-UCB 
+
+The TSTS method resolves the exploration-exploitation tradeoff through posterior sampling. In practice, other ex-ploration methods may perform better, as posterior sampling is not necessarily Bayes-optimal. In this section we propose a different Bayesian exploration strategy that we found to empirically perform very well. We propose Bayes-UCB Tree Search ( BTS ) – an exploration method based on the idea of optimism in the face of uncer-tainty, inspired by the Bayes-UCB algorithm of Kaufmann et al. (2012). The idea is to choose actions at each state proportional to the quantiles of posterior state-action values. For a random variable X with distribution P (X), let 
+
+ρ(α, P ) be its α-quantile, such that P (X ≤ ρ(α, P )) = α.In BTS , we replace the action selection rule in TSTS ’s For-ward Sampling method (lines marked by [*] and [**] in Algorithm 1) with the following: 
+
+a∗ := arg max 
+
+> a
+
+ρ(α(s), P (Q(s, a ))) ,s′ := f (s, a ∗),
+
+(6) where the quantile level is given by α(s) = 1 − (1 − α0) ·
+
+e− N (s)−1 
+
+> β
+
+, where N (s) is the number of visits to state s,         
+
+> 6We omit the conditioning of the posteriors rquery and
+> Pquery (Q(s, a )) on history to ease notation.
+
+and the initial quantile α0 and rate coefficient β are tun-able hyper-parameters. Full pseudo-code is provided in Appendix A. The Bayes-UCB algorithm of Kaufmann et al. (2012) ap-plied a selection rule α(s) = 1 − βN (s) in the MAB setting, where P (Q(s, a )) is replaced with the posterior reward prob-ability for each arm, and N (s) is replaced with the itera-tion number. Under the assumptions of Proposition 1, the Max-Backup method leads to the correct state-action value posterior in each state, and hence BTS applies Bayes-UCB with a different quantile schedule to tree search by applying it to each state, similarly to the way UCB is adapted to tree search in UCT (Kocsis & Szepesv ´ari, 2006). The Bayes-UCT2 rule of Tesauro et al. (2010) selects an action that maximizes E[P (Q(s, a ))] + p2 ln N (s)Var[ P (Q(s, a ))] ,which for a Gaussian posterior is equivalent to a quantile schedule 0.5 + 0 .5 erf( pln N (s)) . Intuitively, in all three schedules, as a node is visited more often, the action selec-tion is more optimistic (higher quantile), exploring actions that have some chance of turning out to be better than the action that currently yields the highest expected return. This intuition is shown in Kaufmann et al. (2012) to yield asymp-totically optimal Bayesian regret bounds for the MAB prob-lem with binary rewards. In our experiments, we found the 
+
+BTS schedule to outperform both Bayes-UCB and Bayes-UCT2. Adapting the analysis of Kaufmann et al. (2012) to the tree search setting is not trivial, and left to future work. 
+
+2.4. Action Commitment in Online Planning 
+
+To connect our Bayesian tree search methods to the online planning scheme, note that TSTS and BTS return the poste-rior state-action value distribution at the root state, and also the tree discovered during search, both of which can be used by the online planning scheme to select an action to perform in the environment. We shall term this action selection step as action commitment , different from the action selection during tree search. We found that using the posterior state-action value distri-bution for action commitment often yielded unfavorable results, as the max-backup tends to inflate the value of states down the tree with high uncertainty. An alternative, which we shall term MCTS action commitment , is to select an ac-tion that corresponds to the branch with the highest expected return (sum of rewards rquery (s, a ) and E [Pquery (Q(s, a ))] at the leaf). We note that due to the deterministic dynamics and reward, this strategy is equivalent to a standard MCTS algo-rithm that commits to the action with the highest backed-up value at the root. An even safer strategy is to select an action that corresponds to the branch with the highest α-quantile of the return. A different method is to choose actions stochas-tically, according to a SoftMax over the backed-up value at the root; this method is helpful when the agent can get 5A Bayesian Approach to Online Planning 
+
+‘stuck’ by committing to a wrong action over and over again. We explore these commitment strategies in our experiments. 
+
+2.5. Learning in Bayesian Tree Search 
+
+After describing the fundamentals of Bayesian tree search, we are finally ready to combine TSTS /BTS with deep learn-ing of the state-action value function distribution. The basic component in our method is a neural network pre-diction for the posterior value distribution Pquery (Q(s, a )) = 
+
+N (μθ (s, a ), σ 2 
+
+> θ
+
+(s, a )) , where μθ (s, a ) is the output of a neu-ral network with parameters θ, and σθ (s, a ) is an estimate of the uncertainty in μθ (s, a ). The literature on estimating uncertainty in neural network predictions is extensive (Gaw-likowski et al., 2021); here, we focus on two simple methods: maximum likelihood estimation (MLE) and ensembles. In the MLE method, the neural network has an additional head for log σθ (s, a ) (Kendall et al., 2018), and the loss func-tion for a data sample bQ(s, a ) is the negative log likelihood: 
+
+L = 12 log  σθ (s, a )2 + (μθ (s,a )− bQ(s,a ))2  
+
+> 2σθ(s,a )2
+
+.
+
+In the ensemble method, we have an ensemble of 
+
+K neural networks for μ(s, a ), μθ1 (s, a ), . . . , μ θK (s, a ),each trained using the mean-squared error loss L =
+
+PKi=1 
+
+
+
+μθi (s, a ) − bQ(s, a )
+
+2
+
+, but with different (random) initial weights. The output of the ensemble is the aver-age, μθ (s, a ) = 1
+
+> K
+
+PKi=1 μθi (s, a ), and the uncertainty estimate is the empirical standard deviation, σ2 
+
+> θ
+
+(s, a ) = 
+
+> 1
+> K−1
+
+PKi=1 (μθi (s, a ) − μθ (s, a )) 2 .
+
+Our method proceeds in rounds similar to AlphaZero and Expert Iteration (Anthony et al., 2017; Silver et al., 2018), where in each round the initial state is reset to s0, and online planning with current neural network parameters θ is per-formed for k time steps (or until a terminal state is reached). The learning targets for each root state and actions visited in the online trajectory are the expected posterior Q values at the root per each search. 
+
+# 3. Related Work 
+
+Meta-reasoning is the study of allocating computational re-sources in artificial intelligence (Russell & Wefald, 1991a; Griffiths et al., 2019). Selecting which actions to explore during search is known as the metalevel decision prob-lem (Hay et al., 2012; Russell & Wefald, 1991b), and is related to Howard’s value of information (Howard, 1966) and the Bayesian ranking and selection problem (Frazier & Powell, 2010). In its Bayesian formulation, the optimal sequence of actions is well defined and its computation is equivalent to solving a partially observed MDP (Hay et al., 2012), thus finding it is generally intractable. Approximate solutions include Thompson sampling (Thompson, 1933) and the knowledge gradient (Ryzhov et al., 2012), which is related to the value of perfect information (VPI) heuris-tic (Baum & Smith, 1997; Dearden et al., 1998; Russell & Wefald, 1991b), and the expected improvement heuristic in Bayesian optimization (Frazier, 2018). Several studies applied a Bayesian metalevel decision mak-ing approach in MCTS. Mern et al. (2021) use Gaussian processes for MCTS with continuous actions, and apply the expected improvement heuristic for selecting actions. Bai et al. (2013) replace the UCB selection rule in each node of the MCTS search tree with Thompson sampling, assuming that Q values are distributed as a mixture-of-Gaussians, and Bai et al. (2014; 2018) further extends this approach to plan-ning in partially observable problems. Tolpin & Shimony (2012); Hay et al. (2012) replace MCTS’s action selection at the root node by approximations to the value of perfect information, and with a UCB update suited for the simple regret. Tesauro et al. (2010) propose a backup of the maxi-mum order statistic, similarly to our max-backup, and used it within an ad hoc UCB-style selection rule. Closely re-lated to our work, the recent study by Dam et al. (2023) models the value distributions along the search tree using Gaussians, and uses the power mean to backup values and their uncertainties, and propose both a UCT and Thompson sampling strategies for action selection. Bai et al. (2013) and Tesauro et al. (2010) claim asymptotic convergence of their methods to the optimal action in the limit T → ∞ , and Dam et al. (2023) also provide an asymptotic polynomial convergence rate. Different from the works above, we ef-fectively apply Thompson sampling to the branches in the search tree, which allows us to obtain the first finite-sample regret guarantees for Thompson sampling tree search. In ad-dition, we investigate the learning setting, by connecting the Bayesian posterior to neural network uncertainty estimates. Lan et al. (2021) estimate the neural network uncertainty, and use it to stop the MCTS search when it is certain, reduc-ing average computation time. In contrast, we exploit the uncertainty to design a different search procedure, which is orthogonal to early stopping. Danihelka et al. (2021) im-prove Alpha Zero’s search by replacing UCB at the root, which minimizes cumulative regret, with sequential halv-ing (Karnin et al., 2013) – a frequentist algorithm for min-imizing the simple regret. We compare our approach with different action selection and backup procedures based on Danihelka et al. (2021), Bai et al. (2013), and Dam et al. (2023) in our experiments. Jin & Keutzer (2015) is, to our knowledge, the only previous work that used neural networks with a Thompson sampling-based MCTS algorithm. In that work, a policy network was employed for selecting actions during rollouts. In our work, following the successful AlphaZero methodology (Silver et al., 2018), we use neural networks for value estimates. 6A Bayesian Approach to Online Planning    
+
+> S0
+> Sample Q(s0, a 1)Sample Q(s0, a 2)
+> S1
+
+(a) Forward Sampling 
+
+> S0
+> Sample
+> Q(s1, a 1)
+> Sample
+> Q(s1, a 2)
+> S1
+
+(b) Forward Sampling    
+
+> S0
+> P(Q(s2, a 1)) P(Q(s2, a 2))
+> S1
+> S2
+> r(s0, a 2)
+> r(s1, a 1)
+
+(c) Max-Backup 
+
+Figure 3. TSTS Algorithm Schematic. Plots (a) and (b) show two successive iterations of forward sampling, where states in Sknown are marked in gray. Subsequently, in Plot (c), state s2 is added to Sknown , and the max-backup routine is performed to update the posteriors. 
+
+# 4. Experiments 
+
+We aim to demonstrate the potential of using uncertainty estimates in online planning. However, as the online plan-ning and learning procedure involves several components, our consideration was to design experiments where the con-tribution of individual components could be clearly teased out and investigated. To this end, we focus on two tasks from the ProcGen suite of procedurally generated game environments (Cobbe et al., 2020), Maze and Leaper. We report an extensive investigation on Maze in the main text, and present similar results on Leaper in the supplementary material Section D. Designed as a benchmark for zero-shot generalization in deep RL, ProcGen presents a challenge in dealing with epistemic uncertainty, which we hope to miti-gate using our Bayesian approach. In addition, the maze and leaper domains allow us to calculate ground-truth values for the Q functions and consequently, also for the uncertainty in the neural-network approximation. We begin by describing our experimental setup; comprehensive technical details are provided in Appendix B. 
+
+Online planning in ProcGen: ProcGen games are deter-ministic, with a finite action space. The game state is not directly accessible, but the agent observes a rendering of the game state as an image. The simulator state can be saved, and reset to a saved state, allowing us to implement a model-based planning scheme without access to the true state transitions, by querying the simulator for the image that would be observed upon taking an action. At each time step i = 1 , . . . , k , the agent is in state si and allowed a search budget of T tree search iterations, after which it must commit to an action ai, and the game proceeds to the next time step. We evaluate the agent by whether it reached a re-warding terminal state or not; evaluation by the accumulated reward in the environment gave similar results. 
+
+Learning in ProcGen: ProcGen procedurally generates game levels, and we let ℓ denote a specific level instance (in practice, the random seed used to generate this level). We consider a set of Ntrain training levels and disjoint set of 
+
+Ntest test levels. We train our neural networks on the training levels, and evaluate their performance on the test levels. Pre-vious work (Cobbe et al., 2020) has already established that in the Maze game, for a moderate Ntrain there is a significant generalization gap, indicating high relevance for epistemic uncertainty. We emphasize that our goal is not to reduce this uncertainty, but only to mitigate its effect on planning. Therefore, we adopt the Impala neural network architecture that was used in previous studies (Espeholt et al., 2018), and a moderate Ntrain = 150 . Further details regarding the training of the neural network are given in Appendix B.2. 
+
+Evaluation: Different planning algorithms can be evaluated using the same neural network μθ (s, a ). We differentiate between the planner used for collecting the data for learning, termed the annotator , and the planner used for evaluation. In our experiments, we evaluate different planners on a net-work trained with a single annotator, allowing us to compare different planners on the same neural network. In addition, we note that some planners are inherently stochastic (e.g., 
+
+TSTS ), while some are deterministic (e.g., UCT). In do-mains such as mazes, where repeatedly choosing a wrong action would get the agent stuck, stochasticity can be an advantage. To fairly compare planners in such domains, we fix the random seed of a stochastic planner A to be the same at all time steps, and denote such a planner as Adet . Finally, we specify the action commitment strategies we use for each experiment in the experiment description. 
+
+Ground Truth Values and Uncertainties: In a Maze task, it is straightforward to calculate a ground truth value of 
+
+Q(s, a ), denoted QGT (s, a ) using algorithms for shortest paths on graphs (Even, 2011). While our agents do not have direct access to the graph that underlies the observed image, we can use the ground truth value to obtain a ground truth estimate of the neural network uncertainty, 
+
+σGT  
+
+> θ
+
+(s, a ) = |μθ (s, a ) − QGT (s, a )|. (7) We emphasize that in any realistic problem, QGT (s, a ) and 
+
+σGT  
+
+> θ
+
+(s, a ) would not be available at test time, and we use them here only to demonstrate the potential of our algo-rithms when uncertainty estimation is perfect. 
+
+Baselines and Ablations: We compare TSTS and BTS 
+
+with the following baselines. N-MCTS : a neural MCTS al-7A Bayesian Approach to Online Planning 
+
+gorithm based on Anthony et al. (2017); Silver et al. (2017). For a fair comparison with our methods, we train a single Q-network, and use it both for value estimation and a SoftMax policy for searching the tree using P-UCT 7. The SoftMax temperature was set to 2.0 using a hyper-parameter search. 
+
+SH-N-MCTS : a variant of N-MCTS inspired by Danihelka et al. (2021), where exploration at the root is done using sequential halving instead of P-UCT. Note that N-MCTS 
+
+is deterministic while SH-N-MCTS is stochastic. B-UCT2 
+
+and B-UCB : the BTS algorithm, but with the Bayes-UCT2 (Tesauro et al., 2010) and the Bayes-UCB (Kaufmann et al., 2012) action selection rules, respectively. In all algorithms, best hyper-parameters were searched for; we report on the sensitivity to hyper-parameters in Appendix E. In addition, in Appendix E.5 we compare our algorithm with the meth-ods of Dam et al. (2023) and Bai et al. (2013). 
+
+4.1. Results 
+
+In Figure 4 we compare various deterministic Bayesian planners with N-MCTS , under different search budgets. In this experiment, the neural network was trained using an 
+
+N-MCTS annotator for 250 epochs. When training the head for predicting σθ (s, a ) we kept the rest of the network frozen, therefore the N-MCTS results are the same as would have been obtained without learning the uncertainty. Our comparison uses the same μθ (s, a ) in all planners. Further-more, in this experiment we chose MCTS action commit-ment for all planners. Thus, the only difference between the planners is how they search the tree . We make sev-eral observations. Clearly, the results on training domains and test domains are markedly different, validating our hy-pothesis that epistemic uncertainty can significantly affect planning. On training domains, all methods are comparable, and achieve significantly better results than on test, where network predictions can be significantly less accurate. We next discuss the comparison on test domains. First, with ground truth uncertainty, all Bayesian methods ( TSTS and 
+
+BTS variants) significantly outperform N-MCTS , validating our main premise – accounting for epistemic uncertainty during the search leads to more informative search trees (see Appendix F for a detailed analysis including illustration of the search trees). Second, we observe that BTS outperforms 
+
+B-UCT2 and B-UCB , which outperform TSTS . Thus, in contrast to the MAB setting (Chapelle & Li, 2011), it ap-pears that in tree search Thompson sampling is significantly outperformed by (Bayesian) exploration bonuses. Third, we observe that the learned uncertainty estimates are not accurate enough to yield improvement over N-MCTS .In Figure 4c we show similar results for stochastic planners: 
+
+TSTS and SH-N-MCTS , in which the search process is  
+
+> 7The alpha-zero implementation in (Silver et al., 2017), for example, had different networks for the policy and the value func-tions, making it harder to compare with TSTS .
+
+stochastic, and also deterministic N-MCTS and BTS with a stochastic SoftMax action commitment. Stochasticity helps avoid recurring mistakes and improves performance, yet the relative ordering between the algorithms is similar to the de-terministic case. For SH-N-MCTS , we noticed significantly worse performance than all other methods in this domain. In Appendix Figure 7 we show a similar comparison and similar conclusions using neural network ensembles. We next study how accurate uncertainty prediction needs to be to yield improvements over N-MCTS . We add ρ% error to each ground truth uncertainty estimate in Eq. 7 by mul-tiplying it by 1 + U , where U ∼ Uniform( −0.01 ρ, 0.01 ρ).Our results in Figure 5a show that with up to 20% error BTS 
+
+still significantly outperforms N-MCTS .In Figure 5b we investigate the action commitment during online planning, using BTS with ground truth uncertainty and different quantiles (cf. Section 2.4). We observe that committing to risk-averse actions significantly improves performance, while the results above show that during the exploration of the search tree being risk seeking is beneficial. Thus, maintaining posterior distributions has additional ben-efits in online planning beyond the improved search trees. 
+
+# 5. Discussion 
+
+The hypothesis in this paper is that uncertainty estimates can benefit the search in online planning with neural networks. We developed the fundamentals of a Bayesian tree search that facilitates such estimates, and proposed several practical algorithms. Our experimental results are mixed: on the one hand, with ground truth uncertainty estimates, we observed a dramatic improvement over state-of-the-art frequentist methods. On the other hand, ground truth estimates are not practical, and our efforts to learn uncertainty estimates proved too inaccurate to yield significant gains in planning. Our results are specific to the ProcGen maze and leaper environments, and it is possible that domains with different reward structures and dynamics will be more or less sensi-tive to the uncertainty estimation accuracy. Nevertheless, we conclude that there is great potential to studying methods for estimating neural network uncertainty in the sequential decision making setting, reinforcing a similar conclusion made by Riquelme et al. (2018) for Bayesian bandits. Some promising recent developments include methods based on conformal prediction (Angelopoulos & Bates, 2021) and epistemic neural networks (Osband et al., 2023). Another interesting direction is to learn posteriors that de-pend on the complete search history, instead of the indepen-dent neural network estimates used here, for example, using transformer models that learn complete decision making strategies (Laskin et al., 2022). The Bayesian view offers a natural framework for such methods. 8A Bayesian Approach to Online Planning      
+
+> (a) Training domains (b) Test domains (c) Stochastic planners (test domains)
+> Figure 4. Success rate of different planners on ProcGen maze. Left + Middle: deterministic planners. Right: stochastic planners. Error bars are over 6 neural networks obtained from independent training runs. See Section 4.1 for more details.
+> (a) GT error ablation (b) Action commitment ablation
+> Figure 5. Ground truth uncertainty error and action commitment ablations, per Section 4.1 in the text.
+
+# Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+# References 
+
+Angelopoulos, A. N. and Bates, S. A gentle introduction to conformal prediction and distribution-free uncertainty quantification. arXiv preprint arXiv:2107.07511 , 2021. Anthony, T., Tian, Z., and Barber, D. Thinking fast and slow with deep learning and tree search. Advances in Neural Information Processing Systems , 30, 2017. Audibert, J.-Y., Munos, R., and Szepesv ´ari, C. Exploration– exploitation tradeoff using variance estimates in multi-armed bandits. Theoretical Computer Science , 410(19): 1876–1902, 2009. Bai, A., Wu, F., and Chen, X. Bayesian mixture modelling and inference based thompson sampling in monte-carlo tree search. Advances in neural information processing systems , 26, 2013. Bai, A., Wu, F., Zhang, Z., and Chen, X. Thompson sam-pling based monte-carlo planning in pomdps. In Pro-ceedings of the International Conference on Automated Planning and Scheduling , volume 24, pp. 29–37, 2014. Bai, A., Wu, F., and Chen, X. Posterior sampling for monte carlo planning under uncertainty. Applied Intelligence ,48(12):4998–5018, 2018. URL https://aijunbai. github.io/publications/AI18-Bai.pdf .Baum, E. B. and Smith, W. D. A bayesian approach to relevance in game playing. Artificial Intelligence , 97 (1-2):195–242, 1997. Bubeck, S. and Eldan, R. Multi-scale exploration of convex functions and bandit convex optimization. In Conference on Learning Theory , pp. 583–589. PMLR, 2016. Cesari, G., Schildbach, G., Carvalho, A., and Borrelli, F. Scenario model predictive control for lane change as-sistance and autonomous driving on highways. IEEE Intelligent transportation systems magazine , 9(3):23–35, 2017. Chapelle, O. and Li, L. An empirical evaluation of thompson sampling. Advances in neural information processing systems , 24, 2011. Chen, Y., Huang, A., Wang, Z., Antonoglou, I., Schrit-twieser, J., Silver, D., and de Freitas, N. Bayesian opti-mization in alphago. arXiv preprint arXiv:1812.06855 ,2018. Cobbe, K., Hesse, C., Hilton, J., and Schulman, J. Lever-aging procedural generation to benchmark reinforcement learning. In International conference on machine learn-ing , pp. 2048–2056. PMLR, 2020. Dam, T., Stenger, P., Schneider, L., Pajarinen, J., D’Eramo, C., and Maillard, O.-A. Monte-carlo tree search with 9A Bayesian Approach to Online Planning 
+
+uncertainty propagation via optimal transport. arXiv preprint arXiv:2309.10737 , 2023. Danihelka, I., Guez, A., Schrittwieser, J., and Silver, D. Policy improvement by planning with gumbel. In Inter-national Conference on Learning Representations , 2021. Dearden, R., Friedman, N., and Russell, S. Bayesian q-learning. In Aaai/iaai , pp. 761–768, 1998. Der Kiureghian, A. and Ditlevsen, O. Aleatory or epistemic? does it matter? Structural safety , 31(2):105–112, 2009. Espeholt, L., Soyer, H., Munos, R., Simonyan, K., Mnih, V., Ward, T., Doron, Y., Firoiu, V., Harley, T., Dunning, I., et al. Impala: Scalable distributed deep-rl with im-portance weighted actor-learner architectures. In Interna-tional conference on machine learning , pp. 1407–1416. PMLR, 2018. Even, S. Graph algorithms . Cambridge University Press, 2011. Finn, C. and Levine, S. Deep visual foresight for planning robot motion. In 2017 IEEE International Conference on Robotics and Automation (ICRA) , pp. 2786–2793. IEEE, 2017. Frazier, P. I. A tutorial on bayesian optimization. arXiv preprint arXiv:1807.02811 , 2018. Frazier, P. I. and Powell, W. B. Paradoxes in learning and the marginal value of information. Decision Analysis , 7 (4):378–403, 2010. Gawlikowski, J., Tassi, C. R. N., Ali, M., Lee, J., Humt, M., Feng, J., Kruspe, A., Triebel, R., Jung, P., Roscher, R., et al. A survey of uncertainty in deep neural networks. 
+
+arXiv preprint arXiv:2107.03342 , 2021. Griffiths, T. L., Callaway, F., Chang, M. B., Grant, E., Krueger, P. M., and Lieder, F. Doing more with less: meta-reasoning and meta-learning in humans and ma-chines. Current Opinion in Behavioral Sciences , 29: 24–30, 2019. Hay, N., Russell, S., Tolpin, D., and Shimony, S. E. Se-lecting computations: Theory and applications. In 28th Conference on Uncertainty in Artificial Intelligence, UAI 2012 , pp. 346–355, 2012. Howard, R. A. Information value theory. IEEE Transactions on systems science and cybernetics , 2(1):22–26, 1966. Jin, P. H. and Keutzer, K. Convolutional monte carlo rollouts in go. arXiv preprint arXiv:1512.03375 , 2015. Karnin, Z., Koren, T., and Somekh, O. Almost optimal exploration in multi-armed bandits. In International Con-ference on Machine Learning , pp. 1238–1246. PMLR, 2013. Kaufmann, E., Capp ´e, O., and Garivier, A. On bayesian upper confidence bounds for bandit problems. In Artificial intelligence and statistics , pp. 592–600. PMLR, 2012. Kendall, A., Gal, Y., and Cipolla, R. Multi-task learning using uncertainty to weigh losses for scene geometry and semantics. In Proceedings of the IEEE conference on computer vision and pattern recognition , pp. 7482–7491, 2018. Kocsis, L. and Szepesv ´ari, C. Bandit based monte-carlo planning. In European conference on machine learning ,pp. 282–293. Springer, 2006. Lan, L.-C., Wu, T.-R., Wu, I.-C., and Hsieh, C.-J. Learning to stop: Dynamic simulation monte-carlo tree search. In 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , volume 35, pp. 259–267, 2021. Laskin, M., Wang, L., Oh, J., Parisotto, E., Spencer, S., Steigerwald, R., Strouse, D., Hansen, S., Filos, A., Brooks, E., et al. In-context reinforcement learning with algorithm distillation. arXiv preprint arXiv:2210.14215 ,2022. Mankowitz, D. J., Michi, A., Zhernov, A., Gelmi, M., Selvi, M., Paduraru, C., Leurent, E., Iqbal, S., Lespiau, J.-B., Ahern, A., et al. Faster sorting algorithms discovered using deep reinforcement learning. Nature , 618(7964): 257–263, 2023. Mern, J., Yildiz, A., Sunberg, Z., Mukerji, T., and Kochen-derfer, M. J. Bayesian optimized monte carlo planning. In Proceedings of the AAAI Conference on Artificial In-telligence , volume 35, pp. 11880–11887, 2021. Osband, I., Wen, Z., Asghari, S. M., Dwaracherla, V., Ibrahimi, M., Lu, X., and Van Roy, B. Approximate thompson sampling via epistemic neural networks. arXiv preprint arXiv:2302.09205 , 2023. Riquelme, C., Tucker, G., and Snoek, J. Deep bayesian bandits showdown: An empirical comparison of bayesian deep networks for thompson sampling. arXiv preprint arXiv:1802.09127 , 2018. Russell, S. and Wefald, E. Principles of metareasoning. 
+
+Artificial intelligence , 49(1-3):361–395, 1991a. Russell, S. J. and Wefald, E. Do the right thing: studies in limited rationality . 1991b. 10 A Bayesian Approach to Online Planning 
+
+Russo, D. and Van Roy, B. An information-theoretic anal-ysis of thompson sampling. The Journal of Machine Learning Research , 17(1):2442–2471, 2016. Ryzhov, I. O., Powell, W. B., and Frazier, P. I. The knowl-edge gradient algorithm for a general class of online learning problems. Operations Research , 60(1):180–195, 2012. Schrittwieser, J., Antonoglou, I., Hubert, T., Simonyan, K., Sifre, L., Schmitt, S., Guez, A., Lockhart, E., Hassabis, D., Graepel, T., et al. Mastering atari, go, chess and shogi by planning with a learned model. Nature , 588(7839): 604–609, 2020. Shahriari, B., Swersky, K., Wang, Z., Adams, R. P., and De Freitas, N. Taking the human out of the loop: A review of bayesian optimization. Proceedings of the IEEE , 104 (1):148–175, 2015. Shim, D. H., Kim, H. J., and Sastry, S. Decentralized non-linear model predictive control of multiple flying robots. In 42nd IEEE International Conference on Decision and Control (IEEE Cat. No. 03CH37475) , volume 4, pp. 3621– 3626. IEEE, 2003. Silver, D., Schrittwieser, J., Simonyan, K., Antonoglou, I., Huang, A., Guez, A., Hubert, T., Baker, L., Lai, M., Bolton, A., et al. Mastering the game of go without human knowledge. nature , 550(7676):354–359, 2017. Silver, D., Hubert, T., Schrittwieser, J., Antonoglou, I., Lai, M., Guez, A., Lanctot, M., Sifre, L., Kumaran, D., Grae-pel, T., et al. A general reinforcement learning algorithm that masters chess, shogi, and go through self-play. Sci-ence , 362(6419):1140–1144, 2018. Tesauro, G., Rajan, V., and Segal, R. Bayesian inference in monte-carlo tree search. In Proceedings of the Twenty-Sixth Conference on Uncertainty in Artificial Intelligence ,pp. 580–588, 2010. Thompson, W. R. On the likelihood that one unknown probability exceeds another in view of the evidence of two samples. Biometrika , 25(3-4):285–294, 1933. Tolpin, D. and Shimony, S. Mcts based on simple regret. In 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , volume 26, pp. 570–576, 2012. Williams, G., Wagener, N., Goldfain, B., Drews, P., Rehg, J. M., Boots, B., and Theodorou, E. A. Information theoretic mpc for model-based reinforcement learning. In 2017 IEEE International Conference on Robotics and Automation (ICRA) , pp. 1714–1721. IEEE, 2017. Yoon, S. W., Fern, A., and Givan, R. Ff-replan: A baseline for probabilistic planning. In ICAPS , volume 7, pp. 352– 359, 2007. Zhang, S., Chen, Z., Shen, Y., Ding, M., Tenenbaum, J. B., and Gan, C. Planning with large language models for code generation. arXiv preprint arXiv:2303.05510 , 2023. Zintgraf, L., Shiarlis, K., Igl, M., Schulze, S., Gal, Y., Hof-mann, K., and Whiteson, S. Varibad: A very good method for bayes-adaptive deep rl via meta-learning. In Interna-tional Conference on Learning Representations , 2019. 11 A Bayesian Approach to Online Planning 
+
+# A. Bayes-UCB Tree Search Pseudo-code 
+
+We provide a complete pseudo-code for BTS . Differences from TSTS are highlighted. 
+
+Algorithm 2 Bayes-UCB Tree Search 
+
+Require: Pquery (Q(s, a )) , rquery (s, a ), c.Init known set Sknown := {s0}
+
+Init state visit counters N (s) := 0 for all s ∈ S
+
+Init value P (Q(s0, a )) := Pquery (Q(s0, a )) ∀a ∈ A.
+
+for t = 1,2,. . . ,T do 
+
+# Forward sampling Set s := s0, s′ := ∅
+
+while True do 
+
+Set N (s) := N (s) + 1 
+
+Set a∗ := arg max a ρ(1 − (1 − α0) · e− N (s)−1 
+
+> β
+
+, P (Q(s, a ))) 
+
+Set s′ := f (s, a ∗)
+
+if s′ /∈ Sknown then 
+
+Set Sknown := Sknown ∪ { s′}
+
+Break 
+
+end if 
+
+Set s := s′
+
+end while 
+
+Set value distribution for leaf P (Q(s′, a ′)) = Pquery (Q(s′, a ′)) ∀a′ ∈ A.# Max-Backup 
+
+while True do 
+
+Set (s, a ) := f −1(s′)
+
+Set P (Q(s, a )) := P (r(s, a ) + max a′∈A Q(s′, a ′)) 
+
+if s = s0 then 
+
+Break 
+
+end if 
+
+Set s′ := s
+
+end while end for return P (Q(s0, a )) 
+
+# B. Implementation Details 
+
+We detail technical points in our implementation of training and evaluation. 
+
+B.1. ProcGen Maze Environment 
+
+Throughout our implementation, we did not use a discount factor. To account for this, we modified the ProcGen reward function such that the reward for each time step until reaching the goal is −1.0. This induces short paths to the goal without discounting. We used random seeds to generate different maze environments for training and testing. In particular, we use a dataset of 
+
+150 samples for training, and also present the results of an evaluation on this set (see Figure 4a.). For testing, we use a disjoint set of 500 samples to evaluate the different planners (see Figure 4). 
+
+B.2. Neural Network Training Parameters 
+
+Our neural network model was trained using the following parameters: The optimizer is an Adam optimizer with fixed learning rate of 0.001, β coefficients of 0.9 and 0.999 for running averages of gradient and its square respectively, and ϵ of 1e-8. 12 A Bayesian Approach to Online Planning 
+
+We expand on our data collection and loading. We maintain a buffer of Nbuffer samples. Each sample contains a state s, and 
+
+4 targets Q(s, a ), one for each action at that state. During training, in each epoch we sample Nbs batches, each with size 
+
+32 samples, from the buffer for training the neural network. We fill the buffer in a FIFO manner using the annotator. The annotator is run on 150 different mazes, each for up to 200 environment steps (early stopping if reaching the goal), and each step has a search budget of 250 . After each search, the annotator converts the Q(s, a ) values at the root (in the case of Bayesian annotator, we take the expected Q values) to probabilities by using SoftMax with a temperature scaling of 10 ,and samples an action commitment according to these probabilities. The committed action is used to advance the state of the world, and a new tree search is started over the new state, and this process is repeated. The Q values at each root state during the interaction are inserted as targets to the buffer. In our experiments we set Nbuffer = 40000 , and Nbs = 200 .We will release checkpoints of the trained networks to reproduce the figures in the paper. Figure 6 shows the success rate of the different planners on a subset of the training set, during the training procedure, using a BTS annotator. In the experiments in the main text we only used an N-MCTS annotator. Note that we show training results on a small subset of training domains, for fast evaluations of the planners during training, therefore the results in the figure are not comparable to the results in the main text.  
+
+> Figure 6. Success rate on train domains during the training
+
+B.3. Computing the Max-Backup 
+
+The calculation of the distribution of max of several independent random variables is given by 
+
+P (max( X1, ..., X n) ≤ a) = P (X1 ≤ a ... and Xn ≤ a) = P (X1 ≤ a, ... Xn ≤ a) = 
+
+> n
+
+Y
+
+> i=1
+
+P (Xi ≤ a),
+
+where in the last equality we use the independence assumption. To perform this calculation in practice we use Algorithm 3 with M = 50 bins linearly spaced starting for each individual CDF from 0.001 and ending at 0.999 , which in the case of normal distribution covers ±3 standard deviations around the mean of the distribution. 13 A Bayesian Approach to Online Planning 
+
+Algorithm 3 Max-Backup 
+
+Require: individual cdf distributions {Ci}Ni=1 , given at M bins bi = {bi
+
+> 1
+
+, . . . , biM } for each Ci.first bin := max i (bi
+
+> 1
+
+)
+
+last bin := max i (biM )
+
+all bins := linspace(first bin, last bin, M )
+
+for i = 1,2,. . . ,N do 
+
+Cinterp i := interpolate (Ci over points all bins )
+
+end for 
+
+MaxDistributionCdf := QNi=1 Cinterp i
+
+return all bins , MaxDistributionCdf 
+
+B.4. Approximations 
+
+When performing the forward sampling in TSTS one has to sample a general pdf P (Q) resulting from the distribution of the max-backup. An approximate calculation is to sample a Gaussian distribution with the expectation and variance of P (Q).Comparing the performance we see little difference between the exact and approximate sampling, so we opted to use the approximate sampling. We adopt a similar approximation also for BTS where instead of calculating the exact percentile ρ(α, P ) for a general P (Q)
+
+we calculate it assuming a Gaussian distribution with the expectation and variance of P (Q). Comparison with the exact calculation showed little difference in results. 
+
+# C. Standard Deviation Estimation via Ensemble of Neural Networks 
+
+In this section we report in Figure 7 the results using an ensemble of neural networks to estimate the uncertainty (see Section 2.5) for details. For this evaluation, we used an ensemble K = 5 models, where all models are initialized with a random set of weights, and trained similarly. The results using this method are similar to the ones reported in 4.1. We do note that using the ensemble improves the predictions of Q(s, a ) (by taking the average of the different models), which mainly improves the performance of N-MCTS 
+
+on test domains. 14 A Bayesian Approach to Online Planning   
+
+> (a) Train domains (b) Test domains
+> Figure 7. Comparison of Different Planners Using an Ensemble of NN
+
+# D. Evaluation on ProcGen Leaper 
+
+In this section we describe additional results on another ProcGen environment, the Leaper environment. In this game, depicted in Figure 8, a frog starts at the bottom of the screen and must get to the finish line. To achieve that, it has to pass road lanes while not being hit by passing cars, and then cross the river by jumping onto wooden logs. If the frog is hit by a car or falls into the river the game terminates, while reaching the finish line yields a reward of 10 . Since we set a discount factor of 1 in all of our experiments, we modified the Leaper default reward function such that an Up action receives a reward of −0.1, while all other actions receive a reward of −0.2 each time step until the game terminates. This modification is done to encourage the agent to reach the goal quickly, instead of stalling and assuming it will obtain the same accumulated reward in the future. Unlike the maze, this environment is dynamic, hence the frog also has a Wait action in addition to moving in four directions. The original Leaper domain exhibited a very small train-test gap in previous work (Cobbe et al., 2020). To generate a significant train-test gap, we manually divided Leaper instances into train and test datasets, such that train instances have at most two road lanes and two river lanes (see an example in Figure 8a), while test instances can have more (Figure 8b). We used Ntrain = 100 for training of the neural network and Ntest = 100 for evaluation. We trained the NN for 60 epochs in a similar manner to the described in Section B.2. We tested BTS against N-MCTS on the test instances, where each planner is evaluated for k = 25 time steps, where at each time step a search is performed and an action is committed and executed, according to the online planning scheme described in Section 2. To solve an instance, the frog must reach the finish line within the k = 25 time steps (and obviously not get hit by a car or fall into the river before that). To estimate GT uncertainty values for BTS we use an A∗ search from each state where the vertical distance of the agent from the finish line is used as an admissible heuristic. Figure 9 shows the success rate (i.e., the percentage of solved instances) of BTS with and without GT uncertainty estimates against N-MCTS . Even without GT estimates, BTS significantly outperforms N-MCTS , where when incorporating GT, BTS 
+
+can achieve a success rate > 85% on the test set. Notably, the neural network uncertainty estimates on Leaper are good enough to yield a significant improvement, differently from the maze domain. We explain this by observing that in Leaper, some of the uncertainty is aleatoric, for example, the uncertainty about whether a log is going to be spawned in the next frame or not. This uncertainty is similar in training and testing, and is easier to capture by training the neural network using the MLE loss. 15 A Bayesian Approach to Online Planning    
+
+> (a) Leaper typical train instance (b) Leaper typical test instance
+> Figure 8. ProcGen Leaper environment
+> Figure 9. Test Results on ProcGen Leaper
+
+# E. Sensitivity to Hyper-Parameters 
+
+In this section we provide the results of an ablation studying the hyper parameters for the different planners, and choosing the best ones for each planner for a fare comparison. 
+
+E.1. B-UCB 
+
+The B-UCB algorithm selects actions to explore in the tree search, based on quantiles of the Q(s, a ) posterior distributions, according to formula 6. The quantile level α(s) depends on the number of visits N (s) and given by: 
+
+α(s) = 1 − βN (s) .
+
+We tested several values of β as depicted in Figure 10, and found out that β = 0 .5 gives the best results. 16 A Bayesian Approach to Online Planning    
+
+> Figure 10. B-UCB βablation
+
+E.2. BTS 
+
+Our suggested BTS algorithm also selects actions based on quantiles of the Q(s, a ) posterior distributions, according to formula 6. However, here the quantile level α(s) depends on two hyper-parameters α0 and β by: 
+
+α(s) = 1 − (1 − α0) · e− N (s)−1 
+
+> β
+
+.
+
+We tested the cross product of the following values for each parameter: α0 = [0 .1, 0.3, 0.5, 0.8] , β = [0 .5, 1, 3, 8] (i.e., 16 different choices) and report the results in Figure 11. We found out that α0 = 0 .5, β = 3 gives the best results. 
+
+E.3. N-MCTS with stochastic SoftMax action commitment 
+
+In SoftMax action commitment, we choose an action to perform in the environment by converting Q(s, a ) values to probabilities using a SoftMax operation. We tested several values for the SoftMax temperature and report the results in Figure 12. We found that using a temperature of 2.0 yields the best performance. 
+
+E.4. BTS with stochastic SoftMax action commitment 
+
+Similarly, we tested several values of the temperature when using SoftMax action commitment with BTS . Results are shown in Figure 13. We found that the best temperature value in this case is 1.0, however for simplicity we used the value 2.0 here as well (similar to N-MCTS with SoftMax action commitment), and note that using a value of 1.0 would improve the results of BTS shown in Figure 4c. 
+
+E.5. Comparison with W-MCTS and DNG-MCTS 
+
+In this section we provide a comparison between our suggested algorithms, and two previously suggested methods that share similar ideas to ours. The first method is the Dirichlet-NormalGamma MCTS ( DNG-MCTS ) algorithm suggested by Bai et al. (2013). In DNG-MCTS , the selection rule of each node of the MCTS search tree is replaced with Thompson 17 A Bayesian Approach to Online Planning 
+
+Figure 11. BTS α0 and β ablation 
+
+Figure 12. N-MCTS sensitivity to SoftMax temperature 
+
+sampling, assuming that Q values are distributed as a mixture-of-Gaussians, i.e., N (μ, 1 
+
+> τ
+
+), where τ = 1 
+
+> σ2
+
+and (μ, τ ) follows 18 A Bayesian Approach to Online Planning   
+
+> Figure 13. BTS sensitivity to SoftMax temperature
+
+a NormalGamma distribution defined by parameters ⟨μ0, λ, α, β ⟩ and a pdf of the form: 
+
+f (μ, τ |μ0, λ, α, β ) = βα√λ
+
+Γ( α)√2π τ α− 12 e−βτ e− λτ (μ−μ0)22 ,
+
+where Γ( α) is the Gamma function. DNG-MCTS then uses the following equations in the backup procedure, given the backed-up value r:
+
+α ← α + 0 .5
+
+β ← β + ( λ(r − μ0)2/(λ + 1)) /2
+
+μ0 ← (λμ 0 + r)/(λ + 1) 
+
+λ ← λ + 1 .
+
+(8) More specifically, since the evaluated maze environment is deterministic, the Q value at each node is distributed as a single Gaussian, hence we don’t need the Dirichlet distribution for sampling the weight of each Gaussian, as described in the original DNG-MCTS paper. The implementation of DNG-MCTS is then almost identical to N-MCTS , except the following changes: a node’s value is sampled from the NormalGamma distribution given it’s current ⟨μ0, λ, α, β ⟩ values, and a backup for updating these values is performed using equations 8. In addition, for any un-visited node, its value is approximated using the NN, instead of the simulation using a rollout policy done in the original DNG-MCTS algorithm. Following the suggestion in Bai et al. (2013), for each node in DNG-MCTS , α is initialized to 1, and μ is initialized to 0 (we also tried initializing μ from the NN and found out it performed worse). We performed a hyper-parameter tuning and found that initializing β = 100 and λ = 0 .001 performed best in the maze setting. The second method we compared against is Wasserstein MCTS ( W-MCTS ), suggested by Dam et al. (2023). W-MCTS 
+
+models value distributions as Gaussians similar to our work, and propagates the uncertainty of the estimate of value nodes 19 A Bayesian Approach to Online Planning 
+
+across the tree using a backup operator that computes value nodes as Wasserstein barycenters of children action-value nodes. Both an Optimistic Selection (similar to the UCT formula by replacing exploration term by the standard deviation) and Thompson sampling are proposed as action-selection strategies. We found that using Thompson sampling for action selection in W-MCTS outperforms using Optimistic Selection, therefore we compare it to our TSTS algorithm. For both algorithms (W-MCTS and TSTS ) we use the deterministic variant (see Section 4). In practice, the implementation of W-MCTS with Thompson sampling is directly derived from our TSTS implementation by only replacing the backup method. To set the p
+
+parameter we performed a hyper-parameter tuning and found that p = 1 worked best in the maze setting. We evaluated both methods on the test dataset of the ProcGen maze environment, using the same neural network used in our method. Our results show (Figure 14) that DNG-MCTS (with the neural network value backup) is comparable to standard N-MCTS 
+
+(though much worse when search budget is small). Since DNG-MCTS is a stochastic algorithm, we compare it to TSTS and observe that it performs worse. With GT uncertainty, TSTS significantly outperforms DNG-MCTS .Additionally, Figure 15 shows that W-MCTS is comparable (but slightly worse on most search iterations) to TSTS without GT uncertainty, but significantly outperformed by TSTS with GT uncertainty for all search iterations. We hypothesize that our Max-Backup, which was naturally derived for this task, is the reason for this result.    
+
+> Figure 14. TSTS vs. DNG-MCTS
+
+20 A Bayesian Approach to Online Planning    
+
+> Figure 15. TSTS vs. W-MCTS
+
+# F. Tree Search Analysis 
+
+In this section we emphasize the potential of our suggested BTS algorithm compared to N-MCTS . Specifically, we show how BTS exploits the uncertainty of the NN (ground truth in this example) to perform a more informed exploration of the search tree, allowing it to explore the tree to a significant depth, eventually leading to finding a rewarded state. Figure 16 shows an example maze, where the cheese (depicted in yellow) is 11 steps away from the mouse (depicted in gray). Figure 17 shows the predicted Q(s, a ) values from the root output by the NN. We see that the NN predictions are pretty accurate in this case, implying that Up is the correct action in this state. Both planners are given a search budget of 25 
+
+iterations in this example. Figures 18 and 19 show the trees explored by N-MCTS and BTS , respectively. N-MCTS follows the UCB formula, causing it to explore the tree in a balanced manner, since there are no significant differences in the Q(s, a ) values of the actions from the root. BTS on the other hand, exploits the uncertainty (or more accurately, the certainty) in the predictions to explore the tree to a much more significant depth, by always selecting the correct (Up) action from the root, and similarly at following nodes. In other words, all other actions from the root, other than Up, yield low Q(s, a ) values with a very high certainty, causing BTS to only exploit the correct action. This eventually lead to finding a terminal (rewarded) state (at leaf node 17 ). We observe similar behavior in the Leaper environment as well.  
+
+> Figure 16. Example maze
+
+Action Predicted Q(s, a ) QGT (s, a ) σGT  
+
+> θ
+
+(s, a )
+
+Up −1.278 −1.0 0.278 
+
+Down −3.03 −3.0 0.03 
+
+Right −2.197 −2.0 0.197 
+
+Left −2.375 −2.0 0.375        
+
+> Figure 17. Predicted Q(s, a ),Q(s, a )GT and σGT
+> θ(s, a )values at the root node
+
+21 A Bayesian Approach to Online Planning       
+
+> Figure 18. Tree opened by N-MCTS in the Maze environment
+> Figure 19. Tree opened by BTS in the Maze environment
+
+# G. Proofs 
+
+For our analysis, we will consider an equivalent regret definition, based on a random variable sequence Yt. Recall that at time t, the observation is Ot, and the information available after observing Ot is Ft+1 = {F t, z t, r (zt)}.Let Yt ∈ R|Z t| be a random variable that is distributed as follows. For each z ∈ Z t, let {F t, z, r (z)} denote the information set of the history Ft, and the observation that results from selecting z at time t. We let P ( Yt(z)| F t) = 
+
+P ( Q0(s0, A root (z)) | F t, z, r (z)) , that is, for each possible leaf z, Yt(z) is drawn from the posterior reward after observing that leaf. We furthermore assume that Yt(z) = f (Ft, z, r (z), Nt), where f is some deterministic function, and Nt is a noise sequence that is independent of the past, and of A∗. This is a technical assumption that essentially states that sampling from the posterior is independent of the decision process. Note that in general, Yt is not necessarily i.i.d., and may depend on the action selection policy. The next proposition shows that we can define the Bayesian regret using Yt.
+
+Proposition 2. We have that E [Regret (T )] = E
+
+hPTt=1 [Yt(z∗ 
+
+> t
+
+) − Yt(zt)] 
+
+i
+
+.Proof. Using the tower rule: 22 A Bayesian Approach to Online Planning 
+
+E
+
+" TX
+
+> t=1
+
+Q0(s0, A root (zt)) 
+
+#
+
+=
+
+> T
+
+X
+
+> t=1
+
+E [E [ Q0(s0, A root (zt)) | F t+1 ]] =
+
+> T
+
+X
+
+> t=1
+
+E [E [ Yt(zt)| F t+1 ]] = E
+
+" TX
+
+> t=1
+
+[Yt(zt)] 
+
+#
+
+.
+
+Let us define a policy ˜πτ that until time τ selects action zt according to π, and at time τ selects z∗ 
+
+> τ
+
+. Let ˜Ft+1 denote the history of following policy ˜πτ for t steps. By definition, ˜Ft+1 = {F t, z ∗ 
+
+> t
+
+, r (z∗ 
+
+> t
+
+)}
+
+E
+
+" TX
+
+> t=1
+
+[Q0(s0, A ∗)] 
+
+#
+
+=
+
+> T
+
+X
+
+> t=1
+
+E [Q0(s0, A ∗)] =
+
+> T
+
+X
+
+> t=1
+
+E
+
+h
+
+E
+
+h
+
+Q0(s0, A ∗)| ˜Ft+1 
+
+ii 
+
+=
+
+> T
+
+X
+
+> t=1
+
+E
+
+h
+
+E
+
+h
+
+Q0(s0, A root (z∗ 
+
+> t
+
+)) | ˜Ft+1 
+
+ii 
+
+=
+
+> T
+
+X
+
+> t=1
+
+E
+
+h
+
+E
+
+h
+
+Yt(z∗ 
+
+> t
+
+)| ˜Ft+1 
+
+ii 
+
+= E
+
+" TX
+
+> t=1
+
+[Yt(z∗ 
+
+> t
+
+)] 
+
+#
+
+.
+
+G.1. Proof of Theorem 1 
+
+Proof. Our proof is broken into several parts, similarly to the analysis in (Russo & Van Roy, 2016). We begin with several information theoretic definitions. We then define the information ratio, and derive a general regret bound, and finally bound the information ratio in our case. The Shannon entropy of a random variable X is 
+
+H(X) = X
+
+> x
+
+−P (X = x) log P (X = x).
+
+The mutual information I(X; Y ) between two random variables X, Y satisfies 
+
+I(X; Y ) = H(X) − H (X|Y ) = H(Y ) − H (Y |X) = I(Y ; X).
+
+The KL-divergence between two distributions is D(P || Q) = R log 
+
+ dP dQ 
+
+
+
+dP . It holds that (Fact 6 in (Russo & Van Roy, 2016)) 
+
+I(X; Y ) = X
+
+> x
+
+P (X = x)D(P (Y |X = x)|| P (Y )) .
+
+Let Pt(X) = P (X|F t), and Et[·] = E[·|F t]. Similarly, 
+
+Ht(X) = X
+
+> x
+
+−Pt(X = x) log Pt(X = x),
+
+and It(X; Y ) = Ht(X) − H t(X|Y ).23 A Bayesian Approach to Online Planning 
+
+As discussed in Section 3.1 of (Russo & Van Roy, 2016), we have that 
+
+E [It(X; Y )] = I(X; Y |F t). (9) Let Yt,a denote the a’s component of Yt. Define the information ratio, 
+
+Γt = Et
+
+Yt,z ∗ 
+
+> t
+
+− Yt,z t
+
+2
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) . (10) The following proposition bounds the regret using a bound on the information ratio. 
+
+Proposition 3. If Γt ≤ ¯Γ almost surely, we have that 
+
+E [Regret (T )] ≤
+
+q¯ΓH(z∗)T . 
+
+Proof. We have that, 
+
+E [Regret (T )] = E
+
+" TX
+
+> t=1
+
+[Yt(z∗ 
+
+> t
+
+) − Yt(zt)] 
+
+#
+
+= E
+
+" TX
+
+> t=1
+
+Et [Yt(z∗ 
+
+> t
+
+) − Yt(zt)] 
+
+#
+
+= E
+
+" TX
+
+> t=1
+
+q
+
+ΓtIt(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) 
+
+#
+
+≤
+
+p¯ΓE
+
+" TX
+
+> t=1
+
+q
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) 
+
+#
+
+≤
+
+p¯Γ
+
+vuutT E
+
+" TX
+
+> t=1
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) 
+
+#
+
+=
+
+vuut¯ΓT E
+
+" TX
+
+> t=1
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) 
+
+#
+
+,
+
+where the first equality is by Proposition 2. The second equality is from the tower rule. The third equality is by definition (10) . The second inequality is by the Cauchy–Schwarz (CS) inequality, as follows. Define the linear inner product 
+
+< u, v > = E[P 
+
+> t
+
+utvt]. For u = [1 , . . . , 1] and v = [ √I1, . . . , √IT ] we have < u, v > = E
+
+hPTt=1 
+
+√It
+
+i
+
+, < u, u > =
+
+E
+
+hPTt=1 1
+
+i
+
+= T , and < v, v > = E
+
+hPTt=1 It
+
+i
+
+. Then, from CS, E
+
+hPTt=1 
+
+√It
+
+i
+
+≤
+
+r
+
+T E
+
+hPTt=1 It
+
+i
+
+.Next, define Zt = ( Ot, z t, Y t,z t ). We have that 
+
+E [It(z∗ 
+
+> t
+
+; Zt)] = I(z∗ 
+
+> t
+
+; Zt|Z1, . . . , Z t−1).
+
+24 A Bayesian Approach to Online Planning 
+
+Therefore, 
+
+E
+
+" TX
+
+> t=1
+
+It(z∗ 
+
+> t
+
+; zt, Y t,z t )
+
+#
+
+≤ E
+
+" TX
+
+> t=1
+
+It(z∗ 
+
+> t
+
+; Zt)
+
+#
+
+= E
+
+" TX
+
+> t=1
+
+It(z∗ 
+
+> t
+
+; Ot)
+
+#
+
+≤ E
+
+" TX
+
+> t=1
+
+It(z∗; Ot)
+
+#
+
+=
+
+> T
+
+X
+
+> t=1
+
+I(z∗; Ot|O1, . . . , O t−1)= I(z∗; ( O1, . . . , O T )) = H(z∗) − H (z∗|O1, . . . , O T )
+
+≤ H (z∗),
+
+where the first inequality is since Zt contains Yt,A t , the first equality is by the definition of Yt, which, given the history, is independent of z∗ 
+
+> t
+
+, and the third equality is from the chain rule of mutual information (Fact 5 in (Russo & Van Roy, 2016)). The second inequality is by the data processing inequality, since z∗ 
+
+> t
+
+is a deterministic function of z∗. Combining the results above gives the desired result. We proceed, similarly to (Russo & Van Roy, 2016), to derive an equivalent form of the information ratio, which will facilitate further analysis. 
+
+Proposition 4. We have that 
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) = X
+
+> a,a ∗
+
+Pt(z∗ 
+
+> t
+
+= a∗)Pt(z∗ 
+
+> t
+
+= a) [ D(Pt(Yt,a |z∗ 
+
+> t
+
+= a∗)|| Pt(Yt,a ))] ,
+
+and 
+
+Et
+
+Yt,z ∗ 
+
+> t
+
+− Yt,z t
+
+ = X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a) ( Et [Yt|z∗ 
+
+> t
+
+= a] − Et [Yt]) .
+
+Proof. We have 
+
+It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) = It(z∗ 
+
+> t
+
+; zt) + It(z∗ 
+
+> t
+
+; Yt,z t |zt)= It(z∗ 
+
+> t
+
+; Yt,z t |zt)= X
+
+> a
+
+Pt(zt = a)It(z∗ 
+
+> t
+
+; Yt,z t |zt = a)= X
+
+> a
+
+Pt(zt = a)It(z∗ 
+
+> t
+
+; Yt,a )) = X
+
+> a
+
+Pt(zt = a) X
+
+> a∗
+
+Pt(z∗ 
+
+> t
+
+= a∗)D(Pt(Yt,a |z∗ 
+
+> t
+
+= a∗)) || Pt(Yt,a )) = X
+
+> a,a ∗
+
+Pt(zt = a)Pt(z∗ 
+
+> t
+
+= a∗)D(Pt(Yt,a |z∗ 
+
+> t
+
+= a∗)) || Pt(Yt,a )) = X
+
+> a,a ∗
+
+Pt(z∗ 
+
+> t
+
+= a)Pt(z∗ 
+
+> t
+
+= a∗)D(Pt(Yt,a |z∗ 
+
+> t
+
+= a∗)) || Pt(Yt,a )) ,
+
+25 A Bayesian Approach to Online Planning 
+
+where the last equality uses the probability matching of TS: Pt(zt = a) = Pt(z∗ 
+
+> t
+
+= a). Also, 
+
+Et
+
+Yt,z ∗ 
+
+> t
+
+− Yt,z t
+
+ = X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a)Et [Yt,a |z∗ 
+
+> t
+
+= a] − X
+
+> a
+
+Pt(zt = a)Et [Yt,a |zt = a]= X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a) ( Et [Yt,a |z∗ 
+
+> t
+
+= a] − Et [Yt,a |zt = a]) ,
+
+= X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a) ( Et [Yt,a |z∗ 
+
+> t
+
+= a] − Et [Yt,a ]) .
+
+where the second equality uses the probability matching of TS: Pt(zt = a) = Pt(z∗ 
+
+> t
+
+= a), and the third equality is since given the history, Yt is independent of zt.We will use the following lemma. 
+
+Lemma 1. Let P, Q be two distributions of X with support [−B, B ], such that P is absolutely continuous with respect to 
+
+Q. Then, 
+
+EP [X] − EQ[X] ≤ B
+
+r 12 D(P || Q).
+
+Proof. We have 
+
+EP [X] − EQ[X] = X
+
+> x
+
+x(P (x) − Q(x)) ≤ X
+
+> x
+
+|x|| P (x) − Q(x)| ≤ B max  
+
+> x
+
+|P (x) − Q(x)| ≤ B
+
+r 12 D(P || Q),
+
+where the last inequality is Pinsker’s inequality. We are finally ready to bound the information ratio. 
+
+Proposition 5. We have that Γt ≤ |Z| R2 
+
+> max H2
+> 2
+
+almost surely. Proof. We have 
+
+Et
+
+Yt,z ∗ 
+
+> t
+
+− Yt,z t
+
+2 = X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a) ( Et [Yt,a |z∗ 
+
+> t
+
+= a] − Et [Yt,a ]) 
+
+!2
+
+≤ |Z| X
+
+> a
+
+Pt(z∗ 
+
+> t
+
+= a)2 (Et [Yt,a |z∗ 
+
+> t
+
+= a] − Et [Yt,a ]) 2
+
+≤ |Z| X
+
+> a,a ∗
+
+Pt(z∗ 
+
+> t
+
+= a)Pt(z∗ 
+
+> t
+
+= a∗) ( Et [Yt,a |z∗ 
+
+> t
+
+= a] − Et [Yt,a ]) 2
+
+≤ |Z| R2
+
+> max
+
+H2
+
+2
+
+X
+
+> a,a ∗
+
+Pt(z∗ 
+
+> t
+
+= a)Pt(z∗ 
+
+> t
+
+= a∗)D (Pt(Yt,a |z∗ 
+
+> t
+
+= a)|| Pt(Yt,a )) = |Z| R2
+
+> max
+
+H2
+
+2 It(z∗ 
+
+> t
+
+; ( zt, Y t,z t )) ,
+
+where the first equality is by Proposition 4. The first inequality is by CS, as follow. Consider the inner product < u, v > =P 
+
+> a
+
+u(a)v(a), and let u = [1 , . . . , 1] , and v(a) = Pt(z∗ 
+
+> t
+
+= a)Et [Yt|z∗ 
+
+> t
+
+= a] − Et [Yt]. Then by CS, (P 
+
+> a
+
+u(a)v(a)) 2 ≤
+
+P 
+
+> a
+
+u(a)2 P 
+
+> a′
+
+v(a′)2 = |Z| P 
+
+> a
+
+(Pt(z∗ 
+
+> t
+
+= a)Et [Yt|z∗ 
+
+> t
+
+= a] − Et [Yt]) 2. The second inequality follows from the following fact: let C(i, j ) > 0. Then P 
+
+> i,j
+
+C(i)C(j)D(i)2 = P 
+
+> i,j =i
+
+C(i)C(j)D(i)2 + P  
+
+> i,j ̸=i
+
+C(i)C(j)D(i)2 ≥ P 
+
+> i
+
+C(i)2D(i)2.The third inequality is by Lemma 1, using that |Yt,a | ≤ Rmax H, since |Q(s0, a )| ≤ Rmax H. The last equality is again from Proposition 4. Plugging Proposition 5 in the bound of Proposition 3 completes the proof. 26 A Bayesian Approach to Online Planning 
+
+G.2. Proof of Proposition 1 
+
+We note that for any leaf z = (˜ s, ˜a), there is a unique branch leading to it, which we shall denote b(z) =
+
+{(s0, a 0), (s1, a 1), . . . , (sk, a k), (˜ s, ˜a)}. We shall denote by b∗ 
+
+> t
+
+= b(z∗ 
+
+> t
+
+) the optimal branch. In the remainder of this proof, all probabilities are conditioned on Ft. To simplify the notation, we omit this dependence. From the sequential structure of the branch, we have that 
+
+P (b(z) = b∗ 
+
+> t
+
+) = P (( s0, a 0) ∈ b∗ 
+
+> t
+
+)P (( s1, a 1) ∈ b∗ 
+
+> t
+
+|(s0, a 0) ∈ b∗ 
+
+> t
+
+) · · · P ((˜ s, ˜a) ∈ b∗ 
+
+> t
+
+|(sk, a k) ∈ b∗ 
+
+> t
+
+).
+
+To see this, note that P (( sk, a k) ∈ b∗ 
+
+> t
+
+|(sk−1, a k−1) ∈ b∗ 
+
+> t
+
+, (sk−2, a k−2) ∈ b∗ 
+
+> t
+
+) = P (( sk, a k) ∈ b∗ 
+
+> t
+
+|(sk−1, a k−1) ∈ b∗ 
+
+> t
+
+),since if (sk−1, a k−1) belongs to the optimal branch, its predecessor (sk−2, a k−2) must also be on the optimal branch. Observe that if (sk−1, a k−1) is on the optimal branch, then the successor state sk must also be on the optimal branch. Therefore, 
+
+P (( sk, a k) ∈ b∗ 
+
+> t
+
+|(sk−1, a k−1) ∈ b∗ 
+
+> t
+
+) = P (Q(sk, a k) ∈ arg max 
+
+> a
+
+Q(sk, a )) .
+
+We therefore have that if P (Q(s, a )) in Algorithm 1 corresponds to the true posterior for each s, a , then the forward sampling procedure samples a branch from P (b(z) = b∗ 
+
+> t
+
+), and equivalently, samples a leaf from P (z∗ 
+
+> t
+
+).We now show by induction that P (Q(s, a )) in Algorithm 1 corresponds to the true posterior, which we shall denote here 
+
+Ptrue (Q(s, a )) . For any leaf (s, a ), by the independence assumption, P (Q(s, a )) is independent of other leaves or nodes in the tree, therefore after each update of the algorithm we have P (Q(s, a )) = Ptrue (Q(s, a )) . Assume that for some node s′
+
+and all actions a′, we have that P (Q(s′, a ′)) = Ptrue (Q(s′, a ′)) . Let s, a be the state-action leading to s′. By definition, 
+
+Ptrue (Q(s, a )) depends only on the decedents of s, a in the tree. We therefore have that 
+
+Ptrue (Q(s, a )) = P
+
+
+
+r(s, a ) + max  
+
+> a′
+
+{Q(s′, a ′)}
+
+
+
+= P (Q(s, a )) .
+
+27

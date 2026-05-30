@@ -1,0 +1,1438 @@
+Title: Continuous Semi-Implicit Models
+
+URL Source: https://openreview.net/pdf?id=xf0tiH1e4u
+
+Number of Pages: 26
+
+Markdown Content:
+# Continuous Semi-Implicit Models 
+
+Longlin Yu ∗ 1 Jiajun Zha ∗ 2 Tong Yang 3 4 Tianyu Xie 1 Xiangyu Zhang 4 S.-H. Gary Chan 2 Cheng Zhang 1 5 
+
+## Abstract 
+
+Semi-implicit distributions have shown great promise in variational inference and generative modeling. Hierarchical semi-implicit models, which stack multiple semi-implicit layers, en-hance the expressiveness of semi-implicit distri-butions and can be used to accelerate diffusion models given pretrained score networks. How-ever, their sequential training often suffers from slow convergence. In this paper, we introduce CoSIM, a continuous semi-implicit model that extends hierarchical semi-implicit models into a continuous framework. By incorporating a contin-uous transition kernel, CoSIM enables efficient, simulation-free training. Furthermore, we show that CoSIM achieves consistency with a care-fully designed transition kernel, offering a novel approach for multistep distillation of generative models at the distributional level. Extensive ex-periments on image generation demonstrate that CoSIM performs on par or better than existing diffusion model acceleration methods, achieving superior performance on FD-DINOv2. 
+
+## 1. Introduction 
+
+Semi-implicit distributions, which are constructed through the convolution of explicit conditional distributions and im-plicit mixing distributions, have gained significant traction in variational inference and generative modeling. Unlike traditional approximating distributions with explicit density forms, semi-implicit distributions enable a more expressive family of variational posteriors, leading to improved approx-              
+
+> *Equal contribution. This work was done during an internship at StepFun. 1School of Mathematical Sciences, Peking University, Beijing, China 2Department of Computer Science and Engineering, Hong Kong University of Science and Technology 3School of Computer Science, Fudan University, Shanghai, China 4Megvii Technology Inc., Beijing, China 5Center for Statistical Science, Peking University, Beijing, China. Correspondence to: Cheng Zhang <chengzhang@math.pku.edu.cn >.
+> Proceedings of the 42 nd International Conference on Machine Learning , Vancouver, Canada. PMLR 267, 2025. Copyright 2025 by the author(s).
+> Figure 1. Selected generated images on Imagenet 512 ×512 using L model from Section 4.2.
+
+imation accuracy (Yin & Zhou, 2018; Titsias & Ruiz, 2019; Moens et al., 2021; Yu & Zhang, 2023; Cheng et al., 2024). Beyond variational inference, semi-implicit architectures have been successfully integrated into deep generative mod-els, including variational autoencoders (VAEs) (Kingma & Welling, 2014; Rezende et al., 2014) and diffusion models (Sohl-Dickstein et al., 2015; Song & Ermon, 2019; Ho et al., 2020; Song et al., 2021; 2020). In VAEs, the generator typically employs a single-layer semi-implicit construction, pushing forward a simple noise through a conditional factorized Gaussian distribution pa-rameterized by a neural network. However, despite their widespread adoption, VAE-generated samples often suffer from blurriness and fail to capture high-frequency details in the data distribution (Dosovitskiy & Brox, 2016). To address these limitations, several VAE variants have been proposed (Rezende & Mohamed, 2016; Razavi et al., 2019; Vahdat & Kautz, 2021). A prominent approach is hierar-chical VAEs (Gregor et al., 2015; Ranganath et al., 2016; Sønderby et al., 2016; Kingma et al., 2017; Vahdat & Kautz, 2021), which enhances the expressiveness of the single layer vallina VAEs through the introduction of multiple latent vari-1Continuous Semi-Implicit Models 
+
+ables, enabling multistep generation. Similarly, diffusion models have emerged as a leading framework for generat-ing high-quality and diverse samples (Sohl-Dickstein et al., 2015; Song & Ermon, 2019; Ho et al., 2020; Song et al., 2021; 2020). These models can also be interpreted through the lens of semi-implicit distributions, where a fixed noise injection process is used to generate latent variables instead of learnable posterior distributions as in hierarchical VAEs. Although multistep generative models are a promising di-rection for improving sample quality, they often involve a trade-off between generation quality and computational cost. Drawing on the connection between diffusion models, hierarchical VAEs, and semi-implicit distributions, recent works have explored distilling diffusion models using tools from semi-implicit variational inference (SIVI) (Yin et al., 2023; Luo et al., 2023; Yu et al., 2023; Zhou et al., 2024b;a). These methods can be broadly categorized into two types: (1) one-step deterministic distillation methods, which learn a direct mapping to generate samples from the target distribu-tion (Yin et al., 2023; Luo et al., 2023; Zhou et al., 2024b;a), and (2) stochastic multi-step models, which generate more diverse samples in fewer steps. In particular, hierarchical semi-implicit variational inference (HSIVI) falls into the second category, recursively constructing the variational distribution over a fixed sequence of time points (Yu et al., 2023). While HSIVI can generate more diverse samples than one-step models, its discretized design results in slow convergence during training due to the sequential simulation process. Drawing inspiration from continuous-time diffusion pro-cesses (Song et al., 2020), we introduce a Continuous Semi-Implicit Model (CoSIM), which extends hierarchical semi-implicit variational inference (HSIVI) into a continuous framework. By leveraging a continuous transition kernel, CoSIM generates samples of the mixing layer in a single push-forward operation, significantly accelerating the train-ing process. The design of the continuous transition kernel shares some similarities with consistency distillation (CD) (Song et al., 2023; Kim et al., 2023; Song & Dhariwal, 2024; Geng et al., 2024; Heek et al., 2024; Lu & Song, 2024), which learn a consistency function to map noisy distribu-tions back to clean target distributions. While Salimans et al. (2024) explore distilling multi-step diffusion models using moment-matching losses, CoSIM distinguishes itself by em-ploying semi-implicit variational inference (SIVI) training criteria. This approach enables learning the consistency function directly at the distributional level, bypassing the need to recover the reverse process of diffusion models at the sample or moment level. As a result, CoSIM signifi-cantly reduces the number of iterations required for distilla-tion. In experiments, we demonstrate that CoSIM achieves comparable results on the Fr ´echet Inception Distance (FID) (Heusel et al., 2017) while incurring lower training costs. Furthermore, CoSIM outperforms existing methods on the FD-DINOv2 metric (Stein et al., 2024), which employs the larger DINOv2 encoder (Oquab et al., 2024) instead of the InceptionV3 encoder (Szegedy et al., 2016) to better align with human perception. 
+
+## 2. Background 
+
+2.1. Diffusion Models 
+
+Diffusion models (Sohl-Dickstein et al., 2015; Song & Er-mon, 2019; Ho et al., 2020; Song et al., 2021; 2020) perturb the clean data to noise in the forward process and then gen-erate the data from noise by multiple denoising steps in the backward process. The forward process can be described by a stochastic differential equation (SDE) 
+
+dxs = f (xs; s)d s + g(s)d Bs, (1) where s ∈ [0 , T ], T > 0 is a fixed terminating time, Bs
+
+is a standard Brownian motion, and f (xs; s) and g(s) are the drift and diffusion coefficients respectively. The starting 
+
+x0 ∼ p(·; 0) is the data distribution. Denote the density law of the forward process as {p(·; s)}s∈[0 ,T ]. Typically, the SDE in (1) is designed as a variance preserving (VP) or variance exploding (VE) scheme (Song et al., 2020; Kar-ras et al., 2022), and the samples of p(xt|x0; t, 0) can be reparameterized as 
+
+xt = a(t)x0 + σ(t)ϵ, t ∈ [0 , T ], (2) where ϵ is a Gaussian noise, a(t) is non-increasing function, and σ(t) is a monotonically increasing function. In the backward process, one can run the following reversed-time SDE from T to 0 to generate the samples of p(x0; 0) dxs = [ f (xs; s) − g2(s)∇ log p(xs; s)]d s + g(s)d ¯Bs,
+
+where ∇ log p(xs; s) is the score function of p(xs; s),
+
+¯Bs is a standard Brownian motion. The score func-tion ∇ log p(xs; s) is often estimated with a score model 
+
+Sθ (xs; s) ≈ ∇ log p(xs; s) via denoising score match-ing (Vincent, 2011; Song et al., 2020). 
+
+2.2. Semi-Implicit Models and Diffusion Distillation 
+
+Semi-implicit is a mixture distribution expressed as 
+
+qϕ(x) = R qϕ(x|z)q(z)d z, which can be used to approxi-mate the target distribution via variational inference (Yin & Zhou, 2018; Titsias & Ruiz, 2019). The conditional layer 
+
+qϕ(x|z) is required to be explicit but the mixing layer q(z)
+
+can be implicit, where ϕ is the variational parameter. Recent works have explored diffusion model distillation within the semi-implicit framework (Wang et al., 2023b). These meth-ods are primarily distinguished by their training objectives: those utilizing density-based divergences (e.g., JSD and KL 2Continuous Semi-Implicit Models 
+
+divergence) (Luo et al., 2023; Wang et al., 2023a; Yin et al., 2023), and those employing score-based divergences (e.g., Fisher divergence) (Yu et al., 2023; Zhou et al., 2024b). Following SiD (Zhou et al., 2024b), which demonstrated superior performance and faster convergence in terms of FID results than Diff-Instruct (Luo et al., 2023), we adopt the score-based training objective in this work. 
+
+Hierarchical Semi-Implicit Variational Inference Yu et al. (2023) propose a hierarchical semi-implicit structure recursively defined from the top layer k = K − 1 to the base layer k = 0 for multistep diffusion distillation. This struc-ture employs the conditional layer qϕ(xk|xk+1 ; tk) and the variational prior q(xT ; T ), defined by 
+
+qϕ(xk ; tk ) = 
+
+Z
+
+qϕ(xk |xk+1 ; tk )qϕ(xk+1 ; tk+1 )d xk+1 ,
+
+(3) 
+
+where k = 0 , 1, . . . , K − 1, 0 < t 1 < . . . < t K = T
+
+and qϕ(·; tK ) := q(·; T ). Moreover, the forward process (1) of diffusion models naturally provides a sequence of intermediate bridge distributions {p(x; tk)}K−1 
+
+> k=0
+
+, which can be combined with (3) for diffusion models distillation. In the training procedure, Yu et al. (2023) introduce a joint training scheme to minimize a weighted sum of the semi-implicit variational inference (SIVI) objectives 
+
+LHSIVI-f (ϕ) = 
+
+> K−1
+
+X
+
+> k=0
+
+β(k)LSIVI-f (qϕ(·; tk )∥p(·; tk )) , (4) 
+
+where β(k) : {0, . . . , T − 1} → R+ is a positive weighting function and f represents a distance criterion. In the applica-tion to diffusion model acceleration, f can be chosen as the Fisher divergence and the resulting HSIVI-SM optimizes 
+
+qϕ(xt; t) via 
+
+min  
+
+> ϕ
+
+max             
+
+> v(·;tk)LSIVI-SM (ϕ) = Eqϕ(xtk;tk)
+> h
+> v(xtk;tk)T[∇log p(xtk;tk)
+
+− ∇ xtk log qϕ(xtk |xtk+1 ; tk)
+
+i
+
+− 12 ∥v(xtk ; tk)∥22
+
+i
+
+, (5) where v(xtk ; tk) is an auxiliary vector-valued function and 
+
+qϕ(xtk , xtk+1 ) = qϕ(xtk |xtk+1 ; tk)qϕ(xtk+1 ; tk+1 ).
+
+Score Identity Distillation For the optimization of ϕ in (5), the coefficient 12 is not a unique choice. Zhou et al. (2024b) introduced Score Identity Distillation (SiD), a one-step distillation method for diffusion models. Assuming the variational semi-implicit distribution ˜qϕ(xt, z; t) =
+
+p(xt|Gϕ(z); t, 0)˜ q(z), where Gϕ is a learnable neural net-work generator mapping from a simple distribution ˜q(z) to data distribution and the conditional layer p(·|· ; t, 0) follows the definition in (2). SiD employs a fused loss function, which can be viewed as the training objective in SIVI objec-tives 
+
+min  
+
+> ϕ
+
+LSiD (ϕ) = E˜qϕ(xt,z;t)
+
+h
+
+v(xt; t)T [∇ log p(xs; s)−∇xt log ˜ qϕ(xt|z; t)] − α∥v(xt, t )∥22
+
+i
+
+, (6) 
+
+where α ∈ R+ is a given hyperparameter used to balance the cross term and squared term in (6). The lower-level optimization problem for v(xt; t) remains consistent with the maximization of LSIVI-SM (ϕ). Empirically, SiD with 
+
+α > 12 demonstrates significantly better performance than both the baseline of α = 12 and density-based distillation methods in one-step image generation tasks (Zhou et al., 2024b). 
+
+## 3. Continuous Semi-Implicit Models 
+
+Unlike one-step generation models, stochastic multi-step approaches such as HSIVI provide a systematic framework for progressive image quality enhancement while preserving sample diversity. However, HSIVI suffers from slow con-vergence in its training process. Inspired by the evolution of noise conditional score network models (NCSN) (Song & Ermon, 2019) to continuous-time score-based generative models (Song et al., 2020), extending the sequential train-ing to a continuous-time training framework promises to enhance the training efficiency. Following Yu et al. (2023), we extend the hierarchical semi-implicit model with a fixed number of layers to a continuous framework. Our goal is to learn a transition kernel qtrans (xs|xt; s, t ) that maps the dis-tribution p(xt; t) to p(xs; s) for 0 ≤ s < t ≤ T as a contin-uous generalization of the conditional layer q(xtk |xtk+1 ; tk)
+
+in HSIVI. In the context of diffusion models, we assume 
+
+p(·; t) follows the density of the forward process of (1). 
+
+3.1. Continuous Transition Kernel 
+
+To construct the density of variational distribution at timestep s, we denote the marginal distribution q(xs; s, t )
+
+as follows 
+
+q(xs; s, t ) = 
+
+Z
+
+qtrans (xs|xt; s, t )qmix (xt; t)d xt, (7) where qmix (xt; t) is chosen as a role of the mixing distri-bution in semi-implicit variational distribution. Within the paradigm of hierarchical semi-implicit distribution (Yu et al., 2023), qmix (xtk ; tk) is obtained by progressively sampling from the conditional layers {qϕ(xti |xti+1 ; ti)}i≥k as indi-cated in (3). Instead, we construct qmix (·; t) through a single push-forward operation using the conditional distribution 
+
+p(·|· ; t, 0) defined in (2) 
+
+qmix (xt; t) = 
+
+Z
+
+p(xt|x0; t, 0) p(x0; 0)d x0, (8) which allows us to sample xt ∼ qmix (xt; t) instantaneously. With the continuous timesteps t and s, we can train the tran-3Continuous Semi-Implicit Models 
+
+sition kernel qtrans (xs|xt; s, t ) via the following continuous generalization of (4) 
+
+LCSI-f (q) = R T 
+
+> 0
+
+π(s, t )LSIVI-f (q(xs; s, t )∥p(xs; s)) d tds, (9) where π(s, t ) = π(s)π(t|s) is a joint time schedule. Adetailed discussion of the design principles for π(s)π(t|s)
+
+is presented in Appendix A.1. Note that the marginal dis-tribution q(xs; s, t ) in (7) depends on t. Thus models of the continuous transition kernel qtrans (xs|xt; s, t ) will lead to consistency, as it convert qmix (xt; t) to the same distri-bution p(xs; s) for all t ∈ (s, T ]. We call it a continuous semi-implicit model (CoSIM). 
+
+3.2. The Training Objectives 
+
+Let qϕ(xs; s, t ) be the corresponding variational distribu-tion for the parameterized transition kernel qϕ(xs|xt; s, t ).We adopt the score matching objective LSIVI-SM introduced in Section 2.2 for training. More specifically, we parameter-ize the auxiliary vector-valued function as vψ (xs; s, t ) := 
+
+∇ log p(xs; s) − fψ (xs; s, t ) and reformulate the optimiza-tion into two stages 
+
+min  
+
+> ϕ
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log p(xs; s) −∇xt log qϕ(xs|xt; s, t )] − 12 ∥vψ (xs; s, t )∥22
+
+i
+
+,
+
+min  
+
+> ψ
+
+Eqϕ(xs,xt;s,t )∥fψ (xs; s, t ) − log qϕ(xs|xt; s, t )∥22,
+
+(10) 
+
+where qϕ(xs, xt; s, t ) = qtrans (xs|xt; s, t )qmix (xt; t).
+
+Shifting fψ by Regularization The Nash-equilibrium of the two-stage optimization problem (10) is given by 
+
+fψ∗ (xs; s, t ) = ∇ log qϕ∗ (xs; s, t ),ϕ∗ ∈ arg min 
+
+> ϕ
+
+{Eqϕ(xs;s,t )∥δϕ(xs; s, t )∥22}, (11) 
+
+δϕ(xs; s, t ) := Sθ∗ (xs; s) − ∇ log qϕ(xs; s, t ).
+
+A natural initialization, therefore, would be to use the pre-trained score network fψ0 (xs; s, t ) ≈ Sθ∗ (xs; s). Dur-ing training, the optimal fψ is given by fψ∗(ϕ)(xs; s, t ) = 
+
+∇ log qϕ(xs; s, t ). When ∇ log qϕ(xs; s, t ) deviates signifi-cantly from the target score model Sθ∗ (xs; s), this initial-ization strategy becomes inefficient for the second-stage optimization in (10). To address this mismatch, we follow Salimans et al. (2024) and adopt a regularization strategy 
+
+min  
+
+> ψ
+
+Eqϕ(xs,xt;s,t )
+
+∥fψ (xs; s, t ) − log qϕ(xs|xt; s, t )∥22
+
++λ∥fψ (xs; s, t ) − Sθ∗ (xs; s)∥22
+
+ , (12) where λ ≥ 0 is a hyperparameter controlling the strength of regularization. It can be shown that the optimal f ˜ψ∗(ϕ) of (12) is shifted towards Sθ∗ as follows 
+
+f ˜ψ∗(ϕ)(xs; s, t ) = 11 + λ ∇ log qϕ(xs; s, t )+ λ
+
+1 + λ Sθ∗ (xs; s).
+
+Although this additional regularization introduces bias into the second optimization in (10), we found that this bias in 
+
+ψ does not transfer to ϕ, and the Nash equilibrium of ϕ
+
+remains consistent with (11). We provide a comprehensive statement in the theorem 3.1. 
+
+Reformulation of Fused Loss In the fused training objec-tive (6) of SiD, there is a mismatch in the two-stages training objective (10) when α is not 12 . Furthermore, when α > 1,the fused loss function exhibits pathological behavior as it becomes negative when the inner optimization of v(·; t)
+
+converges to its optimal solution 
+
+ˆLSiD (ϕ) = E˜qϕ(xt;t)(1 − α)∥∇ log p(xs; s) − ∇ log ˜ qϕ(xt; t)∥22,
+
+However, within the framework of shifting fψ , we can reformulate the SiD training objective to achieve unbi-asedness while eliminating the aforementioned patholog-ical behavior. Consider the scaled Fisher divergence Dα(p(·; s)∥qϕ(·; s, t )) defined as Dα(qϕ(·; s, t )∥p(·; s)) := Eqϕ(xs;t,s )
+
+14α ∥˜δϕ(xs; s, t )∥22,
+
+˜δϕ(xs; s, t ) := ∇ log p(xs; s) − ∇ log qϕ(xs; s, t ), (13) Then we can rewrite the above Dα(p(·; s)∥qϕ(·; s, t )) as the maximum value of the optimization problem 
+
+max 
+
+> vψ
+
+Eqϕ(xs;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log p(xs; s)−∇ log qϕ(xs; s, t )] − α∥vψ (xs; s, t )∥22
+
+i
+
+, (14) Similarly, we utilize (14) to reformulate the (13). 
+
+Theorem 3.1. Optimization of Dα (p(·; s)∥qϕ(·; s, t )) is equivalent to the two-stages optimization 
+
+min  
+
+> ϕ
+
+Eqϕ(xs,xt;s,t )
+
+vψ (xs; s, t )T [∇ log p(xs; s)−
+
+∇xs log qϕ(xs|xt; s, t )] − α∥vψ (xs; s, t )∥22
+
+ , (15) 
+
+min  
+
+> ψ
+
+Eqϕ(xs,xt;s,t )
+
+vψ (xs; s, t )T [∇xs log qϕ(xs|xt; s, t )−
+
+∇ log p(xs; s)] + (1 + λ)α∥vψ (xs; s, t )∥22
+
+ ,
+
+where λ ≥ 0 is a given regularization strength hyperpa-rameter. The optimal fψ∗(ϕ)(xs; s, t ) of the second-stage optimization is given by 
+
+fψ∗ (ϕ)( ·; s, t ) = β∇ log qϕ(·; s, t )+(1 −β)∇ log p(·; s), (16) 
+
+where β = 12α(1+ λ) . The equilibrium of ϕ remains consis-tent with (11). 
+
+It is straightforward to observe that (15) is the same as the SiD loss in (6). If ∇ log p(xs; s) is approximated by 
+
+Sθ∗ (xs; s), the optimal f ˜ψ∗ is given by 
+
+f ˜ψ∗ (·; s, t ) = β∇ log qϕ(·; s, t ) + (1 − β)∇ log p(·; s). (17) 
+
+4Continuous Semi-Implicit Models 
+
+(17) indicates that when α > 12(1+ λ) , then β < 1. The optimal f ˜ψ∗(ϕ)(xs; s, t ) in the second-stage optimization also shifts towards Sθ∗ (xs; s). This alignment facilitates learning when fψ is initialized as Sθ∗ . The proof of Theo-rem 3.1 and its general version are shown in Appendix B.1. The training process of CoSIM is summarized in Algorithm 2 in Appendix A.1. 
+
+3.3. Parameterization of CoSIM 
+
+Consistency model (Song et al., 2023) is a family of gen-erative models that learn a consistency function Gϕ(xt, t )
+
+to map the samples of distribution p(xt; t) back to p(x0; 0) .Once the consistency function is well-trained, the consis-tency model can generate samples using multiple steps by iterating with s < t as follows 
+
+xs = a(s)Gϕ(xt, t ) + σ(s)ϵ, (18) which approximates x0 in (2) by Gϕ(xt, t ), and ϵ ∼N (0, I). Intuitively, this provides a parameterized form of the continuous transition kernel qtrans (xs|xt; s, t ). We hereafter adopt this setting for diffusion model distillation. One can expect that once Gϕ(xt, t ) is perfectly trained with 
+
+LCSI-f (ϕ), then Gϕ(xt, t ) will also map the samples of dis-tribution p(xt; t) back to p(x0; 0) . We present this result in Proposition 3.2. See a detailed proof of Proposition 3.2 in Appendix B.2. 
+
+Proposition 3.2 (Consistent Similarity) . Let the continuous transition kernel qtrans (xs|xt; s, t ) be parameterized as 
+
+xs = [ a(s)Gϕ(xt, t ) + σ(s)ϵ] ∼ qϕ(xs|xt; s, t ),
+
+where 0 < s < t ≤ T , ϵ ∼ N (0, I), and a(·), σ (·) are defined in (2). Then the optimal Gϕ(·, t ) obtained from the two-stage alternating optimization problem (15) also serves as a consistency function. 
+
+With a well-trained continuous transition kernel 
+
+qtrans (xs|xt; s, t ), we can iteratively sample from it over multiple steps to ultimately generate samples from 
+
+p(x0). To select the sequence of time points, we use the sampling scheme of EDM (Karras et al., 2022) as an initial choice and set a scale parameter for tuning with a greedy algorithm. We summarize the multistep sampling procedure in Algorithm 1. 
+
+Error Bound of CoSIM Building on the parameter-ized setting (18) of qtrans (xs|xt; s, t ), we denote the vari-ational distribution family Q =
+
+n
+
+qϕ|qϕ(xs; s, t ) =
+
+R qϕ(xs|xt; s, t )qmix (xt)d xt, ϕ ∈ Φ
+
+o
+
+, where Φ is the fea-sible domain of neural network parameters of Gϕ and qmix 
+
+follows (8). Then we can define the optimal variational distribution in Q as 
+
+qϕ∗ ∈ arg min 
+
+> qϕ∈Q
+
+LCSI α (qϕ), (19) 
+
+Algorithm 1 Inference of Continuous Semi-Implicit Models 
+
+Input: Continuous transition kernel qtrans (xs|xt; s, t )
+
+and a sequence of time points T = t0 > t 1 > · · · >tk = 0 .
+
+Output: The estimated samples of p(x0).Initialize x0 ∼ p(xT ; T )
+
+for n = 1 to k do 
+
+Sample xn ∼ qtrans (·| xn−1; tn, t n−1)
+
+end for Output: xk
+
+where LCSI α[h] is defined in (9) with the choice of criterion Dα (p(·; s)∥qϕ(·; s, t )) discussed in section 3.2. We first introduce the following assumptions with a fixed 
+
+λ > 0 and an early-stopping time 0 < δ < T .As illustrated in Algorithm 2, the approximation errors arise from the inexact second-stage optimization of fψ . We de-note it as follows. 
+
+Assumption 3.3 (fψ function error) . The estimated auxil-iary vector-valued function f ˆψ(ϕ)(xt; t) in the two-stage optimization problem (15) is ϵf-accurate, that is for all 
+
+s, t ∈ [δ, T ] with s < t and ϕ ∈ Φ:
+
+Eqϕ(xs;s,t )∥f ˆψ(ϕ)(xs; s, t ) − fψ∗(ϕ)(xs; s, t )∥22 ≤ ε2 
+
+> f
+
+. (20) 
+
+Let the q ˆϕ(xs; s, t ) be the one obtained by the first stage optimization problem with the ϵf-accurate f ˆψ(ϕ)
+
+q ˆϕ(·; s, t )∈ arg min qϕ∈Q Eqϕ(xs,xt;s,t )     
+
+> h
+> uˆψ(ϕ)(xs;s, t )T[Sθ∗(xs;s)
+
+−∇ xs log qϕ(xs|xt; s, t )] − α∥u ˆψ(ϕ)(xs; s, t )∥22
+
+i
+
+,
+
+where u ˆψ(ϕ)(xs; s, t ) := log p(xs; s) − f ˆψ(ϕ)(xs, xt; s, t ).Then we are ready to state the following result. 
+
+Proposition 3.4 (Error bound of one-step map, Yu & Zhang (2023)) . Suppose the assumptions [3.3] hold. Then for any 
+
+0 < s < t < T , the Fisher divergence between the target distribution p(xδ ) and the estimated distribution of CoSIM is bounded as follows FI (q ˆϕ(·; s, t )∥p(·; s)) ≲ FI (qϕ∗(xs;s,t )∥p(·, s )) + ε2 
+
+> f
+
+.
+
+The above results show that the approximation error of inex-act fψ only attribute an extra term ε2 
+
+> f
+
+to the approximation accuracy of CoSIM. As long as the approximation error εf
+
+is small, the two stages optimization of CoSIM with regular-ization strength λ > 0 will provide the same approximation accuracy as the optimization with the original training ob-jective (13). 5Continuous Semi-Implicit Models 
+
+3.4. Insights on the Benefits of Multi-Step Methods 
+
+As discussed in section 3.2, we adopt the same type of SIVI objective ( LSIVI-f ) as in SiD (Zhou et al., 2024b) for diffusion model distillation. However, unlike the deter-ministic one-step generation scheme of SiD, continuous semi-implicit models (CoSIM) allow us to generate samples from p(x0) through multiple steps. A notable advantage of CoSIM is that it injects randomness at each generation step, producing more diverse samples—an observation consistent with the benefits of stochastic diffusion models (Song et al., 2020). Moreover, as we show next, CoSIM can generate samples closer to the target distribution than the one-step distillation model by employing multistep sampling. Since the optimal variational distribution qϕ∗ (xs; s, t ) is de-fined on Q, this family itself will introduce approximation gaps due to the approximation capacity of Gϕ(xt, t ). Since 
+
+Gϕ(xt, t ) maps the distribution p(xt; t) back to p(x0; 0) ,the approximation error is expected to grow with t. Follow-ing the assumption in previous work Chen et al. (2023), we scale the error term of Gϕ(xt, t ) accordingly. 
+
+Assumption 3.5 (Consistency function error) . For all t ∈
+
+[δ, T ], the approximation gaps between ∇ log qϕ∗ (xδ , δ, t )
+
+and ∇ log p(xδ ; δ) is bounded in L2(qϕ∗ ):              
+
+> Eqϕ∗(xδ;δ,t )∥∇ log p(xδ;δ)− ∇ log qϕ∗(xδ;δ, t )∥22≤εg(t)2,
+
+where the error term is scaled by εg(t)2 := 2 ε2 
+
+> c
+
+FI (p(·; t +
+
+δ)∥p(·; δ)) , and error εc characterizes the approximation capacity of the consistency function family {Gϕ|ϕ ∈ Φ}.FI (·∥· ) denotes the Fisher divergence. We note that the divergence FI (p(·; t + δ)∥p(·, δ )) grows as 
+
+t increases to T . Furthermore, when {Gϕ | ϕ ∈ Φ} con-tains only the identity mapping, the aforementioned upper bound holds with ε2 
+
+> c
+
+= 1 , validating the reasonableness of assumption 3.5. More details can be found in the proof of Proposition 3.4 in Appendix B.2. 
+
+Assumption 3.6. The perturbed distribution p(xδ ; δ) satis-fies a logarithmic Sobolev inequality (LSI) as follows. ent (f 2) ≤ 2LLSI Ep(xδ ;δ)Γ( f ), ∀f ∈ C ∞(Rd), (21) where ent (f 2) = Ep(xδ ;δ)(f 2(log f 2 − Ep(xδ ;δ)f 2)) is the entropy of f 2, Γ( f ) = ∥∇ f ∥22 and LLSI is the LSI constant. The LSI assumption is a standard assumption in the anal-ysis of diffusion models (Lee et al., 2023), and previous works show that the LSI inequality holds when p(x0; 0) is a bounded distribution (Chen et al., 2021). More details can be found in the proof of proposition 3.4. Then we investigate the smoothness assumption of the con-sistency function Gϕ(xt, t ). Following the preconditioning strategy of neural network proposed in (Karras et al., 2022; Song et al., 2023), we employ the consistency function as 
+
+Gϕ(xt, t ) as follows 
+
+Gϕ(xt, t ) = cskip (t)xt + cout (t)Fϕ(cin (t)xt, t ), (22) where cskip modulates the skip connection and cin , cout are the scaling factors of network input and output. 
+
+Assumption 3.7 (Smoothness of neural network) . The neu-ral network Fϕ(x, t ) in (22) is Lf -Lipschitz continuous on the variable x with constant Lf > 1 for all t ∈ [δ, T ].The Lipschitz continuous assumption is naturally used in previous works (Song et al., 2023; Lyu et al., 2024; Li et al., 2024). However, we adopt a practical preconditioning and impose the Lipschitz condition on Fϕ rather than Gϕ.Moreover, these two Lipschitz conditions are equivalent under the variance preserving (VP) scheme, which is shown in Appendix B.4. Based on the above error bound in proposition 3.4, we can give a convergence bound for the multistep sampling of CoSIM similar to Lyu et al. (2024). 
+
+Proposition 3.8 (Multistep Wasserstein Distance Error) .
+
+Under Assumptions [3.3-3.7], consider a sequence of time points T = t0 ≥ t1 = · · · = tK−1 = tmid > t K = 0 . Let 
+
+q(K)ˆϕ (·) denote the K-step estimated distribution by CoSIM. Then for variance preserving scheme of (1), there exists 
+
+tmid = O(log Lf ) for variance preserving scheme of (1) such that 
+
+W2(q(K)ˆϕ , p (·; 0)) ≲ δ2d + ( 34 )K−1E 12 
+
+> W22
+
+(T ) + E 12 
+
+> W22
+
+(tmid ),
+
+where EW 22 (t) denotes the Wasserstein distance bound be-tween the one-step CoSIM estimate q ˆϕ(·; δ; t) and p(·; δ).This bound is controlled by the error terms from Assump-tions [3.3-3.7], with the explicit formulation detailed in Appendix B.4. For variance exploding scheme of (1), the above results hold for some tmid = O(Lf ).
+
+Intuitively, since the Wasserstein distance bound EW 22 (t)
+
+is increasing with t, the benefit of multistep sampling lies in reducing the error bound from E 12 
+
+> W22
+
+(T ) of the one-step model to a smaller one E 12 
+
+> W22
+
+(tmid ). We provide a detailed proof of Proposition 3.8 in Appendix B.4. 
+
+## 4. Experiments 
+
+In this section, we explore the performance of CoSIM on the unconditional image generation task on CIFAR-10 ( 32 × 32 )and the conditional image generation task on ImageNet (64 × 64 ) and ImageNet ( 512 × 512 ). For all experiments, the network architecture of the transition kernel qϕ(·| xt; s, t )
+
+and the auxiliary function vψ (xs; s, t ) is almost identical to the pre-trained score network Sθ∗ (xs; s) (Karras et al., 6Continuous Semi-Implicit Models 
+
+2022), except for an additional time embedding network of t. For the purpose of minimal changes, this is done by duplicating the time embedding network of s in the score network architecture and summing up the time embedding of s and t together, leading to only a 4% increase in pa-rameters. The implementation of CoSIM is available at 
+
+https://github.com/longinYu/CoSIM .We use the well-established metric Frechet Inception Dis-tance (Salimans et al., 2016) (FID) to measure the quality of the generated images. Furthermore, as the FID score often unfairly favors the models trained with GAN losses and penalizes the diffusion models, we consider an additional metric - FD-DINOv2 (Stein et al., 2024), which replaces the InceptionV3 (Szegedy et al., 2016) encoder of FID by DINOv2 (Oquab et al., 2024) to better align with human per-ception. Both FID and FD-DINOv2 are evaluated on 50K generated images and the whole training set, which means 50K images from CIFAR10 (Krizhevsky & Hinton, 2009) training split and 1,281,167 images from ImageNet (Deng et al., 2009). The training setup for CoSIM is basically kept the same as the underlying pre-trained score models, only with a different optimization objective in Section 3.2. In practice, we adopt the setting α = 1 .2 as in Zhou et al. (2024b). In contrast to the SiD loss, which uses α(1 + λ) = 0 .5,we choose to increase the regularization strength λ such that α(1 + λ) = 1 for simplicity. The time schedule is detailed in Appendix A.1. We re-use most of the optimizer settings from the pretrained score models with some slight tweakings such as learning rate and batch size, more details can be found in Appendix C. 
+
+4.1. Unconditional Image Generation CIFAR-10 (32 × 32) On the unconditional image gen-eration task on CIFAR-10, the pre-trained score network 
+
+Sθ∗ (xs; s) is from Karras et al. (2022). Table 1 reports the generation quality measured by FID and FD-DINOv2. We see that our CoSIM reaches the same FID as the teacher (VP-EDM) with only 4 NFE. Although the 2-step CoSIM reaches an FID above 2, this is still con-siderably lower than many of the leading methods. The reasons for CoSIM’s lagging behind other methods can be attributed to our model size, which is significantly smaller than others. On the FD-DINOv2, our CoSIM achieves state-of-the-art results compared to both trained-from-scratch and distilled models. Specifially, CoSIM attains an FD-DINOv2 of 113.51 with 4 NFE, outperforming the best-ever PFGM++ (Xu et al., 2023, an FD-DINOv2 of 141.65) by a large mar-gin. We also note that this leading status of CoSIM still holds with 2 NFE. Furthermore, the FID metric’s inclination towards GAN-based models (Stein et al., 2024) may partly explain why CTM achieves the best FID score, rather than 
+
+Table 1. Unconditional generation quality on CIFAR-10 ( 32 × 32 ). Results with asterisks ( ∗) are tested by ourselves with the official codes and checkpoints. ECT does not provide official checkpoints, so its FD-DINOv2 score ( †) comes from our re-implementation. The other results are from the original papers. The best result is marked in black bold font and the second best result is marked in 
+
+brown bold font .                                                                                
+
+> Method #Params NFE FID ( ↓)FD-DINOv2 ( ↓)CIFAR:Test Split --3.15 31 .07
+> DDPM (Ho et al., 2020) 1000 3.17 -DDIM (Song et al., 2021) 100 4.16 -TDPM+ (Zheng et al., 2023a) 100 2.83 -DPM-Solver3 (Lu et al., 2022) 48 2.65 -VP-EDM (Karras et al., 2022) 56 M35 1.97 168 .01 ∗
+> VP-EDM+LEGO-PR (Zheng et al., 2023b) 35 1.88 -PFGM++ (Xu et al., 2023) 35 1.91 141 .65
+> HSIVI-SM (Yu et al., 2023) 15 4.17 -CD-LPIPS (Song et al., 2023) 13.55 -
+> 22.93 -iCT (Song & Dhariwal, 2024) 12.83 -
+> 22.46 -sCT (Lu & Song, 2024) 12.97 -
+> 22.06 -CTM (Kim et al., 2023) 324 M11.98 237 .08 ∗
+> CTM (Kim et al., 2023) 324 M21.87 210 .64 ∗
+> CTM (Kim et al., 2023) 324 M41.84 ∗197 .59 ∗
+> ECT (Geng et al., 2024) 56 M22.11 211 .17 †
+> SiD (Zhou et al., 2024b) 56 M11.92 148 .17 ∗
+> CoSIM (ours) 56 M22.40 116 .92
+> CoSIM (ours) 56 M41.97 113 .51
+> CoSIM(ours) 56 M61.96 111 .98
+
+FD-DINOv2. Finally, we observe a consistent decrease in both FID and FD-DINOv2 as the NFE increases from 2 to 4, which accords with our theoretical analysis in Section 3.4. 
+
+4.2. Conditional Image Generation ImageNet (64 × 64) Similarly to Section 4.1, the network structure and the checkpoint of the pre-trained score model 
+
+Sθ∗ (xs; s) are from Karras et al. (2022). We report the conditional generation quality of different models in Table 3. We see that the VP-EDM (the teacher model) can get a worse FID with 999 NFE, while the FD-DINOv2 decreases monotonically as NFE increases. This consistency in FD-DINOv2 further verifies the reasonability of introducing FD-DINOv2 for measuring the generation quality of diffusion-based models. After distillation, our CoSIM produces an FID of 1.46 with 4 NFE, reaching a similar performance to VP-EDM with 999 NFE and outper-forming most methods in Table 3. Our CoSIM also achieves state-of-the-art results on FD-DINOv2, setting the lowest record at 56.66 with only 4 NFE. We also notice that Mo-ment Matching (Salimans et al., 2024) reaches a better FID score compared to our CoSIM, which we attribute to the smaller network architecture employed by us. 
+
+ImageNet (512 × 512) FD-DINOv2 is a new metric pro-posed very recently (Stein et al., 2024). Most of the models published before FD-DINOv2 naturally did not consider metric in their experiments and thus may not set up their 7Continuous Semi-Implicit Models 
+
+Figure 2. Conditionally generated images on ImageNet ( 512 × 512 ). The two batches of images are generated from 4-step ( left ) and 2-step ( right ) CoSIM L model respectively, with identical initial noise and class labels. 
+
+Table 2. Conditional generation quality measured by FD-DINOv2 on ImageNet ( 512 × 512 ). Results of SiD are reported from Zhou et al. (2025).                                           
+
+> Method #Params NFE FD-DINOv2 ( ↓)EDM2-S-DINOv2 (Karras et al., 2024) 280 M63 68 .64
+> EDM2-M-DINOv2 (Karras et al., 2024) 498 M63 58 .44
+> EDM2-L-DINOv2 (Karras et al., 2024) 778 M63 52 .25
+> EDM2-XL-DINOv2 (Karras et al., 2024) 1.1B63 45 .96
+> EDM2-XXL-DINOv2 (Karras et al., 2024) 1.5B63 42 .84
+> SiD-S (Zhou et al., 2024b) 280 M165 .08
+> SiD-M (Zhou et al., 2024b) 498 M155 .92
+> SiD-L (Zhou et al., 2024b) 777 M156 .25
+> CoSIM-S (ours) 280 M267 .81 280 M467 .71
+> CoSIM-M (ours) 498 M253 .35 498 M451 .57
+> CoSIM-L (ours) 778 M246 .41 778 M441 .79
+
+models perfectly for getting a good FD-DINOv2 result. To make a more convincing comparison, we further test CoSIM on ImageNet (512 ×512) against EDM2 (Karras et al., 2024) which also incorporates FD-DINOv2 benchmark in their original paper. This experiment also validates the scalability of our approach. We test our method on three different model sizes (S, M, L) from Karras et al. (2024), which are significantly larger than those models tested in CIFAR 32 ×32 and Imagenet 64 ×64 .Also, with a steady increase in parameter numbers from S to M and L, we showcase the scalability of our approach by generating superior results on larger models. Tables [2-4] report the conditional generation quality mea-sured by FD-DINOv2 and FID of different models. As the model size grows, the generation quality of both models improves consistently. For all the model sizes (S,M,L), our CoSIM with only 2 NFE surpasses the teacher with 63 NFE, demonstrating the effective distillation ability of CoSIM for handling high-dimensional samples and larger models. Due to the GPU memory limit, we do not test CoSIM on XL and XXL models but expect its similarly superior performance, since CoSIM-L with 4 NFE already beats EDM2-XXL-dino. 
+
+Table 3. Conditional generation quality on ImageNet ( 64 × 64 ). Results with asterisks ( ∗) are tested by ourselves with the official codes and checkpoints. The other results are from the original papers. The best result is marked in black bold font and the second best result is marked in brown bold font .                                                                                     
+
+> Method #Params NFE FID ( ↓)FD-DINOv2 ( ↓)DDPM (Ho et al., 2020) 250 11 .00 -TDPM+ (Zheng et al., 2023a) 1000 1.62 -DPM-Solver3 (Lu et al., 2022) 50 17 .52 -VP-EDM (Karras et al., 2022) 296 M79 2.64 107 .07 ∗
+> 296 M511 1.36 79 .82 ∗
+> 296 M999 1.41 ∗72 .67 ∗
+> VP-EDM+LEGO-PR (Zheng et al., 2023b) 250 2.16 -HSIVI-SM (Yu et al., 2023) 15 15 .49 -CD-LPIPS (Song et al., 2023) 16.20 -
+> 24.70 -iCT (Song & Dhariwal, 2024) 14.02 -
+> 23.20 -sCT (Lu & Song, 2024) 12.04 -
+> 21.48 -CTM (Kim et al., 2023) 604 M11.92 163 .47 ∗
+> 604 M21.73 159 .04 ∗
+> Moment Matching (Salimans et al., 2024) 400 M13.0-
+> 400 M23.86 -
+> 400 M41.50 -
+> 400 M81.24 -ECT (Geng et al., 2024) 296 M21.67 ∼150
+> Diff-Instruct (Luo et al., 2023) 296 M15.57 -SiD (Zhou et al., 2024b) 296 M11.52 79 .15 ∗
+> CoSIM (ours) 296 M23.35 108 .99
+> CoSIM (ours) 296 M41.46 58 .66
+
+We also provide the conditionally generated images from CoSIM in Figure 2. We ensure that the 4-step generation and 2-step generation start from the same initial noise and class labels, and show that there is a clearly observable difference. Specifically, 2-step samples are good enough to capture the majority of contents, but 4-step samples tend to capture more fine-grained details, e.g., the human eyes, cricket legs, and snake bodies shown in this figure. 
+
+## 5. Conclusion 
+
+We presented CoSIM, a continuous-time semi-implicit framework for accelerating diffusion models through stochastic multi-step generation. Unlike the discrete-time sequential training in hierarchical semi-implicit variational inference, CoSIM leverages a continuous-time framework 8Continuous Semi-Implicit Models                                                       
+
+> Table 4. Conditional generation quality measured by FID on Ima-geNet ( 512 ×512 ).
+> Method #Params NFE FID ( ↓)EDM2-S-FID (Karras et al., 2024) 280 M63 2.56
+> EDM2-M-FID (Karras et al., 2024) 498 M63 2.25
+> EDM2-L-FID (Karras et al., 2024) 778 M63 2.06
+> EDM2-XL-FID (Karras et al., 2024) 1.1B63 1.96
+> EDM2-XXL-FID (Karras et al., 2024) 1.5B63 1.91
+> sCD-S (Lu & Song, 2024) 280 M22.50
+> sCD-M (Lu & Song, 2024) 498 M22.26 sCD-L (Lu & Song, 2024) 778 M22.04 SiD-S (Zhou et al., 2024b) 280 M12.71
+> SiD-M (Zhou et al., 2024b) 498 M12.06
+> SiD-L (Zhou et al., 2024b) 778 M11.91
+> CoSIM-S (ours) 280 M22.66 280 M42.56
+> CoSIM-M (ours) 498 M21.95 498 M41.93
+> CoSIM-L (ours) 778 M21.84 778 M41.83
+
+to approximate continuous transition kernels. By introduc-ing a framework of equilibrium point shifting, we establish theoretical guarantees for unbiased two-stage optimization while resolving the pathological behavior inherent in SiD training objectives. Through careful parameterization of continuous transition kernels, we provide a novel method for multistep distillation of generative models training on a distributional level. In experiments, we demonstrate that CoSIM achieves comparable or superior FID while only requiring fewer training iterations and utilizing similar or smaller neural networks compared to existing one-step dis-tillation methods and consistency model variants. Further-more, CoSIM achieves state-of-the-art performance on both unconditional and conditional image generation tasks as measured by FD-DINOv2. 
+
+Limitations For diffusion distillation, CoSIM training involves three models: the generator Gθ , the auxiliary func-tion fψ and the target score model Sθ∗ . As a result, CoSIM incurs high memory consumption due to the involvement of multiple models. Additionally, since CoSIM initializes the generator Gϕ and the function fψ from a pre-trained target score model, it limits the flexibility of Gϕ to leverage larger architectures for modeling the continuous transition kernels. Consequently, the one-step generation quality of CoSIM is lower than that of modern one-step distillation models such as SiD and sCD, we defer this aspect to future research. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+## Acknowledgements 
+
+This work was supported by National Natural Science Foun-dation of China (grant no. 12201014, grant no. 12292980 and grant no. 12292983). The research of Cheng Zhang was support in part by National Engineering Laboratory for Big Data Analysis and Applications, the Key Laboratory of Mathematics and Its Applications (LMAM) and the Key Laboratory of Mathematical Economics and Quantitative Finance (LMEQF) of Peking University. The research of S.-H. Gary Chan was supported, in part, by Research Grants Council Collaborative Research Fund (under grant number C1045-23G). The authors appreciate the anonymous ICML reviewers for their constructive feedback. 
+
+## References 
+
+Bardet, J.-B., Gozlan, N., Malrieu, F., and Zitt, P.-A. Func-tional inequalities for gaussian convolutions of compactly supported measures: explicit bounds and dimension de-pendence. Bernoulli , 24(1):333–353, 2018. Cattiaux, P. and Guillin, A. Functional inequalities for per-turbed measures with applications to log-concave mea-sures and to some bayesian problems. Bernoulli , 28(4): 2294–2321, 2022. Chen, H., Lee, H., and Lu, J. Improved analysis of score-based generative modeling: User-friendly bounds under minimal smoothness assumptions, 2023. URL https: //arxiv.org/abs/2211.01916 .Chen, H.-B., Chewi, S., and Niles-Weed, J. Dimension-free log-sobolev inequalities for mixture distributions, 2021. URL https://arxiv.org/abs/2102.11476 .Cheng, Z., Zhang, S., Yu, L., and Zhang, C. Particle-based variational inference with generalized wasserstein gradi-ent flow. In Thirty-seventh Conference on Neural Infor-mation Processing Systems , 2023. Cheng, Z., Yu, L., Xie, T., Zhang, S., and Zhang, C. Ker-nel semi-implicit variational inference. In Forty-First International Conference on Machine Learning , 2024. Deng, J., Dong, W., Socher, R., Li, L.-J., Li, K., and Fei-Fei, L. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition , pp. 248–255. Ieee, 2009. Dosovitskiy, A. and Brox, T. Generating images with per-ceptual similarity metrics based on deep networks, 2016. URL https://arxiv.org/abs/1602.02644 .9Continuous Semi-Implicit Models 
+
+Geng, Z., Pokle, A., Luo, W., Lin, J., and Kolter, J. Z. Consistency models made easy, 2024. URL https: //arxiv.org/abs/2406.14548 .Gregor, K., Danihelka, I., Graves, A., Rezende, D. J., and Wierstra, D. Draw: A recurrent neural network for image generation, 2015. URL https://arxiv.org/abs/ 1502.04623 .Gronwall, T. H. Note on the derivatives with respect to a parameter of the solutions of a system of differential equations. Annals of Mathematics , 20:292, 1919. Heek, J., Hoogeboom, E., and Salimans, T. Multistep con-sistency models, 2024. URL https://arxiv.org/ abs/2403.06807 .Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., and Hochreiter, S. GANs trained by a two time-scale update rule converge to a local Nash equilibrium. In Advances in Neural Information Processing Systems , pp. 6626–6637, 2017. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion proba-bilistic models. Advances in Neural Information Process-ing Systems , 33:6840–6851, 2020. Karras, T., Aittala, M., Aila, T., and Laine, S. Elucidat-ing the design space of diffusion-based generative mod-els. In Oh, A. H., Agarwal, A., Belgrave, D., and Cho, K. (eds.), Advances in Neural Information Processing Systems , 2022. URL https://openreview.net/ forum?id=k7FuTOWMOc7 .Karras, T., Aittala, M., Lehtinen, J., Hellsten, J., Aila, T., and Laine, S. Analyzing and improving the training dynamics of diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 24174–24184, 2024. Kim, D., Lai, C.-H., Liao, W.-H., Murata, N., Takida, Y., Uesaka, T., He, Y., Mitsufuji, Y., and Ermon, S. Consis-tency trajectory models: Learning probability flow ode trajectory of diffusion. arXiv preprint arXiv:2310.02279 ,2023. Kingma, D. P. and Welling, M. Auto-encoding variational bayes. In ICLR , 2014. Kingma, D. P., Salimans, T., Jozefowicz, R., Chen, X., Sutskever, I., and Welling, M. Improving variational inference with inverse autoregressive flow, 2017. URL 
+
+https://arxiv.org/abs/1606.04934 .Krizhevsky, A. and Hinton, G. Learning multiple lay-ers of features from tiny images. https://www.cs. toronto.edu/˜kriz/cifar.html , 2009. Lee, H., Lu, J., and Tan, Y. Convergence for score-based generative modeling with polynomial complexity, 2023. URL https://arxiv.org/abs/2206.06227 .Li, G., Huang, Z., and Wei, Y. Towards a mathematical theory for consistency training in diffusion models. ArXiv ,abs/2402.07802, 2024. Lu, C. and Song, Y. Simplifying, stabilizing and scaling continuous-time consistency models, 2024. URL https: //arxiv.org/abs/2410.11081 .Lu, C., Zhou, Y., Bao, F., Chen, J., Li, C., and Zhu, J. DPM-solver: A fast ODE solver for diffusion probabilis-tic model sampling in around 10 steps. In Oh, A. H., Agarwal, A., Belgrave, D., and Cho, K. (eds.), Advances in Neural Information Processing Systems , 2022. Luo, W., Hu, T., Zhang, S., Sun, J., Li, Z., and Zhang, Z. Diff-instruct: A universal approach for transferring knowledge from pre-trained diffusion models. In Thirty-seventh Conference on Neural Information Processing Systems , 2023. URL https://openreview.net/ forum?id=MLIs5iRq4w .Lyu, J., Chen, Z., and Feng, S. Sampling is as easy as keeping the consistency: convergence guarantee for consistency models. In Forty-first International Con-ference on Machine Learning , 2024. URL https: //openreview.net/forum?id=ZPiEIhQpos .Moens, V., Ren, H., Maraval, A., Tutunov, R., Wang, J., and Ammar, H. Efficient semi-implicit variational inference. 
+
+arXiv preprint arXiv:2101.06070 , 2021. Oquab, M., Darcet, T., Moutakanni, T., Vo, H. V., Szafraniec, M., Khalidov, V., Fernandez, P., HAZIZA, D., Massa, F., El-Nouby, A., Assran, M., Ballas, N., Galuba, W., Howes, R., Huang, P.-Y., Li, S.-W., Misra, I., Rabbat, M., Sharma, V., Synnaeve, G., Xu, H., Je-gou, H., Mairal, J., Labatut, P., Joulin, A., and Bo-janowski, P. DINOv2: Learning robust visual features without supervision. Transactions on Machine Learn-ing Research , 2024. ISSN 2835-8856. URL https:// openreview.net/forum?id=a68SUt6zFt . Fea-tured Certification. Otto, F. and Villani, C. Generalization of an inequality by ta-lagrand and links with the logarithmic sobolev inequality. 
+
+Journal of Functional Analysis , 173:361–400, 2000. Ranganath, R., Tran, D., and Blei, D. M. Hierarchical vari-ational models, 2016. URL https://arxiv.org/ abs/1511.02386 .Razavi, A., van den Oord, A., and Vinyals, O. Generating diverse high-fidelity images with vq-vae-2, 2019. URL 
+
+https://arxiv.org/abs/1906.00446 .10 Continuous Semi-Implicit Models 
+
+Rezende, D. J. and Mohamed, S. Variational inference with normalizing flows, 2016. URL https://arxiv. org/abs/1505.05770 .Rezende, D. J., Mohamed, S., and Wierstra, D. Stochastic backpropagation and approximate inference in deep gen-erative models, 2014. URL https://arxiv.org/ abs/1401.4082 .Salimans, T., Goodfellow, I., Zaremba, W., Cheung, V., Radford, A., and Chen, X. Improved techniques for training gans. Advances in neural information processing systems , 29, 2016. Salimans, T., Mensink, T., Heek, J., and Hoogeboom, E. Multistep distillation of diffusion models via mo-ment matching. In The Thirty-eighth Annual Con-ference on Neural Information Processing Systems ,2024. URL https://openreview.net/forum? id=C62d2nS3KO .Sohl-Dickstein, J. N., Weiss, E. A., Maheswaranathan, N., and Ganguli, S. Deep unsupervised learning using nonequilibrium thermodynamics. ArXiv , abs/1503.03585, 2015. Song, J., Meng, C., and Ermon, S. Denoising diffusion implicit models. In International Conference on Learning Representations , 2021. Song, Y. and Dhariwal, P. Improved techniques for training consistency models. In The Twelfth International Confer-ence on Learning Representations , 2024. URL https: //openreview.net/forum?id=WNzy9bRDvG .Song, Y. and Ermon, S. Generative modeling by estimating gradients of the data distribution. In Neural Information Processing Systems , 2019. Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Er-mon, S., and Poole, B. Score-based generative modeling through stochastic differential equations. arXiv preprint arXiv:2011.13456 , 2020. Song, Y., Dhariwal, P., Chen, M., and Sutskever, I. Consis-tency models. arXiv preprint arXiv:2303.01469 , 2023. Stein, G., Cresswell, J., Hosseinzadeh, R., Sui, Y., Ross, B., Villecroze, V., Liu, Z., Caterini, A. L., Taylor, E., and Loaiza-Ganem, G. Exposing flaws of generative model evaluation metrics and their unfair treatment of diffusion models. Advances in Neural Information Processing Systems , 36, 2024. Szegedy, C., Vanhoucke, V., Ioffe, S., Shlens, J., and Wojna, Z. Rethinking the inception architecture for computer vi-sion. In Proceedings of the IEEE conference on computer vision and pattern recognition , pp. 2818–2826, 2016. Sønderby, C. K., Raiko, T., Maaløe, L., Sønderby, S. K., and Winther, O. Ladder variational autoencoders, 2016. URL https://arxiv.org/abs/1602.02282 .Titsias, M. K. and Ruiz, F. J. R. Unbiased implicit varia-tional inference. In The 22nd International Conference on Artificial Intelligence and Statistics , pp. 167–176. PMLR, 2019. Vahdat, A. and Kautz, J. Nvae: A deep hierarchical vari-ational autoencoder, 2021. URL https://arxiv. org/abs/2007.03898 .Vincent, P. A connection between score matching and de-noising autoencoders. Neural Computation , 23(7):1661– 1674, 2011. doi: 10.1162/NECO a 00142. Wang, Z., Lu, C., Wang, Y., Bao, F., Li, C., Su, H., and Zhu, J. Prolificdreamer: High-fidelity and diverse text-to-3d generation with variational score distillation. In Advances in Neural Information Processing Systems (NeurIPS) ,2023a. Wang, Z., Zheng, H., He, P., Chen, W., and Zhou, M. Diffusion-GAN: Training GANs with diffusion. In The Eleventh International Conference on Learning Represen-tations , 2023b. URL https://openreview.net/ forum?id=HZf7UbpWHuA .Xu, Y., Liu, Z., Tian, Y., Tong, S., Tegmark, M., and Jaakkola, T. Pfgm++: Unlocking the potential of physics-inspired generative models. In International Conference on Machine Learning , pp. 38566–38591. PMLR, 2023. Yin, M. and Zhou, M. Semi-implicit variational inference. In International Conference on Machine Learning , pp. 5646–5655, 2018. Yin, T., Gharbi, M., Zhang, R., Shechtman, E., Durand, F., Freeman, W. T., and Park, T. One-step diffusion with distribution matching distillation. arXiv preprint arXiv:2311.18828 , 2023. Yu, L. and Zhang, C. Semi-implicit variational inference via score matching. In The Eleventh International Confer-ence on Learning Representations , 2023. URL https: //openreview.net/forum?id=sd90a2ytrt .Yu, L., Xie, T., Zhu, Y., Yang, T., Zhang, X., and Zhang, C. Hierarchical semi-implicit variational inference with application to diffusion model acceleration. In Thirty-seventh Conference on Neural Information Processing Systems , 2023. URL https://openreview.net/ forum?id=ghIBaprxsV .Zheng, H., He, P., Chen, W., and Zhou, M. Truncated diffu-sion probabilistic models and diffusion-based adversarial 11 Continuous Semi-Implicit Models 
+
+auto-encoders. In The Eleventh International Confer-ence on Learning Representations , 2023a. URL https: //openreview.net/forum?id=HDxgaKk956l .Zheng, H., Wang, Z., Yuan, J., Ning, G., He, P., You, Q., Yang, H., and Zhou, M. Learning stackable and skippable LEGO bricks for efficient, reconfigurable, and variable-resolution diffusion modeling, 2023b. Zhou, M., Wang, Z., Zheng, H., and Huang, H. Long and short guidance in score identity distillation for one-step text-to-image generation. ArXiv 2406.01561 , 2024a. URL 
+
+https://arxiv.org/abs/2406.01561 .Zhou, M., Zheng, H., Wang, Z., Yin, M., and Huang, H. Score identity distillation: Exponentially fast distillation of pretrained diffusion models for one-step generation. In 
+
+International Conference on Machine Learning , 2024b. Zhou, M., Zheng, H., Gu, Y., Wang, Z., and Huang, H. Adversarial score identity distillation: Rapidly sur-passing the teacher in one step. In The Thirteenth In-ternational Conference on Learning Representations ,2025. URL https://openreview.net/forum? id=lS2SGfWizd .12 Continuous Semi-Implicit Models 
+
+Algorithm 2 Training procedure of Continuous Semi-Implicit Models (CoSIM) 
+
+Input: Dataset D, pretrained score model Sθ∗ (xs; s), continuous transition kernel qϕ(xs|xt; s, t ), auxiliary vector-valued function fψ (xs; s, t ) and λ, α s.t. α = 1 .2, α(1 + λ) = 1 .0.
+
+Output: Continuous transition kernel qϕ(xs|xt; s, t ).Initialization: ϕ ← θ∗, ψ ← θ∗ with require all=False and iteration number n = 0 .
+
+repeat 
+
+Sample continuous time points s ∼ π(s) and t ∼ π(t|s).Sample x0 ∼ D and xt ∼ p(xt|x0; t, 0) .Sample xs ∼ qϕ(xs|xt; s, t ).
+
+uψ (xs; s, t ) → Sθ∗ (xs; s) − fψ (xs; s, t ).
+
+if n is odd then 
+
+Update ϕ ← ϕ − ηw 1(s)∇ϕ
+
+n
+
+uψ (xs; s, t )T [Sθ∗ (xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − α∥uψ (xs; s, t )∥22
+
+o
+
+.
+
+else 
+
+Update ψ ← ψ − ηw 2(s)∇ψ
+
+n
+
+uψ (xs; s, t )T [∇xs log qϕ(xs|xt; s, t ) − Sθ∗ (xs; s)] + α(1 + λ)∥uψ (xs; s, t )∥22
+
+o
+
+.
+
+end if 
+
+n ← n + 1 .
+
+until convergence 
+
+## A. SIVI Objectives 
+
+A.1. Details of training procedure Choice of Time Schedule We now discuss the design principles of the time schedule π(s, t ) defined over [δ, T ]. First, we decompose π(s, t ) into the marginal distribution π(s) and the conditional distribution π(t|s). For π(s), we adopt the EDM time schedule (Karras et al., 2022): 
+
+s = ( σ 1 
+
+> ρ
+> min
+
++ rs · (σ 1 
+
+> ρ
+> max
+
+− σ 1
+
+> ρ
+> min
+
+)) ρ, rs ∼ Uniform [0 , 1] ,
+
+where σmin = δ, σmax = T , and ρ = 7 .0. The conditional distribution π(t|s) is parameterized as: 
+
+t = ( σ 1 
+
+> ρ
+> min
+
++ rt · (σ 1 
+
+> ρ
+> max
+
+− σ 1
+
+> ρ
+> min
+
+)) ρ, rt = min {rs + γ, 1},
+
+where γ ∼ π(γ|rs). Since the continuous transition kernel qtrans (xs|xt; s, t ) learns the mapping from distribution p(·; t) to 
+
+p(·; s), the learning complexity increases with the time difference between t and s. Therefore, we design the distribution 
+
+π(γ|rs) to assign higher probabilities to larger time difference γ.
+
+γ = B · Uniform [0 , 1] · Uniform {1, 12 , · · · , 1
+
+R } + (1 − B), B ∼ Bernoulli ( 12 ),
+
+where R > 1 is a hyperparameter controlling the probability of sampling smaller values of γ.Leveraging the aforementioned time schedule and adopting the weight functions wi(s) ( i = 1 , 2) from SiD (Zhou et al., 2024b), we present our complete training procedure in Algorithm 2. 
+
+## B. Theoretical Result 
+
+B.1. Proof of Theorem 3.1 
+
+Here we provide a general version of theorem 3.1 and illustrate the scaled Fisher divergence within the framework of generalized Fisher divergence (Cheng et al., 2023). Consider the generalized Fisher divergence equipped with a strictly smooth convex function h(x)
+
+GFI [h]( p(·; s)∥qϕ(·; s, t )) := Eqϕ(xs;t,s )h (∇ log p(xs; s) − ∇ log qϕ(xs; s, t )) ,
+
+where h(0) = 0 and h(x) > 0 for x̸ = 0.13 Continuous Semi-Implicit Models 
+
+Theorem B.1. Let the variational distribution qϕ(xs; s, t ) defined as in (7) and vψ (xs; s, t ) := ∇ log p(xs; s)−fψ (xs; s, t ).Then the optimization of GFI [h] ( p(·; s)∥qϕ(·; s, t )) is equivalent to the two-stages alternating optimization problem as follows 
+
+min  
+
+> ϕ
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − h∗(vψ (xs; s, t )) 
+
+i
+
+, (23) 
+
+min  
+
+> ψ
+
+Eqϕ(xs,xt;s,t )
+
+vψ (xs; s, t )T [∇xs log qϕ(xs|xt; s, t ) − ∇ log p(xs; s)] + (1 + λ)h∗(vψ (xs; s, t ))  ,
+
+where λ ≥ 0 is a given regularization strength hyperparameter and h∗(·) is the Legendre transformation of h(·). Specifically, if h(x) = 14α ∥x∥22 and ∇ log p(xs; s) is approximated by Sθ∗ (xs; s), (23) becomes the SiD loss (6). The optimal 
+
+f ˜ψ∗(ϕ)(xs; s, t ) of the second-stage optimization is given by 
+
+f ˜ψ∗(ϕ)(·; s, t ) = β∇ log qϕ(·; s, t ) + (1 − β)Sθ∗ (·; s), (24) 
+
+where β = 12α(1+ λ) . Similarly, the equilibrium of ϕ remains consistent with (11). Proof of Theorem B.1. We can write the optimization problem with the generalized Fisher divergence GFI [h] as 
+
+min 
+
+> qϕ
+
+Eqϕ(xs;t,s )h(∇ log p(xs; s) − ∇ log qϕ(xs; s, t )) . (25) Since the Legendre transformation of h(x) is that h∗(y) = max x{yT x − h(x)} and h∗∗ (·) = h(·), we can rewrite the optimization problem as 
+
+min 
+
+> qϕ
+
+max   
+
+> vψ(·;s,t )
+
+Eqϕ(xs;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log p(xs; s) − ∇ log qϕ(xs; s, t )] − h∗(vψ (xs; s, t )) 
+
+i
+
+, (26) By the trick on the score function ∇ log qϕ(xs; s, t ), we have 
+
+Eqϕ(xs;s,t ) ⟨vψ (xs; s, t ), ∇ log qϕ(xs; s, t )⟩ = Eqϕ(xs,xt;s,t ) ⟨vψ (xs; s, t ), ∇ log qϕ(xs|xt; s, t )⟩ . (27) Therefore, the optimization problem (25) can be rewritten as these two stages optimization problem 
+
+min 
+
+> qϕ
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − h∗(vψ (xs; s, t )) 
+
+i
+
+, (28) 
+
+min 
+
+> vψ
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+vψ (xs; s, t )T [∇xs log qϕ(xs|xt; s, t ) − ∇ log p(xs; s)] + h∗(vψ (xs; s, t )) 
+
+i
+
+. (29) If the regularization strength parameter λ > 0, the optimization problem with a regularized term is formed as 
+
+min 
+
+> vψ
+
+Eqϕ(xs;s,t )
+
+h
+
+vψ (xs; s, t )T [∇xs log qϕ(xs; s, t ) − ∇ log p(xs; s)] + (1 + λ)h∗(vψ (xs; s, t )) 
+
+i
+
+. (30) We can view the above minization formulation as the Legendre transformation with the convex function (1 + λ)h∗(·), then the optimal function vψ∗(ϕ)(·; s, t ) of the above optimization problem satisfies 
+
+Eqϕ(xs;s,t )
+
+h
+
+vψ∗(ϕ)(·; s, t )T [∇xs log qϕ(xs; s, t ) − ∇ log p(xs; s)] + (1 + λ)h∗(vψ∗(ϕ)(·; s, t )) 
+
+i
+
+, (31) 
+
+= − Eqϕ(xs;s,t )
+
+h
+
+(1 + λ)h∗i∗
+
+∇ log p(xs; s) − ∇ xs log qϕ(xs; s, t )
+
+
+
+, (32) 
+
+= − Eqϕ(xs;s,t )(1 + λ)h
+
+ 11 + λ (log p(xs; s) − ∇ xs log qϕ(xs; s, t )) 
+
+
+
+. (33) Bring the above optimal function vψ∗(ϕ)(·; s, t ) back to the first stage optimization problem (28), then we have 
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+vψ∗(ϕ)(xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − h∗(vψ∗(ϕ)(xs; s, t )) 
+
+i
+
+, (34) 
+
+=Eqϕ(xs,xt;s,t )(1 + λ)h
+
+ 11 + λ (log p(xs; s) − ∇ xs log qϕ(xs; s, t )) 
+
+
+
++ λh ∗
+
+vψ∗(ϕ)(xs; s, t )
+
+
+
+. (35) 14 Continuous Semi-Implicit Models 
+
+As h is a strongly smooth convex function, the Legendre transformation h∗ is also a strongly convex function, and h(x) = 0 
+
+if and only if x = 0. When vψ∗(ϕ)(xs; s, t ) ≡ 0, the first derivate condition of the optimal function vψ∗(ϕ)(·; s, t ) is satisfied 
+
+[∇xs log qϕ(xs; s, t ) − ∇ log p(xs; s)] + (1 + λ)h(0) = [ ∇xs log qϕ(xs; s, t ) − ∇ log p(xs; s)] = 0 .
+
+Therefore, the global optimal distribution of (34) is qϕ∗ (xs; s, t ) = ∇ log p(xs; s) that similar with the original optimization problem (25). So the two stage optimization problem with regularization term has the similar optimal solution as the original optimization problem. In practice, we choose the function h(x) = 14α ∥x∥22, then the Legendre transformation of h(x) is that 
+
+h∗(y) = max  
+
+> x
+
+{yT x − 14α ∥x∥22} = α∥y∥22.
+
+Substituting the Legendre transformation h∗(x) back into the second stage optimization problem (30), we obtain 
+
+Eqϕ(xs;s,t )
+
+h
+
+vψ (xs; s, t )T [∇ log qϕ(xs; s, t ) − ∇ log p(xs; s)] + (1 + λ)α∥(vψ (xs; s, t )∥22
+
+i
+
+,
+
+=(1 + λ)αEqϕ(xs;s,t ) vψ (xs; s, t ) − 12(1 + λ)α [−∇ log qϕ(xs; s, t ) + ∇ log p(xs; s)] 22
+
++ C(ϕ),
+
+where C(ϕ) := Eqϕ(xs;s,t )∥∇ log qϕ(xs; s, t ) − ∇ log p(xs; s)∥22 and is independent of ψ. Therefore, the optimal function of the second stage optimization problem (30) is that 
+
+vψ∗(ϕ)(xs; s, t ) = ∇ log p(xs; s) − fψ∗(ϕ)(xs; s, t )= 12(1 + λ)α [−∇ log qϕ(xs; s, t ) + ∇ log p(xs; s)] .
+
+Replacing the target score function ∇ log p(xs; s) with the estimated score model Sθ∗ (xs; s), we eventually write the optimal f ˜ψ∗(ϕ)(xs; s, t ) of the second stage optimization problem with the regularization term as 
+
+u ˜ψ∗(ϕ)(xs; s, t ) = Sθ∗ (xs; s) − f ˜ψ∗(ϕ)(xs; s, t ) (36) 
+
+f ˜ψ∗(ϕ)(xs; s, t ) = 12α(1 + λ) ∇ log qϕ(xs; s, t ) + (1 − 12α(1 + λ) )Sθ∗ (xs; s). (37) Moreover, (34) is rewritten as 
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+u ˜ψ∗(ϕ)(xs; s, t )T [Sθ∗ (xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − α∥(u ˜ψ∗(ϕ)(xs; s, t )) ∥22
+
+i
+
+,
+
+= (1 + 2 λ)4α(1 + λ)2 Eqϕ(xs;s,t )∥Sθ∗ (xs; s) − ∇ log qϕ(xs; s, t )∥22.
+
+Therefore, the equilibrium of the two-stage optimization problem for ϕ remains consistent with (11). 
+
+B.2. Proof of Proposition 3.2 
+
+Proof. As discussed in the proof of theorem 3.1, the two-stages optimization problem in (15) is equivalent to optimizing 
+
+min 
+
+> ϕ
+
+(1 + 2 λ)4α(1 + λ)2 Eqϕ(xs;s,t )∥∇ log p(xs; s) − ∇ log qϕ(xs; s, t )∥22. (38) And the continuous transition kernel qtrans (xs|xt; s, t ) is parameterized as 
+
+qϕ(xs|xt; s, t ) = N (xs; a(s)Gϕ(xt, t ), σ (s)2I), (39) where 0 < s < t ≤ T , a(s), σ (s) ∈ R+ are defined in (2). Then we have that the marginal distribution qϕ(xs; s, t ) is supported on Rd since 
+
+qϕ(xs; s, t ) = 
+
+Z
+
+qϕ(xs|xt; s, t )p(xt; t)dxt > 0, ∀xs ∈ Rd. (40) 15 Continuous Semi-Implicit Models 
+
+Therefore, the optimal variational distribution qϕ(xs; s, t ) in (38) satisfies that 
+
+∇ log p(xs; s) = ∇ log qϕ(xs; s, t ), ∀xs ∈ Rd.
+
+It implies that qϕ(xs; s, t ) = p(xs; s). Furthermore, for the independent random variables xt ∼ p(·; t) and ϵ ∼ N (0, I),the characteristic function of Gϕ(·, t )♯p (·; t) satisfies 
+
+φGϕ(·,t )♯p (·;t)(w) = EeiwT Gϕ(xt,t ) = Eei 1  
+
+> a(s)wT[a(s)Gϕ(xt,t )+ σ(s)ϵ]
+
+(Eei σ(s)  
+
+> a(s)wTϵ
+
+)−1,
+
+= Eqϕ(xs;s,t )ei 1   
+
+> a(s)wTxs
+
+(Eei σ(s)  
+
+> a(s)wTϵ
+
+)−1 = Ep(xs;s)ei 1   
+
+> a(s)wTxs
+
+(Eei σ(s)  
+
+> a(s)wTϵ
+
+)−1,
+
+= Ep(x0;0) ·N (ϵ;0,I)ei 1  
+
+> a(s)wT[a(s)x0+σ(s)ϵ]
+
+(Eei σ(s)  
+
+> a(s)wTϵ
+
+)−1 = φx0 (w).
+
+Therefore, the characteristic function of Gϕ(·, t )♯p (·; t) is the same as the characteristic function of p(x0; 0) . We can conclude that Gϕ(·, t ) establishes a mapping from distribution p(·; t) back to p(·; 0) .
+
+B.3. Proof of Proposition 3.4 
+
+Proof of Proposition 3.4. As the approximated variational distribution q ˆϕ is obtained by 
+
+q ˆϕ(·; s, t ) ∈ arg min 
+
+> qϕ∈Q
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+u ˆψ(ϕ)(xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − α∥u ˆψ(ϕ)(xs; s, t )∥22
+
+i
+
+,
+
+(41) where u ˆψ(ϕ)(xs; s, t ) := ∇ log p(xs; s) − f ˆψ(ϕ)(xs; s, t ).We can bound the Fisher divergence between q ˆϕ and p(·; s) as follows. First we rewrite the first stage optimization objective as 
+
+Eqϕ(xs,xt;s,t )
+
+h
+
+uψ (xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs|xt; s, t )] − α∥uψ (xs; s, t )∥22
+
+i
+
+,
+
+=Eqϕ(xs;s,t )
+
+h
+
+uψ (xs; s, t )T [∇ log p(xs; s) − ∇ xs log qϕ(xs; s, t )] − α∥uψ (xs; s, t )∥22
+
+i
+
+,
+
+= 1 + 2 λ
+
+4α(1 + λ)2 Eqϕ(xs;s,t )∥δϕ(xs; s, t )∥22 + λ
+
+1 + λ Eqϕ(xs;s,t )
+
+
+
+δϕ(xs; s, t ), uψ (xs; s, t ) − 12α(1 + λ) δϕ(xs; s, t )
+
+
+
+−αEqϕ(xs;s,t )∥uψ (xs; s, t ) − 12α(1 + λ) δϕ(xs; s, t )∥22, (42) where δϕ(xs; s, t ) := ∇ log p(xs; s) − ∇ log qϕ(xs; s, t ). Then we have 
+
+14α(1 + λ)2 FI (q ˆϕ(·; s, t )∥p(·; s)) = 14α(1 + λ)2 Eq ˆϕ(xs;s,t )∥∇ log p(xs; s) − ∇ log q ˆϕ(xs; s, t )∥22
+
+= 1 + 2 λ
+
+4α(1 + λ)2 Eq ˆϕ(xs;s,t )∥δ ˆϕ(xs; s, t )∥22
+
+| {z }
+
+> ①
+
+− λ
+
+2α(1 + λ)2 FI (q ˆϕ(·; s, t )∥p(·; s)) ,
+
+Bring (42) into ①, we have 
+
+① =Eq ˆϕ(xs;s,t )
+
+nh 
+
+u ˆψ( ˆϕ)(xs; s, t )T h
+
+∇ log p(xs; s) − ∇ xs log q ˆϕ(xs; s, t )
+
+i
+
+− α∥u ˆψ( ˆϕ)(xs; s, t )∥22
+
+i
+
+− λ
+
+1 + λ
+
+
+
+δ ˆϕ(xs; s, t ), u ˆψ( ˆϕ)(xs; s, t ) − 12α(1 + λ) δ ˆϕ(xs; s, t )
+
+| {z }
+
+> ②
+
++α∥u ˆψ( ˆϕ)(xs; s, t ) − 12α(1 + λ) δ ˆϕ(xs; s, t )∥22
+
+o
+
+,
+
+≤ Eqϕ∗ (xs;s,t )
+
+nh 
+
+u ˆψ(ϕ∗)(xs; s, t )T [∇ log p(xs; s) − ∇ log qϕ∗ (xs; s, t )] − α∥u ˆψ(ϕ∗)(xs; s, t )∥22
+
+i| {z }
+
+> ③
+
+−Eq ˆϕ(xs;s,t )(②) + αε 2 
+
+> f
+
+.
+
+16 Continuous Semi-Implicit Models 
+
+For the term Eq ˆϕ(xs;s,t )(②), we have 
+
+−Eq ˆϕ(xs;s,t )(②) ≤ λ
+
+2α(1 + λ)2 Eq ˆϕ(xs;s,t )∥δ ˆϕ(xs; s, t )∥22 + αλ 
+
+2 Eq ˆϕ(xs;s,t )∥u ˆψ( ˆϕ)(xs; s, t ) − 12α(1 + λ) δ ˆϕ(xs; s, t )∥22,
+
+≤ λ
+
+2α(1 + λ)2 FI (q ˆϕ(·; s, t )∥p(·; s)) + αλ 
+
+2 ε2 
+
+> f
+
+.
+
+For the term ③, by (42)we have 
+
+③ = 1 + 2 λ
+
+4α(1 + λ)2 Eqϕ∗ (xs;s,t )∥δϕ∗ (xs; s, t )∥22 − αEqϕ∗ (xs;s,t )∥u ˆψ(ϕ∗)(xs; s, t ) − 12α(1 + λ) δϕ∗ (xs; s, t )∥22
+
++ λ
+
+1 + λ Eqϕ∗ (xs;s,t )
+
+
+
+δϕ∗ (xs; s, t ), u ˆψ(ϕ∗)(xs; s, t ) − 12α(1 + λ) δϕ∗ (xs; s, t )
+
+
+
+,
+
+≤ 1 + 2 λ
+
+4α(1 + λ)2 FI (qϕ∗ (·; s, t )∥p(·; s)) − αEqϕ∗ (xs;s,t )∥u ˆψ(ϕ∗)(xs; s, t ) − 12α(1 + λ) δϕ∗ (xs; s, t )∥22
+
++ λ2
+
+4(1 + λ)2α Eqϕ∗ (xs;s,t )∥δϕ∗ (xs; s, t )∥22 + αEqϕ∗ (xs;s,t )∥u ˆψ(ϕ∗)(xs; s, t ) − 12α(1 + λ) δϕ∗ (xs; s, t )∥22,
+
+= 14α FI (qϕ∗ (·; s, t )∥p(·; s)) .
+
+Bring the above results back to ①, we have FI (q ˆϕ(·; s, t )∥p(·; s)) =4 α(1 + λ)2(① − λ
+
+2α(1 + λ)2 FI (q ˆϕ(·; s, t )∥p(·; s))) ,
+
+≤(1 + λ)2FI (qϕ∗ (·; s, t )∥p(·; s)) + 2 α2(1 + λ)2(2 + λ)ε2 
+
+> f
+
+. (43) Introduce the approximation gap from Assumption 3.5, we have FI (q ˆϕ(·; s, t )∥p(·; s)) ≤ 2(1 + λ)2ε2 
+
+> c
+
+FI (p(·; t + s)∥p(·, s )) + 2 α2(1 + λ)2(2 + λ)ε2 
+
+> f
+
+. (44) The assumption 3.5 quantifies the capacity of the consistency map Gϕ(·, t ) based on the initial gap. That is, the qϕ0 (x; s, t ) = R p(x|xt; 0 , s )p(xt; t)d xt = p(x; t + s) when Gϕ0 (xt, t ) ≡ xt. Therefore, the initial approximation gap FI (qϕ0 (·; t +
+
+s)∥p(·, s )) = FI (p(·; t + s)∥p(·, s )) .
+
+B.4. Proof of Proposition 3.8 
+
+Proof of Proposition 3.8. First we bound the Wasserstein distance between q ˆϕ(·; 0 , t ) and p(·; 0) . Since p(·; 0) is supported on the hypercube [−1, 1] d, its support is contained in the Euclidean ball B(0 , √d). By the results of bounds on the logarithmic Sobolev inequality (LSI) constants (Bardet et al., 2018; Chen et al., 2021; Cattiaux & Guillin, 2022), we can derive the following LSI inequality 
+
+Ep(xδ ;δ)f 2(xδ )(log f 2(xδ ) − log Ep(xδ ;δ)f 2(xδ )) ≤ 2CLSI Ep(xδ ;δ)∥∇ f (xδ )∥22, ∀f ∈ C ∞(Rd), (45) where the LSI constant CLSI ≤ 6(4 d + σ(δ)) exp( 4dσ(δ)2 ). Let f 2(·) = q ˆϕ(·;δ,t ) 
+
+> p(·;δ)
+
+, then we have KL (q ˆϕ(·; δ, t )∥p(·; δ)) ≲ (4 d + σ(δ)) exp( 4dσ(δ)2 )FI (q ˆϕ(·; δ, t )∥p(·; δ)) 
+
+Moreover, by Otto-Villani theorem (Otto & Villani, 2000), the following Talagrand’s inequality holds 
+
+W 22 (q ˆϕ(·; δ, t ), p (·; δ)) ≤ 2CLSI KL (q ˆϕ(·; δ, t )∥p(·; δ)) ≲ (4 d + σ(δ)) 2 exp( 8dσ(δ)2 )FI (q ˆϕ(·; δ, t )∥p(·; δ)) .
+
+Denote ∆ := (4 d + σ(δ)) 2 exp( 8dσ(δ)2 ), we have the bound of Wasserstein distance between q ˆϕ(·; δ, t ) and p(·; δ) as 
+
+W 22 (q ˆϕ(·; δ, t ), p (·; δ)) ≲ EW 22 (t) := ε2 
+
+> c
+
+∆FI (p(·; t + δ)∥p(·, δ )) + ∆ ε2 
+
+> f
+
+. (46) 17 Continuous Semi-Implicit Models 
+
+Next, following the methodology proposed in (Lyu et al., 2024), we give the bound for the multistep sampling of CoSIM. Given a sequence of fixed time points T = t0 ≥ t1 ≥ · · · ≥ tK−1 ≥ tK = δ, we denote z0 ∼ p(·; t0) and 
+
+zk = a(tk)G ˆϕ(zk−1, t k−1) + σ(tk)ϵ2k, (47) 
+
+q(k)ˆϕ (·; δ) = Law {z(δ) 
+
+> k
+
+:= a(δ)G ˆϕ(zk−1, t k−1) + σ(δ)ϵ2k−1}, k = 1 , 2, · · · , K, (48) where ϵk ∼ N (0, I) are independent Gaussian noises, then it can be shown that q(1) ˆϕ (·; δ) = q ˆϕ(·; δ, T ). For a fixed time points tk, we consider the optimal transport coupling γ(zk, xtk ) ∈ Γopt (Law (zk), p (·; tk)) and let 
+
+zδk+1 =
+
+h
+
+a(δ)G ˆϕ(zk, t k) + σ(δ)ϵ2k+1 
+
+i
+
+∼ q(k)ˆϕ (·; δ),
+
+y =
+
+h
+
+a(δ)G ˆϕ(xtk , t k) + σ(δ)ϵ2k+1 
+
+i
+
+∼ q ˆϕ(·; δ, t k).
+
+Then we have 
+
+W2(q(k+1) ˆϕ , p (·; δ)) ≤W2(q(k+1) ˆϕ , q ˆϕ(·; δ, t k)) + W2(q ˆϕ(·; δ, t k), p (·; δ)) ,
+
+≤E(zk ,xtk )∼γ, ϵ2k+1 ∼N (0,I)∥zδk+1 − y∥22 + W 22 (q ˆϕ(·; δ, t k), p (·; δ)) ,
+
+=a(δ)E(zk ,xtk )∼γ ∥G ˆϕ(zk, t k) − G ˆϕ(xtk , t k)∥22 + W 22 (q ˆϕ(·; δ, t k), p (·; δ)) . (49) Recall that the consistency function G ˆϕ(·, t ) is parameterized as 
+
+Gϕ(xt, t ) = O (cskip (t)xt + cout (t)Fϕ(cin (t)xt, t )) , (50) where 
+
+cskip (t) = σ2
+
+> data
+
+a(t)2
+
+σ(t)2 + σ2
+
+> data
+
+a(t)2 , (51) 
+
+cout (t) = ( σ2
+
+> data
+
+σ(t)2a(t)2
+
+σ(t)2 + σ2
+
+> data
+
+a(t)2 )1/2, (52) 
+
+cin (t) = ( 1
+
+σdata 2a(t)2+σ(t)2
+
+)1/2. (53) Practically, σdata := 12 is a fixed constant. Given any x1, x2 ∈ Rd and by the Lf -Lipschitz continuity of Fϕ(·, t ) with respect to xt, we have 
+
+∥Gϕ(x1, t ) − Gϕ(x2, t )∥2 ≤∥ cskip (t)( x1 − x2) + cout (t)( Fϕ(cin (t)x1, t ) − Fϕ(cin (t)x2, t )) ∥2,
+
+≤(cskip (t) + cout (t)Lf cin (t)) ∥x1 − x2∥2,
+
+≤( a(t)
+
+σ(t)2 + a(t)2 + 2 Lf
+
+σ(t)a(t)
+
+σ(t)2 + a(t)2 )∥x1 − x2∥22. (54) In the case of variance preserving (VP) scheme for (1), we have 
+
+a(t) = e−t, σ(t) = p1 − e−2t, ∀t ∈ [0 , T ]. (55) This implies that Gϕ(x, t ) is 3Lf -Lipschitz continuous with respect to x if a(t), σ (t) is defined as (55). In the case of variance exploding (VE) scheme for (1), we have 
+
+a(t) = 1 , σ(t) = t, ∀t ∈ [0 , T ]. (56) Then Gϕ(x, t ) is ( 2Lf 
+
+> t+1
+
++ 1 
+
+> t2+1
+
+)-Lipschitz continuous in the variance exploding scenario. Denote these two Lipschitz constant as Lvp = 3 Lf adn Lve = 2Lf 
+
+> t+1
+
++ 1 
+
+> t2+1
+
+respectively. To ensure the condition σ(δ) > a (δ)√d, we have the early stopping time δvp = O(log (d)) for VP scheme and δve = O(√d) for VE scheme. 18 Continuous Semi-Implicit Models 
+
+For the variance preserving scheme, substituting the above results into (49) yields 
+
+W2(q(k+1) ˆϕ , p (·; δ)) ≤a(δ)Lvp E(zk ,xtk )∼γ ∥zk − xtk ∥22 + W2(q ˆϕ(·; δ, t k), p (·; δ)) ,
+
+≤a(δ)Lvp W2(Law (zk), p (·; tk)) + W2(q ˆϕ(·; δ, t k), p (·; δ)) .
+
+Next, given the optimal coupling γ′(z′, x′) ∈ Γopt (q(k)ˆϕ (·; δ), p (·; δ)) , we consider the following coupling γ1(z, x) ∼
+
+Γ( Law (zk), p (·; tk)) 
+
+z = a(tk − δ)z(δ) 
+
+> k
+
++ σ(tk − δ)ϵ2k,
+
+x = a(tk − δ)xδ + σ(tk − δ)ϵ2k.
+
+Then 
+
+W2(Law (zk), p (·; tk)) ≤ (E(z,x)∼γ1 ∥z − x∥22)1/2 = a(tk − δ)Eγ′ ∥z′ − x′∥22 ≤ a(tk − δ)W2(q(k)ˆϕ (·; δ), p (·; δ)) .
+
+Therefore, we have 
+
+W2(q(k+1) ˆϕ , p (·; δ)) ≲ a(tk)Lvp W2(q(k)ˆϕ (·; δ), p (·; δ)) + E 12 
+
+> W22
+
+(tk).
+
+Let t1 = · · · = tK−1 = tmid > 1 with a fixed tmid and apply the discrete type Gr ¨onwall’s inequality (Gronwall, 1919), we have 
+
+W2(q(K)ˆϕ (·; 0) , p (·; 0)) ≲W2(q(K)ˆϕ (·; δ), p (·; δ)) + δ2d
+
+≲δ2d + ( a(tmid )Lvp )K−1E 12 
+
+> W22
+
+(T ) + (1 − a(tmid )Lvp )−1E 12 
+
+> W22
+
+(tmid ),
+
+=δ2d + e(K−1)( −tmid +log(3 Lf )) E 12 
+
+> W22
+
+(T ) + (1 − e−tmid +log(3 Lf ))−1E 12 
+
+> W22
+
+(tmid ).
+
+For the variance exploding scheme, we have 
+
+W2(q(K)ˆϕ (·; 0) , p (·; 0)) ≲ δ2d + ( 2Lf
+
+tmid + 1 )K−1E 12 
+
+> W22
+
+(T ) + (1 − 2Lf
+
+tmid + 1 )−1E 12 
+
+> W22
+
+(tmid ).
+
+Therefore, the first term on right-hand side has an exponential decay rate as tmid = log(4 Lf ) for VP scheme and tmid = 4 Lf
+
+for VE scheme. 
+
+## C. Experimental Details 
+
+Our consistency method is to build on top of existing pre-trained diffusion models and distill from them. With numerous existing diffusion models, we choose our base models using the following criteria: 1. Completely open-source, including checkpoints, model architectures, and all training and inferencing details. 2. Results that are generally recognized to be reproducible. 3. State-of-the-art performance. Fortunately, all these are satisfied with EDM (Karras et al., 2022) and EDM2 (Karras et al., 2024). They are set to be our base models. 
+
+Pre-processing and Evaluation We followed EDM to process CIFAR10 and Imagenet 64 × 64 , and followed EDM2 for Imagenet 512 × 512 . Most of the consistency methods we compared with in Table 1,2,3 follow the same pre-processing protocol. However, CTM (Kim et al., 2023) followed a different way to down-sample Imagenet to 64 × 64 . More precisely, CTM has a different down-sampling kernel compared to EDM. This caussed a significant disruption to the FD-DINOv2 value. Because FD-DINOv2 is computed at a fixed resolution 
+
+224 × 224 and all images at lower resolution have to be up-sampled before computing this value, the final result will be very sensitive to the down-sampling kernel. For a fair comparison, we compute FD-DINOv2 between CTM generated 50K images and 1,281,167 Imagenet images down-sampled to 64 × 64 using the same kernel as CTM. 19 Continuous Semi-Implicit Models 
+
+Table 5. Hyperparameters for different experimental setup.                                                                                                   
+
+> Hyperparameters CIFAR10 32 ×32 Imagenet 64 ×64 Imagenet 512 ×512 SImagenet 512 ×512 MImagenet 512 ×512 LBatch Size 2048 2048 2048 2048 2048 Batch per GPU 64 16 32 32 32 Gradient accumulation round 416 888# of GPU (L40S 48G) 88888Learning rate of Gϕand fψ1e−54e−62e−52e−51e−4
+> # of EMA half-life images 0.5M 2M 2M 2M 2M Optimizer Adam eps 1e−81e−12 1e−12 1e−12 1e−12
+> Optimizer Adam β10.0 0.0 0.0 0.0 0.0 Optimizer Adam β20.999 0.99 0.99 0.99 0.99 R48844# of total training images 200M 200M 200M 200M 20M # of parameters 56M 296M 280M 498M 778M dropout 00.1 00.1 0.1 augment 00000
+
+Table 6. FD-DINOv2 results of CoSIM on class-conditional ImageNet ( 512 × 512 ) with different regularization strengths ( coef ) and total training images. All results are evaluated with NFE = 2 .
+
+Regularization Strength 204k 1024k 2048k 4096k 
+
+coef = 0 .5 309 .77 101 .33 69 .65 61 .53 coef = 0 .75 392 .85 92 .81 61 .77 50 .54 coef = 1 .0 421 .90 95 .23 58 .63 49 .28 
+
+Network Architecture and Initialization Following Algorithm 2 and Section 3.3, there are three networks in our training process, generator Gϕ, teacher Sθ∗ and auxiliary function fψ . All are initialized from the pre-trained checkpoints of our chosen base model. During our training, Sθ∗ is frozen while generator Gϕ and auxiliary function fψ are iteratively refined. During inferencing, only generator Gϕ is used to generate new samples. Since Gϕ, fψ , Sθ∗ are initialized from the same checkpoint, their architectures are kept the same as the base model. But 
+
+fψ must accommodate the additional s input from Section 3, so we duplicate the time-embedding layer as described in Section 4. This only adds a very small number of extra parameters during training, and makes no change to the generator used during inferencing. 
+
+Hyperparameters The hyperparameters for all of our experiments are presented in Table 5. For those parameters not mentioned in this table, they are kept the same as the base model. 
+
+Training Budget We conducted all of our experiments using 8× NVIDIA L40S GPU with 48GB video memory. For CIFAR10 32 × 32 , we train our models for ∼ 4 days. For Imagenet 64 × 64 , we need ∼ 7 days to reach our reported results. On Imagenet 512 × 512 , though the final image size is significantly larger, the training of consistency model is still conducted on 64 × 64 internally. This is because EDM2 (Karras et al., 2024) applied a VAE to encode original input size into 64 × 64 latent size, and our consistency model only works on the latent feature. For S,M,L setups, the training takes 
+
+∼ 3, ∼ 7 and ∼ 3 days accordingly. 
+
+Sampling Steps In Section 4.2, we show that 4-step sampling generates better quality than 2-step sampling. Here we provide more visual results in Figure 8 . Compared to 4-step sampling results, some details deteriorate in 2-step sampling, such as the floating leaves on the spider web, and the shape of shoes are not ideal. 
+
+On the Role of λ We conducted an ablation study on λ with the coefficient coef := α(1 + λ) in (15) for ImageNet 
+
+512 × 512 generation of CoSIM using the L model size with fixed α = 1 .2.The results show that introducing regularization (i.e., increasing coef ) within a suitable range significantly enhances the learning process of fψ , which in turn improves the training of qϕ.Here we provide more visual results on our experiments. 20 Continuous Semi-Implicit Models 
+
+Figure 3. Unconditionally generated 32 × 32 images on CIFAR10 using 2-step sampling. 
+
+21 Continuous Semi-Implicit Models 
+
+Figure 4. Unconditionally generated 32 × 32 images on CIFAR10 using 4-step sampling. 
+
+22 Continuous Semi-Implicit Models 
+
+Figure 5. Conditionally generated 64 × 64 images on Imagenet using 2-step sampling. 
+
+23 Continuous Semi-Implicit Models 
+
+Figure 6. Conditionally generated 64 × 64 images on Imagenet using 4-step sampling. 
+
+24 Continuous Semi-Implicit Models 
+
+(a) 2 steps 
+
+(b) 4 steps 
+
+Figure 7. Class-conditioned 512 × 512 images generated by CoSIM with different steps on Imagenet using M model, starting from identical noise. 
+
+25 Continuous Semi-Implicit Models 
+
+(a) 2 steps 
+
+(b) 4 steps 
+
+Figure 8. Class-conditioned 512 × 512 images generated by CoSIM with different steps on Imagenet using L model, starting from identical noise. 
+
+26

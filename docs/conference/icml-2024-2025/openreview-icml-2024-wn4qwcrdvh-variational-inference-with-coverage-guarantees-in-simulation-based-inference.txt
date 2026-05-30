@@ -1,0 +1,1623 @@
+Title: Variational Inference with Coverage Guarantees in Simulation-Based Inference
+
+URL Source: https://openreview.net/pdf?id=Wn4QwCrDvH
+
+Number of Pages: 28
+
+Markdown Content:
+# Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Yash Patel 1 Declan McNamara 1 Jackson Loper 1 Jeffrey Regier * 1 Ambuj Tewari * 1 
+
+# Abstract 
+
+Amortized variational inference is an often em-ployed framework in simulation-based inference that produces a posterior approximation that can be rapidly computed given any new observa-tion. Unfortunately, there are few guarantees about the quality of these approximate posteri-ors. We propose Conformalized Amortized Neu-ral Variational Inference (CANVI), a procedure that is scalable, easily implemented, and provides guaranteed marginal coverage. Given a collec-tion of candidate amortized posterior approxima-tors, CANVI constructs conformalized predic-tors based on each candidate, compares the pre-dictors using a metric known as predictive effi-ciency, and returns the most efficient predictor. CANVI ensures that the resulting predictor con-structs regions that contain the truth with a user-specified level of probability. CANVI is agnostic to design decisions in formulating the candidate approximators and only requires access to sam-ples from the forward model, permitting its use in likelihood-free settings. We prove lower bounds on the predictive efficiency of the regions pro-duced by CANVI and explore how the quality of a posterior approximation relates to the predic-tive efficiency of prediction regions based on that approximation. Finally, we demonstrate the accu-rate calibration and high predictive efficiency of CANVI on a suite of simulation-based inference benchmark tasks and an important scientific task: analyzing galaxy emission spectra. 
+
+# 1. Introduction 
+
+In many scientific applications, such as in astrophysics, neuroscience, and particle physics (Papamakarios & Mur-ray, 2016; Lueckmann et al., 2017; Greenberg et al., 2019;      
+
+> *Senior author order was decided by a coin flip. 1Department of Statistics, University of Michigan, Ann Arbor, USA. Correspon-dence to: Yash Patel <yppatel@umich.edu >.
+> Proceedings of the 41 st International Conference on Machine Learning , Vienna, Austria. PMLR 235, 2024. Copyright 2024 by the author(s).
+
+Deistler et al., 2022; Papamakarios et al., 2019; Boelts et al., 2022), posterior distributions P(Θ | x) are sought over a large collection of x, typically on the order of 10,000 or more. In such scientific settings, (θ, x ) pairs are assumed to come from nature, which has led to the growth of “simulation-based inference,” in which a likeli-hood P(X | θ) and prior P(Θ) are posited and simulated to fit posteriors (Cranmer et al., 2020; Lueckmann et al., 2021). Even when the likelihood and prior are well specified, ex-act sampling from the posteriors is intractable, requiring running 10,000 separate MCMC chains. In these settings, amortized variational inference is fre-quently employed. Variational inference (VI) has become a staple in Bayesian inference; however, it has been repeat-edly noted that a major shortcoming of VI is its lack of any theoretical guarantees and tendency to produce biased posterior estimates (Blei et al., 2017; Murphy, 2022; Zhang et al., 2018; Yao et al., 2018). The most common metric for assessing the calibration of such inference algorithms is the “expected coverage.” Having calibrated expected coverage is a necessary but not sufficient condition for conditional coverage, yet amortized variational approximations fail to even achieve this minimal requirement, despite significant work to remedy this shortcoming (Deistler et al., 2022; De-launoy et al., 2022; Lemos et al., 2023; Delaunoy et al., 2023). A lack of such calibration limits the capacity to reach downstream scientific conclusions, highlighted in a recent meta-study of likelihood-free inference algorithms (Hermans et al., 2021b). In applications where many posteriors need to be estimated, credible regions with marginally calibrated coverage can be sufficient for downstream scientific inquiries. For instance, in astrophysics, there is great interest in constraining the 
+
+ΛCDM model, the current concordance model in cosmology (Gilman et al., 2021; Hezaveh et al., 2016; Vegetti et al., 2010; Vegetti & Koopmans, 2009; Hogg & Blandford, 1994). A recent work from this community, (Hermans et al., 2021a), leveraged Bayesian inference towards this end, obtaining approximate posteriors for the parameters of interest on each of 10,000 observations. Crucially, these posteriors were then used to produce credible intervals with marginally 
+
+valid frequentist coverage, from which they made claims on the ΛCDM model. 1Variational Inference with Coverage Guarantees in Simulation-Based Inference     
+
+> Figure 1. CANVI is a wrapper around variational inference requiring minimal implementation and computational overhead that produces prediction regions with guaranteed marginal calibration. Among a family of candidate amortized posterior approximators, CANVI can identify the approximator leading to the most efficient prediction regions. CANVI can be used in any setting where the forward model
+> P(X|Θ) can be sampled.
+
+Our insight is that conformal prediction can be leveraged to provide variational approximators with marginal cover-age guarantees and provide users new ways to measure the quality of variational approximators. In this manuscript, we present CANVI (Conformalized Amortized Neural Varia-tional Inference), a novel, general framework for producing marginally calibrated, informative prediction regions from a collection of variational approximators. Such regions can be produced with minimal implementation and computa-tional overhead, requiring only samples from the prior and 
+
+P(X | Θ) , as shown in Figure 1. In Section 3.3, we provide theoretical analysis of the informativeness of the prediction regions produced by CANVI using a measure known as “predictive efficiency.” High predictive efficiency is neces-sary to draw conclusions in downstream scientific inquiries and relates to asymptotic conditional coverage with the ap-propriate choice of score function. Finally, in Section 4, we show calibration and predictive efficiency across simulation-based inference benchmark tasks and an important scientific task: analyzing galaxy emission spectra. 
+
+# 2. Background 
+
+2.1. Variational Inference 
+
+Bayesian methods aim to sample the posterior distribution 
+
+P(Θ | X), typically using either MCMC or VI. VI has risen in popularity recently due to how well it lends itself to amortization. Given an observation X, variational infer-ence transforms the problem of posterior inference into an optimization problem by seeking 
+
+φ∗(X) = arg min 
+
+> φ
+
+D(qφ(Θ) ||P (Θ | X)) , (1) where D is a divergence and qφ is a member of a varia-tional family of distributions Q indexed by the free param-eter φ. Normalizing flows have emerged as a particularly apt choice for Q, as they are highly flexible and perform well empirically (Rezende & Mohamed, 2015; Agrawal et al., 2020). Amortized variational inference expands on this approach by training a neural network to approximate 
+
+φ∗(X). This leads to a variational posterior approximator 
+
+q(Θ | X) = qφ∗(X)(Θ) that can be rapidly computed for any value X. The characteristics of φ∗ depend in part on the variational objective, D. For instance, using a reverse-KL objective, i.e. DKL (qφ(Θ) ||P (Θ | X)) , is known to pro-duce mode-seeking posterior approximations, whereas using a forward-KL objective, i.e. DKL (P(Θ | X)|| qφ(Θ)) , en-courages mode-covering behavior (Murphy, 2023). Popular variational objectives include the Forward-Amortized Varia-tional Inference (FAVI) objective (Ambrogioni et al., 2019; Bornschein & Bengio, 2014), the Evidence Lower Bound (ELBO), and the Importance Weighted ELBO (IWBO) (Burda et al., 2015). 
+
+2.2. Conformal Prediction 
+
+Given DC = {(x1, θ 1), . . . (xN , θ N )} iid 
+
+∼ P (X, Θ) , con-formal prediction (Angelopoulos & Bates, 2021; Shafer & Vovk, 2008) produces prediction regions with distribution-free guarantees. A prediction region is a mapping from observations of X to sets of possible values for Θ and is said to be marginally calibrated at the 1 − α level if 
+
+P(Θ /∈ C (X)) ≤ α.Split conformal is one popular version of conformal predic-tion. In this approach, marginally calibrated regions C are designed using a “score function” s(x, θ ). Intuitively, the score function should have the quality that s(x, θ ) is smaller when it is more reasonable to guess that Θ = θ given the observation X = x. For example, if one has access to a function ˆf (x) which attempts to predict Θ from X, one might take s(x, θ ) = ∥ ˆf (x)−θ∥. The score function is eval-uated on each point of a subset of the dataset DC , called the “calibration dataset,” yielding S = {s(xci , θ ci )}NC
+
+> i=1
+
+. Note that the calibration dataset cannot be used to pick the score function; if data is used to design the score function, it must independent of DC . This is how “split conformal” gets its name: in typical cases, data are split into two parts, one used to design s and the other to perform calibration. We then de-2Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+fine bq(α) as the ⌈(NC + 1)(1 − α)⌉ /N C quantile of S. For any future x, the set C(x) = {θ | s(x, θ ) ≤ bq(α)} satisfies 
+
+1 − α ≤ P (Θ ∈ C (X)) . This coverage guarantee arises from the exchangeability of the score of a future test point 
+
+s(x′, θ ′) with S and holds regardless NC : conformal guaran-tees are not asymptotic. If s(X, Θ) is jointly continuous, we additionally have that P(Θ ∈ C (X)) ≤ 1−α+1 /(NC +1) .While the coverage guarantee holds for any score function, different choices may lead to more or less informative pre-diction regions (Shafer & Vovk, 2008). For example, the score s(x, θ ) = 1 leads to the uninformative prediction re-gion of all possible values of Θ. Predictive efficiency is one way to quantify informativeness (Yang & Kuchibhotla, 2021; Sesia & Cand `es, 2020), defined as the expected in-verse Lebesgue measure of C(X), EX [L(C(X)) −1]. Meth-ods using conformal prediction often seek to identify pre-diction regions that are efficient and marginally calibrated. 
+
+2.3. Related Literature 
+
+Efforts to correct for miscalibration have been of great inter-est recently in light of its apparent omnipresence highlighted in (Hermans et al., 2021b). The notion of calibration stud-ied therein, and the one we concentrate on here, centers on the expected coverage probability of the highest pre-dictive density (HPD) of a posterior estimate q(Θ | X),defined for such a q, some fixed x, and pre-specified cover-age level α to be the set HPD( q(Θ | x), 1−α) with smallest Lebesgue measure such that PΘ∼q(Θ |x)(Θ ∈ HPD( q(Θ |
+
+x), 1 − α)) ≥ 1 − α. The expected coverage is then 
+
+EX, Θ∼P (X, Θ) [1[Θ ∈ HPD( q(Θ | X), 1 − α)]] .Such calibration has been studied across a number of poste-rior estimation techniques in the likelihood-free inference community, which generally fall into one of three categories. Neural posterior approximation (NPE) methods directly ap-proximate the posterior density P(Θ | X) (Papamakarios & Murray, 2016; Lueckmann et al., 2017; Greenberg et al., 2019; Deistler et al., 2022), neural likelihood estimation (NLE) methods estimate the assumed intractable likelihood 
+
+P(X | Θ) (Papamakarios et al., 2019; Boelts et al., 2022), and neural ratio estimation (NRE) methods estimate the 
+
+P(X | Θ) /P(X) ratio (Hermans et al., 2020; Durkan et al., 2020b; Miller et al., 2022). Both NLE and NRE rely on MCMC for posterior sampling after estimation. While these approaches differ in their estimation strategies, they all suffer miscalibration if naively employed. One suggestion advocated by (Hermans et al., 2021b) was en-sembling, compatible with all the aforementioned posterior approximation strategies. Despite its improvement in empir-ical calibration, ensembling affords no guarantees on cali-bration and also dramatically increases the computational cost of training and inference alike. As an effort to address this lack of guarantees and computational cost, recent cali-bration efforts have focused on modifying the loss function to appropriately encourage conservatism in the learned pos-terior estimates, since the downstream scientific use cases can afford such conservatism, unlike underdispersed posteri-ors. In particular, (Delaunoy et al., 2022) took a first step in this direction by proposing a modification over the vanilla NRE formulation with a regularization term that results in more conservative posterior estimates. Such a method, how-ever, has no guarantees and further relies on the selection of a tunable λ parameter, whose optimal selection is unknown without awareness of the true posterior. This approach was then extended to NPE and NLE in (Delaunoy et al., 2023) and (Falkiewicz et al., 2023), which both again suffer from the deficiencies of producing overly conservative posteriors and relying on the careful selection of λ.
+
+# 3. Method 
+
+In response to the shortcomings highlighted in the previ-ous section, we were interested in procuring a method that has (1) guarantees on calibration without tuning parameters, (2) minimal computational overhead, and (3) informative prediction regions. We demonstrate in Section 3.1 that leveraging conformal prediction on an amortized VI ap-proximator q(Θ | X) immediately addresses points (1) and (2). We then study in the following sections how this naive application can be extended to the full CANVI algorithm by considering a collection of amortized VI approxima-tors {q(1) (Θ | X), . . . , q (T )(Θ | X)} to address point (3). CANVI can be applied whenever P(X, Θ) can be sampled. The coverage validity of CANVI is proven in Section 3.2, and analyses of its predictive efficiency in Section 3.5. 
+
+3.1. CANVI: Score Function 
+
+In the simplest case, CANVI takes as input a single amor-tized posterior approximator q(Θ | X). In traditional appli-cations of split conformal, much concern is given to the loss of accuracy of the predictor q in having to reserve a subset of the training data for calibration. Here we have no such issues; we sample DC = {(xci , θ ci )}NC
+
+> i=1 iid
+
+∼ P (Θ) P(X | Θ) 
+
+from the joint distribution to produce a calibration dataset that can be arbitrarily large. Given q(Θ | X), we employ the following score, as used in (Angelopoulos & Bates, 2021): 
+
+s(xi, θ i) = ( q(θi | xi)) −1. (2) Denoting the ⌈(NC + 1)(1 − α)⌉ /N C quantile of the score distribution over DC as bqC (α), C(x) = {θ : 1 /q (θ | x) ≤
+
+bqC (α)} is then marginally calibrated. It may be disjoint if the posterior is multimodal. While other choices of score functions also result in re-gions C(x) that address both the lack of guarantees and computational cost of methods highlighted in Section 2.3, the particular choice of Equation (2) has the desirable 3Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+property that, if we recover the true posterior, that is 
+
+q(Θ | X) = P(Θ | X), we recover the HPDs, namely 
+
+C(x) = HPD( P(Θ | x), 1 − α), achieving conditional cov-erage. Note that the procedure described in this section and those that follow can be easily extended to the group conditional setting if such coverage is of interest, whose discussion we defer to Appendix A. 
+
+3.2. CANVI: Approximator Selection 
+
+To mitigate the risk of producing uninformative prediction regions, it is natural to explore multiple posterior approxima-tions, {q(t)(Θ | X)}Tt=1 , since a poorly chosen approxima-tor may lead to poor predictive efficiency. These posterior approximations could, for instance, differ in their choice of training objective, variational family, or hyperparameters. CANVI seeks to identify the variational approximator q(t∗)
+
+for which the efficiency is greatest, defined for a threshold 
+
+τ to be 
+
+ℓ(q, τ ) := EX [L ({θ : 1 /q (θ | X) ≤ τ })] , (3) We defer the discussion of estimating ℓ(q, τ ) to Section 3.4. Naively, one would expect by taking (q(t∗), bq(t∗) 
+
+> C
+
+(α)) where 
+
+t∗ := arg min t ℓ(q(t), bq(t) 
+
+> C
+
+(α)) , we achieve maximal effi-ciency and retain coverage guarantees. However, defining 
+
+C(x) with bq(t∗) 
+
+> C
+
+(α) fails to retain coverage guarantees, as the exchangeability of scores of future test points s(x′, θ ′)
+
+with S is lost in conditioning on DC for selecting t∗.We must, therefore, perform an additional recalibration step after selecting t∗ to retain coverage guarantees. CANVI performs such recalibration using an additional dataset DR
+
+again constructed with i.i.d. draws from P(X, Θ) . We take 
+
+DR to be the same size as DC , i.e. |D R| = NC . CANVI then computes the quantile bq(∗) 
+
+> R
+
+(α) := bq(t∗) 
+
+> R
+
+(α), which is used to define prediction regions C(x) := {θ : 1 /q (t∗)(θ |
+
+x) ≤ bq(∗) 
+
+> R
+
+(α)}. However, such regions require analysis to guarantee high efficiency, as we explore in Section 3.3. The full CANVI framework is provided in Algorithm 1. The validity of the CANVI procedure follows directly from that of split conformal prediction, formally stated below and explicitly proven in Appendix B. 
+
+Lemma 3.1. Let α ∈ (0 , 1) and 
+
+q(∗)(Θ | X), bq(∗) 
+
+> R
+
+(α) = CANVI 
+
+
+
+{q(t)(Θ | X)}Tt=1 , P(X, Θ) , 1 − α, N C , N T
+
+
+
+Let (x′, θ ′) ∼ P (X, Θ) ⊥⊥ D ∪ D C ∪ D R ∪ D T , with D
+
+being the data used to train {q(t)(Θ |X)}Tt=1 . Then 1 − α ≤P(1 /q (∗)(θ′|x′) ≤ bq(∗) 
+
+> R
+
+(α)) .
+
+Algorithm 1 CANVI: Note that V OLUME EST is a volume estimator subroutine detailed in Section 3.4.  
+
+> 1:
+
+Procedure CPQuantile  
+
+> 2:
+
+Inputs: Posterior approximation q(Θ | X), Calibra-tion set DC , Desired coverage 1 − α 
+
+> 3:
+
+S ← { 1 
+
+> q(θi|xi)
+
+}NC 
+
+> i=1
+> 4:
+
+Return ⌈(NC +1)(1 −α)⌉ 
+
+> NC
+
+quantile of S 
+
+> 5: 6:
+
+Procedure CANVI  
+
+> 7:
+
+Inputs: Posterior approximators {q(t)(Θ |X)}Tt=1 ,Prior P(Θ) , Forward model P(X | Θ) , Desired cover-age 1 − α, Calibration size NC , Test size NT 
+
+> 8:
+
+DC , DR ∼ P (X, Θ) , DT ∼ P (X) 
+
+> 9:
+
+for t ∈ { 1, . . . T } do  
+
+> 10:
+
+bq(t) 
+
+> C
+
+← CPQ UANTILE (q(t), DC , 1 − α) 
+
+> 11:
+
+bℓ(t) ← VOLUME EST (q(t), P(Θ) , bq(t) 
+
+> C
+
+, DT ) 
+
+> 12:
+
+end for  
+
+> 13:
+
+t∗ ← arg min t bℓ(t) 
+
+> 14:
+
+bq(∗) 
+
+> R
+
+(α) ← CPQ UANTILE (q(t∗), DR, 1 − α) 
+
+> 15:
+
+Return q(∗)(Θ | X), bq(∗) 
+
+> R
+
+(α)
+
+3.3. CANVI: Efficiency Analysis Assumptions 
+
+We now show that, with high probability, the pair CANVI produces (q(∗)(Θ |X), bq(∗) 
+
+> R
+
+(α)) is the most efficient amongst the candidate posteriors considered. The concern is that the post-recalibrated quantile may result in significant degradation of the efficiency, i.e. ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) ≫
+
+ℓ(q(∗), bq(∗) 
+
+> C
+
+(α)) . This tradeoff between coverage and ef-ficiency was studied in (Yang & Kuchibhotla, 2021). Recall 1 − α ≤ P (Θ ∈ C (X)) ≤ 1 − α + 1 /(NC + 1) . De-note the CDF of the score function under the joint distribu-tion P(X, Θ) as F(s) := PΘ,X (1 /q (Θ | X)) . The cover-age guarantee, thus, implies bq(α) ∈ [F−1(1 − α), F−1(1 −
+
+α + 1 /(NC + 1))] for bq(α) from any calibration set. In particular, bq(∗) 
+
+> C
+
+(α) and bq(∗) 
+
+> R
+
+(α) both lie in this range. We bound the efficiency suboptimality by proceeding in two steps. We first demonstrate that the quantiles of q(∗)(Θ | X)
+
+under DC and DR are close by demonstrating the quantile range of F−1 is small. We then demonstrate the efficiency varies smoothly as a function of the quantile, allowing us to bound the resulting efficiency change. Formally, we state these assumptions respectively as follows, per (Yang & Kuchibhotla, 2021), which we then demonstrate follow from properties of the chosen variational families. 
+
+Assumption 3.2. For each t, the ℓ(q(t), τ ) is Lipschitz con-tinuous in τ with constant LW .
+
+Assumption 3.3. For each t, ∃ r, γ ∈ (0 , 1] such that 
+
+F−1 
+
+> t
+
+(s) (inverse score CDF under q(t)), is γ-H ¨older contin-uous on [ 1 − α, 1 − α + r] with continuity constant Lt.
+
+4Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+3.3.1. L IPSCHITZ CONTINUITY OF EFFICIENCY 
+
+We now demonstrate Assumption 3.2 can be guaranteed with the appropriate selection of variational family by the end user. It suffices to demonstrate ℓx(q, τ ) := L({θ :1/q (θ | x) ≤ τ }) is L-Lipschitz continuous in τ for any 
+
+x ∈ X , proven in Appendix D.1. For any fixed x, ℓx(q, τ ) is the intrinsic volume of the sub-level set of 1/q (θ | x). We summarize and subsequently use relevant results from (Jubin, 2019) below. “Intrinsic volume” defines the notion of volume for a lower dimen-sional manifold embedded in a higher dimensional space. For a brief review of Riemannian manifolds, see Appendix C; a more complete presentation is available in (Lee & Lee, 2012). The n − k degree intrinsic volume of a flat compact 
+
+n-dimensional manifold N is 
+
+Ln−k(N ) = bk
+
+Z
+
+> ∂N
+
+tr 
+
+^k−1
+
+S
+
+
+
+vol ∂N , (4) where 0 ≤ k ≤ n, bk ∈ R, and S is the second fundamental form of ∂N in N . Lipschitz continuity of Ln−k(M τf ) was established as follows. The level sets M τf := f −1(( −∞ , τ ]) 
+
+are restricted to “regular values” of f , namely τ such that 
+
+f (x) = τ =⇒ df (x)̸ = 0 .
+
+Theorem 3.4. Let (M, g ) be an n-dimensional Riemannian manifold, f ∈ C 3(M, R) bounded below, and τ a regular value of f equipped with the standard uniform C3 topol-ogy. Then, if 0 ≤ k ≤ n, τ → L n−k(M τf ) is Lipschitz continuous (Jubin, 2019). 
+
+The Lipschitz continuity of ℓx(q, τ ) then follows as a corollary for any variational families for which the den-sity is sufficiently smooth, namely q(θ | x) ∈ C 3(Rn).The proof follows by taking ℓx(q, τ ) := Ln(( Rn)τs ) for 
+
+s(θ) = 1 /q (θ|x), with τ = s(θ) for {θ : ∇θ q(θ|x)̸ = 0 }
+
+being the set of regular values. This domain restriction is discussed more in Section 3.5. Notice s(θ) ∈ C 3(Rn) as both f (x) := 1 /x and q(θ | x) are ∈ C 3(Rn) and C3 is closed under function composition. Formally, 
+
+Corollary 3.5. Suppose for any x ∈ X , q(θ | x) ∈ C 3(Rn)
+
+is bounded above and τ is a regular value of q(θ | x). Then, 
+
+ℓ(q, τ ) is Lipschitz continuous in τ .
+
+Notably, this assumption on smoothness holds for most vari-ational families used in practice, including highly expressive flow-based variational families (K¨ ohler et al., 2021). 3.3.2. C ONTINUITY OF CONFORMAL QUANTILES 
+
+We now discuss the validity of Assumption 3.3. Comparable assumptions are commonly used in the quantile estimation literature, as discussed in (Lei et al., 2018). The H ¨older constant cannot be characterized in general, as it is inti-mately tied to specific details of the score distribution under 
+
+P(X, Θ) . We, therefore, provide an explicit characteriza-tion for a particular family of distributions in Theorem 3.6 and defer extensions to a broader set of families to future work. Details for this proof are given in Appendix E. 
+
+Theorem 3.6. Let Θ and X be zero-mean unit-variance Gaussian random variables with correlation ρ. Let 
+
+q(t)(θ|x) = N (θ; tx, 1 − ρ2). Let κ := t2 − 2tρ + 1 
+
+and r > 0. Then F −1 
+
+> t
+
+(z), is 1-H ¨older continuous on 
+
+[1 − α, 1 − α + r] with H¨ older constant 
+
+κΦ−1( 1−α 
+
+> 2
+
+)
+
+r
+
+exp 
+
+ κ 
+
+> 1−ρ2
+
+Φ−1( 1−α 
+
+> 2
+
+)2 − (1 −α)2
+
+> 2
+
+p(1 − ρ2)/2 (5) Notably, the H ¨older constant is minimized in recovering the true posterior, as Equation (5) is minimized at φ = ρ.
+
+3.4. CANVI: Volume Estimation 
+
+We now provide an estimation procedure for ℓ(q, τ ).Naively, we might expect taking the sample average of 
+
+ℓxi (q, τ ) over DT := {xi}NT 
+
+> i=1
+
+∼ P (X) would suffice. However, exact calculation of ℓxi (q, τ ) requires a grid-discretization over Supp (Θ |xi), which is only feasible when the support has a known, small extent. As a result, ℓx(q, τ ) is estimated using an importance-weighted Monte Carlo estimate over S samples from q.Such an estimator, however, suffers from high variance if q
+
+is underdispersed, as C(x) will cover regions of low varia-tional density. To combat this issue, we use the well-known fact that P(Θ | X) is narrower than P(Θ) to construct a “mixed sampler,” specifically with zj ∼ Bern (λ) and 
+
+θj ∼ q(Θ |xi)zj P(Θ) 1−zj , where the mixed density is now 
+
+eq(θj ) = λq (θj |xi) + (1 − λ)P(θj ). The necessity of such mixing is dependent on the nature of the variational posterior with respect to the true posterior, which is unknown in prac-tice. We, thus, average several estimates over {λk} ∈ [0 , 1] .Denoting the mixed density with λk as eqk, for each xi and 
+
+λk, we make S draws {θjk }Sj=1 ∼ eqk(Θ | xi). We empiri-cally demonstrate the necessity of such mixed sampling in Section 4.2.2. This procedure is summarized in Algorithm 2, with the final estimate bℓ(q, τ ) being 
+
+1
+
+KNTNT ,K X
+
+> i,k =1
+
+1
+
+S
+
+> S
+
+X
+
+> j=1
+
+1
+
+eqk(θjk |xi) 1
+
+ 1
+
+q(θjk |xi) ≤ τ
+
+
+
+(6) 
+
+3.5. CANVI: Efficiency Proof 
+
+We now state the result of recovery of the optimal recali-brated approximator. To do so, we require the Monte Carlo estimate to be sufficiently well-behaved to recover the opti-mal pre-recalibration approximator. 5Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Algorithm 2 VOLUME EST  
+
+> 1:
+
+Procedure VolumeEst  
+
+> 2:
+
+Inputs: Posterior approximation q(Θ | X), Prior 
+
+P(Θ) , CP quantile bq, Test set DT 
+
+> 3:
+
+for i ∈ { 1, . . . NT }, k ∈ { 1, . . . K } do  
+
+> 4:
+
+for j ∈ { 1, . . . S } do  
+
+> 5:
+
+zj ∼ Bern (k/K ) 
+
+> 6:
+
+θj ∼ q(Θ | xi)zj P(Θ) 1−zj 
+
+> 7:
+
+eqj ← (k/K )q(θj | xi) + (1 − k/K )P(θj ) 
+
+> 8:
+
+end for  
+
+> 9:
+
+Vi,k ← 1
+
+> S
+
+PSj=1 1 
+
+> eqj
+
+1[1 /q (θj |xi) ≤ bq] 
+
+> 10:
+
+end for  
+
+> 11:
+
+Return 1
+
+> KNT
+
+P 
+
+> i,k
+
+Vi,k 
+
+Assumption 3.7. If t∗ := arg min 1≤t≤T ℓ(q(t), bq(t) 
+
+> R
+
+(α)) 
+
+and bt∗ := arg min 1≤t≤T bℓ(q(t), bq(t) 
+
+> R
+
+(α)) for α ∈ (0 , 1) ,then ∃∆, ϵ > 0, such that with probability at least 1 − ϵ,
+
+|ℓ(q(bt∗), bq(bt∗) 
+
+> R
+
+(α)) − ℓ(q(t∗), bq(t∗) 
+
+> R
+
+(α)) | < ∆.
+
+Important to note is that bℓ is only used to select t∗, after which we make claims on ℓ (i.e. not the estimate) for the recalibrated quantiles in Theorem 3.8. As with Assumption 3.3, this assumption is intimately tied to specific details of the score distribution under P(X, Θ) , making its restate-ment in more natural distributional properties of q impossi-ble. We demonstrate its validity empirically across several posteriors in Section 4.2. The proof of Theorem 3.8 now follows as an extension of Theorem 3 from (Yang & Kuchibhotla, 2021) and is explic-itly provided in Appendix D.2. Notably, we use Corollary 3.5 to replace Assumption 3.2 with a more natural set of conditions for this context. This requires ensuring that, for any x, bq(∗) 
+
+> C
+
+(α) and bq(∗) 
+
+> R
+
+(α) are regular values of s(θ). We, thus, assume for any x and θ̸ = 0 , L({θ : ∇θ q(θ|x)}) = 0 ,which naturally holds for variational families used in prac-tice, i.e. any non-piecewise constant density estimator. 
+
+Theorem 3.8. Suppose for any x ∈ X and t = 1 , ..., T ,
+
+q(t)(θ | x) ∈ C 3(Rn) is bounded above and for θ̸ = 0 ,
+
+L({θ : ∇θ q(t)(θ|x)}) = 0 . Further assume P (X, Θ) is bounded above. Let α ∈ (0 , 1) and 
+
+q(∗)(Θ | X), bq(∗) 
+
+> R
+
+(α) = CANVI 
+
+
+
+{q(t)(Θ | X)}Tt=1 , P(X, Θ) , 1 − α, N C , N T
+
+
+
+If, for r ≥ max {plog(4 T /δ )/2NC , 2/N C } and δ ∈ [0 , 1] ,Assumption 3.3 holds and for ∆, ϵ > 0 Assumption 3.7 holds, then with probability at least (1 − ϵ)(1 − δ),
+
+ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) ≤ min  
+
+> 1≤t≤T
+
+ℓ(q(t), bq(t) 
+
+> R
+
+(α)) + ∆ +3 LW L[T ]
+
+" log(4 T /δ )
+
+NC
+
+γ/ 2
+
++
+
+ 2
+
+NC
+
+γ #
+
+,
+
+(7) 
+
+where γ, LW , and L[T ] = max 1≤t≤T Lt are constants defined in Assumptions 3.3 and 3.2. 
+
+Again, in any setting where it is possible to sample from 
+
+P(X, Θ) , NC can be made arbitrarily large, tightening the bound in Equation 7. Practitioners can, thus, focus on ob-taining efficient predictors knowing that CANVI will make the optimal selection with high probability. 
+
+# 4. Experiments 
+
+As discussed, the main advantages of CANVI over alterna-tive strategies are its guaranteed calibration without the need for tuning parameters, minimal computational overhead, and informative prediction regions. For this reason, we present three experiments herein. The first (Section 4.1) seeks to validate the first two claims by comparing BNRE, BNRE C, NPE, NRE, NRE C, and Ratio BNPE to the vanilla version of CANVI i.e. when it is applied to a single q(Θ | X),where no recalibration is necessary. Notably, the informativeness of prediction regions, the fo-cus of the third claim, is only of interest once a predic-tor is calibrated, meaning the comparison with alternatives is only meaningful when they are nearly calibrated. As demonstrated in Section 4.1, however, the alternatives fail to consistently demonstrate calibration, rendering such a comparison moot. For this reason, the following experiment (Section 4.2) focuses on demonstrating that applying the full CANVI procedure to a collection {q(t)(Θ | X)}Tt=1 both retains coverage under recalibration and ultimately recovers the most efficient predictor. The latter hinges upon the valid-ity of Assumption 3.7 for the Monte Carlo efficiency estima-tor in Equation (6). We, therefore, demonstrate in the sub-sequent experiments that this estimator exhibits the desired estimation consistency when applied in settings where poste-rior estimators are trained to different epochs (Section 4.2.1) or with different training objectives (Section 4.2.2). Finally, we demonstrate CANVI can computationally scale up to scientific problems of interest in Section 4.3. In all experiments, coverage for variational posteriors is assessed using Monte Carlo estimation, namely by con-structing the highest density credible region per xi. That is, for a given xi, the ζ such that {θj | q(θj | xi) ≥ ζ}
+
+captures 1 − α of the probability mass is estimated by draw-ing {θj }Nj=1 ∼ q(Θ |xi) and finding the 1 − α quantile of {q(θj |xi)}Nj=1 . Coverage of the true parameter θ can be assessed by checking if q(θ | xi) ≥ ζ. Details are provided in Appendix G, and code is available at https: //github.com/yashpatel5400/canvi.git .6Variational Inference with Coverage Guarantees in Simulation-Based Inference         
+
+> Figure 2. Calibration on the SBI benchmarks across different calibration strategies. Perfect calibration corresponds to the highlighted
+> y=xcurve. Conservative prediction regions lie above this calibrated line and overconfident ones below. Conformalized lines (CANVI) are difficult to distinguish, as they all lie along the desired y=xcurve.
+
+4.1. Coverage Calibration 
+
+We evaluate on the standard SBI benchmark tasks, high-lighted in (Delaunoy et al., 2023). For full descriptions of the tasks, refer to Appendix F. Again following the prece-dent from previous SBI works, we present the calibration of the models trained over several simulation budgets ( |D| ). CANVI was applied to an NPE, in which DC was taken to be 10% of the simulation budgets and the remainder used for training. Calibration was completed in under one second 
+
+for each task. Coverage was assessed 1,000 i.i.d. samples. Figure 2 demonstrates the miscalibration of the alternative approaches and the correction afforded with CANVI. 
+
+4.2. Predictive Efficiency 
+
+4.2.1. T RAINING EPOCHS 
+
+We now study the application of CANVI to a collection of posteriors. In this experiment, q(t) is taken to be the t-th iterate of training a Neural Spline Flow family against the 
+
+LFAVI objective (Durkan et al., 2019). Generally, we expect efficiency to improve with training iterates, as q(Θ | x)
+
+better approximates P(Θ | x); however, the most efficient iterate may not occur at t = T . Selecting an intermediate t
+
+is comparable to the practice of retaining the training iterate with the best validation performance in prediction tasks.           
+
+> Figure 3. ℓ(q, τ )and bℓ(q, τ )for τ=bq(t)
+> C(α). Error bars across test batches are plotted.
+
+We first study the validity of Assumption 3.7 by compar-ing bℓ(q, τ ) to ℓ(q, τ ). To compare to ℓ(q, τ ), we restrict experiments to projected posteriors of ˜Θ = ( θ1, θ 2) for the Two Moons, Gaussian Mixture, SLCP, and Gaussian Linear 7Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Table 1. Coverage rates and standard errors for θ before (rows 1-4) and after conformalization (rows 5-8) by CANVI, for ARCH (left table) and SED (right table), assessed by checking for inclusion of θ in the 1 − α highest density region. Non-conformalized regions were estimated empirically from batches of 1000 i.i.d. samples per point. ℓ(q, bqC (0 .05)) were computed with explicit gridding, discretizing each dimension into 200 bins; such estimation was intractable for Θ ∈ R11 for SEDs. bℓ was estimated using Algorithm 2, with K = 1 
+
+and K = 10 mixing discretizations.                                                                                 
+
+> 1−αELBO IWBO FAVI 0.50 0.0007 (0.0008) 0.1031 (0.0110) 0.5514 (0.0127) 0.75 0.0044 (0.0018) 0.1994 (0.0115) 0.7534 (0.0127) 0.90 0.0195 (0.0044) 0.3263 (0.0122) 0.8797 (0.0065) 0.95 0.0396 (0.0061) 0.4074 (0.0186) 0.9260 (0.0083) 0.50 0.4970 (0.0124) 0.5019 (0.0167) 0.5086 (0.0144) 0.75 0.7488 (0.0139) 0.7559 (0.0126) 0.7565 (0.0092) 0.90 0.8978 (0.0080) 0.9036 (0.0111) 0.9005 (0.0110) 0.95 0.9496 (0.0071) 0.9548 (0.0052) 0.9487 (0.0081)
+> ℓ(q, bqC(0 .05)) 1.3184 (0.2178) 1.4211 (0.1128) 0.7451 (0.0641)
+> bℓK=1 (q, bqC(0 .05)) 50.6595 (8.1313) 69.6484 (2.2495) 19.3635 (0.8868)
+> bℓK=10 (q, bqC(0 .05)) 1.4151 (0.2181) 1.5206 (0.1114) 0.8402 (0.0656)
+> 1−αELBO IWBO FAVI 0.50 0.1683 (0.0088) 0.6185 (0.0111) 0.4986 (0.0180) 0.75 0.4556 (0.0146) 0.7978 (0.0079) 0.7550 (0.0105) 0.90 0.5803 (0.0106) 0.8881 (0.0064) 0.9028 (0.0092) 0.95 0.6824 (0.0144) 0.9248 (0.0083) 0.9532 (0.0085) 0.50 0.4901 (0.0156) 0.4937 (0.0101) 0.5024 (0.0203) 0.75 0.7485 (0.0163) 0.7513 (0.0139) 0.7542 (0.0163) 0.90 0.8985 (0.0098) 0.9013 (0.0096) 0.9022 (0.0067) 0.95 0.9499 (0.0084) 0.9510 (0.0061) 0.9461 (0.0059)
+> bℓ(q, bqC(0 .05)) ∞1.3849 (1.2357) ×10 95.3732 (3.3302) ×10 6
+
+Uniform tasks, for which explicit gridding was tractable. 
+
+bℓ(q(t), bq(t) 
+
+> C
+
+(α)) was estimated for a fixed α = 0 .05 and 
+
+t taken every 100 training steps with 5 batches of 100 test points ( |D T | = 100 ) using S = 10 , 000 importance-weighted i.i.d. samples for each of K = 10 mixed samplers. From Figure 3, we see that bℓ(q, τ ) tracks closely to ℓ(q, τ )
+
+across all tasks, giving credence to Assumption 3.7. We visualize the credible regions in Appendix H. 4.2.2. T RAINING OBJECTIVES 
+
+We now similarly study q(t) across training objectives, tak-ing one iterate of q trained against each of LFAVI , LELBO ,and LIWBO (K = 10 ), giving us three amortized posteriors as input for CANVI, for a lag-one ARCH model: 
+
+y(m) = θ1y(m−1) +e(m), e (m) = ξ(m)
+
+q
+
+0.2 + θ2
+
+ e(m−1) 2,
+
+where y(0) = 0 , e(0) = 0 , M = 100 , and the ξ(m) are independent standard normal random variables (Thomas et al., 2022), detailed in Appendix F.9. Table 1 shows that prior to conformalization, the variational posteriors are generally miscalibrated: training by the ELBO or IWBO results in significant under-coverage, as targeting either is known to find solutions that are mode-seeking. While the variational posterior obtained by FAVI is better calibrated, it still needs correction. As multiple posterior approximators were considered, CANVI had to be applied with recalibration. Table 1 shows that the recalibrated 1 − α
+
+prediction regions are nearly perfectly calibrated. Impor-tantly, correction by CANVI can result in either larger or smaller 1 − α regions, depending on the direction of mis-calibration. In settings where the variational posterior is overdispersed, applying CANVI results in smaller 1 − α
+
+density regions, explicitly shown in Appendix I.7. Table 1 also demonstrates using the better calibrated LFAVI -trained approximation results in higher efficiency compared to the 
+
+LELBO and LIWBO counterparts. We also demonstrate the necessity of using mixed sampling for bℓ. In particular, we compare the estimates when using only the variational posterior as a sampler ( bℓK=1 ) and when averaging 10 mixed samplers ( bℓK=10 ), from which we ob-serve the estimator accuracy greatly improves with mixing, especially in the underdispersed IWBO and ELBO cases. 
+
+4.3. Galaxy Spectral Energy Distributions 
+
+We now present the application of CANVI to an impor-tant scientific problem. The spectrum of an astronomical object is measured via a spectrograph, which records the flux across a large grid of wavelength values (York et al., 2000; Abareshi et al., 2022), which we simulate with the Probabilistic Value-Added Bright Galaxy Survey simula-tor (PROVABGS). PROVABGS maps θ ∈ R11 to galaxy spectra, detailed further and visualized in Appendix J. A mixture of 20 Gaussian distributions was used as the variational posterior and trained against the LFAVI , LELBO ,
+
+and LIWBO objectives, as in Section 4.2.2. Table 1 shows that the ELBO and IWBO tend to be overly concentrated, failing to contain the entire parameter vector θ in the 1 − α highest-density region often. FAVI, on the other hand, is reasonably well-calibrated. After applying CANVI, all three methods achieve nearly perfect calibration across a range of desired confidence levels. Of course, the utility of these corrected regions depends on the level of information contained in the original model. For the ELBO or IWBO cases, the corrected regions achieve statistical validity, but are too large to be informative. Notably, the underdispersion of the ELBO approximator led to bqC (0 .05) = 0 (up to machine precision), resulting in a volume estimate of ∞. For FAVI, on the other hand, application of CANVI results in statistical guarantees with minimal alterations to the high-density regions. 8Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# 5. Discussion 
+
+We have presented CANVI, a framework for producing marginally calibrated, efficient prediction regions from a collection of variational approximators with minimal over-head in simulation-based inference settings. We view such guarantees on marginal coverage as an important first step toward increasing the utility of such inference algorithms for downstream applications, suggesting many directions for extension. Of immediate interest would be extending CANVI to cases of misspecified forward models P(X | Θ) 
+
+by leveraging work on conformal prediction under distri-bution shift (Tibshirani et al., 2019; Barber et al., 2022). Further, leveraging CANVI over functional spaces may enable guarantees over the full posterior distributions. 
+
+# Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 9Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# References 
+
+Abareshi, B., Aguilar, J., Ahlen, S., Alam, S., Alexander, D. M., Alfarsy, R., Allen, L., Prieto, C. A., Alves, O., Ameel, J., et al. Overview of the instrumentation for the Dark Energy Spectroscopic Instrument. The Astronomical Journal , 164(5):207, 2022. Agrawal, A., Sheldon, D. R., and Domke, J. Advances in black-box VI: Normalizing flows, importance weight-ing, and optimization. Advances in Neural Information Processing Systems , 33:17358–17369, 2020. Ambrogioni, L., G ¨u c¸ l ¨u, U., Berezutskaya, J., Borne, E., G ¨uc¸ l ¨ut ¨urk, Y., Hinne, M., Maris, E., and Gerven, M. For-ward amortized inference for likelihood-free variational marginalization. In The 22nd International Conference on Artificial Intelligence and Statistics , pp. 777–786. PMLR, 2019. Angelopoulos, A. N. and Bates, S. A gentle introduction to conformal prediction and distribution-free uncertainty quantification. arXiv preprint arXiv:2107.07511 , 2021. Barber, R. F., Candes, E. J., Ramdas, A., and Tibshirani, R. J. Conformal prediction beyond exchangeability. arXiv preprint arXiv:2202.13415 , 2022. Blei, D. M., Kucukelbir, A., and McAuliffe, J. D. Varia-tional inference: A review for statisticians. Journal of the American statistical Association , 112(518):859–877, 2017. Boelts, J., Lueckmann, J.-M., Gao, R., and Macke, J. H. Flexible and efficient simulation-based inference for mod-els of decision-making. Elife , 11:e77220, 2022. Bornschein, J. and Bengio, Y. Reweighted wake-sleep. 
+
+arXiv preprint arXiv:1406.2751 , 2014. Burda, Y., Grosse, R., and Salakhutdinov, R. Importance weighted autoencoders. arXiv preprint arXiv:1509.00519 ,2015. Cranmer, K., Brehmer, J., and Louppe, G. The frontier of simulation-based inference. Proceedings of the National Academy of Sciences , 117(48):30055–30062, 2020. Deistler, M., Goncalves, P. J., and Macke, J. H. Truncated proposals for scalable and hassle-free simulation-based inference. arXiv preprint arXiv:2210.04815 , 2022. Delaunoy, A., Hermans, J., Rozet, F., Wehenkel, A., and Louppe, G. Towards reliable simulation-based inference with balanced neural ratio estimation. arXiv preprint arXiv:2208.13624 , 2022. Delaunoy, A., Miller, B. K., Forr ´e, P., Weniger, C., and Louppe, G. Balancing simulation-based inference for conservative posteriors. arXiv preprint arXiv:2304.10978 ,2023. Durkan, C., Bekasov, A., Murray, I., and Papamakarios, G. Neural spline flows. Advances in neural information processing systems , 32, 2019. Durkan, C., Bekasov, A., Murray, I., and Papamakarios, G. nflows: normalizing flows in PyTorch, Novem-ber 2020a. URL https://doi.org/10.5281/ zenodo.4296287 .Durkan, C., Murray, I., and Papamakarios, G. On contrastive learning for likelihood-free inference. In International conference on machine learning , pp. 2771–2781. PMLR, 2020b. Falkiewicz, M., Takeishi, N., Shekhzadeh, I., Wehenkel, A., Delaunoy, A., Louppe, G., and Kalousis, A. Calibrat-ing neural simulation-based inference with differentiable coverage probability. arXiv preprint arXiv:2310.13402 ,2023. Gilman, D., Bovy, J., Treu, T., Nierenberg, A., Birrer, S., Benson, A., and Sameie, O. Strong lensing signatures of self-interacting dark matter in low-mass haloes. Monthly Notices of the Royal Astronomical Society , 507(2):2432– 2447, 2021. Greenberg, D., Nonnenmacher, M., and Macke, J. Auto-matic posterior transformation for likelihood-free infer-ence. In International Conference on Machine Learning ,pp. 2404–2414. PMLR, 2019. Gupta, C., Kuchibhotla, A. K., and Ramdas, A. Nested conformal prediction and quantile out-of-bag ensemble methods. Pattern Recognition , 127:108496, 2022. Hahn, C., Kwon, K., Tojeiro, R., Siudek, M., Canning, R. E., Mezcua, M., Tinker, J. L., Brooks, D., Doel, P., Fanning, K., et al. The DESI PRObabilistic Value-added Bright Galaxy Survey (PROVABGS) mock challenge. 
+
+The Astrophysical Journal , 945(1):16, 2023. Hermans, J., Begy, V., and Louppe, G. Likelihood-free mcmc with amortized approximate ratio estimators. In 
+
+International conference on machine learning , pp. 4239– 4248. PMLR, 2020. Hermans, J., Banik, N., Weniger, C., Bertone, G., and Louppe, G. Towards constraining warm dark matter with stellar streams through neural simulation-based inference. 
+
+Monthly Notices of the Royal Astronomical Society , 507 (2):1999–2011, 2021a. 10 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Hermans, J., Delaunoy, A., Rozet, F., Wehenkel, A., and Louppe, G. Averting a crisis in simulation-based infer-ence. arXiv preprint arXiv:2110.06581 , 2021b. Hezaveh, Y. D., Dalal, N., Marrone, D. P., Mao, Y.-Y., Morningstar, W., Wen, D., Blandford, R. D., Carlstrom, J. E., Fassnacht, C. D., Holder, G. P., et al. Detection of lensing substructure using ALMA observations of the dusty galaxy SDP.81. The Astrophysical Journal , 823(1): 37, 2016. Hogg, D. W. and Blandford, R. The gravitational lens system B1422+231: dark matter, superluminal expansion and the Hubble constant. Monthly Notices of the Royal Astronomical Society , 268(4):889–893, 1994. Jubin, B. Intrinsic volumes of sublevel sets. arXiv preprint arXiv:1903.01592 , 2019. Kingma, D. P. and Ba, J. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980 , 2014. K ¨ohler, J., Kr ¨amer, A., and No ´e, F. Smooth normalizing flows. Advances in Neural Information Processing Sys-tems , 34:2796–2809, 2021. Lee, J. M. and Lee, J. M. Smooth manifolds . Springer, 2012. Lei, J., G’Sell, M., Rinaldo, A., Tibshirani, R. J., and Wasserman, L. Distribution-free predictive inference for regression. Journal of the American Statistical Associa-tion , 113(523):1094–1111, 2018. Lemos, P., Coogan, A., Hezaveh, Y., and Perreault-Levasseur, L. Sampling-based accuracy testing of pos-terior estimators for general inference. arXiv preprint arXiv:2302.03026 , 2023. Lueckmann, J.-M., Goncalves, P. J., Bassetto, G., ¨Ocal, K., Nonnenmacher, M., and Macke, J. H. Flexible statistical inference for mechanistic models of neural dynamics. 
+
+Advances in neural information processing systems , 30, 2017. Lueckmann, J.-M., Boelts, J., Greenberg, D., Goncalves, P., and Macke, J. Benchmarking simulation-based inference. In International Conference on Artificial Intelligence and Statistics , pp. 343–351. PMLR, 2021. Miller, B. K., Weniger, C., and Forr ´e, P. Contrastive neural ratio estimation. arXiv preprint arXiv:2210.06170 , 2022. Murphy, K. P. Probabilistic machine learning: an introduc-tion . MIT press, 2022. Murphy, K. P. Probabilistic Machine Learning: Advanced Topics . MIT Press, 2023. URL probml.ai .Papamakarios, G. and Murray, I. Fast ε-free inference of simulation models with bayesian conditional density es-timation. Advances in neural information processing systems , 29, 2016. Papamakarios, G., Sterratt, D., and Murray, I. Sequen-tial neural likelihood: Fast likelihood-free inference with autoregressive flows. In The 22nd International Confer-ence on Artificial Intelligence and Statistics , pp. 837–848. PMLR, 2019. Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen, T., Lin, Z., Gimelshein, N., Antiga, L., et al. Pytorch: An imperative style, high-performance deep learning library. Advances in neural information processing systems , 32, 2019. Rezende, D. and Mohamed, S. Variational inference with normalizing flows. In International conference on ma-chine learning , pp. 1530–1538. PMLR, 2015. Sesia, M. and Cand `es, E. J. A comparison of some confor-mal quantile regression methods. Stat , 9(1):e261, 2020. Shafer, G. and Vovk, V. A tutorial on conformal prediction. 
+
+Journal of Machine Learning Research , 9(3), 2008. Thomas, O., Dutta, R., Corander, J., Kaski, S., and Gutmann, M. U. Likelihood-Free Inference by Ratio Estimation. 
+
+Bayesian Analysis , 17(1):1 – 31, 2022. doi: 10.1214/ 20-BA1238. URL https://doi.org/10.1214/ 20-BA1238 .Tibshirani, R. J., Foygel Barber, R., Candes, E., and Ramdas, A. Conformal prediction under covariate shift. Advances in neural information processing systems , 32, 2019. Vegetti, S. and Koopmans, L. Statistics of mass substructure from strong gravitational lensing: quantifying the mass fraction and mass function. Monthly Notices of the Royal Astronomical Society , 400(3):1583–1592, 2009. Vegetti, S., Koopmans, L., Bolton, A., Treu, T., and Gavazzi, R. Detection of a dark substructure through gravitational imaging. Monthly Notices of the Royal Astronomical Society , 408(4):1969–1981, 2010. Yang, Y. and Kuchibhotla, A. K. Finite-sample efficient conformal prediction. arXiv preprint arXiv:2104.13871 ,2021. Yao, Y., Vehtari, A., Simpson, D., and Gelman, A. Yes, but did it work?: Evaluating variational inference. In 
+
+International Conference on Machine Learning , pp. 5581– 5590. PMLR, 2018. York, D. G., Adelman, J., Anderson Jr, J. E., Anderson, S. F., Annis, J., Bahcall, N. A., Bakken, J., Barkhouser, 11 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+R., Bastian, S., Berman, E., et al. The Sloan Digital Sky Survey: Technical summary. The Astronomical Journal ,120(3):1579, 2000. Zhang, C., B¨ utepage, J., Kjellstr¨ om, H., and Mandt, S. Ad-vances in variational inference. IEEE transactions on pattern analysis and machine intelligence , 41(8):2008– 2026, 2018. 12 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# A. Group Conditional CANVI 
+
+We now discuss how CANVI can be easily extended to provide a stronger notion of group conditional coverage over the purely marginal coverage over X that was provided in the paper. Here, instead of defining a global bq, a collection {bqi}Ki=1 
+
+is obtained by defining centroids over the X space {ci}Ki=1 , constructing balls of radius ϵ around them Bϵ(ci) ⊂ X , and performing calibration using Di 
+
+> C
+
+:= {(xj , θ j )}NC 
+
+> j=1
+
+with xj ∈ B ϵ(ci).To compare, we define a global quantile bq using KN samples. Specifically, we take N = 100 , 000 and K = 5 , meaning calibration was performed using 500,000 i.i.d. samples for the overall calibration set. Coverage was assessed over α ∈ [0 , 1] 
+
+discretized at steps of .05 over K = 5 regions. Coverage was assessed over 10 batches of 100,000 i.i.d. test samples. 
+
+Figure 4. Calibration on the SBI benchmarks with overall quantile and region-specific quantiles, respectively the dashed and solid lines. Region-specific conformalized lines are slightly difficult to distinguish, as they all lie along the desired y = x curve. Error bars from coverage assessments across test batches are plotted, although they are difficult to see due to the low variance between estimates across batches. 
+
+Figure 4 demonstrates the miscalibration of the regions produced using the overall quantile and subsequent correction with region-specific calibration. We additionally plot the calibration across the X space of the Two Moons task to demonstrate the non-uniformity of coverage across regions and subsequent corrections in Figure 5. 
+
+Figure 5. Coverage for Two Moons with the overall and region-specific quantiles with α = 0 .05 .
+
+13 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# B. CANVI Validity 
+
+Lemma B.1. Let α ∈ (0 , 1) and 
+
+q(∗)(Θ | X), bq(∗) 
+
+> R
+
+(α) = CANVI 
+
+
+
+{q(t)(Θ | X)}Tt=1 , P(X, Θ) , 1 − α, N C , N T
+
+
+
+Let (x′, θ ′) ∼ P (X, Θ) ⊥⊥ D ∪ D C ∪ D R ∪ D T , with D being the data used to train {q(t)(Θ |X)}Tt=1 . Then 1 − α ≤P(1 /q (∗)(θ′|x′) ≤ bq(∗) 
+
+> R
+
+(α)) .Proof. Consider the score function s(∗)(x, θ ) := 1/q (∗)(θ | x). Observe that (x′, θ ′) ∪ D R are jointly sampled i.i.d. from P(X, Θ) , independent of the datasets used to design s(∗)(x, θ ), namely D ∪ D C ∪ D T . Denoting SR := 
+
+{s(∗)(xi, θ i)}(xi,θ i)∈D R , scores s(∗)(x′, θ ′) ∪ S R, thus, too are i.i.d and, hence, exchangeable. The coverage guarantee then follows from the general theory of conformal prediction, presented in (Angelopoulos & Bates, 2021). 
+
+# C. Riemannian Manifolds 
+
+Let (M, g ) denote a Riemannian manifold, with g denoting the metric tensor associated with this space. By definition, a manifold M is locally isomorphic to Euclidean space, from which we can define the notion of a tangent space Tz M at each point z ∈ M . The metric tensor g then defines a local notion of distance, namely g : Tz M × T z M → R. This, therefore, induces a local notion of length, namely for x ∈ T z M, || x|| z = pg(x, x ).
+
+Global distances over the manifold, therefore, can then be denoted by integrating such a local notion across a path γ.Concretely, a path is defined between a, b ∈ M by γ : [0 , 1] → M such that γ(0) = a, γ (1) = b. The length of such a path is then ℓ(γ) := R 10 || γ′(t)|| γ(t)dt . A natural choice of distance, therefore, is the minimum length of a constant velocity path, formally 
+
+d(a, b ) = inf  
+
+> γ:|| γ′(t)|| =1 ,γ (0)= a,γ (1)= b
+
+ℓ(γ) (8) 
+
+# D. CANVI: Efficiency Analysis 
+
+D.1. Lipschitz Continuity of Efficiency Lemma D.1. Let ℓ(q, τ ) be as defined in Equation 3. If ℓx(q, τ ) is L-Lipschitz continuous in τ for any x ∈ X , then ℓ(q, τ )
+
+is L-Lipschitz continuous. Proof. 
+
+|ℓ(q, τ 1) − ℓ(q, τ 2)| = |EX [L ({θ : 1 /q (Θ | X) ≤ τ1}) − L ({θ : 1 /q (Θ | X) ≤ τ2})] |
+
+=
+
+Z
+
+P(x) [ ℓx(q, τ 1) − ℓx(q, τ 2)] ≤
+
+Z
+
+P(x) |ℓx(q, τ 1) − ℓx(q, τ 2)| dx ≤ L |τ1 − τ2|
+
+Z
+
+P(x)dx = L |τ1 − τ2| ,
+
+completing the proof as desired. 
+
+D.2. Predictive Efficiency of CANVI 
+
+The proof emerges through a reduction of CANVI to a special case of the “Validity First Conformal Prediction for the Smallest Prediction Set” (VFCP) algorithm presented in the (Yang & Kuchibhotla, 2021). The VFCP algorithm is provided for convenience in Algorithm 3. Note that we made the appropriate replacements in notations to match those presented in the main body of our paper for clarity. To further underscore the parallel, we present an immaterially modified version of VFCP, where it is assumed the data are split prior to the algorithm execution into disjoint sets D, DC , and DR. We assume input prediction methods A(1) , ..., A(T )
+
+have been trained on D. Finally, the presentation in (Yang & Kuchibhotla, 2021) allows for generic definitions of the measure function of C(x), referred to as “Width” therein. We present it with the particular Lebesgue measure function as presented in the main body to avoid confusion. These three modifications in the algorithm presentation have no manifest 14 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+effects in the proof of (Yang & Kuchibhotla, 2021), meaning all results as presented there apply with the appropriate choices of inputs in Algorithm 3. We similarly consider an immaterially modified form of CANVI, that is, one in which DC and DR are pre-generated in precisely the fashion outlined Algorithm 1 and provided as input. Thus, inputs to CANVI parallel those of VFCP, namely 
+
+{q(t)(Θ | X)}Tt=1 , 1 − α, D C , and DR.Intuitively, the proof follows from the fact that CANVI is a special case of Algorithm 3, where the particular structural assumptions we make imply the corresponding assumptions as stated in the theorem from (Yang & Kuchibhotla, 2021). Algorithm 3 is presented using the so-called “nested set formulation” of conformal prediction. Briefly, the nested sets formulation starts by requiring the user to specify a set-valued function Fr instead of a score function. Sets must be nested over increasing r. Despite being seemingly more expressive, the equivalence of the nested set and split score conformal methods was demonstrated in (Gupta et al., 2022). In particular, for a chosen score function s(x, θ ), the corresponding nested set function would be F (t) 
+
+> τ
+
+= {(x, θ ) | s(t)(x, θ ) ≤ τ }, where s(t) denotes the score function as defined with A(t).The presentation of Algorithm 3 using the nested set formulation was, thus, a means to allow for the employment of relevant proof strategies from classical learning theory. We now proceed through the formal equivalence of CANVI and a special case of VFCP. 
+
+Algorithm 3 Validity First Conformal Prediction (VFCP) (Yang & Kuchibhotla, 2021)  
+
+> 1:
+
+Procedure: VFCP  
+
+> 2:
+
+Inputs: Predictors {A (t)}Tt=1 , Target coverage 1 − α, Calibration set DC , Recalibration set DR, Score s(x, θ ) 
+
+> 3:
+
+Using A(t), construct an increasing (nested) sequence of sets {F (t) 
+
+> τ
+
+}τ ∈T , where T ⊂ R and 
+
+F (t) 
+
+> τ
+
+= {(x, θ ) | s(t)(x, θ ) ≤ τ },
+
+where s(t) denotes the score function as defined with A(t) 
+
+> 4:
+
+Compute conformal prediction set C(t) based on {F (t) 
+
+> τ
+
+}τ ∈T . Specifically, for each (xi, θ i) ∈ D C and t ∈ { 1, 2, ..., T },denote its corresponding score as 
+
+s(t)(xi, θ i) := inf   
+
+> τ∈T
+
+{(xi, θ i) ∈ F (t) 
+
+> τ
+
+} 
+
+> 5:
+
+Compute the corresponding conformal prediction set as 
+
+C(t) 
+
+> C
+
+:= {(x, θ ) : s(t)(x, θ ) ≤ bq(t) 
+
+> C
+
+(α)},
+
+where bq(t) 
+
+> C
+
+(α) is the ⌈(|D C | + 1)(1 − α)⌉-th largest element of {s(t)(xi, θ i)}i∈D C 
+
+> 6:
+
+Let C(t) 
+
+> C
+
+(x) := {θ : ( x, θ ) ∈ C (t) 
+
+> C
+
+}. Set 
+
+t∗ := arg min 
+
+> 1≤t≤T
+
+EX [L(C(t) 
+
+> C
+
+(X))]  
+
+> 7:
+
+For each (xi, θ i) ∈ D R, define the conformal score 
+
+s(∗)(xi, θ i) := inf   
+
+> τ∈T
+
+{(xi, θ i) ∈ F (t∗) 
+
+> τ
+
+} 
+
+> 8:
+
+Compute the corresponding conformal prediction set as 
+
+C(∗) 
+
+> R
+
+:= {(x, θ ) : s(∗)(x, θ ) ≤ bq(∗) 
+
+> R
+
+(α)},
+
+where bq(∗) 
+
+> R
+
+(α) := ⌈(|D R| + 1)(1 − α)⌉-th largest element of {s(∗)(xi, θ i)}i∈D R 
+
+> 9:
+
+Return the prediction set C(∗)
+
+> R
+
+We first state for reference the original theorem for VFCP, which we leverage in the proof of theorem. 
+
+Theorem D.2. Suppose Assumption 3.2 holds. Let α ∈ (0 , 1) , DC and DR be drawn i.i.d. from P(X, Θ) , and 
+
+C(∗) 
+
+> R
+
+= VFCP 
+
+
+
+A(t), 1 − α, D C , D T , s (x, θ )
+
+
+
+15 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+If, for r ≥ max {plog(4 T /δ )/2NC , 2/N C } and δ ∈ [0 , 1] , Assumption 3.3 holds, then with probability at least (1 − δ),
+
+EX [L(C(∗) 
+
+> R
+
+(X))] ≤ min  
+
+> 1≤t≤T
+
+EX [L(C(t) 
+
+> R
+
+(X))] + 3 LW L[T ]
+
+" log(4 T /δ )
+
+NC
+
+γ/ 2
+
++
+
+ 2
+
+NC
+
+γ #
+
+, (9) 
+
+where γ, LW , and L[T ] = max 1≤t≤T Lt are constants defined in Assumptions 3.3 and 3.2 (Yang & Kuchibhotla, 2021). 
+
+We now present the proof of our theorem. The proof proceeds in two steps. We first demonstrate the CANVI and VFCP algorithms are equivalent if we assume access to the exact ℓ(q, τ ), which, coupled with the assumptions imposed on q,allows us to directly leverage the results of Theorem D.2. We then demonstrate, under Assumption 3.7, we recover the desired bound even if t∗ is chosen with bℓ(q, τ ).
+
+Theorem D.3. Suppose for any x ∈ X and t = 1 , ..., T , q(t)(θ | x) ∈ C 3(Rn) is bounded above and for θ̸ = 0 ,
+
+L({θ : ∇θ q(t)(θ|x)}) = 0 . Further assume P (X, Θ) is bounded above. Let α ∈ (0 , 1) and 
+
+q(∗)(Θ | X), bq(∗) 
+
+> R
+
+(α) = CANVI 
+
+
+
+{q(t)(Θ | X)}Tt=1 , P(X, Θ) , 1 − α, N C , N T
+
+
+
+If, for r ≥ max {plog(4 T /δ )/2NC , 2/N C } and δ ∈ [0 , 1] , Assumption 3.3 holds and for ∆, ϵ > 0 Assumption 3.7 holds, then with probability at least (1 − ϵ)(1 − δ),
+
+ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) ≤ min  
+
+> 1≤t≤T
+
+ℓ(q(t), bq(t) 
+
+> R
+
+(α)) + ∆ + 3 LW L[T ]
+
+" log(4 T /δ )
+
+NC
+
+γ/ 2
+
++
+
+ 2
+
+NC
+
+γ #
+
+, (10) 
+
+where γ, LW , and L[T ] = max 1≤t≤T Lt are constants defined in Assumptions 3.3 and 3.2. Proof. Let C(∗) 
+
+> R
+
+= VFCP  {q(t)(Θ | X)}Tt=1 , 1 − α, D C , D T , 1/q (θ | x). We first wish to demonstrate C(t),VFCP  
+
+> C,R
+
+(x) = 
+
+C(t),CANVI  
+
+> C,R
+
+(x) for any fixed x, where we use the C, R condensed notation to mean this equality holds both under DC and 
+
+DR. This equivalence can be shown in demonstrating the equivalence in corresponding scores, as the resulting empirical score distributions and hence quantiles over DC and DR and finally future prediction regions follow to then be equivalent by the algorithm structure. This equivalence follows as a straightforward instance of the equivalence of the set-valued and standard conformal prediction frameworks. In particular, we recover the original score formulation, as: 
+
+s(t)(xi, θ i) := inf   
+
+> τ∈T
+
+{(xi, θ i) ∈ F (t) 
+
+> τ
+
+} = inf   
+
+> τ∈T
+
+{(xi, θ i) ∈ { (x, θ ) | 1/q (t)(θ | x) ≤ τ }} = 1 /q (t)(θi | xi).
+
+The bound under access to the exact ℓ(q, τ ) then follows from Theorem D.2 under demonstration of the appropriate assumptions. Assumption 3.3 holds by assumption. Assumption 3.2 holds for any ϑ(t) := {θ : ∇θ q(t)(θ|x)} by Corollary 3.5. In the application of Assumption 3.2 for the proof of Theorem D.2, it suffices for F−1 
+
+> t
+
+(1 −α) ∈ ϑ(t) and F−1 
+
+> t
+
+(1 −α+1 /(NC +1)) ∈ ϑ(t). Since L({θ : ∇θ q(t)(θ|x)}) = 0 and P(X, Θ) is bounded above, this means PX, Θ(F−1 
+
+> t
+
+(1 − α) ∈ ϑ(t)) = 1 
+
+and PX, Θ(F−1 
+
+> t
+
+(1 − α + 1 /(NC + 1)) ∈ ϑ(t)) = 1 . Thus, if t∗ is chosen in CANVI using ℓ(q, τ ), by Theorem D.2, with probability 1(1 − δ) = 1 − δ,
+
+ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) ≤ min  
+
+> 1≤t≤T
+
+ℓ(q(t), bq(t) 
+
+> R
+
+(α)) + 3 LW L[T ]
+
+" log(4 T /δ )
+
+NC
+
+γ/ 2
+
++
+
+ 2
+
+NC
+
+γ #
+
+.
+
+The extension of this to the case of interest, where t∗ is chosen using bℓ(q, τ ), is now a straightforward application of Assumption 3.7, from which we have that ∃ ∆, ϵ > 0, such that with probability at least 1 − ϵ
+
+ℓ(q(bt∗), bq(bt∗) 
+
+> R
+
+(α)) − ℓ(q(t∗), bq(t∗) 
+
+> R
+
+(α)) < ∆ = ⇒ ℓ(q(bt∗), bq(bt∗) 
+
+> R
+
+(α)) < ℓ (q(t∗), bq(t∗) 
+
+> R
+
+(α)) + ∆ . (11) Switching back to denoting ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) := ℓ(q(bt∗), bq(bt∗) 
+
+> R
+
+(α)) , this implies that, with probability (1 − ϵ)(1 − δ),
+
+ℓ(q(∗), bq(∗) 
+
+> R
+
+(α)) ≤ ℓ(q(t∗), bq(t∗) 
+
+> R
+
+(α)) + ∆ ≤ min  
+
+> 1≤t≤T
+
+ℓ(q(t), bq(t) 
+
+> R
+
+(α)) + ∆ + 3 LW L[T ]
+
+" log(4 T /δ )
+
+NC
+
+γ/ 2
+
++
+
+ 2
+
+NC
+
+γ #
+
+,
+
+16 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+completing the proof as desired. 
+
+# E. Gaussian H¨ older Continuity 
+
+Theorem E.1. Let Θ and X be zero-mean unit-variance Gaussian random variables with correlation ρ. Let q(t)(θ|x) = 
+
+N (θ; tx, 1 − ρ2). Let κ := t2 − 2tρ + 1 and r > 0. Then F −1 
+
+> t
+
+(z), is 1-H ¨older continuous on [1 − α, 1 − α + r] with H¨ older constant 
+
+κΦ−1( 1−α 
+
+> 2
+
+)
+
+r
+
+exp 
+
+ κ 
+
+> 1−ρ2
+
+Φ−1( 1−α 
+
+> 2
+
+)2 − (1 −α)2
+
+> 2
+
+p(1 − ρ2)/2 (12) 
+
+Proof. Notice that in the bivariate Gaussian case, we have closed forms for the following: 
+
+Θ | x ∼ N (ρx, 1 − ρ2) X | θ ∼ N (ρθ, 1 − ρ2)Θ ∼ N (0 , 1) X ∼ N (0 , 1) .
+
+We wish to find the distribution of s(X, Θ) = 1 /q (Θ | X) jointly over X, Θ to find F −1 
+
+> t
+
+(z) explicitly. The CDF of this score can be computed as follows: 
+
+P (1 /q t(Θ | X) ≤ q) = P
+
+p2π(1 − ρ2)e (tX −Θ) 22(1 −ρ2) ≤ q
+
+
+
+= P R2 ≤ 2(1 − ρ2) log 
+
+s
+
+q2
+
+2π(1 − ρ2)
+
+!! 
+
+= P R ≤
+
+s
+
+(1 − ρ2) log 
+
+ q2
+
+2π(1 − ρ2)
+
+!
+
+,
+
+where R := |tX − Θ|. From the above calculation, F −1 
+
+> t
+
+(z) must satisfy: 
+
+P
+
+R ≤
+
+s
+
+(1 − ρ2) log 
+
+ F −1 
+
+> t
+
+(z)2
+
+2π(1 − ρ2)
+
+ = z. 
+
+Notice now that, since (X, Θ) are bivariate Gaussian: 
+
+tX − Θ ∼ N (0 , t 2 + 1 − 2tρ ) = ⇒ R ∼ HalfNormal (t2 + 1 − 2tρ ).
+
+Therefore, the z quantile of R is pt2 + 1 − 2tρ Φ−1  1 − α
+
+> 2
+
+. Solving for F −1 
+
+> t
+
+(z) in this quantile produces the final threshold: s
+
+(1 − ρ2) log 
+
+ F −1 
+
+> t
+
+(z)2
+
+2π(1 − ρ2)
+
+
+
+= pt2 + 1 − 2tρ Φ−1 
+
+1 − α
+
+2
+
+
+
+=⇒ log 
+
+ F −1 
+
+> t
+
+(z)2
+
+2π(1 − ρ2)
+
+
+
+= t2 + 1 − 2tρ 
+
+1 − ρ2
+
+
+
+Φ−1 
+
+1 − α
+
+2
+
+ 2
+
+=⇒ F −1 
+
+> t
+
+(z) = 
+
+s
+
+2π(1 − ρ2) exp 
+
+ t2 + 1 − 2tρ 
+
+1 − ρ2
+
+
+
+Φ−1
+
+
+
+1 − α
+
+2
+
+ 2
+
+.
+
+The H¨ older constant follows from bounding the derivative of F −1 
+
+> t
+
+(z), namely 
+
+κΦ−1( z 
+
+> 2
+
+)
+
+r
+
+exp 
+
+ κ 
+
+> 1−ρ2
+
+Φ−1( z 
+
+> 2
+
+)2 − (z)2
+
+> 2
+
+p(1 − ρ2)/2
+
+This expression is monotonically decreasing in z and hence maximized for z = 1 − α in the interval, giving the desired expression. 17 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# F. Simulation-Based Inference Benchmarks 
+
+The benchmark tasks are a subset of those provided by (Lueckmann et al., 2021). For convenience, we provide brief descriptions of the tasks curated by this library; however, a more comprehensive description of these tasks can be found in their manuscript. 
+
+F.1. Gaussian Linear 
+
+10-dimensional Gaussian model with a Gaussian prior: 
+
+Prior : N (0 , 0.1 ⊙ I)
+
+Simulator : x | w ∼ N (x | w, 0.1 ⊙ I)
+
+F.2. Gaussian Linear Uniform 
+
+10-dimensional Gaussian model with a uniform prior: 
+
+Prior : U(−1, 1) 
+
+Simulator : x | w ∼ N (x | w, 0.1 ⊙ I)
+
+F.3. SLCP with Distractors 
+
+Simple Likelihood Complex Posterior (SLCP) with Distractors has uninformative dimensions in the observation over the standard SLCP task: 
+
+Prior : U(−3, 3) 
+
+Simulator : x | w = p(y) where p reorders 
+
+y with a fixed random order 
+
+y[1:8] ∼ N 
+
+ w1
+
+w2
+
+
+
+,
+
+ w43 w23 w24 tanh( w5)
+
+w23 w24 tanh( w5) w44
+
+ 
+
+,y9:100 ∼ 120 
+
+> 20
+
+X
+
+> i=1
+
+t2(μi, Σi), μ i ∼ N (0 , 15 2I),
+
+Σij,k ∼ N (0 , 9) , Σij,j = 3 ea, a ∼ N (0 , 1) ,
+
+F.4. Bernoulli GLM Raw 
+
+10-parameter GLM with Bernoulli observations and Gaussian prior. Observations are not sufficient statistics, unlike the standard “Bernoulli GLM” task: 
+
+Prior : β ∼ N (0 , 2) , f ∼ N (0 , (F T F )−1)
+
+Fi,i −2 = 1 , F i,i −1 = −2
+
+Fi,i = 1 + 
+
+r i − 19 , F i,j = 0; i ≤ j
+
+Simulator : x(i) | w ∼ Bern (η(v(i) 
+
+> T
+
+f + β)) ,η(⊙) = exp( ⊙)/(1 + exp( ⊙)) 
+
+18 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+F.5. Gaussian Mixture 
+
+A mixture of two Gaussians, with one having a much broader covariance structure: 
+
+Prior : β ∼ U (−10 , 10) 
+
+Simulator : x | w ∼ 0.5N (x | w, I ) + 0 .5N (x | w, . 01 I)
+
+F.6. Two Moons 
+
+Task with a posterior that has both global (bimodal) and local (crescent-shaped) structure: 
+
+Prior : β ∼ U (−1, 1) 
+
+Simulator : x | w =
+
+r cos( α) + 0 .25 
+
+r sin( α)
+
+
+
++
+
+ −| w1 + w2|/√2(−w1 + w2)/√2
+
+
+
+α ∼ U (−π/ 2, π/ 2) , r ∼ N (0 .1, 0.01 2)
+
+F.7. SIR 
+
+Epidemiology model with S (susceptible), I (infected), and R (recovered). A contact rate β and mean recovery rate of γ are used as follows: 
+
+Prior : β ∼ LogNormal (log(0 .4) , 0.5) ,γ ∼ LogNormal (log(1 /8) , 0.2) 
+
+Simulator : x = ( x(i))10 
+
+> i=1
+
+; x(i) | w ∼ Bin (1000 , IN ),
+
+where I is simulated from: 
+
+dS dt = −β SI N , dI dt = β SI N − γI, dR dt = γI 
+
+F.8. Lotka-Volterra 
+
+An ecological model commonly used in describing dynamics of competing species. w parameterizes this interaction as 
+
+w = ( α, β, γ, δ ):
+
+Prior : α ∼ LogNormal (−.125 , 0.5) 
+
+β ∼ LogNormal (−3, 0.5) , γ ∼ LogNormal (−.125 , 0.5) 
+
+δ ∼ LogNormal (−3, 0.5) 
+
+Simulator : x = ( x(i))10 
+
+> i=1
+
+,x1,i | w ∼ LogNormal (log( X), 0.1) ,x2,i | w ∼ LogNormal (log( Y ), 0.1) 
+
+where X, Y is simulated from: 
+
+dX dt = αX − βXY, dY dt = −γY + δXY 
+
+F.9. ARCH 
+
+The two-dimensional parameter θ = ( θ1, θ 2) includes both an autoregressive component ( θ1) and a component controlling the level of conditional noise ( θ2). Given a full realization of the time series y1: T , we aim to amortize inference over θ.19 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Priors are taken to be θ1 ∼ Unif (−1, 1) and θ2 ∼ Unif (0 , 1) . One important change from the model of (Thomas et al., 2022) is that we fix e(0) = 0 rather than drawing this quantity from a standard Gaussian. The Adam optimizer was used with a learning rate of 0.0001 for 25,000 training steps for each of the three methods: IWBO (K = 10 ), ELBO, FAVI. Due to constraints arising from the uniform priors on the parameters, the IWBO and ELBO implementations rely on logit transformations of the latent random variables θ to avoid zero-density regions that result in undefined gradients. The encoder network is trained to learn distributions on the unconstrained space of the transformed random variable θ′, and visualizations are produced by performing the inverse transformation. While FAVI avoids these issues because it is likelihood-free, for an apples-to-apples comparison we also implement FAVI on the unconstrained latent space as well. 
+
+# G. Training Details 
+
+All encoders were implemented in PyTorch (Paszke et al., 2019) with a Neural Spline Flow architecture. The NSF was built using code from (Durkan et al., 2020a). Specific architecture hyperparameter choices were taken to be the defaults from (Durkan et al., 2020a) and are available in the code. Optimization was done using Adam (Kingma & Ba, 2014) with a learning rate of 10 −3 over 5,000 training steps. Minibatches were drawn from the corresponding prior P(Θ) and simulator 
+
+P(X | Θ) as specified per task in the preceding section. Training these models required between 10 minutes and two hours using an Nvidia RTX 2080 Ti GPUs for each of the SBI tasks. 
+
+# H. Prediction Regions 
+
+Credible regions for qφ(Θ | x) (for a single x ∼ P (X)) on a subset of the SBI benchmark tasks are plotted below over varying degrees of training, as indicated in the figures. As expected, the efficiency of the prediction regions improves over training across all tasks, resulting in smaller regions for each target coverage 1 − α.
+
+H.1. Gaussian Linear 
+
+20 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+H.2. Gaussian Linear Uniform 
+
+H.3. SLCP 
+
+21 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+H.4. Bernoulli GLM Raw 
+
+H.5. Gaussian Mixture 
+
+22 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+H.6. Two Moons 
+
+# I. Posteriors 
+
+We provide visualizations of approximate and reference posteriors (produced with MCMC from (Lueckmann et al., 2021)) to justify the overdispersion claims made on the variational approximation procedure. 
+
+I.1. Gaussian Linear 
+
+23 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+I.2. Gaussian Mixture 
+
+I.3. Gaussian Linear Uniform 
+
+I.4. Two Moons 
+
+24 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+I.5. SLCP 
+
+I.6. Bernoulli GLM 
+
+I.7. ARCH 
+
+For selected points from the training sets, we show the exact and approximate posteriors obtained by training according to the ELBO, IWBO, and FAVI objectives. The ground-truth parameter value is noted in red. 
+
+25 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+26 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+Depending on the miscalibration of the variational posterior on either per-objective or per-point basis, the conformalized 
+
+1 − α high-density region (HDR) either shrinks or expands, and can be visualized in two dimensions. Figure 6, Figure 7 show examples where the 50% prediction regions obtained from the FAVI-learned variational posterior shrinks and grows after applying CANVI.   
+
+> Figure 6. 50% prediction region, observation 7, before and after applying CANVI.
+> Figure 7. 50% prediction region, observation 8, before and after applying CANVI.
+
+We visualize the efficiency of the iterates qφ across training iterations in Figure 8. Recalling the form of Equation 6, it is unsurprising that FAVI tends to be more efficient, as it trains using simulated data (over which Equation 6 is computed). To estimate Equation 6, at every 500 training steps, we simulate 20 θ, x pairs from the forward model. A larger number of Monte Carlo samples can be used but at an increased cost. As the resulting estimates are noisy, we smooth the resulting series with a Savitzky-Golay filter with a window length of 10 and third-degree polynomial order for better visualization.  
+
+> Figure 8. Efficiency estimates for variational posteriors trained by ELBO, IWBO, and FAVI across training iterations.
+
+27 Variational Inference with Coverage Guarantees in Simulation-Based Inference 
+
+# J. SED Experimental Details 
+
+The PROVABGS emulator (Section 4.3) was trained to minimize the MSE using normalized simulated PROVABGS outputs with fixed log stellar mass parameter (Hahn et al., 2023). Training data were generated from PROVABGS with a fixed magnitude parameter ( θ0 = 10 .5), resampled onto a 5 Angstrom grid, and normalized to integrate to one. After training, forward passes through the emulator are significantly faster than the base simulator. We provide two simulated draws from our emulator in Figure 9. We use the recommended priors from (Hahn et al., 2023) on the remaining eleven parameters. As these are highly constrained (uniform priors, vastly different scales, and a 4-dimensional vector on the simplex), we similarly operate on an unconstrained, 10-dimensional space by invertible transformations. All three methods were trained for 10,000 steps using the Adam optimizer with learning rate 0.0001. K = 1000 was used for the IWBO.  
+
+> Figure 9. Two example draws from our neural network emulator of PROVABGS.
+
+We let the output of our simulator be a mean parameter μ ∈ R1400 , and generate observed data independently binwise via 
+
+xi ∼ N (μi, |μi|2σ2) for a fixed hyperparameter σ = .1 and all i = 1 , . . . , 1400 . We adopt this noise model for simplicity, as it imposes a fixed signal-to-noise ratio (SNR) of 1/σ = 10 across all spectra and wavelength bins. 28

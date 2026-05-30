@@ -1,0 +1,4046 @@
+Title: Batch and match: black-box variational inference with a score-based divergence
+
+URL Source: https://openreview.net/pdf?id=bplNmU2ROC
+
+Number of Pages: 40
+
+Markdown Content:
+# Batch and match: black-box variational inference with a score-based divergence 
+
+Diana Cai 1 Chirag Modi 1 2 Loucas Pillaud-Vivien 1 3 Charles C. Margossian 1 Robert M. Gower 1
+
+David M. Blei 4 Lawrence K. Saul 1
+
+Abstract 
+
+Most leading implementations of black-box varia-tional inference (BBVI) are based on optimizing a stochastic evidence lower bound (ELBO). But such approaches to BBVI often converge slowly due to the high variance of their gradient estimates and their sensitivity to hyperparameters. In this work, we propose batch and match (BaM), an alternative approach to BBVI based on a score-based divergence. Notably, this score-based diver-gence can be optimized by a closed-form proxi-mal update for Gaussian variational families with full covariance matrices. We analyze the con-vergence of BaM when the target distribution is Gaussian, and we prove that in the limit of infinite batch size the variational parameter updates con-verge exponentially quickly to the target mean and covariance. We also evaluate the performance of BaM on Gaussian and non-Gaussian target distri-butions that arise from posterior inference in hier-archical and deep generative models. In these ex-periments, we find that BaM typically converges in fewer (and sometimes significantly fewer) gra-dient evaluations than leading implementations of BBVI based on ELBO maximization. 
+
+1. Introduction 
+
+Probabilistic modeling plays a fundamental role in many problems of inference and decision-making, but it can be challenging to develop accurate probabilistic models that re-main computationally tractable. In typical applications, the goal is to estimate a target distribution that cannot be evalu-ated or sampled from exactly, but where an unnormalized form is available. A canonical situation is applied Bayesian            
+
+> 1Center for Computational Mathematics, Flatiron Insti-tute 2Center for Computational Astrophysics, Flatiron Institute
+> 3CERMICS Laboratory, Ecole des Ponts ParisTech 4Department of Statistics, Department of Computer Science, Columbia Univer-sity. Correspondence to: Diana Cai <dcai@flatironinstitute.org >.
+> Proceedings of the 41 st International Conference on Machine Learning , Vienna, Austria. PMLR 235, 2024. Copyright 2024 by the author(s).
+
+statistics, where the target is a posterior distribution of latent variables given observations, but where only the model’s joint distribution is available in closed form. Variational inference (VI) has emerged as a leading method for fast ap-proximate inference (Jordan et al., 1999; Wainwright et al., 2008; Blei et al., 2017). The idea behind VI is to posit a parameterized family of approximating distributions, and then to find the member of that family which is closest to the target distribution. Recently, VI methods have become increasingly “black box,” in that they only require calculation of the log of the unnor-malized target and (for some algorithms) its gradients (Ran-ganath et al., 2014; Kingma & Welling, 2014; Archer et al., 2015; Ryder et al., 2018; Locatello et al., 2018; Burroni et al., 2023; Kim et al., 2023; Domke, 2019; Welandawe et al., 2022; Domke et al., 2023; Modi et al., 2023; Giordano et al., 2024). Further applications have built on advances in automatic differentiation, and now black-box variational inference (BBVI) is widely deployed in robust software packages for probabilistic programming (Salvatier et al., 2016; Kucukelbir et al., 2017; Bingham et al., 2019). In general, the ingredients of a BBVI strategy are the form of the approximating family, the divergence to be minimized, and the optimization algorithm to minimize it. Most BBVI algorithms work with a factorized (or mean-field) family, and minimize the reverse Kullback-Leibler (KL) divergence via stochastic gradient descent (SGD). But this approach has its drawbacks. The optimizations can be plagued by high-variance gradients and sensitivity to hyperparameters of the learning algorithms (Dhaka et al., 2020; 2021). These issues are further exacerbated in high-dimensional problems and when using richer variational families that model the correlations between different latent variables. There has been recent work on BBVI which avoids SGD for Gaussian variational families (Modi et al., 2023), but this approach does not minimize an explicit divergence and requires addi-tional heuristics to converge for non-Gaussian targets. In this paper, we develop a new approach to BBVI. It is based on a different divergence, accommodates expressive variational families, and does not rely on SGD for opti-mization. In particular, we introduce a novel score-based divergence that measures the agreement of the scores, or 1Batch and match: black-box variational inference with a score-based divergence 
+
+gradients of the log densities, of the target and variational distributions. This divergence can be estimated for unnor-malized target distributions, thus making it a natural choice for BBVI. We study the score-based divergence for Gaus-sian variational families with full covariance, rather than the factorized family. We also develop an efficient stochas-tic proximal point algorithm, with closed-form updates, to optimize this divergence. Our algorithm is called batch and match (BaM), and it al-ternates between two types of steps. In the “batch” step, we draw a batch of samples from the current approximation to the target and use those samples to estimate the diver-gence; in the “match” step, we estimate a new variational approximation by matching the scores at these samples. By iterating these steps, BaM finds a variational distribution that is close in score-based divergence to the target. Theoretically, we analyze the convergence of BaM when the target itself is Gaussian. In the limit of an infinite batch size, we prove that the variational parameters converge exponen-tially quickly to the target mean and covariance at a rate controlled by the quality of initialization and the amount of regularization. Notably, this convergence result holds for any amount of regularization; this stability to the “learn-ing rate” parameter is characteristic of proximal algorithms, which are often less brittle than SGD (Asi & Duchi, 2019). Empirically, we evaluate BaM on a variety of Gaussian and non-Gaussian target distributions, including a test suite of Bayesian hierarchical models and deep generative mod-els. On these same problems, we also compare BaM to a leading implementation of BBVI based on ELBO maxi-mization (Kucukelbir et al., 2017) and a recently proposed algorithm for Gaussian score matching (Modi et al., 2023). By and large, we find that BaM converges faster and to more accurate solutions. In what follows, we begin by reviewing BBVI and then developing a score-based divergence for BBVI with several important properties (Section 2). Next, we propose BaM, an iterative algorithm for score-based Gaussian variational inference, and we study its rate of convergence (Section 3). We then present a discussion of related methods in the lit-erature (Section 4). Finally, we conclude with a series of empirical studies on a variety of synthetic and real-data tar-get distributions (Section 5). A Python implementation of BaM is available at github.com/modichirag/GSM-VI/. 
+
+2. BBVI with the score-based divergence 
+
+VI was developed as a way to estimate an unknown target 
+
+distribution with density p; here we assume that the target is a distribution on RD . The target is estimated by first positing a variational family of distributions Q, then finding the particular q ∈ Q that minimizes an objective L (q)
+
+measuring the difference between p and q.
+
+2.1. From VI to BBVI to score-based BBVI 
+
+In the classical formulation of VI, the objective L (q) is the (reverse) Kullback-Leibler (KL) divergence: KL (q; p) := 
+
+Z
+
+log 
+
+ q(z)
+
+> p(z)
+
+
+
+q(z) dz. (1) For some models the derivatives of KL (q; p) can be exactly evaluated, but for many others they cannot. In this case a further approximation is needed. This more challenging situation is the typical setting for BBVI. In BBVI, it is assumed that (a) the target density p cannot be evaluated pointwise or sampled from exactly, but that (b) an unnormalized target density is available. BBVI algo-rithms use stochastic gradient descent to minimize the KL divergence, or equivalently, to maximize the evidence lower bound (ELBO). The necessary gradients in this case can be estimated with access to the unnormalized target density. But in practice this objective is difficult to optimize: the optimization can converge slowly due to noisy gradients, and it can be sensitive to the choice of learning rates. In this work, we will also assume additionally that (c) the log target density is differentiable, and its derivatives can be efficiently evaluated. We define the target density’s score function s : RD → RD as 
+
+s(z) := ∇z log p(z).
+
+It is often possible to compute these scores even when p is intractable because they only depend on the logarithm of the unormalized target density. In what follows, we intro-duce the score-based divergence and study its properties; in Section 3, we will then propose a BBVI algorithm based on this score-based divergence. 
+
+Notation. For Σ ∈ RD×D , let Σ ≻ 0 denote that Σ
+
+is positive definite and Σ ⪰ 0 denote that Σ is positive semi-definite. Define the set of symmetric, positive defi-nite matrices as SD 
+
+> ++
+
+:= {Σ ∈ RD×D : Σ = Σ ⊤, Σ ≻ 0}.Let tr (Σ) := PDd=1 Σdd denote the trace of Σ and let 
+
+I ∈ RD×D denote the identity matrix. We primarily con-sider two norms throughout the paper: first, given z ∈ RD
+
+and Σ ∈ RD×D , we define the Σ-weighted vector norm, 
+
+∥z∥Σ := √z⊤Σz, and second, given Σ ∈ RD×D , we define the matrix norm ∥Σ∥ to be the spectral norm. 
+
+2.2. The score-based divergence 
+
+We now introduce the score-based divergence, which will be the basis for a BBVI objective. Here we focus on a Gaussian variational family, i.e., 
+
+Q = {N (μ, Σ) : μ ∈ RD , Σ ∈ SD
+
+> ++
+
+},
+
+2Batch and match: black-box variational inference with a score-based divergence 
+
+but we generalize the score-based divergence to non-Gaussian distributions in Appendix A. The score-based divergence between densities q ∈ Q and 
+
+p on RD is defined as 
+
+D(q; p) := 
+
+Z
+
+∇z log 
+
+ q(z)
+
+> p(z)
+
+ 2
+
+> Cov (q)
+
+q(z) dz, (2) where Cov (q) ∈ SD 
+
+> ++
+
+is the covariance matrix of the varia-tional density q.Importantly, the score-based divergence can be evaluated when p is only known up to a normalization constant, as it only depends on the target density through the score ∇ log p.Thus, not only can this divergence be used as a VI objective, but it can also be used for goodness-of-fit evaluations, unlike the KL divergence. The divergence in eq. (2) is well-defined under mild con-ditions on p and q (see Appendix A), and it enjoys two important properties: 
+
+Property 1 (Non-negativity & equality): D(q; p) ≥ 0 with 
+
+D(q; p) = 0 iff p = q.
+
+Property 2 (Affine invariance): Let h : RD → RD be an affine transformation, and consider the induced densities ˜q(h(z)) = q(z)|J (z)|−1 and ˜p(h(z)) = 
+
+p(z)|J (z)|−1, where J is the determinant of the Jaco-bian of h. Then D(q; p) = D(˜ q; ˜ p).We note that these properties are also satisfied by the KL divergence (Qiao & Minematsu, 2010). The first property shows that D(q; p) is a proper divergence measuring the agreement between p and q. The second property states that the score-based divergence D(q, p ) is invariant under affine transformations; this property is desirable to maintain a consistent measure of similarity under coordinate trans-formations of the input. This property depends crucially on the weighted vector norm, mediated by Cov (q), in the divergence of eq. (2). There are several related divergences in the research litera-ture. A generalization of the score-based divergence is the weighted Fisher divergence (Barp et al., 2019), given by 
+
+Eq [∥∇ log( q/p )∥2 
+
+> M
+
+], where M ∈ RD×D ; the score-based divergence is recovered by the choice M = Cov (q). Aspecial case of the score-based divergence is the Fisher di-vergence (Hyv ¨arinen, 2005) given by Eq [∥∇ log( q/p )∥2 
+
+> I
+
+],but this divergence is not affine invariant. (See the proof of Theorem A.4 for further discussion.) 
+
+3. Score-based Gaussian variational inference 
+
+The score-based divergence has many favorable properties for VI. We now show that this divergence can also be effi-ciently optimized by an iterative black-box algorithm. 
+
+3.1. Algorithm 
+
+Our goal is to find some Gaussian distribution q∗ ∈ Q that minimizes D(q; p). Without additional assumptions on the target p, the score-based divergence D(q; p) is not analyt-ically tractable. So instead we consider a Monte Carlo estimate of D(q; p): given samples z1, . . . , z B ∼ q, we construct the approximation 
+
+D(q; p) ≈ 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+∇z log 
+
+ q(zb)
+
+> p(zb)
+
+ 2
+
+> Cov (q)
+
+. (3) This estimator is unbiased, but it does not lend itself to opti-mization: we cannot simultaneously sample from q while also optimizing over the family Q to which it belongs. There is a generic solution to the above problem: the so-called “reparameterization trick” (e.g., Kucukelbir et al. (2017)) de-couples the sampling distribution and optimization variable. But this approach leads to a gradient-based algorithm that does not fully capitalize on the structure of the Gaussian variational family. In this paper we take a different approach, one that does capitalize on this structure. Specifically, we take an iterative approach whose goal is to produce a sequence of distri-butions {qt}∞ 
+
+> t=0
+
+that converges to q∗. At a high level, the approach alternates between two steps—one that constructs a biased estimate of D(q; p), and another that updates q
+
+based on this biased estimate, but not too aggressively (so as to minimize the effect of the bias). Specifically, at the 
+
+tth iteration, we first estimate D(q; p) with samples from qt:i.e., given z1, . . . , z B ∼ qt, we compute 
+
+bDqt (q; p) := 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+∇z log 
+
+ q(zb)
+
+> p(zb)
+
+ 2
+
+> Cov (q)
+
+. (4) We call eq. (4) the batch step because it estimates D(q, p )
+
+from the batch of samples z1, . . . , z B ∼ qt.The batch step of the algorithm relies on stochastic sampling, but it alternates with a deterministic step that updates q by minimizing the empirical score-based divergence bDqt (q; p)
+
+in eq. (4). Importantly, this minimization is subject to a reg-ularizer: we penalize large differences between qt and qt+1 
+
+by their KL divergence. Intuitively, when q remains close to qt, then bDqt (q; p) in eq. (4) remains a good approxima-tion to the unbiased estimate bDq (q; p) in eq. (3). With this in mind, we compute qt+1 by minimizing the regularized 
+
+objective function 
+
+L BaM (q) := bDqt (q; p) + 2 
+
+> λt
+
+KL (qt; q), (5) where q ∈ Q and λt > 0 is the inverse regularization param-eter. When λt is small, the regularizer is large, encouraging the next iterate qt+1 to remain close to qt; thus λt can also be viewed as a learning rate. 3Batch and match: black-box variational inference with a score-based divergence 
+
+The objective function in eq. (5) has the important property that its global minimum can be computed analytically in closed form. In particular, we can optimize eq. (5) without recourse to gradient-based methods that are derived from a linearization around qt. We refer to the minimization of 
+
+L BaM (q) in eq. (5) as the match step because the updated distribution qt+1 always matches the scores at z1, . . . , z B
+
+better than the current one qt.Combining these two steps, we arrive at the batch and match 
+
+(BaM) algorithm for BBVI with a score-based divergence. The intuition behind this iterative approach will be formally justified in Section 3.2 by a proof of convergence. We now discuss each step of the algorithm in greater detail. 
+
+Batch Step. This step begins by sampling z1, z 2, . . . , z B ∼
+
+qt and computing the scores gb = ∇ log p(zb) at each sam-ple. It then calculates the means and covariances (over the batch) of these quantities; we denote these statistics by 
+
+z = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+zb, C = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(zb − z)( zb − z)⊤ (6) 
+
+g = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+gb, Γ = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(gb − g)( gb − g)⊤, (7) where z, g ∈ RD are the means, respectively, of the samples and the scores, and C, Γ ∈ RD×D are their covariances. In Appendix C, we show that the empirical score-based divergence bDqt (q; p) in eq. (4) can be written in terms of these statistics as 
+
+bDqt (q; p) = tr (ΓΣ) + tr (CΣ−1) + μ−z−Σg 2Σ−1 + const. ,
+
+where for clarity we have suppressed additive constants that do not depend on the mean μ or covariance Σ of q. This calculation completes the batch step of BaM. 
+
+Match Step. The match step of BaM updates the variational approximation q by setting 
+
+qt+1 = arg min  
+
+> q∈Q
+
+L BaM (q), (8) where L BaM (q) is given by eq. (5). This optimization can be solved in closed form; that is, we can analytically cal-culate the variational mean μt+1 and covariance Σt+1 that minimize L BaM (q).The details of this calculation are given in Appendix C. There we show that the updated covariance Σt+1 satisfies a quadratic matrix equation, 
+
+Σt+1 U Σt+1 + Σ t+1 = V, (9) where the matrices U and V in this expression are positive semidefinite and determined by statistics from the batch step 
+
+Algorithm 1 Batch and match VI 
+
+1: Input: Iterations T , batch size B, inverse regularization 
+
+λt > 0, target score function s : RD → RD , initial varia-tional mean μ0 ∈ RD and covariance Σ0 ∈ SD
+
+> ++
+
+2: for t = 0 , . . . , T −1 do 
+
+3: Sample batch zb ∼ N (μt, Σt) for b = 1 , . . . , B 
+
+4: Evaluate scores gb = s(zb) for b = 1 , . . . , B 
+
+5: Compute statistics z, g ∈ RD and Γ, C ∈ RD×D
+
+z = 1
+
+> BB
+
+X
+
+> b=1
+
+zb, C = 1
+
+> BB
+
+X
+
+> b=1
+
+(zb − z)( zb − z)⊤
+
+g = 1
+
+> BB
+
+X
+
+> b=1
+
+gb, Γ = 1
+
+> BB
+
+X
+
+> b=1
+
+(gb − g)( gb − g)⊤
+
+6: Compute matrices U and V needed to solve the quadratic matrix equation ΣU Σ + Σ = VU = λtΓ + λt 
+
+> 1+ λt
+
+g g ⊤
+
+V = Σ t + λtC + λt 
+
+> 1+ λt
+
+(μt − z)( μt − z)⊤
+
+7: Update variational parameters 
+
+Σt+1 = 2 V
+
+
+
+I + ( I + 4 U V ) 12
+
+−1
+
+μt+1 = 11+ λt μt + λt 
+
+> 1+ λt
+
+(Σ t+1 g + z)
+
+8: end for 
+
+9: Output: variational parameters μT , ΣT
+
+of BaM. In particular, these matrices are given by 
+
+U = λtΓ + λt 
+
+> 1+ λt
+
+g g ⊤ (10) 
+
+V = Σ t + λtC + λt 
+
+> 1+ λt
+
+(μt − z)( μt − z)⊤. (11) The quadratic matrix equation in eq. (9) has a symmetric and positive-definite solution (see Appendix B), and it is given by 
+
+Σt+1 = 2 V
+
+
+
+I + ( I + 4 U V ) 12
+
+−1
+
+. (12) The solution in eq. (12) is the BaM update for the variational covariance. The update for the variational mean is given by 
+
+μt+1 = 11+ λt μt + λt 
+
+> 1+ λt
+
+(Σ t+1 g + z) . (13) Note that the update for μt+1 depends on Σt+1 , so these updates must be performed in the order shown above. The updates in eq. (12–13) complete the match step of BaM. More intuition for BaM can be obtained by examining cer-tain limiting cases of the batch size and learning rate. When 
+
+λt → 0, the updates have no effect, with Σt+1 = Σ t and 
+
+μt+1 = μt. Alternatively, when B = 1 and λt → ∞ , the BaM updates reduce to the recently proposed updates for BBVI by (exact) Gaussian score matching (Modi et al., 2023); this equivalence is shown in Appendix C. Finally, when 
+
+B → ∞ and λ0 → ∞ (in that order), BaM converges to a Gaussian target distribution in one step; see Corollary D.5 of Appendix D. 4Batch and match: black-box variational inference with a score-based divergence 
+
+We provide pseudocode for BaM in Algorithm 1. We note that it costs O(D3) to compute the covariance update as shown in eq. (12), but for small batch sizes, when the ma-trix U is of rank O(B) with B ≪ D, it is possible to com-pute the update in O(D2B + B3); this update is presented in Lemma B.3 of Appendix B. BaM incorporates many ideas from previous work. Like the stochastic proximal point (SPP) method (Asi & Duchi, 2019; Davis & Drusvyatskiy, 2019), it minimizes a Monte Carlo estimate of a divergence subject to a regularization term. In proximal point methods, the updates are always regular-ized by squared Euclidean distance, but the KL divergence has been used elsewhere as a regularizer—for example, in the EM algorithm (Tseng, 2004; Chr ´etien & Hero, 2000) and for approximate Bayesian inference (Theis & Hoffman, 2015; Khan et al., 2015; 2016; Dai et al., 2016). KL-based regularizers are also a hallmark of mirror descent meth-ods (Nemirovskii & Yudin, 1983), but in these methods the objective function is linearized—a poor approximation for objective functions with high curvature. Notably, BaM does not introduce any linearizations because its optimizations in eq. (8) can be solved in closed form. 
+
+3.2. Proof of convergence for Gaussian targets 
+
+In this section we analyze a concrete setting in which we can rigorously prove the convergence of the updates in Al-gorithm 1. Suppose the target distribution is itself a Gaussian and the updates are computed in the limit of infinite batch size (B → ∞ ). In this setting we show that BaM converges to the target distribution. More precisely, we show that the variational parameters converge exponentially quickly to their target values for all fixed levels of regularization λ > 0
+
+and no matter how they are initialized . Our proof does not exclude the possibility of convergence in less restrictive settings, and in Section 5, we observe empirically that the updates also converge for non-Gaussian targets and finite batch sizes. Though the proof here does not cover such cases, it remains instructive in many ways. To proceed, consider a Gaussian target distribution 
+
+p = N (μ∗, Σ∗). At the tth iteration of Algorithm 1, we measure the normalized errors in the mean and covariance parameters by 
+
+εt := Σ − 12 
+
+> ∗
+
+(μt −μ∗), (14) 
+
+∆t := Σ − 12 
+
+> ∗
+
+(Σ t −Σ∗) Σ − 12 
+
+> ∗
+
+. (15) The theorem below shows that εt, ∆t → 0 in spectral norm. Specifically, it shows that this convergence occurs exponentially quickly at a rate controlled by the quality of initialization and amount of regularization. 
+
+Theorem 3.1 (Exponential convergence ). Suppose that 
+
+p = N (μ∗, Σ∗) in Algorithm 1, and let α > 0 denote the minimum eigenvalue of the matrix Σ− 12 
+
+> ∗
+
+Σ0Σ− 12 
+
+> ∗
+
+. For any fixed level of regularization λ > 0, define 
+
+β := min 
+
+
+
+α, 1+ λ
+
+1+ λ+∥ε0∥2
+
+
+
+, δ := λβ 
+
+1+ λ , (16) where β ∈ (0 , 1] measures the quality of initialization and 
+
+δ ∈ (0 , 1) denotes a rate of decay. Then with probability 1 in the limit of infinite batch size ( B → ∞ ), and for all t ≥ 0,the normalized errors in eqs. (14–15) satisfy 
+
+∥εt∥ ≤ (1 −δ)t∥ε0∥, (17) 
+
+∥∆t∥ ≤ (1 −δ)t∥∆0∥ + t(1 −δ)t−1∥ε0∥2. (18) Before sketching the proof we make three remarks. First, these error bounds behave sensibly: they suggest that the up-dates converge more slowly when the learning rate is small (with λ ≪ 1), when the variational mean is poorly initialized (with ∥ε0∥2 ≫ 1), and/or when the initial estimate of the covariance is nearly singular (with α ≪ 1). Second, the theorem holds under very general conditions—not only for any initialization of μ0 and Σ0 ≻ 0, but also for any λ > 0.This robustness is typical of proximal algorithms, which are well-known for their stability with respect to hyperpa-rameters (Asi & Duchi, 2019), but it is uncharacteristic of many gradient-based methods, which only converge when the learning rate varies inversely with the largest eigenvalue of an underlying Hessian (Garrigos & Gower, 2023). Third, with more elaborate bookkeeping, we can derive tighter 
+
+bounds both for the above setting and also when different iterations use varying levels of regularization {λt}∞
+
+> t=0
+
+. We give a full proof with these extensions in Appendix D. 
+
+Proof Sketch. The crux of the proof is to bound the normal-ized errors in eqs. (14–15) from one iteration to the next. Most importantly, we show that 
+
+∥εt+1 ∥ ≤ (1 −δ)∥εt∥, (19) 
+
+∥∆t+1 ∥ ≤ (1 −δ)∥∆t∥ + ∥εt∥2, (20) where δ is given by eq. (16), and from these bounds, we use induction to prove the overall rates of decay in eqs. (17-18) .Here we briefly describe the steps that are needed to derive the bounds in eqs. (19–20). The first is to examine the statistics computed at each iter-ation of the algorithm in the infinite batch limit (B → ∞ ).This limit is simplifying because by the law of large num-bers, we can replace the batched averages over B samples at each iteration by their expected values under the varia-tional distribution qt = N (μt, Σt). The second step of the proof is to analyze the algorithm’s convergence in terms 5Batch and match: black-box variational inference with a score-based divergence 
+
+of the normalized mean εt in eq. (14) and the normalized 
+
+covariance matrix 
+
+Jt = Σ − 12 
+
+> ∗
+
+ΣtΣ− 12 
+
+> ∗
+
+= I + ∆ t, (21) where I denotes the identity matrix. In the infinite batch limit, we show that with probability 1 these quantities satisfy 
+
+λJ t+1 
+
+
+
+Jt + 11+ λ εtε⊤
+
+> t
+
+
+
+Jt+1 + Jt+1 = (1+ λ)Jt, (22) 
+
+εt+1 =
+
+
+
+I − λ 
+
+> 1+ λ
+
+Jt+1 
+
+
+
+εt. (23) The third step of the proof is to sandwich the matrix Jt+1 
+
+that appears in eq. (22) between two other positive-definite matrices whose eigenvalues are more easily bounded. Specifically, at each iteration t, we introduce matrices Ht+1 
+
+and Kt+1 defined by 
+
+λH t+1 
+
+
+
+Jt + ∥εt∥2 
+
+> 1+ λ
+
+I
+
+
+
+Ht+1 + Ht+1 = (1+ λ)Jt, (24) 
+
+λK t+1 Jt Kt+1 + Kt+1 = (1+ λ)Jt. (25) It is easier to analyze the solutions to these equations be-cause they replace the outer-product εtε⊤ 
+
+> t
+
+in eq. (22) by a multiple of the identity matrix. We show that for all times 
+
+t ≥ 0,
+
+Ht+1 ⪯ Jt+1 ⪯ Kt+1 , (26) so that we can prove ∥Jt −I∥ → 0 by showing ∥Ht −I∥ → 0
+
+and ∥Kt −I∥ → 0. Finally, the last (and most technical) step is to derive the bounds in eqs. (19–20) by combining the sandwich inequality in eq. (26) with a detailed analysis of eqs. (22–25). 
+
+4. Related work 
+
+BaM builds on intuitions from earlier work on Gaussian score matching (GSM) (Modi et al., 2023). GSM is an itera-tive algorithm for BBVI that updates a full-covariance Gaus-sian by analytically solving a system of nonlinear equations. As previously discussed, BaM recovers GSM as a special limiting case. A limitation of GSM is that it aims to match the scores exactly; thus, if the target is not exactly Gaussian, the updates for GSM attempt to solve an infeasible problem, In addition, the batch updates for GSM perform an ad hoc averaging that is not guaranteed to match any scores exactly, even when it is possible to do so. BaM overcomes these limitations by optimizing a proper score-based divergence on each batch of samples. Empirically, with BaM, we ob-serve that larger batch sizes lead to more stable convergence. The score-based divergence behind BaM also lends itself to analysis, and we can provide theoretical guarantees on the convergence of BaM for Gaussian targets. Proximal point methods have been studied in several papers in the context of variational inference; typically the objec-tive is a stochastic estimate of the ELBO with a (forward) KL regularization term. For example, Theis & Hoffman (2015) optimize this objective using alternating coordinate ascent. In other work, Khan et al. (2015; 2016) propose a splitting method for this objective, and by linearizing the difficult terms, they obtain a closed-form solution when the variational family is Gaussian and additional knowledge is given about the structure of the target. By contrast, BaM does not resort to linearization in order to obtain an analyti-cal solution, nor does it require additional assumptions on the structure of the target. Proximal algorithms have also been developed for Gaussian variational families based on the Wasserstein metric. Lam-bert et al. (2022) consider a KL objective with the Wasser-stein metric as a regularizer; in this case, the proximal step is not solvable in closed form. On the other hand, Diao et al. (2023) consider a proximal-gradient method, and show that the proximal step admits a closed-form solution. Several works consider score matching with a Fisher diver-gence in the context of VI. For instance, Yu & Zhang (2023) propose a score-matching approach for semi-implicit vari-ational families based on stochastic gradient optimization of the Fisher divergence. Zhang et al. (2018) use the Fisher divergence with an energy-based model as the variational family. BaM differs from these approaches by working with a Gaussian variational family and an affine-invariant score-based divergence. Finally, we note that the idea of score matching (Hyv ¨arinen, 2005) with a (weighted) Fisher divergence appears in many contexts beyond VI (Song & Ermon, 2019; Barp et al., 2019). One such context is generative modeling: here, given a set of training examples, the goal is to approximate an unknown data distribution p by a parameterized model pθ with an intractable normalization constant. Note that in this setting one can evaluate ∇ log pθ but not ∇ log p. This setting is quite different from the setting of VI in this paper where we do not have samples from p, where we can evaluate ∇ log p,and where the approximating distribution q has the much simpler and more tractable form of a multivariate Gaussian. 
+
+5. Experiments 
+
+We evaluate BaM against two other BBVI methods for Gaus-sian variational families with full covariance matrices. The first of these is automatic differentiation VI (ADVI) (Ku-cukelbir et al., 2017), which is based on ELBO maximiza-tion, and the second is GSM (Modi et al., 2023), as described in the previous section. We implement all algorithms using 
+
+JAX (Bradbury et al., 2018), 1 which supports efficient au-tomatic differentiation both on CPU and GPU. We provide pseudocode for these methods in Appendix E.1. 
+
+> 1Python implementations of BaM and the baselines are avail-able at: https://github.com/modichirag/GSM-VI/.
+
+6Batch and match: black-box variational inference with a score-based divergence 10 0 10 1 10 2 10 3 10 4              
+
+> # gradient evaluations
+> 10 6
+> 10 2
+> 10 2
+> 10 6
+> Forward KL  D=4
+> BaM-5
+> BaM-2
+> GSM
+> Score
+> Fisher
+> ADVI
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=16
+> BaM-15
+> BaM-2
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=64
+> BaM-40
+> BaM-2
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=256
+> BaM-150
+> BaM-2
+
+Figure 5.1: Gaussian targets of increasing dimension. Solid curves indicate the mean over 10 runs (transparent curves). ADVI, Score, Fisher, and GSM use a batch size of B = 2 . The batch size for BaM is given in the legend. 
+
+5.1. Synthetically-constructed target distributions 
+
+We first validate BaM in two settings where we know the true target distribution p. In the first setting, we construct Gaussian targets with increasing number of dimensions. In the second setting, we study BaM for distributions with increasing (but controlled) amounts of non-Gaussianity. As evaluation metrics, we use empirical estimates of the KL divergence in both the forward direction, KL (p; q), and the reverse direction, KL (q; p).
+
+Gaussian targets with increasing dimensions. We con-struct Gaussian targets of increasing dimension with D =4, 16 , 64 , 256 . In Figure 5.1, we compare BaM, ADVI, and GSM on each of these target distributions, plotting the for-ward KL divergence against the number of gradient evalua-tions; here we also consider two modified ADVI methods, where instead of the ELBO loss, we use the score-based divergence (labeled as “Score”) and the Fisher divergence (labeled as “Fisher”). Results for the reverse KL divergence and other parameter settings are provided in Appendix E.3. In all of these experiments, we use a constant learning rate 
+
+λt = BD for BaM. Overall, we find that BaM converges orders of magnitude faster than ADVI. While GSM is com-petitive with BAM in some experiments, BaM converges more quickly with increasing batch size; this is unlike GSM which was observed to have marginal gains beyond B = 2 
+
+for Gaussian targets (Modi et al., 2023). We also observe that the gradient-based methods (ADVI, Score, Fisher) have similar performance in terms of con-vergence, and the score-based divergence is typically more sensitive to the learning rate. In Appendix E.2, we present wallclock timings for the methods, which show that the gradient evaluations dominate the computational cost in lower-dimensional settings. 
+
+Non-Gaussian targets with varying skew and tails. The sinh-arcsinh normal distribution transforms a Gaussian ran-dom variable via the hyperbolic sine function and its inverse (Jones & Pewsey, 2009; 2019). If y ∼ N (μ, Σ) , then a sample from the sinh-arcsinh normal distribution is 
+
+z = sinh   1
+
+> τ
+
+ sinh −1(y) + s ,
+
+where the parameters s ∈ R and τ > 0 control, respec-tively, the skew and the heaviness of the tails. The Gaussian distribution is recovered when s = 0 and τ = 1 .We construct different non-Gaussian target distributions by varying these parameters. The results are presented in Figure 5.2 and Figure E.4. Here we use a decaying learning rate λt = BD/ (t+1) for BaM, as some decay is necessary for BaM to converge when the target distribution is non-Gaussian. First, we construct target distributions with normal tails (t = 1 ) but varying skew ( s = 0 .2, 1.0, 1.8). Here we ob-serve that BaM converges faster than ADVI. For large skew (s = 1 .0, 1.8), BaM converges to a higher value of the for-ward KL divergence but to similar values of the reverse KL divergence. In these experiments, we see that GSM and ADVI often have similar performance but that BaM stabilizes more quickly with larger batch sizes. Notably, the reverse KL divergence for GSM diverges when the target distribution is highly skewed ( s = 1 .8). The Score method diverges for highly skewed targets as well, and we found this method to be more sensitive to the learning rate. Next we construct target distributions with no skew ( s = 0 )but tails of varying heaviness ( t = 0 .1, 0.9, 1.7). Here we find that all methods tend to converge to similar values of the reverse KL divergence. In some cases, BaM and ADVI converge to better values than GSM, and BaM typically converges in fewer gradient evaluations than ADVI. 
+
+5.2. Application: hierarchical Bayesian models 
+
+We now consider the application of BaM to posterior in-ference. Suppose we have observations {xn}Nn=1 , and the target distribution is the posterior density 
+
+p  z | { xn}Nn=1 
+
+ ∝ p(z) p  {xn}Nn=1 | z , (27) with prior p(z) and likelihood p({xn}Nn=1 | z). We examine three target distributions from posteriordb (Magnus-son et al., 2022), a database of Stan (Carpenter et al., 2017; Roualdes et al., 2023) models with reference sam-ples generated using Hamiltonian Monte Carlo (HMC). The first target is nearly Gaussian ( arK , D = 7 ). The other 7Batch and match: black-box variational inference with a score-based divergence 10 2 10 4            
+
+> # gradient evaluations
+> 10 1
+> 10 1
+> 10 3
+> 10 5
+> Forward KL
+> s=0.2, =1.0
+> BaM-10
+> BaM-5
+> GSM
+> Score
+> Fisher
+> ADVI
+> 10 210 4
+> # gradient evaluations
+> s=1.0, =1.0
+> 10 210 4
+> # gradient evaluations
+> s=1.8, =1.0 10 210 4
+> # gradient evaluations
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Forward KL
+> s=0.0, =0.1
+> 10 210 4
+> # gradient evaluations
+> s=0.0, =0.9
+> 10 210 4
+> # gradient evaluations
+> s=0.0, =1.7
+
+Figure 5.2: Non-Gaussian targets constructed using the sinh-arcsinh distribution, varying the skew s and the tail weight t.The curves denote the mean of the forward KL divergence over 10 runs, and shaded regions denote their standard error. ADVI, Score, Fisher, and GSM use a batch size of B = 5 .two targets are non-Gaussian: one is a Gaussian process (GP) Poisson regression model ( gp-pois-regr , D = 13 ), and the other is the 8-schools hierarchical Bayesian model (eight-schools-centered , D = 10 ). In these experiments, we evaluate BaM, ADVI, and GSM by computing the relative errors of the posterior mean and standard deviation (SD) estimates with respect to those from HMC samples (Welandawe et al., 2022); we define these quantities and present additional results in Appendix E.5. We use a decaying learning rate λt = BD/ (t+1) for BaM. Figure 5.3 compares the relative mean errors of BaM, ADVI, and GSM for batch sizes B = 8 and B = 32 . We observe that BaM outperforms ADVI. For smaller batch sizes GSM can converge faster than BaM, but it oscillates around the solution. BaM performs better with increasing batch size, converging more quickly and to a more stable result, while GSM and ADVI do not benefit from increasing batch size. In the appendix, we report the relative SD error and find similar results except that in the hierarchical example, BaM converges to a larger relative SD error. 
+
+5.3. Application: deep generative model 
+
+In a deep generative model, the likelihood is parameterized by the output of a neural network Ω, e.g., 
+
+zn ∼ N (0 , I ) (28) 
+
+xn | zn ∼ N (Ω( zn, ˆθ), σ 2I), (29) where xn corresponds to a high-dimensional object, such as an image, and zn is a low-dimensional representation of xn.The neural network Ω is parameterized by ˆθ and maps zn
+
+to the mean of the likelihood p(xn|zn). For this example, we set σ2 = 0 .1. The above joint distribution underlies many deep learning models (Tomczak, 2022), including the variational autoencoder (Kingma & Welling, 2014; Rezende et al., 2014). We train the neural network on the CIFAR-10 image data set (Krizhevsky, 2009). We model the images as continuous, with xn ∈ R3072 , and learn a latent representa-tion zn ∈ R256 ; see Appendix E.6 for details. Given a new observation x′, we wish to approximate the posterior p(z′|x′). As an evaluation metric, we examine how well x′ is reconstructed by feeding the posterior expec-tation E[z′|x′] into the neural network Ω( ·, ˆθ). The quality of the reconstruction is assessed visually and using the mean squared error (MSE, Figure 5.4); we present the MSE plot-ted against wallclock time in Figure E.7. For ADVI and BaM, we use a pilot run of T = 100 iterations to find a suit-able learning rate; we then run the algorithms for T = 1000 
+
+iterations. (GSM does not require this tuning step.) BaM performs poorly when the batch size is very small ( B = 10 )relative to the dimension of the latent variable z′, but it becomes competitive as the batch size is increased. When the batch size is comparable to the dimension of zn (i.e. 
+
+B = 300 ), BaM converges an order of magnitude (or more) faster than ADVI and GSM. To refine our comparison, suppose we have a computational budget of 3000 gradient evaluations. Under this budget, ADVI achieves its lowest MSE for B = 10 and T = 300 ,while BaM produces a comparable result for B = 300 and 
+
+T = 10 . Hence, the gradient evaluations for BaM can be largely parallelized. By contrast, most gradients for ADVI must be evaluated sequentially. Notably, Figure E.7 shows that BaM with B = 300 converges faster in wallclock time. Depending on how the parameter ˆθ of the neural network is estimated, it possible to learn an encoder and perform amor-tized variational inference (AVI) on a new observation x′.When such an encoder is available, estimations of p(z′|x′)
+
+can be obtained essentially for free. In our experiment, both BaM and ADVI eventually achieve a lower reconstruction error than AVI. This result is expected because our AVI implementation uses a factorized Gaussian approximation, whereas BaM and ADVI use a full-covariance approxima-tion, and the latter provides better compression of x′ even though the dimension of z′ and the weights of the neural network remain unchanged. 
+
+6. Discussion and future work 
+
+In this paper, we introduce a score-based divergence that is especially well-suited to BBVI with Gaussian variational families. We show that the score-based divergence has a number of desirable properties. We then propose a regular-8Batch and match: black-box variational inference with a score-based divergence 10 0 10 1 10 2 10 3 10 4 10 5           
+
+> # of gradient evaluations
+> 10 1
+> 10 0
+> 10 1
+> Rel. mean error
+> Nearly Gaussian
+> BaM
+> GSM
+> ADVI
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> 10 0
+> 10 1
+> Gaussian Process
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> 10 0
+> Hierarchical
+
+Figure 5.3: Posterior inference in Bayesian models. The curves denote the mean over 5 runs, and shaded regions denote their standard error. Solid curves ( B = 32 ) correspond to larger batch sizes than dashed curves ( B = 8 ). ADVI       
+
+> GSM
+> 1
+> BaM
+> 2510 100 300 500 1000
+
+(a) Image reconstruction across iterations with batch size, B = 300 .0 500 1000     
+
+> Iterations
+> 0.0
+> 0.1
+> 0.2
+> Mean Squared Error  B=10
+> 0500 1000
+> Iterations
+> B=100
+> 0500 1000
+> Iterations
+> B=300
+> GSM
+> ADVI
+> BaM
+> Amortized VI
+
+(b) Reconstruction error for varying batch sizes. 
+
+Figure 5.4: Image reconstruction and error when the posterior mean of z′ is fed into the generative neural network. The beige and purple stars highlight the best outcome for ADVI and BaM, respectively, after 3,000 gradient evaluations. ized optimization based on this divergence, and we show that it admits a closed-form solution, leading to a fast it-erative algorithm for score-based BBVI. We analyze the convergence of score-based BBVI when the target is Gaus-sian, and in the limit of an infinite batch size, we show that the updates converge exponentially quickly to the target mean and covariance. Finally, we demonstrate the effec-tiveness of BaM in a number of empirical studies involving both Gaussian and non-Gaussian targets; here we observe that for sufficiently large batch sizes, our method converges much faster than other BBVI algorithms. There are a number of fruitful directions for future work. First, it remains to analyze the convergence of BaM in the finite-batch case and for a larger class of target distributions. Second, it seems promising to develop score-based BBVI for other (non-Gaussian) variational families, and more gen-erally, to study what divergences lend themselves to stochas-tic proximal point algorithms. Third, the BaM approach can be modified to utilize data subsampling (potentially with control variates (Wang et al., 2024)) for large-scale Bayesian inference problems, where a noisy estimate of the target density’s score is used in place of its exact score. Finally, we note that the score-based divergence, which is computable for unnormalized models, has useful appli-cations beyond VI (Hyv ¨arinen, 2005); e.g., the affine in-variance property makes it attractive as a goodness-of-fit diagnostic for inference methods. Further study remains to characterize the relationship of the score-based divergence to other such diagnostics (Gorham & Mackey, 2015; Liu et al., 2016; Barp et al., 2019; Welandawe et al., 2022). 9Batch and match: black-box variational inference with a score-based divergence 
+
+Acknowledgements 
+
+We thank Bob Carpenter, Ryan Giordano, and Yuling Yao for helpful discussions and anonymous reviewers for their feedback on the paper. This work was supported in part by NSF IIS-2127869, NSF DMS-2311108, NSF/DoD PHY-2229929, ONR N00014-17-1-2131, ONR N00014-15-1-2209, the Simons Foundation, and Open Philanthropy. 
+
+Impact statement 
+
+This paper presents work whose goal is to advance approx-imate probabilistic inference. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+References 
+
+Archer, E., Park, I. M., Buesing, L., Cunningham, J., and Paninski, L. Black box variational inference for state space models. arXiv preprint arXiv:1511.07367 , 2015. Asi, H. and Duchi, J. C. Stochastic (approximate) proximal point methods: convergence, optimality, and adaptivity. 
+
+SIAM Journal on Optimization , 29(3):2257–2290, 2019. ISSN 1052-6234. Barp, A., Briol, F.-X., Duncan, A., Girolami, M., and Mackey, L. Minimum Stein discrepancy estimators. Ad-vances in Neural Information Processing Systems , 32, 2019. Bingham, E., Chen, J. P., Jankowiak, M., Obermeyer, F., Pradhan, N., Karaletsos, T., Singh, R., Szerlip, P., Hors-fall, P., and Goodman, N. D. Pyro: Deep universal proba-bilistic programming. The Journal of Machine Learning Research , 20(1):973–978, 2019. Blei, D. M., Kucukelbir, A., and McAuliffe, J. D. Varia-tional inference: A review for statisticians. Journal of the American Statistical Association , 112(518):859–877, 2017. Bradbury, J., Frostig, R., Hawkins, P., Johnson, M. J., Leary, C., Maclaurin, D., Necula, G., Paszke, A., VanderPlas, J., Wanderman-Milne, S., and Zhang, Q. JAX: composable transformations of Python+NumPy programs, 2018. URL 
+
+http://github.com/google/jax .Burroni, J., Domke, J., and Sheldon, D. Sample aver-age approximation for black-box VI. arXiv preprint arXiv:2304.06803 , 2023. Carpenter, B., Gelman, A., Hoffman, M. D., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M., Guo, J., Li, P., and Riddell, A. Stan: A probabilistic programming language. Journal of Statistical Software , 76(1):1–32, 2017. Chr ´etien, S. and Hero, A. O. Kullback proximal algorithms for maximum-likelihood estimation. IEEE Transactions on Information Theory , 46(5):1800–1810, 2000. Dai, B., He, N., Dai, H., and Song, L. Provable Bayesian inference via particle mirror descent. In Artificial Intelli-gence and Statistics , pp. 985–994. PMLR, 2016. Davis, D. and Drusvyatskiy, D. Stochastic model-based min-imization of weakly convex functions. SIAM J. Optim. ,29(1):207–239, 2019. Dhaka, A. K., Catalina, A., Andersen, M. R., Magnusson, M., Huggins, J., and Vehtari, A. Robust, accurate stochas-tic optimization for variational inference. Advances in Neural Information Processing Systems , 33, 2020. Dhaka, A. K., Catalina, A., Welandawe, M., Andersen, M. R., Huggins, J., and Vehtari, A. Challenges and op-portunities in high dimensional variational inference. Ad-vances in Neural Information Processing Systems , 34, 2021. Diao, M. Z., Balasubramanian, K., Chewi, S., and Salim, A. Forward-backward Gaussian variational inference via JKO in the Bures-Wasserstein space. In International Conference on Machine Learning . PMLR, 2023. Domke, J. Provable gradient variance guarantees for black-box variational inference. Advances in Neural Informa-tion Processing Systems , 32, 2019. Domke, J., Garrigos, G., and Gower, R. Provable con-vergence guarantees for black-box variational inference. 
+
+Advances in Neural Information Processing Systems , 36, 2023. Garrigos, G. and Gower, R. M. Handbook of convergence theorems for (stochastic) gradient methods, 2023. Giordano, R., Ingram, M., and Broderick, T. Black box vari-ational inference with a deterministic objective: Faster, more accurate, and even more black box. Journal of Machine Learning Research , 25(18):1–39, 2024. Gorham, J. and Mackey, L. Measuring sample quality with Stein’s method. Advances in Neural Information Process-ing Systems , 28, 2015. Hyv ¨arinen, A. Estimation of non-normalized statistical models by score matching. Journal of Machine Learning Research , 6(4), 2005. Jones, C. and Pewsey, A. Sinh-arcsinh distributions. 
+
+Biometrika , 96(4):761–780, 2009. Jones, C. and Pewsey, A. The sinh-arcsinh normal distribu-tion. Significance , 16(2):6–7, 2019. 10 Batch and match: black-box variational inference with a score-based divergence 
+
+Jordan, M. I., Ghahramani, Z., Jaakkola, T. S., and Saul, L. K. An introduction to variational methods for graphical models. Machine Learning , 37:183–233, 1999. Khan, M. E., Baqu ´e, P., Fleuret, F., and Fua, P. Kullback-Leibler proximal variational inference. In Advances in Neural Information Processing Systems , 2015. Khan, M. E., Babanezhad, R., Lin, W., Schmidt, M., and Sugiyama, M. Faster stochastic variational inference using proximal-gradient methods with general divergence functions. In Conference on Uncertainty in Artificial Intelligence , 2016. Kim, K., Oh, J., Wu, K., Ma, Y., and Gardner, J. R. On the convergence of black-box variational inference. Advances in Neural Information Processing Systems , 36, 2023. Kingma, D. P. and Welling, M. Auto-encoding variational Bayes. In International Conference on Learning Repre-sentations , 2014. Krizhevsky, A. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Kucukelbir, A., Tran, D., Ranganath, R., Gelman, A., and Blei, D. M. Automatic differentiation variational infer-ence. Journal of Machine Learning Research , 2017. Ku ˇcera, V. On nonnegative definite solutions to matrix quadratic equations. Automatica , 8(4):413–423, 1972a. Ku ˇcera, V. A contribution to matrix quadratic equations. 
+
+IEEE Transactions on Automatic Control , 17(3):344–347, 1972b. Lambert, M., Chewi, S., Bach, F., Bonnabel, S., and Rigol-let, P. Variational inference via Wasserstein gradient flows. 
+
+Advances in Neural Information Processing Systems , 35, 2022. Liu, Q., Lee, J., and Jordan, M. A kernelized Stein discrep-ancy for goodness-of-fit tests. In International Confer-ence on Machine Learning . PMLR, 2016. Locatello, F., Dresdner, G., Khanna, R., Valera, I., and R ¨atsch, G. Boosting black box variational inference. 
+
+Advances in Neural Information Processing Systems , 31, 2018. Magnusson, M., B ¨urkner, P., and Vehtari, A. posteri-ordb: a set of posteriors for Bayesian inference and probabilistic programming. https://github.com/ stan-dev/posteriordb , November 2022. Modi, C., Margossian, C., Yao, Y., Gower, R., Blei, D., and Saul, L. Variational inference with Gaussian score matching. Advances in Neural Information Processing Systems , 36, 2023. Nemirovskii, A. and Yudin, D. B. Problem complexity and method efficiency in optimization . John Wiley and Sons, 1983. Potter, J. E. Matrix quadratic solutions. SIAM Journal of Applied Mathematics , 14(3):496–501, 1966. Qiao, Y. and Minematsu, N. A study on invariance of 
+
+f -divergence and its application to speech recognition. 
+
+IEEE Transactions on Signal Processing , 58(7):3884– 3890, 2010. Ranganath, R., Gerrish, S., and Blei, D. Black box varia-tional inference. In Artificial Intelligence and Statistics ,pp. 814–822. PMLR, 2014. Rezende, D. J., Mohamed, S., and Wierstra, D. Stochastic backpropagation and approximate inference in deep gen-erative models. In International Conference on Machine Learning . PMLR, 2014. Roualdes, E., Ward, B., Axen, S., and Carpenter, B. BridgeStan: Efficient in-memory access to Stan programs through Python, Julia, and R. https://github. com/roualdes/bridgestan , March 2023. Ryder, T., Golightly, A., McGough, A. S., and Prangle, D. Black-box variational inference for stochastic differen-tial equations. In International Conference on Machine Learning . PMLR, 2018. Salvatier, J., Wiecki, T. V., and Fonnesbeck, C. Probabilistic programming in Python using PyMC3. PeerJ Computer Science , 2:e55, 2016. Shurbet, G., Lewis, T., and Boullion, T. Quadratic matrix equations. The Ohio Journal of Science , 74(5), 1974. Song, Y. and Ermon, S. Generative modeling by estimating gradients of the data distribution. Advances in Neural Information Processing Systems , 32, 2019. Theis, L. and Hoffman, M. A trust-region method for stochastic variational inference with applications to streaming data. In International Conference on Machine Learning . PMLR, 2015. Tomczak, J. M. Deep Generative Modeling . Springer, 2022. Tseng, P. An analysis of the EM algorithm and entropy-like proximal point methods. Mathematics of Operations Research , 29(1):27–44, 2004. Wainwright, M. J., Jordan, M. I., et al. Graphical models, exponential families, and variational inference. Founda-tions and Trends® in Machine Learning , 1(1–2):1–305, 2008. 11 Batch and match: black-box variational inference with a score-based divergence 
+
+Wang, X., Geffner, T., and Domke, J. Dual control variate for faster black-box variational inference. In International Conference on Artificial Intelligence and Statistics , 2024. Welandawe, M., Andersen, M. R., Vehtari, A., and Hug-gins, J. H. A framework for improving the reliabil-ity of black-box variational inference. arXiv preprint arXiv:2203.15945 , 2022. Yu, L. and Zhang, C. Semi-implicit variational inference via score matching. In International Conference on Learning Representations , 2023. Yuan, Y., Liu, L., Zhang, H., and Liu, H. The solutions to the quadratic matrix equation X*AX+B*X+D=0. Applied Mathematics and Computation , 410:126463, 2021. Zhang, C., Shahbaba, B., and Zhao, H. Variational Hamilto-nian Monte Carlo via score matching. Bayesian Analysis ,13(2):485, 2018. 12 Batch and match: black-box variational inference with a score-based divergence 
+
+A. Score-based divergence 
+
+In Section 2 we introduced a score-based divergence between two distributions, p and q, over RD , and specifically we considered the case where q was Gaussian. In this section, we define this score-based divergence more generally. In particular, here we assume only that these distributions satisfy the following properties: (i) p(z) > 0 and q(z) > 0 for all z ∈ RD .(ii) ∇p and ∇q exist and are continuous everywhere in RD .(iii) Eq
+
+∥∇ log q∥2 < ∞.There may be weaker properties than these that also yield the following results (or various generalizations thereof), but the above will suffice for our purposes. This appendix is organized as follows. We begin with a lemma that is needed to define a score-based divergence for distributions (not necessarily Gaussian) satisfying the above properties. We then show that this score-based divergence has several appealing properties in its own right: it is nonnegative and invariant under affine reparameterizations, it takes a simple and intuitive form for distributions that are related by annealing or exponential tilting, and it reduces to the KL divergence in certain special cases. 
+
+Lemma A.1. The matrix defined by Γq = Eq
+
+(∇ log q)( ∇ log q)⊤ exists in RD×D and is positive definite. 
+
+Proof. Let u be any unit vector in RD . We shall prove the theorem by showing that 0 < u ⊤Γq u < ∞, or equivalently that all of the eigenvalues of Γq are finite and positive. The boundedness follows easily from property (iii) since 
+
+u⊤Γq u = Eq
+
+(∇ log q · u)2 ≤ Eq
+
+∥∇ log q∥2 < ∞. (30) To show positivity, we appeal to property (ii) that q is differentiable; hence for all t > 0 we can write 
+
+q(tu ) = q(0) + 
+
+Z t
+
+> 0
+
+dτ u ⊤∇q(τ u ) = q(0) + 
+
+Z t
+
+> 0
+
+dτ q (τ u ) ∇ log q(τ u ) · u. (31) To proceed, we take the limit t → ∞ on both sides of this equation, and we appeal to property (i) that q(0) > 0. Moreover, since lim t→∞ q(tu ) = 0 for all normalizable distributions q, we see that 
+
+Z ∞
+
+> 0
+
+dτ q (τ u ) ∇ log q(τ u ) · u < 0. (32) For this inequality to be satisfied, there must exist some t0 ≥ 0 such that ∇ log q(t0u) · u < 0. Let z0 = t0u, and let 
+
+δ = −∇ log q(z0) · u. Since q and ∇q are continuous by properties (iii-iv), there must exist some finite ball B around z0
+
+such that ∇ log q(z) · u < − δ 
+
+> 2
+
+for all z ∈ B . Let qB = min z∈B q(z), and note that qB > 0 since it is the minimum of a positive-valued function on a compact set. It follows that 
+
+u⊤Γq u = Eq
+
+(∇ log q · u)2 > q B · vol (B) ·   δ
+
+> 2
+
+2 > 0, (33) where the inequality is obtained by considering only those contributions to the expected value from within the volume of the ball B around z0. This proves the lemma. The lemma is needed for the following definition of the score-based divergence. Notably, the definition assumes that the matrix Eq
+
+(∇ log q)( ∇ log q)⊤ is invertible. 
+
+Definition A.2 (Score-based divergence ). Let p and q satisfy the properties listed above, and let Γq be defined as in Lemma A.1. Then we define the score-based divergence between q and p as 
+
+D(q; p) = Eq
+
+
+
+∇ log qp
+
+⊤
+
+Γ−1
+
+> q
+
+
+
+∇ log qp
+
+
+
+. (34) 13 Batch and match: black-box variational inference with a score-based divergence 
+
+Let us quickly verify that this definition reduces to the previous one in Section 2 where q is assumed to be Gaussian. In particular, suppose that q = N (ν, Ψ) . In this case 
+
+Γq = Eq [( ∇ log q)( ∇ log q)⊤] = Eq [Ψ −1(z−ν)( z−ν)⊤Ψ−1] = Ψ −1ΨΨ −1 = Ψ −1 = [ Cov (q)] −1. (35) Substituting this result into eq. (34), we recover the more specialized definition of the score-based divergence in Section 2. We now return to the more general definition in eq. (34). Next we show this score-based divergence shares many desirable properties with the Kullback-Leibler divergence; indeed, in certain special cases of interest, these two divergences, D(q; p)
+
+and KL (q; p), are equivalent. These properties are demonstrated in the following theorems. 
+
+Theorem A.3 (Nonnegativity ). D(q; p) ≥ 0 with equality if and only if p(z) = q(z) for all z ∈ RD .
+
+Proof. Nonnegativity follows from the previous lemma, and it is clear that the divergence vanishes if p = q. To prove the converse, we note that for any z ∈ RD , we can write 
+
+log p(z)
+
+q(z) = log p(0) 
+
+q(0) +
+
+Z 10
+
+dt ∇ log 
+
+ p(tz )
+
+q(tz )
+
+
+
+· z. (36) Now suppose that D(q; p) = 0 . Then it must be the case that ∇ log p = ∇ log q everywhere in RD . (If it were the case that 
+
+∇ log p(z0)̸ = ∇ log q(z0) for some z0 ∈ RD , then by continuity, there would also exist some ball around z0 where these gradients were not equal; furthermore, in this case, the value inside the expectation of eq. (34) would be positive everywhere inside this ball, yielding a positive value for the divergence.) Since the gradients of log p and log q are everywhere equal, it follows from eq. (36) that 
+
+log p(z)
+
+q(z) = log p(0) 
+
+q(0) , (37) or equivalently, that p(z) and q(z) have some constant ratio independent of z. But this constant ratio must be equal to one because both distributions yield the same value when they are integrated over RD .
+
+Theorem A.4 (Affine invariance ). Let f : RD → RD be an affine transformation, and consider the induced densities 
+
+˜q(f (z)) = q(z)|J (z)|−1 and ˜p(f (z)) = p(z)|J (z)|−1, where J (z) is the determinant of the Jacobian of f . Then 
+
+D(q; p) = D(˜ q; ˜ p).
+
+Proof. Denote the affine transformation by ˜z = Az + b where A ∈ RD×D and b ∈ RD . Then we have 
+
+∇z
+
+ log p(z) = ∇z
+
+
+
+log 
+
+
+
+˜p(˜ z) d˜zdz 
+
+ 
+
+= ∇z [log (˜ p(˜ z) |A|)] = 
+
+ d˜zdz 
+
+⊤
+
+∇˜z [log ˜ p(˜ z)] = A⊤∇˜z
+
+ log ˜ p(˜ z), (38) and a similar relation holds for ∇x log q(z). It follows that 
+
+D(q; p) = Eq
+
+h
+
+(∇ log p−∇ log q)⊤  Eq
+
+(∇ log q)( ∇ log q)⊤ −1 (∇ log p−∇ log q)
+
+i
+
+(39) 
+
+= E˜q
+
+h
+
+(∇ log ˜ p−∇ log ˜ q)⊤
+
+A A⊤E˜q
+
+(∇ log ˜ q)( ∇ log ˜ q)⊤A−1A⊤(∇ log ˜ p−∇ log ˜ q)
+
+i
+
+(40) 
+
+= E˜q
+
+h
+
+(∇ log ˜ p−∇ log ˜ q)⊤ E˜q
+
+(∇ log ˜ q)( ∇ log ˜ q)⊤ −1 (∇ log ˜ p−∇ log ˜ q)
+
+i
+
+(41) 
+
+= D ˜q, ˜p. (42) Note the important role played by the matrix Γq = Eq
+
+(∇ log q)( ∇ log q)⊤ in this calculation. In particular, the unscaled quantity Eq [∥∇ log p−∇ log q∥2] is not invariant under affine reparameterizations of RD .
+
+Theorem A.5 (Annealing ). If p is an annealing of q, with p ∝ qβ , then D(q; p) = D(β −1) 2.14 Batch and match: black-box variational inference with a score-based divergence 
+
+Proof. In this case ∇ log p = β∇ log q. Thus, with Γq defined as in Lemma A.1, we have 
+
+D(q; p) = ( β −1) 2 Eq
+
+h
+
+(∇ log q)⊤ Γ−1 
+
+> q
+
+(∇ log q)
+
+i
+
+= ( β −1) 2 tr  Γ−1 
+
+> q
+
+Γq
+
+ = D(β −1) 2. (43) Here we see that D(q; p) measures the difference in inverse temperature from the annealing. Note that in the limit β → 0 of a uniform distribution, eq. (43) yields a divergence of D that is independent of the base distribution q.
+
+Theorem A.6 (Exponential tilting ). If p is an exponential tilting of q, with p(z) ∝ q(z) eθ⊤z , then D(q; p) = θ⊤Γ−1 
+
+> q
+
+θ
+
+where Γq is defined as in Lemma A.1. 
+
+Proof. In this case ∇ log p−∇ log q = θ, and the result follows at once from substitution into eq. (34). 
+
+Proposition A.7 (Gaussian score-based divergences ). Suppose that p is multivariate Gaussian with mean μ and covariance Σ and that q is multivariate Gaussian with mean ν and covariance Ψ, respectively. Then 
+
+D(q; p) = tr 
+
+h I − ΨΣ −12i
+
++ ( ν −μ)⊤Σ−1ΨΣ −1(ν −μ). (44) 
+
+Proof. We use the previous result in eq. (35) that Γq = Ψ −1 when q is Gaussian with covariance Ψ. Then from eq. (34) the score-based divergence is given by 
+
+D(q; p) = Eq
+
+h
+
+(∇ log p−∇ log q)⊤ Γ−1 
+
+> q
+
+(∇ log p−∇ log q)
+
+i
+
+, (45) 
+
+= Eq
+
+h Σ−1(z−μ) − Ψ−1(z−ν)⊤ Ψ  Σ−1(z−μ) − Ψ−1(z−ν)i
+
+, (46) 
+
+= Eq
+
+h   Σ−1 −Ψ−1 (z−ν) − Σ−1(μ−ν)⊤ Ψ    Σ−1 −Ψ−1 (z−ν) − Σ−1(μ−ν)i
+
+, (47) 
+
+= tr Ψ(Σ −1 −Ψ−1)Ψ(Σ −1 −Ψ−1) + ( ν −μ)⊤Σ−1ΨΣ −1(ν −μ), (48) 
+
+= tr 
+
+h I − ΨΣ −12i
+
++ ( ν −μ)⊤Σ−1ΨΣ −1(ν −μ). (49) 
+
+Corollary A.8 (Relation to KL divergence ). Let p and q be multivariate Gaussian distributions with different means but the same covariance matrix. Then 12 D(q; p) = KL( q; p) = KL( p; q).
+
+Proof. Let μ and ν denote, respectively, the means of p and q, and let Σ denote their shared covariance. From the previous result, we find 
+
+D(q; p) = ( ν −μ)⊤Σ−1(ν −μ). (50) Finally, we recall the standard derivation for these distributions that 
+
+KL( q; p) = Eq
+
+h
+
+log qp
+
+i
+
+(51) 
+
+= 12 Eq
+
+(z−ν)⊤Σ−1(z−ν) − (z−μ)⊤Σ−1(z−μ) (52) 
+
+= 12 Eq
+
+(( z−μ) − (ν −μ)) ⊤Σ−1(( z−μ) − (ν −μ)) − (z−μ)⊤Σ−1(z−μ) (53) 
+
+= 12 (ν −μ)⊤Σ−1(ν −μ), (54) thus matching the result for 12 D(q; p). Moreover, we obtain the same result for KL( p; q) by noting that the above expression is symmetric with respect to the means μ and ν.In sum, the score-based divergence D(q; p) in eq. (34) has several attractive properties as a measure of difference between most smooth distributions p and q with support on all of RD . First, it is nonnegative and equal to zero if and only if p = q.Second, it is invariant to affine reparameterizations of the underlying domain. Third, it behaves intuitively for simple transformations such as exponential tilting and annealing. Fourth, it is normalized such that every base distribution q has the same divergence to (the limiting case of) a uniform distribution. Finally, it reduces to a constant factor of the KL divergence for the special case of two multivariate Gaussians with the same covariance matrix but different means. 15 Batch and match: black-box variational inference with a score-based divergence 
+
+B. Quadratic matrix equations 
+
+In this appendix we show how to solve the quadratic matrix equation XU X + X = V where U and V are positive semidefinite matrices in RD×D . We also verify certain properties of these solutions that are needed elsewhere in the paper but that are not immediately obvious. Quadratic matrix equations of this type (and of many generalizations thereof) have been studied for decades (Potter, 1966; Ku ˇcera, 1972a;b; Shurbet et al., 1974; Yuan et al., 2021), and our main goal here is to collect the results that we need in their simplest forms. These results are contained in the following four lemmas. 
+
+Lemma B.1. Let U ⪰ 0 and V ≻ 0, and suppose that XU X +X = V . Then a solution to this equation is given by 
+
+X = 2 V
+
+h
+
+I + ( I + 4 U V ) 12
+
+i−1
+
+. (55) 
+
+Proof. We start by turning the left side of the equation XU X +X = V into a form that can be easily factored. Multiplying both sides by U , we see that 
+
+U XU X + U X = U V. (56) The next step is to complete the square by adding 14 I to both sides; in this way, we find that 
+
+ U X + 12 I2 = U V + 14 I. (57) Next we claim that the matrix U V + 14 I on the right side of eq. (57) has all positive eigenvalues. To verify this claim, we note that 
+
+U V + 14 I = V − 12
+
+
+
+V 12 U V 12 + 14 I
+
+
+
+V 12 . (58) Thus we see that this matrix is similar to (and thus shares all the same eigenvalues as) the positive definite matrix 
+
+U 12 V U 12 + 14 I in parentheses on the right side of eq. (58). Since the matrix has all positive eigenvalues, it has a unique principal square root, and from eq. (57) it follows that 
+
+U X = ( U V + 14 I) 12 − 12 I. (59) If the matrix U were of full rank, then we could solve for X by left-multiplying both sides of eq. (59) by its inverse; however, we desire a general solution even in the case that U is not full rank. Thus we proceed in a different way. In particular, we substitute the solution for U X in eq. (59) into the original form of the quadratic matrix equation. In this way we find that 
+
+V = XU X + X, (60) 
+
+= X(U X + I), (61) 
+
+= X
+
+h  U V + 14 I 12 − 12 I
+
+
+
++ I
+
+i
+
+, (62) 
+
+= X
+
+h
+
+(U V + 14 I) 12 + 12 I
+
+i
+
+, (63) 
+
+= 12 X
+
+h
+
+(4 U V + I) 12 + I
+
+i
+
+. (64) Finally we note that the matrix in brackets on the right side of eq. (64) has all positive eigenvalues; hence it is invertible, and after right-multiplying eq. (64) by its inverse we obtain the desired solution in eq. (55). 
+
+Lemma B.2. The solution to XU X +X = V in eq. (55) is symmetric and positive definite. 
+
+Proof. The key idea of the proof is to simultaneously diagonalize the matrices U and V −1 by congruence . In particular, let Λ and E be, respectively, the diagonal and orthogonal matrices satisfying 
+
+V 12 U V 12 = EΛE⊤, (65) 16 Batch and match: black-box variational inference with a score-based divergence 
+
+where Λ ⪰ 0. Now define C = V 12 E. It follows that C⊤V −1C = I and C⊤U C = Λ , showing that C simultaneously diagonalizes V −1 and U by congruence. Alternatively, we may use these relations to express U and V in terms of C and 
+
+Λ as 
+
+V = CC ⊤, (66) 
+
+U = C−⊤ ΛC−1. (67) We now substitute these expressions for U and V into the solution from eq. (55). The following calculation then gives the desired result: 
+
+X = 2 V
+
+h
+
+I + ( I + 4 U V )− 12
+
+i−1
+
+, (68) 
+
+= 2 CC ⊤ h
+
+I +  I + 4 C−⊤ ΛC⊤ 12
+
+i−1
+
+, (69) 
+
+= 2 CC ⊤ h
+
+I +  C−⊤ (I + 4Λ) C⊤ 12
+
+i−1
+
+, (70) 
+
+= 2 CC ⊤ h
+
+I + C−⊤ (I + 4Λ) 12 C⊤i−1
+
+, (71) 
+
+= 2 CC ⊤ h
+
+C−⊤ 
+
+I + ( I + 4Λ) 12
+
+
+
+C⊤i−1
+
+, (72) 
+
+= 2 CC ⊤C−⊤ h
+
+I + ( I + 4Λ) 12
+
+i−1
+
+C⊤, (73) 
+
+= 2 C
+
+h
+
+I + ( I + 4Λ) 12
+
+i−1
+
+C⊤. (74) Recalling that Λ ⪰ 0, we see that the above expression for X is manifestly symmetric and positive definite. Next we consider the cost of computing the solution to XU X +X = V in eq. (55). On the right side of eq. (55) there appear both a matrix square root and a matrix inverse. As written, it therefore costs O(D3) to compute this solution when U and V
+
+are D×D matrices. However, if U is of very low rank, there is a way to compute this solution much more efficiently. This possibility is demonstrated by the following lemma. 
+
+Lemma B.3 (Low rank solver ). Let U = QQ ⊤ where Q ∈ RD×K . Then the solution in eq. (55), or equivalently in eq. (74), can also be computed as 
+
+X = V − V ⊤Q
+
+h 12 I +  Q⊤V Q + 14 I 12
+
+i−2
+
+Q⊤V. (75) Before proving the lemma, we analyze the computational cost to evaluate eq. (75). Note that it costs O(KD 2) to compute the decomposition U = QQ ⊤ as well as to form the product Q⊤V , while it costs O(K3) to invert and take square roots of K ×K matrices. Thus the total cost of eq. (75) is O(KD 2 +K3), in comparison to the O(D3) cost of eq. (55). This computational cost results in a potentially large savings if K ≪ D. We now prove the lemma. 
+
+Proof. We will show that eq. (75) is equivalent to eq. (74) in the previous lemma. Again we appeal to the existence of an invertible matrix C that simultaneously diagonalizes V −1 and U as in eqs. (66–67). If U = QQ ⊤, then it follows from eq. (67) that 
+
+Q = C−⊤ Λ 12 R (76) for some orthogonal matrix R. Next we substitute V = CC ⊤ from eq. (66) and Q = C−⊤ Λ 12 R from eq. (76) in place of 17 Batch and match: black-box variational inference with a score-based divergence 
+
+each appearance of V and Q in eq. (75). In this way we find that 
+
+X = V − V ⊤Q
+
+h 12 I +  Q⊤V Q + 14 I 12
+
+i−2
+
+Q⊤V, (77) 
+
+= CC ⊤ − CΛ 12 R
+
+ 
+
+> 12
+
+I +
+
+
+
+(R⊤Λ 12 C−1)( CC ⊤)( C−⊤ Λ 12 R) + 14 I
+
+ 12
+
+−2
+
+R⊤Λ 12 C⊤, (78) 
+
+= C
+
+
+
+I − Λ 12 R
+
+h 12 I +  R⊤ΛR + 14 I 12
+
+i−2
+
+R⊤Λ 12
+
+
+
+C⊤, (79) 
+
+= C
+
+
+
+I − Λ 12 R
+
+h 12 I + R⊤  Λ + 14 I 12 R
+
+i−2
+
+R⊤Λ 12
+
+
+
+C⊤, (80) 
+
+= C
+
+
+
+I − Λ 12 R
+
+h
+
+R⊤  12 I +  Λ + 14 I 12
+
+
+
+R
+
+i−2
+
+R⊤Λ 12
+
+
+
+C⊤, (81) 
+
+= C
+
+"
+
+I − Λ 12 R
+
+
+
+R⊤  12 I +  Λ + 14 I 12
+
+2
+
+R
+
+−1
+
+R⊤Λ 12
+
+#
+
+C⊤, (82) 
+
+= C
+
+
+
+I − Λ 12 R
+
+
+
+R⊤  12 I +  Λ + 14 I 12
+
+−2
+
+R
+
+
+
+R⊤Λ 12
+
+
+
+C⊤, (83) 
+
+= C
+
+
+
+I − Λ 12
+
+ 12 I +  Λ + 14 I 12
+
+−2
+
+Λ 12
+
+
+
+C⊤. (84) We now compare the matrices sandwiched between C and C⊤ in eqs. (74) and (84). Both of these sandwiched matrices are diagonal, so it is enough to compare their corresponding diagonal elements. Let ν denote one element along the diagonal of Λ. Then starting from eq. (84), we see that 
+
+1 − ν
+
+ 12 +
+
+q
+
+ν + 14
+
+2 = 1 − 4ν
+
+(1 + √4ν + 1) 2 = (1 + √4ν + 1) 2 − 4ν
+
+(1 + √4ν + 1) 2 = 21 + √4ν + 1 . (85) Comparing the left and right terms in eq. (85), we see that the corresponding elements of diagonal matrices in eqs. (74) and (84) are equal, and we conclude that eqs. (55) and (75) yield the same solution. The last lemma in this appendix is one that we will need for the proof of convergence of Algorithm 1 in the limit of infinite batch size. In particular, it is needed to prove the sandwiching inequality in eq. (26). 
+
+Lemma B.4 (Monotonicity ). Let X, Y , and V be positive-definite matrices satisfying XT X + X = Y U Y + Y = V ,where T ⪰ U ⪰ 0. Then X ⪯ Y .
+
+Proof. The result follows from examining the solutions for X and Y directly. As shorthand, let S = V 12 . By Lemma B.1, we have the solutions 
+
+X = 2 S
+
+h
+
+I + ( S + 4 ST S ) 12
+
+i−1
+
+S, (86) 
+
+Y = 2 S
+
+h
+
+I + ( S + 4 SU S ) 12
+
+i−1
+
+S. (87) If T ⪰ U , then the positive semi-definite ordering is preserved by the following chain of implications: 
+
+ST S ⪰ SU S, (88) 
+
+S + 4 ST S ⪰ S + 4 SU S, (89) 
+
+(S + 4 ST S ) 12 ⪰ (S + 4 SU S ) 12 , (90) 
+
+I + ( S + 4 ST S ) 12 ⪰ I + ( S + 4 SU S ) 12 , (91) 18 Batch and match: black-box variational inference with a score-based divergence 
+
+where in eq. (90) we have used the fact that positive semi-definite orderings are preserved by matrix square roots. Finally, these orderings are reversed by inverse operations, so that 
+
+h
+
+I + ( S + 4 ST S ) 12
+
+i−1
+
+⪯
+
+h
+
+I + ( S + 4 SU S ) 12
+
+i−1
+
+. (92) It follows from eq. (92) and the solutions in eqs. (86–87) that X ⪯ Y , thus proving the lemma. 
+
+C. Derivation of batch and match updates 
+
+In this appendix we derive the updates in Algorithm 1 for score-based variational inference. The algorithm alternates between two steps—a BATCH step that draws samples from an approximating Gaussian distribution and computes various statistics of these samples, and a MATCH step that uses these statistics to derive an updated Gaussian approximation, one that better matches the scores of the target distribution. We explain each of these steps in turn, and then we review the special case in which they reduce to the previously published updates (Modi et al., 2023) for Gaussian Score Matching (GSM). 
+
+C.1. Batch step 
+
+At each iteration, Algorithm 1 solves an optimization based on samples drawn from its current Gaussian approximation to the target distribution. Let qt denote this approximation at the tth iteration, with mean μt and covariance Σt, and let 
+
+z1, z 2, . . . , z B denote the B samples that are drawn from this distribution. The algorithm uses these samples to compute a (biased) empirical estimate of the score-based divergence between the target distribution, p, and another Gaussian approximation q with mean μ and covariance Σ. We denote this empirical estimate by 
+
+bDqt (q; p) = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+∇ log q(zb) − ∇ log p(zb) 2Σ
+
+. (93) To optimize the Gaussian approximation q that appears in this divergence, it is first necessary to evaluate the sum in eq. (93) over the batch of samples z1, z 2, . . . , z B that have been drawn from qt.The BATCH step of Algorithm 1 computes the statistics of these samples that enter into this calculation. Since q is Gaussian, its score at the bth sample is given by ∇ log q(zb) = −Σ−1(zb − μ). As shorthand, let gb = ∇ log p(zb) denote the score of the target distribution at the bth sample. In terms of these scores, the sum in eq. (93) is given by 
+
+bDqt (q; p) = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+− Σ−1(zb − μ) − gb
+
+> 2Σ
+
+. (94) Next we show that bDqt (q, p ) depends in a simple way on certain first-order and second-order statistics of the samples, and it is precisely these statistics that are computed in the BATCH step. In particular, we compute the following: 
+
+z = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+zb, g = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+gb, C = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(zb − z)( zb − z)⊤, Γ = 1
+
+B
+
+> N
+
+X
+
+> n=1
+
+(gb − g)( gb − g)⊤. (95) Note that the first two of these statistics compute the means of the samples and scores in the current iteration of the algorithm, while the remaining two compute their covariance matrices . With these definitions, we can now express bDqt (q, p ) in an especially revealing form. Proceeding from eq. (94), we have 
+
+bDqt (q; p) = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(g − gb) + Σ −1(z − zb) + Σ −1(μ − z − Σg) 2Σ
+
+, (96) 
+
+= 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+h
+
+gb − g 2Σ + zb − z 2Σ−1 + μ − z − Σg 2Σ−1 + 2( gb − g)( zb − z)
+
+i
+
+, (97) 
+
+= tr (ΓΣ) + tr (CΣ−1) + μ − z − Σg 2Σ−1 + constant , (98) 19 Batch and match: black-box variational inference with a score-based divergence 
+
+where in the second line we have exploited that many cross-terms vanish, and in the third line we have appealed to the definitions of C and Γ in eqs. (95). We have also indicated explicitly that the last term in eq. (98) has no dependence on μ and Σ; it is a constant with respect to the approximating distribution q that the algorithm seeks to optimize. This optimization is performed by the MATCH step, to which we turn our attention next. 
+
+C.2. Match step 
+
+The MATCH step of the algorithm updates the Gaussian approximation of VI to better match the recently sampled scores of the target distribution. The update at the tth iteration is computed as 
+
+qt+1 = argmin 
+
+> q∈Q
+
+h
+
+L BaM (q)
+
+i
+
+, (99) where Q is the Gaussian variational family of Section 2 and L BaM (q) is an objective function that balances the empirical estimate of the score based divergence in in eq. (98) against a regularizer that controls how far qt+1 can move away from qt.Specifically, the objective function takes the form 
+
+L BaM (q) = bDqt (q; p) + 2 
+
+> λt
+
+KL (qt; q), (100) where the regularizing term is proportional to the KL divergence between the Gaussian distributions qt and q. This KL divergence is in turn given by the standard result KL (qt; q) = 12
+
+
+
+tr (Σ −1Σt) − log |Σt||Σ| + ∥μ − μt∥2Σ−1 − D
+
+
+
+. (101) From eqs. (98) and (101), we see that this objective function has a complicated coupled dependence on μ and Σ; nevertheless, the optimal values of μ and Σ can be computed in closed form. The rest of this section is devoted to performing this optimization. First we perform the optimization with respect to the mean μ, which appears quadratically in the objective L BaM through the third terms in (98) and (101). Thus we find 
+
+∂L BaM 
+
+∂μ = ∂∂μ 
+
+
+
+μ − z − Σg 2Σ−1 + 1
+
+λt
+
+∥μ − μt∥2Σ−1
+
+
+
+= 2Σ −1h
+
+μ − z − Σg + 1 
+
+> λt
+
+(μ − μt)
+
+i
+
+. (102) Setting this gradient to zero, we obtain a linear system which can be solved for the updated mean μt+1 in terms of the updated covariance Σt+1 . Specifically we find 
+
+μt+1 = λt
+
+1+ λt
+
+(z + Σ t+1 g) + 11+ λt
+
+μt, (103) matching eq. (13) in Section 3 of the paper. As a sanity check, we observe that in the limit of infinite regularization ( λt → 0), the updated mean is equal to the previous mean (with μt+1 = μt), while in the limit of zero regularization (λt → ∞ ), the updated mean is equal to precisely the value that zeros its contribution to bDqt (q, p ) in eq. (98). Next we perform this optimization with respect to the covariance Σ. To simplify our work, we first eliminate the mean μ
+
+from the optimization via eq. (103). When the mean is eliminated in this way from eqs. (98) and (101), we find that 
+
+bDqt (q; p) = tr (ΓΣ) + tr (CΣ−1) + 1(1 + λt)2 μt −z−Σg 2Σ−1 + constant , (104) KL (qt; q) = 12
+
+
+
+tr (Σ −1Σt) − log |Σt||Σ| + λ2
+
+> t
+
+(1 + λt)2 μt −z−Σg 2Σ−1 − D
+
+
+
+. (105) Combining these terms via eq. (100), and dropping additive constants, we obtain an objective function of the covariance matrix Σ alone. We denote this objective function by M (Σ) , and it is given by 
+
+M (Σ) = tr (ΓΣ) + tr 
+
+ 
+
+C + 1
+
+λt
+
+Σt
+
+
+
+Σ−1
+
+
+
++ 11 + λt
+
+
+
+μt −z 2Σ−1 + g 2Σ
+
+
+
++ 1
+
+λt
+
+log |Σ|. (106) 20 Batch and match: black-box variational inference with a score-based divergence 
+
+All the terms in this objective function can be differentiated with respect to Σ. To minimize M (Σ) , we set its total derivative to zero. Doing this, we find that 
+
+0 = Γ + 11+ λt
+
+g g ⊤ − Σ−1
+
+
+
+C + 1
+
+λt
+
+Σt + 11+ λt
+
+(μt −z)( μt −z)⊤
+
+
+
+Σ−1 + 1
+
+λt
+
+Σ−1. (107) The above is a quadratic matrix equation for the inverse covariance matrix Σ−1; multiplying on the left and right by Σ, we can rewrite it as a quadratic matrix equation for Σ. In this way we find that 
+
+ΣU Σ + Σ = V where 
+
+
+
+U = λtΓ + λt
+
+1+ λt
+
+g g ⊤,V = Σ t + λtC + λt
+
+1+ λt
+
+(μt −z)( μt −z)⊤,
+
+(108) matching eq. (9) in Section 3 of the paper. The solution to this quadratic matrix equation is given by Lemma B.1, yielding the update rule 
+
+Σt+1 = 2 V
+
+h
+
+I + ( I + 4 U V ) 12
+
+i−1
+
+(109) and matching eq. (12) in Section 3 of the paper. Moreover, this solution is guaranteed to be symmetric and positive definite by Lemma B.2. 
+
+C.3. Gaussian score matching as a special case 
+
+In this section, we show that the updates for BaM include the updates for GSM (Modi et al., 2023) as a limiting case. In BaM, this limiting case occurs when there is no regularization ( λ → ∞ ) and when the batch size is equal to one ( B = 1 ). In this case, we show that the updates in eqs. (103) and (108) coincide with those of GSM. To see this equivalence, we set B = 1 , and we use zt and gt to denote, respectively, the single sample from qt and its score under p at the tth iteration of BaM. The equivalence arises from a simple intuition: as λ → ∞ , all the weight in the loss shifts to minimizing the divergence bDqt (q; p), which is then minimized exactly so that bDqt (q; p) = 0 . More formally, in this limit the batch step can be written as 
+
+lim  
+
+> λ→∞
+
+min 
+
+> q∈Q
+
+bDqt (q; p) + 2
+
+λt
+
+KL (qt; q)
+
+
+
+= min 
+
+> q∈Q
+
+KL (qt; q) such that bDqt (q; p) = 0 . (110) The divergence term bDqt (q; p) only vanishes when the scores match exactly; thus the above can be re-written as 
+
+min 
+
+> q∈Q
+
+KL (qt; q) such that ∇ log q(zt) = ∇ log p(zt), (111) which is exactly the variational formulation of the GSM method (Modi et al., 2023) We can also make this equivalence more precise by studying the resulting update. Indeed, the batch statistics in eq. (95) simplify in this setting: namely, we have z = zt and g = gt (because there is only one sample) and C = Γ = 0 (because the batch has no variance). Next we take the limit λt → ∞ in eq. (108). In this limit we find that 
+
+U = gtg⊤ 
+
+> t
+
+, (112) 
+
+V = Σ t + ( μt −zt)( μt −zt)⊤, (113) so that the covariance is updated by solving the quadratic matrix equation 
+
+Σt+1 gtg⊤ 
+
+> t
+
+Σt+1 + Σ t+1 = Σ t + ( μt −zt)( μt −zt)⊤. (114) Similarly, taking the limit λt → ∞ in eq. (103), we see that the mean is updated as 
+
+μt+1 = Σ t+1 gt + zt. (115) These BaM updates coincide exactly with the updates for GSM: specifically, eqs. (114) and (115) here are identical to eqs. (42) and (23) in Modi et al. (2023). 21 Batch and match: black-box variational inference with a score-based divergence 
+
+D. Proof of convergence 
+
+In this appendix we provide full details for the proof of convergence in Theorem 3.1. We repeat equations freely from earlier parts of the paper when it helps to make the appendix more self-contained. Recall that the target distribution in this setting is assumed to be Gaussian with mean μ∗ and covariance Σ∗; in addition, we measure the normalized errors at the tth iteration by 
+
+εt = Σ − 12 
+
+> ∗
+
+(μt − μ∗), (116) 
+
+∆t = Σ − 12 ΣtΣ− 12 − I. (117) If the mean and covariance iterates of Algorithm 1 converge to those of the target distribution, then equivalently the norms of these errors must converge to zero. Many of our intermediate results are expressed in terms of the matrices 
+
+Jt = Σ − 12 
+
+> ∗
+
+ΣtΣ− 12 
+
+> ∗
+
+, (118) which from eq. (117) we can also write as Jt = I + ∆ t. For convenience we restate the theorem in section D.1; our main result is that in the limit of an infinite batch size, the norms of the errors in eqs. (116–117) decay exponentially to zero with rates that we can bound from below. The rest of the appendix is organized according to the major steps of the proof as sketched in section 3.2. In section D.2, we examine the statistics that are computed by Algorithm 1 when the target distribution is Gaussian and the number of batch samples goes to infinity. In section D.3, we derive the recursions that are satisfied for the normalized mean εt and covariance Jt in this limit. In section D.4, we derive a sandwiching inequality for positive-definite matrices that arise in the analysis of these recursions. In section D.5, we use the sandwiching inequality to derive upper and lower bounds on the eigenvalues of Jt. In section D.6, we use these eigenvalue bounds to derive how the normalized errors εt and ∆t decay from one iteration to the next. In section D.7, we use induction on these results to derive the final bounds on the errors in eqs. (121–122), thus proving the theorem. In the more technical sections of the appendix, we sometimes require intermediate results that digress from the main flow of the argument; to avoid too many digressions, we collect the proofs for all of these intermediate results in section D.8. 
+
+D.1. Main result 
+
+Recall that our main result is that as B → ∞ , the spectral norms of the normalized mean and covariance errors in decay exponentially to zero with rates that we can bound from below. 
+
+Theorem D.1 (Restatement of Theorem 3.1 ). Suppose that p = N (μ∗, Σ∗) in Algorithm 1, and let α > 0 denote the minimum eigenvalue of the matrix Σ− 12 
+
+> ∗
+
+Σ0Σ− 12 
+
+> ∗
+
+. For any fixed level of regularization λ > 0, define 
+
+β := min 
+
+
+
+α, 1+ λ
+
+1+ λ+∥ε0∥2
+
+
+
+, (119) 
+
+δ := λβ 
+
+1+ λ , (120) where β ∈ (0 , 1] measures the quality of initialization and δ ∈ (0 , 1) denotes a rate of decay. Then with probability 1 in the limit of infinite batch size ( B → ∞ ), and for all t ≥ 0, the normalized errors in eqs. (116–117) satisfy 
+
+∥εt∥ ≤ (1 −δ)t∥ε0∥, (121) 
+
+∥∆t∥ ≤ (1 −δ)t∥∆0∥ + t(1 −δ)t−1∥ε0∥2. (122) We emphasize that the theorem holds under very general conditions: it is true no matter how the variational parameters are initialized (assuming only that they are finite and that the initial covariance estimate is not singular), and it is true for any fixed degree of regularization λ > 0. Notably, the value of λ is not required to be inversely proportional to the largest (but a priori unknown) eigenvalue of some Hessian matrix, an assumption that is typically needed to prove the convergence of most 22 Batch and match: black-box variational inference with a score-based divergence 
+
+gradient-based methods. This stability with respect to hyperparameters is a well-known property of proximal algorithms, one that has been previously observed beyond the setting of variational inference in this paper. Finally we note that the bounds in eqs. (121–122) can be tightened with more elaborate bookkeeping and also extended to updates that use varying levels of regularization {λt}∞ 
+
+> t=0
+
+at different iterations of the algorithm. At various points in what follows, we indicate how to strengthen the results of the theorem along these lines. Throughout this section, we use the matrix norm ∥·∥ to denote the spectral norm, and we use the notation νmin (J) and νmax (J) to denote the minimum and maximum eigenvalues of a matrix J.
+
+D.2. Infinite batch limit 
+
+The first step of the proof is analyze how the statistics computed at each iteration of Algorithm 1 simplify in the infinite batch limit ( B → ∞ ). Let qt denote the Gaussian variational approximation at the tth iteration of the algorithm, let 
+
+zb ∼ N (μt, Σt) denote the bth sample from this distribution, and let gb = ∇ log p(zb) denote the corresponding score of the target distribution p at this sample. Recall that step 5 of Algorithm 1 computes the following batch statistics: 
+
+zB = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+zb, CB = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(zb − zB )( zb − zB )⊤, (123) 
+
+gB = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+gb, ΓB = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(gb − gB )( gb − gB )⊤, (124) Here we use the subscript on these averages to explicitly indicate the batch size. (Also, to avoid an excess of indices, we do not explicitly indicate the iteration t of the algorithm.) These statistics simplify considerably when the target distribution is multivariate Gaussian and the number of batch samples goes to infinity. In particular, we obtain the following result. 
+
+Lemma D.2 (Infinite batch limit ). Suppose p = N (μ∗, Σ∗). Then with probability 1, as the number of batch samples goes to infinity (B → ∞ ), the statistics in eqs. (123–124) tend to 
+
+lim  
+
+> B→∞
+
+zB = μt, (125) 
+
+lim  
+
+> B→∞
+
+CB = Σ t, (126) 
+
+lim  
+
+> B→∞
+
+gB = Σ −1 
+
+> ∗
+
+(μ∗ − μt), (127) 
+
+lim  
+
+> B→∞
+
+ΓB = Σ −1 
+
+> ∗
+
+ΣtΣ−1 
+
+> ∗
+
+. (128) 
+
+Proof. The first two of these limits follow directly from the strong law of large numbers. In particular, for the sample mean in eq. (123), we have with probability 1 that 
+
+lim  
+
+> B→∞
+
+zB = lim 
+
+> B→∞
+
+"
+
+1
+
+B
+
+> B
+
+X
+
+> b=1
+
+zb
+
+#
+
+=
+
+Z
+
+z q t(dz ) = μt, (129) thus yielding eq. (125). Likewise for the sample covariance in eq. (123), we have with probability 1 that 
+
+lim  
+
+> B→∞
+
+CB = lim 
+
+> B→∞
+
+"
+
+1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(zb −zB )( zb −zB )⊤
+
+#
+
+=
+
+Z
+
+(z−μt)( z−μt)⊤qt(dz ) = Σ t, (130) thus yielding eq. (126). Next we consider the infinite batch limits for gB and ΓB , in eq. (124), involving the scores of the target distribution. Note that if this target distribution is multivariate Gaussian, with p = N (μ∗, Σ∗), then we have 
+
+gb = ∇ log p(zb) = Σ −1 
+
+> ∗
+
+(μ∗ −zb), (131) 23 Batch and match: black-box variational inference with a score-based divergence 
+
+showing that the score gb is a linear function of zb. Thus the infinite batch limits gB and ΓB follow directly from those for zB and CB . In particular, combining eq. (131) with the calculation in eq. (129), we see that 
+
+lim  
+
+> B→∞
+
+gB = lim 
+
+> B→∞
+
+"
+
+1
+
+B
+
+> B
+
+X
+
+> b=1
+
+gb
+
+#
+
+= lim 
+
+> B→∞
+
+h
+
+Σ−1 
+
+> ∗
+
+(μ∗ − zB )
+
+i
+
+= Σ −1 
+
+> ∗
+
+(μ∗ − μt) (132) for the mean of the scores in this limit, thus yielding eq. (127). Likewise, by the same reasoning, we see that 
+
+lim  
+
+> B→∞
+
+ΓB = lim 
+
+> B→∞
+
+"
+
+1
+
+B
+
+> B
+
+X
+
+> b=1
+
+(gb − gB )( gb − gB )⊤
+
+#
+
+= lim  
+
+> B→∞
+
+Σ−1 
+
+> ∗
+
+CB Σ−1 
+
+> ∗
+
+= Σ −1 
+
+> ∗
+
+ΣtΣ−1 
+
+> ∗
+
+(133) for the covariance of the scores in this limit, thus yielding eq. (128). This proves the lemma. 
+
+D.3. Recursions for εt and Jt
+
+Next we use Lemma D.2 to derive recursions for the normalized error εt in eq. (116) and the normalized covariance Jt in eq. (118). Both follow directly from our previous results. 
+
+Proposition D.3 (Recursion for εt). Suppose p = N (μ∗, Σ∗), and let B → ∞ in Algorithm 1. Then with probability 1, the normalized error at the (t+1) th iteration of satisfies 
+
+εt+1 =
+
+
+
+I − λt
+
+1 + λt
+
+Jt+1 
+
+
+
+εt. (134) 
+
+Proof. Consider the update for the variational mean in step 7 of Algorithm 1. We begin by computing the infinite batch limit of this update. Using the limits for zB and gB from Lemma D.2, we see that 
+
+μt+1 = lim 
+
+> B→∞
+
+ 11+ λt
+
+
+
+μt +
+
+ λt
+
+1+ λt
+
+  Σt+1 gB + zB
+
+
+
+, (135) 
+
+=
+
+ 11+ λt
+
+
+
+μt +
+
+ λt
+
+1+ λt
+
+ 
+
+Σt+1 Σ−1 
+
+> ∗
+
+(μ∗ −μt) + μt
+
+
+
+, (136) 
+
+= μt + λt
+
+1+ λt
+
+Σt+1 Σ−1 
+
+> ∗
+
+(μ∗ −μt). (137) The proposition then follows by substituting eq. (137) into the definition of the normalized error in eq. (116): 
+
+εt+1 = Σ − 12 
+
+> ∗
+
+(μt+1 −μ∗), (138) 
+
+= Σ − 12
+
+> ∗
+
+
+
+μt + λt
+
+1+ λt
+
+Σt+1 Σ−1 
+
+> ∗
+
+(μ∗ −μt) − μ∗
+
+
+
+, (139) 
+
+=
+
+
+
+I − λt
+
+1+ λt
+
+Σ− 12 
+
+> ∗
+
+Σt+1 Σ− 12
+
+> ∗
+
+
+
+Σ− 12 
+
+> ∗
+
+(μt −μ∗), (140) 
+
+=
+
+
+
+I − λt
+
+1+ λt
+
+Jt+1 
+
+
+
+εt. (141) This proves the proposition, and we note that this recursion takes the same form as eq. (23), in the proof sketch of Theorem 3.1, if a fixed level of regularization is used at each iteration. 
+
+Proposition D.4 (Recursion for Jt). Suppose p = N (μ∗, Σ∗), and let B → ∞ in Algorithm 1. Then with probability 1, the normalized covariance at the (t+1) th iteration of satisfies 
+
+λtJt+1 
+
+
+
+Jt + 11+ λt
+
+εtε⊤
+
+> t
+
+
+
+Jt+1 + Jt+1 = (1+ λt)Jt (142) 24 Batch and match: black-box variational inference with a score-based divergence 
+
+Proof. Consider the quadratic matrix equation, from step 6 of Algorithm 1, that is satisfied by the variational covariance after t+1 updates: 
+
+Σt+1 UB Σt+1 + Σ t+1 = VB . (143) We begin by computing the infinite batch limit of the matrices, UB and VB , that appear in this equation. Starting from eq. (11) for VB , and using the limits for zB and CB from Lemma D.2, we see that 
+
+lim  
+
+> B→∞
+
+VB = lim 
+
+> B→∞
+
+
+
+Σt + λtCB + λt
+
+1+ λt
+
+(μt − zB )( μt − zB )⊤
+
+
+
+, (144) 
+
+= (1+ λt)Σ t, (145) 
+
+= Σ 12
+
+> ∗
+
+(1+ λt)Jt
+
+Σ 12 
+
+> ∗
+
+, (146) where in the last line we have used eq. (118) to re-express the right side in terms of Jt. Likewise, starting from eq. (10) for UB , and using the limits for gB and ΓB from Lemma D.2, we see that 
+
+lim  
+
+> B→∞
+
+UB = lim 
+
+> B→∞
+
+
+
+λtΓB + λt
+
+1+ λt
+
+¯gB ¯g⊤
+
+> B
+
+
+
+(147) 
+
+= λtΣ−1 
+
+> ∗
+
+ΣtΣ−1 
+
+> ∗
+
++ λt
+
+1+ λt
+
+Σ−1 
+
+> ∗
+
+(μ−μt)( μ−μt)⊤Σ−1 
+
+> ∗
+
+(148) 
+
+= λtΣ−1 
+
+> ∗
+
+ΣtΣ−1 
+
+> ∗
+
++ λt
+
+1+ λt
+
+Σ−1 
+
+> ∗
+
+(μ∗ −μt)( μ∗ −μt)⊤Σ−1 
+
+> ∗
+
+(149) 
+
+= λtΣ− 12
+
+> ∗
+
+
+
+Jt + 11+ λt
+
+εtε⊤
+
+> t
+
+
+
+Σ− 12 
+
+> ∗
+
+, (150) where again in the last line we have used eqs. (116) and (118) to re-express the right side in terms of εt and Jt. Next we substitute these limits for UB and VB into the quadratic matrix equation in eq. (143). It follows that 
+
+λtΣt+1 Σ− 12
+
+> ∗
+
+
+
+Jt + 11+ λt
+
+εtε⊤
+
+> t
+
+
+
+Σ− 12 
+
+> ∗
+
+Σt+1 + Σ t+1 = Σ 12
+
+> ∗
+
+(1+ λt)Jt
+
+Σ 12 
+
+> ∗
+
+. (151) Finally, we obtain the recursion in eq. (142) by left and right multiplying eq. (151) by Σ− 12 
+
+> ∗
+
+and again making the substitution 
+
+Jt+1 = Σ − 12 
+
+> ∗
+
+Σt+1 Σ− 12 
+
+> ∗
+
+from eq. (118). The proof of convergence in future sections relies on various relaxations to derive the simple error bounds in eqs. (121–122). Before proceeding, it is therefore worth noting the following property of Algorithm 1 that is not apparent from these bounds. 
+
+Corollary D.5 (One-step convergence ). Suppose p = N (μ∗, Σ∗), and consider the limit of infinite batch size ( B → ∞ )in Algorithm 1 followed by the additional limit of no regularization ( λ0 → ∞ ). In this combined limit, the algorithm converges with probability 1 in one step: i.e., lim λ0→∞ lim B→∞ ∥ε1∥ = lim λ0→∞ lim B→∞ ∥∆1∥ = 0 .
+
+Proof. Consider the recursion for J1 given by eq. (142) in the additional limit λ0 → ∞ . In this limit one can ignore the terms that are not of leading order in λ0, and the recursion simplifes to J1J0J1 = J0. This equation has only one positive-definite solution given by J1 = I. Next consider the recursion for ε1 given by eq. (134) in the additional limit 
+
+λ0 → ∞ . In this limit this recursion simplifies to ε1 = ( I −J1)ε0, showing that ε1 = 0 . It follows that Σ1 = Σ and μ1 = μ,and future updates have no effect. 
+
+D.4. Sandwiching inequality 
+
+To complete the proof of convergence for Theorem 3.1, we must show that ∥εt∥ → 0 and ∥Jt −I∥ → 0 as t → ∞ . We showed in Propositions D.3 and D.4 that εt and Jt satisfy simple recursions. However, it is not immediately obvious how to translate these recursions for εt and Jt into recursions for ∥εt∥ and ∥Jt −I∥. To do so requires additional machinery. 25 Batch and match: black-box variational inference with a score-based divergence 
+
+One crucial piece of machinery is the sandwiching inequality that we prove in this section. In addition to the normalized covariance matrices {Jt}∞
+
+> t=0
+
+, we introduce two sequences of auxiliary matrices, {Ht}∞ 
+
+> t=1
+
+and {Kt}∞ 
+
+> t=1
+
+satisfying 
+
+0 ≺ Ht+1 ⪯ Jt+1 ⪯ Kt+1 (152) for all t ≥ 0; this is what we call the sandwiching inequality. These auxiliary matrices are defined by the recursions 
+
+λtHt+1 
+
+
+
+Jt + 11+ λt
+
+∥εt∥2 I
+
+
+
+Ht+1 + Ht+1 = (1+ λt)Jt, (153) 
+
+λtKt+1 JtKt+1 + Kt+1 = (1+ λt)Jt. (154) We invite the reader to scrutinize the differences between these recursions for Ht+1 and Kt+1 and the one for Jt+1 eq. (142). Note that in eq. (154), defining Kt+1 , we have dropped the term in eq. (142) involving the outer-product εtε⊤ 
+
+> t
+
+, while in eq. (153), defining Ht+1 , we have replaced this term by a scalar multiple of the identity matrix. As we show later, these auxiliary recursions are easier to analyze because the matrices Ht+1 and Kt+1 (unlike Jt+1 ) share the same eigenvectors as Jt. Later we will exploit this fact to bound their eigenvalues as well as the errors ∥Jt+1 −I∥.In this section we show that the recursions for Ht+1 and Kt+1 in eqs. (153–154) imply the sandwiching inequality in eq. (152). As we shall see, the sandwiching inequality follows mainly from the monotonicity property of these quadratic matrix equations proven in Lemma B.4. 
+
+Proposition D.6 (Sandwiching inequality ). Let Σ0 ≻ 0 and λt > 0 for all t ≥ 0. Also, let {εt}∞
+
+> t=1
+
+, {Jt}∞
+
+> t=1
+
+, {Ht}∞
+
+> t=1
+
+,and {Kt}∞ 
+
+> t=1
+
+be defined, respectively, by the recursions in eqs. (134), (142), and (153–154). Then for all t ≥ 0 we have 
+
+0 ≺ Ht+1 ⪯ Jt+1 ⪯ Kt+1 . (155) 
+
+Proof. We prove the orderings in the proposition from left to right. Since Σ0 ≻ 0, it follows from eq. (118) that J0 ≻ 0,and Lemma B.2 ensures for the recursion in eq. (142) that Jt+1 ≻ 0 for all t ≥ 0. Likewise, since Jt ≻ 0 for all t ≥ 0,Lemma B.2 ensures for the recursion in eq. (153) that Ht+1 ≻ 0 for all t ≥ 0. This proves the first ordering in the proposition. To prove the remaining orderings, we note that for all vectors εt,
+
+λtJt ⪯ λt
+
+
+
+Jt + 11+ λt
+
+εtε⊤
+
+> t
+
+
+
+⪯ λt
+
+
+
+Jt + 11+ λt
+
+∥εt∥2I
+
+
+
+. (156) We now apply Lemma B.4 to the quadratic matrix equations that define the recursions for Ht+1 , Jt+1 , and Kt+1 . From the first ordering in eq. (156), and for the recursions for Jt+1 and Kt+1 in eqs. (142) and (154), Lemma B.4 ensures that 
+
+Jt+1 ⪯ Kt+1 . Likewise, from the second ordering in eq. (156), and for the recursions for Jt+1 and Ht+1 in eqs. (142) and (153), Lemma B.4 ensures that Ht+1 ⪯ Jt+1 .
+
+D.5. Eigenvalue bounds 
+
+The sandwiching inequality in the previous section provides a powerful tool for analyzing the eigenvalues of the normalized covariance matrices {Jt}∞
+
+> t=1
+
+. As shown in the following lemma, much of this power lies in the fact that the matrices Jt,
+
+Ht+1 , and Kt+1 are jointly diagonalizable. 
+
+Lemma D.7 (Joint diagonalizability ). Let λt > 0 for all t ≥ 0, and let {εt}∞
+
+> t=1
+
+, {Jt}∞
+
+> t=1
+
+, {Kt}∞
+
+> t=1
+
+, and {Ht}∞ 
+
+> t=1
+
+be defined, respectively, by the recursions in eqs. (134), (142), and (153–154). Then for all t ≥ 0 we have the following: (i) Ht+1 and Kt+1 share the same eigenvectors as Jt.(ii) Each eigenvalue νJ of Jt determines a corresponding eigenvalue νH of Ht+1 and a corresponding eigenvalue νK
+
+of Kt+1 via the positive roots of the quadratic equations 
+
+λt
+
+
+
+νJ + ∥εt∥2
+
+1+ λt
+
+
+
+ν2 
+
+> H
+
++ νH = (1+ λt)νJ , (157) 
+
+λtνJ ν2 
+
+> K
+
++ νK = (1+ λt)νJ . (158) 26 Batch and match: black-box variational inference with a score-based divergence 
+
+Proof. Write Jt = QΛJ Q⊤, where Q is the orthogonal matrix storing the eigenvectors of Jt and ΛJ is the diagonal matrix storing its eigenvalues. Now define the matrices 
+
+ΛH = Q⊤Ht+1 Q, (159) 
+
+ΛK = Q⊤Kt+1 Q. (160) We will prove that Jt, Ht+1 , and Kt+1 share the same eigenvectors as Jt by showing that the matrices ΛH and ΛK are also diagonal. We start by multiplying eqs. (153–154) on the left by Q⊤ and on the right by Q. In this way we find 
+
+λtΛH
+
+
+
+ΛJ + 11+ λt
+
+∥εt∥2 I
+
+
+
+ΛH + Λ H = (1+ λt)Λ J , (161) 
+
+λtΛK ΛJ ΛK + Λ K = (1+ λt)Λ J . (162) Since ΛJ is diagonal, we see from eqs. (161–162) that ΛH and ΛK also have purely diagonal solutions; this proves the first claim of the lemma. We obtain the scalar equations in eqs. (157–158) by focusing on the corresponding diagonal elements (i.e., eigenvalues) of the matrices ΛH , ΛJ , and ΛK in eqs. (161–162); this proves the second claim of the lemma. To prove the convergence of Algorithm 1, we will also need upper and lower bounds on eigenvalues of the normalized covariance matrices. The next lemma provides these bounds. 
+
+Lemma D.8 (Bounds on eigenvalues of Jt+1 ). Let λt > 0 for all t ≥ 0, and let {εt}∞
+
+> t=1
+
+, {Jt}∞
+
+> t=1
+
+, {Kt}∞
+
+> t=1
+
+, and 
+
+{Ht}∞ 
+
+> t=1
+
+be defined, respectively, by the recursions in eqs. (134), (142), and (153–154). Then for all t ≥ 0, the largest and smallest eigenvalues of Jt+1 satisfy 
+
+νmax (Jt+1 ) ≤
+
+r 1 + λt
+
+λt
+
+, (163) 
+
+νmin (Jt+1 ) ≥ min 
+
+
+
+νmin (Jt), 1 + λt
+
+1 + λt + ∥εt∥2
+
+
+
+. (164) 
+
+Proof. We will prove these bounds using the sandwiching inequality. We start by proving an upper bound on νmax (Kt+1 ).Recall from Lemma D.7 that each eigenvalue νK of Kt+1 is determined by a corresponding eigenvalue νJ of Jt via the positive root of the quadratic equation in eq. (158). Rewriting this equation, we see that 
+
+ν2 
+
+> K
+
+= 1+ λt
+
+λt
+
+− νK
+
+λtνJ
+
+≤ 1+ λt
+
+λt
+
+, (165) showing that every eigenvalue of Kt+1 must be less than 
+
+q 1+ λt 
+
+> λt
+
+. Now from the sandwiching inequality, we know that 
+
+Jt+1 ⪯ Kt+1 , from which it follows that νmax (Jt+1 ) ≤ νmax (Kt+1 ). Combining these observations, we have shown 
+
+νmax (Jt+1 ) ≤ νmax (Kt+1 ) ≤
+
+r 1+ λt
+
+λt
+
+, (166) which proves the first claim of the lemma. Next we prove a lower bound on νmin (Ht+1 ). Again, recall from Lemma D.7 that each eigenvalue νH of Ht+1 is determined by a corresponding eigenvalue νJ of Jt via the positive root of the quadratic equation in eq. (157). We restate this equation here for convenience: 
+
+λt
+
+
+
+νJ + ∥εt∥2
+
+1+ λt
+
+
+
+ν2 
+
+> H
+
++ νH = (1+ λt)νJ
+
+We now exploit two key properties of this equation, both of which are proven in Lemma D.13. Specifically, Lemma D.13 states that if νH is computed from the positive root of this equation, then νH is a monotonically increasing function of νJ ,and it also satisfies the lower bound 
+
+νH ≥ min 
+
+
+
+νJ , 1+ λt
+
+1+ λt +∥εt∥2
+
+
+
+. (167) 27 Batch and match: black-box variational inference with a score-based divergence 
+
+We can combine these properties to derive a lower bound on the smallest eigenvalue of Ht+1 ; namely, it must be the case that 
+
+νmin (Ht+1 ) ≥ min 
+
+
+
+νmin (Jt), 1+ λt
+
+1+ λt +∥εt∥2
+
+
+
+. (168) Now again from the sandwiching inequality, we know that Jt+1 ⪰ Ht+1 , from which it follows that νmin (Jt+1 ) ≥ νmin (Ht+1 ).Combining this observation with eq. (168), we see that 
+
+νmin (Jt+1 ) ≥ νmin (Ht+1 ) ≥ min 
+
+
+
+νmin (Jt), 1+ λt
+
+1+ λt +∥εt∥2
+
+
+
+, (169) which proves the second claim of the lemma. 
+
+D.6. Recursions for ∥εt∥ and ∥∆t∥
+
+In this section, we analyze how the errors ∥εt∥ and ∥∆t∥ evolve from one iteration of Algorithm 1 to the next. These 
+
+per-iteration results are the cornerstone of the proof of convergence in the infinite batch limit. 
+
+Proposition D.9 (Decay of ∥εt∥). Suppose that p = N (μ∗, Σ∗). Then for Algorithm 1 in the limit of infinite batch size (B → ∞ ), the normalized errors in eq. (116) of the variational mean strictly decrease from one iteration to the next: i.e., 
+
+∥εt+1 ∥ < ∥εt∥. More precisely, they satisfy 
+
+∥εt+1 ∥ ≤ 
+
+
+
+1 − λt
+
+1+ λt
+
+νmin (Jt+1 )
+
+
+
+∥εt∥ , (170) where the multiplier in parentheses on the right side is strictly less than one. 
+
+Proof. Recall from Proposition D.3 that the normalized errors in the variational mean satisfy the recursion 
+
+εt+1 =
+
+
+
+I − λt
+
+1+ λt
+
+Jt
+
+
+
+εt. (171) Taking norms and applying the sub-multiplicative property of the spectral norm, we have 
+
+∥εt+1 ∥ ≤ I − λt
+
+1+ λt
+
+Jt+1 ∥εt∥ . (172) Consider the matrix norm that appears on the right side of eq. (172). By Lemma D.8, and specifically eq. (163) which gives the ordering Jt+1 ⪯
+
+q 1+ λt 
+
+> λt
+
+I, it follows that 
+
+I − λt
+
+1+ λt
+
+Jt+1 ⪰ 1 −
+
+r λt
+
+1+ λt
+
+!
+
+I ≻ 0. (173) Thus the spectral norm of this matrix is strictly greater than zero and determined by the minimum eigenvalue of Jt+1 . In particular, we have 
+
+I − λt
+
+1+ λt
+
+Jt = 1 − λt
+
+1+ λt
+
+νmin (Jt+1 ), (174) and the proposition is proved by substituting eq. (174) into eq. (172). 
+
+Proposition D.10 (Decay of ∥∆t∥). Suppose that p = N (μ∗, Σ∗). Then for Algorithm 1 in the limit of infinite batch size ( B → ∞ ), the normalized errors in eq. (117) of the variational covariance satisfy 
+
+∥∆t+1 ∥ ≤ ∥ εt∥2 + 11+ λtνmin (Jt) ∥∆t∥ . (175) 28 Batch and match: black-box variational inference with a score-based divergence 
+
+Proof. We start by applying the triangle inequality and the sandwiching inequality: 
+
+∥∆t+1 ∥ = ∥Jt+1 −I∥, (176) 
+
+≤ ∥ Jt+1 −Kt+1 ∥ + ∥Kt+1 −I∥, (177) 
+
+≤ ∥ Ht+1 −Kt+1 ∥ + ∥Kt+1 −I∥. (178) Already from these inequalities we can see the main outlines of the result in eq. (175). Clearly, the first term in eq. (178) must vanish when ∥εt∥ = 0 because the auxiliary matrices Ht+1 and Kt+1 , defined in eqs. (153–154), are equal when 
+
+εt = 0 . Likewise, the second term in eq. (178) must vanish when ∥∆t∥ = 0 , or equivalently when Jt = I, because in this case eq. (154) is also solved by Kt+1 = I.First we consider the left term in eq. (178). Recall from Lemma D.7 that the matrices Ht+1 and Kt+1 share the same eigenvectors; thus the spectral norm ∥Ht+1 −Kt+1 ∥ is equal to the largest gap between their corresponding eigenvalues. Also recall from eqs. (157–158) of Lemma D.7 that these corresponding eigenvalues νH and νK are determined by the positive roots of the quadratic equations 
+
+λt
+
+
+
+νJ + ∥εt∥2
+
+1+ λt
+
+
+
+ν2 
+
+> H
+
++ νH = (1+ λt)νJ , (179) 
+
+λtνJ ν2 
+
+> K
+
++ νK = (1+ λt)νJ , (180) where νJ is their (jointly) corresponding eigenvalue of Jt. Since these two equations agree when ∥εt∥2 = 0 , it is clear that 
+
+|νH −νK | → 0 as ∥εt∥ → 0. More precisely, as we show in Lemma D.14 of section D.8, it is the case that 
+
+|νH −νK | ≤ ∥ εt∥2. (181) (Specifically, this is property (v) of Lemma D.14.) It follows in turn from this property that 
+
+∥Ht+1 −Kt+1 ∥ ≤ ∥ εt∥2. (182) We have thus bounded the left term in eq. (178) by a quantity that, via Proposition D.9, is decaying geometrically to zero with the number of iterations of the algorithm. Next we focus on the right term in eq. (178). The spectral norm ∥Kt+1 − I∥ is equal to the largest gap between any eigenvalue of Kt+1 and the value of 1 (i.e., the value of all eigenvalues of I). Recall from eq. (158) of Lemma D.7 that each eigenvalue νJ of Jt determines a corresponding eigenvalue νK of Kt+1 via the positive root of the quadratic equation 
+
+λtνJ ν2 
+
+> K
+
++ νK = (1+ λt)νJ . (183) This correspondence has an important contracting property that eigenvalues of Jt not equal to one are mapped to eigenvalues of Kt+1 that are closer to one. In particular, as we show in Lemma D.13 of section D.8, it is the case that 
+
+|νK −1| ≤ 11+ λtνJ
+
+|νJ −1|. (184) (Specifically, this is property (vii) of Lemma D.13.) It follows in turn from this property that 
+
+∥Kt+1 −I∥ ≤ 11+ λtνmin (Jt) ∥Jt −I∥. (185) Finally, the proposition is proved by substituting eq. (182) and eq. (185) into eq. (178). The results of Proposition D.9 and Proposition D.10 could be used to further analyze the convergence of Algorithm 1 when different levels of regularization λt are used at each iteration. By specializing to a fixed level of regularization, however, we obtain the especially interpretable results of eqs. (19–20) in the proof sketch of Theorem 3.1. To prove these results, we need one further lemma. 29 Batch and match: black-box variational inference with a score-based divergence 
+
+Lemma D.11 (Bound on νmin (Jt)). Suppose that p = N (μ∗, Σ∗) in Algorithm 1, and let α > 0 denote the minimum eigenvalue of the matrix Σ− 12 
+
+> ∗
+
+Σ0Σ− 12 
+
+> ∗
+
+. Then in the limit of infinite batch size ( B → ∞ ), and for any fixed level of regularization λ > 0, we have for all t ≥ 0 that 
+
+νmin (Jt) ≥ min 
+
+
+
+α, 1+ λ
+
+1+ λ+ ∥ε0∥2
+
+
+
+. (186) 
+
+Proof. We prove the result by induction. Note that νmin (J0) = νmin 
+
+
+
+Σ− 12 
+
+> ∗
+
+Σ0Σ− 12
+
+> ∗
+
+
+
+= α, so that eq. (186) holds for t = 0 .Now assume that the result holds for some iteration t > 0. Then 
+
+νmin (Jt+1 ) ≥ min 
+
+
+
+νmin (Jt), 1+ λ
+
+1+ λ+ ∥εt∥2
+
+
+
+, (187) 
+
+≥ min 
+
+
+
+min 
+
+
+
+α, 1+ λ
+
+1+ λ+ ∥ε0∥2
+
+
+
+, 1+ λ
+
+1+ λ+ ∥εt∥2
+
+
+
+, (188) 
+
+= min 
+
+
+
+α, 1+ λ
+
+1+ λ+ ∥ε0∥2
+
+
+
+, (189) where the first inequality is given by eq. (164) of Lemma D.8, the second inequality follows from the inductive hypothesis, and the final equality holds because ∥εt∥ < ∥ε0∥ from Proposition D.9. Note how the bound in eq. (186) depends on α and ∥ε0∥, both of which reflect the quality of initialization. In particular, when α ≪ 1, the initial covariance is close to singular, and when ∥ε0∥ is large, the initial mean is a poor estimate. Both these qualities of initialization play a role in the next result. 
+
+Corollary D.12 (Rates of decay for ∥εt∥ and ∥∆t∥). Suppose that p = N (μ∗, Σ∗) and let α > 0 denote the minimum eigenvalue of the matrix Σ− 12 
+
+> ∗
+
+Σ0Σ− 12 
+
+> ∗
+
+. Also, for any fixed level of regularization λ > 0, define 
+
+β = min 
+
+
+
+α, 1+ λ
+
+1+ λ+∥ε0∥2
+
+
+
+, (190) 
+
+δ = λβ 
+
+1+ λ , (191) where β ∈ (0 , 1] measures the quality of initialization and δ ∈ (0 , 1) measures a rate of decay. Then in the limit of infinite batch size ( B → ∞ ), the normalized errors in eqs. (116–117) satisfy 
+
+∥εt+1 ∥2 ≤ (1 −δ)2∥εt∥2, (192) 
+
+∥∆t+1 ∥ ≤ (1 −δ)∥∆t∥ + ∥εt∥2. (193) 
+
+Proof. The results follow from the previous ones in this section. In particular, from Proposition D.9 and the previous lemma, we see that 
+
+∥εt+1 ∥ ≤ 
+
+
+
+1 − λ
+
+1+ λ νmin (Jt+1 )
+
+
+
+∥εt∥ ≤ 
+
+
+
+1 − λβ 
+
+1+ λ
+
+
+
+∥εt∥ = (1 −δ)∥εt∥. (194) 30 Batch and match: black-box variational inference with a score-based divergence 
+
+Likewise, from Proposition D.10 and the previous lemma, we see that 
+
+∥∆t+1 ∥ ≤ ∥ εt∥2 + 11+ λν min (Jt) ∥∆t∥ , (195) 
+
+≤ ∥ εt∥2 + 11+ λβ ∥∆t∥ , (196) 
+
+= ∥εt∥2 +
+
+
+
+1 − λβ 
+
+1+ λβ 
+
+
+
+∥∆t∥ , (197) 
+
+≤ ∥ εt∥2 +
+
+
+
+1 − λβ 
+
+1+ λ
+
+
+
+∥∆t∥ , (198) 
+
+= ∥εt∥2 + (1 − δ) ∥∆t∥ . (199) 
+
+D.7. Induction 
+
+From the previous corollary we can at last give a simple proof of Theorem 3.1. It should also be clear that tighter bounds can be derived, and differing levels of regularization accommodated, if we instead proceed from the more general bounds in Propositions D.9 and D.10. 
+
+Proof of Theorem 3.1. We start from eqs. (192–193) of Corollary D.12 and proceed by induction. At iteration t = 0 , we see from these equations that 
+
+∥ε1∥ ≤ (1 −δ)∥ε0∥, (200) 
+
+∥∆1∥ ≤ (1 −δ)∥∆0∥ + ∥ε0∥2. (201) The above agree with eqs. (17–18) at iteration t = 0 and therefore establish the base case of the induction. Next we assume the inductive hypothesis that eqs. (17–18) are true at some iteration t−1. Then again, appealing to eqs. (192–193) of Corollary D.12, we see that 
+
+∥εt∥ ≤ (1 −δ)∥εt−1∥, (202) 
+
+≤ (1 −δ)(1 −δ)t−1∥ε0∥, (203) 
+
+= (1 −δ)t∥ε0∥, (204) 
+
+∥∆t∥ ≤ (1 −δ)∥∆t−1∥ + ∥εt−1∥2, (205) 
+
+≤ (1 −δ)
+
+h
+
+(1 −δ)t−1∥∆0∥ + ( t−1)(1 −δ)t−2∥ε0∥2i
+
++ (1 −δ)2( t−1) ∥ε0∥2, (206) 
+
+= (1 −δ)t∥∆0∥ +
+
+h
+
+(t−1)(1 −δ)t−1 + (1 −δ)2t−2i
+
+∥ε0∥2, (207) 
+
+≤ (1 −δ)t∥∆0∥ +
+
+h
+
+(t−1)(1 −δ)t−1 + (1 −δ)t−1i
+
+∥ε0∥2, (208) 
+
+= (1 −δ)t∥∆0∥ + t(1 −δ)t−1∥ε0∥2. (209) This proves the theorem. 
+
+D.8. Supporting lemmas 
+
+In this section we collect a number of lemmas whose results are needed throughout this appendix but whose proofs digress from the main flow of the argument. 31 Batch and match: black-box variational inference with a score-based divergence 0 0.5 1 1.5 2 2.5 300.5 11.5 
+
+Figure D.1: Plot of the function f in eq. (211), as well as its fixed point and upper and lower bounds from Lemma D.13, with λ = 4 and ε2 = 1 .
+
+Lemma D.13. Let λ > 0 and ε2 ≥ 0, and let f : R+ → R+ be the function defined implicitly as follows: if ν > 0 and 
+
+ξ = f (ν), then ξ is equal to the positive root of the quadratic equation 
+
+λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ2 + ξ − (1+ λ)ν = 0 . (210) Then f has the following properties: (i) f is monotonically increasing on (0 , ∞).(ii) f (ν) <
+
+q 1+ λλ for all ν > 0.(iii) f has a unique fixed point ν∗ = f (ν∗).(iv) f (ν) ≥ ν∗ for all ν ≥ ν∗.(v) f (ν) > ν for all ν ∈ (0 , ν ∗).(vi) f (ν) ≥ min 
+
+
+
+ν, 1+ λ
+
+> 1+ λ+ε2
+
+
+
+for all ν > 0.(vii) If ε2 = 0 , then |ν −1| ≥ (1+ λν )|f (ν)−1| for all ν > 0.Before proving the lemma, we note that it is straightforward to solve the quadratic equation in eq. (210). Doing so, we find 
+
+f (ν) = −1 + p1 + 4 λ(1 + λ)ν2 + 4 λε 2ν
+
+2λ
+
+
+
+ν + ε2
+
+> 1+ λ
+
+ . (211) In most aspects, this explicit form for f is less useful than the implicit one given in the statement of the lemma. However, eq. (211) is useful for visualizing properties (i)-(vi), and Fig. D.1 shows a plot of f (ν) with λ = 4 and ε2 = 1 . We now prove the lemma. 
+
+Proof. Let ν > 0. To prove property (i) that f is monotonically increasing, it suffices to show f ′(ν) > 0. Differentiating eq. (210) with respect to ν, we find that 
+
+λξ 2 + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξf ′(ν) + f ′(ν) − (1+ λ) = 0 , (212) 32 Batch and match: black-box variational inference with a score-based divergence 
+
+where ξ = f (ν). To proceed, we re-arrange terms to isolate f ′(ν) on the left side and use eq. (210) to remove quadratic powers of ξ. In this way, we find: 
+
+
+
+1 + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ
+
+
+
+f ′(ν) = 1 + λ − λξ 2, (213) 
+
+= 1 + λ − (1 + λ)ν − ξν + ε2
+
+> 1+ λ
+
+, (214) 
+
+= ξ + ε2
+
+ν + ε2
+
+> 1+ λ
+
+. (215) Note that the term in brackets on the left side is strictly positive, as is the term on the right side. It follows that f ′(ν) > 0,thus proving property (i). Moreover, since f is monotonically increasing, it follows from eq. (211) that 
+
+f (ν) < lim  
+
+> ω→∞
+
+f (ω) = 
+
+r 1 + λλ , (216) thus proving property (ii). To prove property (iii), we solve for fixed points of f . Let ν∗ > 0 denote a fixed point satisfying 
+
+ν∗ = f (ν∗). Then upon setting ν = ν∗ in eq. (210), we must find that ξ = ν∗ is a solution of the resulting equation, or 
+
+λ
+
+
+
+ν∗ + ε2
+
+1+ λ
+
+
+
+ν∗2 + ν∗ − (1+ λ)ν∗ = 0 . (217) Eq. (217) has one root at zero, one negative root, and one positive root, but only the last of these can be a fixed point of f ,which is defined over R+. This fixed point corresponds to the positive root of the quadratic equation: 
+
+
+
+ν∗ + ε2
+
+1+ λ
+
+
+
+ν∗ = 1 . (218) This proves property (iii). Property (iv) follows easily from properties (i) and (iii): if ν ≥ ν∗, then f (ν) ≥ f (ν∗) = ν∗, where the inequality holds because f is monotonically increasing and the equality holds because ν∗ is a fixed point of f . To prove property (v), suppose that ν ∈ (0 , ν ∗). Then from eq. (218), it follows that 
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ν < 1. (219) Now let ξ = f (ν). Then from eq. (210) and eq. (219), it follows that 
+
+0 = ν · 0 (220) 
+
+= ν
+
+
+
+λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ2 + ξ − (1+ λ)ν
+
+
+
+, (221) 
+
+= λν 
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ2 + νξ − (1+ λ)ν2, (222) 
+
+< λξ 2 + νξ − (1+ λ)ν2, (223) 
+
+= ( ξ − ν)( ξ + (1+ λ)ν). (224) Since the right factor in eq. (224) is positive, the inequality as a whole can only be satisfied if ξ > ν , or equivalently if 
+
+f (ν) > ν , thus proving property (v). To prove property (vi), we observe from eq. (218) that ν∗ ≤ 1, and from this upper 
+
+bound on ν∗, we re-use eq. (218) to derive the lower bound 
+
+ν∗ = 1
+
+ν∗ + ε2
+
+> 1+ λ
+
+≥ 11 + ε2
+
+> 1+ λ
+
+= 1+ λ
+
+1+ λ+ε2 . (225) With this lower bound, we show next that property (vi) follows from properties (iv) and (v). In particular, if ν ∈ (0 , ν ∗), then from property (v) we have f (ν) > ν ; on the other hand, if ν ≥ ν∗, then from property (iv) and the lower bound in eq. (225), we have f (ν) ≥ ν∗ ≥ 1+ λ 
+
+> 1+ λ+ε2
+
+. But either ν ∈ (0 , ν ∗) or ν ≥ ν∗, and hence for all ν > 0 we have 
+
+f (ν) ≥ min 
+
+
+
+ν, 1+ λ
+
+1+ λ+ε2
+
+
+
+, (226) 33 Batch and match: black-box variational inference with a score-based divergence 
+
+which is exactly property (vi). Fig. (D.1) plots the lower and upper bounds on f from properties (ii) and (vi), as well as the fixed point ν∗ = f (ν∗). Property (vii) considers the special case when ε2 = 0 . In this case, we can also rewrite eq. (210) as 
+
+ν − 1 = λνξ 2 + ξ − λν − 1 = (1 + λν + λνξ )( ξ − 1) , (227) and taking the absolute values of both sides, we find that 
+
+|ν − 1| = (1 + λν + λνξ )|ξ − 1| ≥ (1 + λν )|ξ − 1| (228) for all ν > 0, thus proving property (vii). The meaning of this property becomes more evident upon examining the function’s fixed point: note from eq. (218) that ν∗ = 1 when ε2 = 0 . Thus property (vii) can alternatively be written as 
+
+|f (ν) − ν∗| ≤ 11 + λν |ν − ν∗|, (229) showing that the function converges to its fixed point when it is applied in an iterative fashion. 
+
+Lemma D.14. Let λ, ν > 0, and let g : [0 , ∞) → R+ be the function defined implicitly as follows: if ξ = g(ε2), then ξ is equal to the positive root of the quadratic equation 
+
+λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ2 + ξ − (1+ λ)ν = 0 . (230) Then g has the following properties: (i) g is monotonically decreasing on [0 , ∞).(ii) g(0) <
+
+q 1+ λλ .(iii) g′(0) > −1.(iv) g is convex on [0 , ∞).(v) |g(ε2)−g(0) | ≤ ε2.Before proving the lemma, we note that it is straightforward to solve the quadratic equation in eq. (230). Doing so, we find 
+
+g(ε2) = −1 + p1 + 4 λ(1 + λ)ν2 + 4 λε 2ν
+
+2λ
+
+
+
+ν + ε2
+
+> 1+ λ
+
+ . (231) This explicit formula for g is not needed for the proof of the lemma. However, eq. (231) is useful for visualizing properties (i)-(ii), and Fig. D.2 shows several plots of g(ε2) for different values of λ and ν. We now prove the lemma. 
+
+Proof. To prove property (i) that g is monotonically increasing, it suffices to show g′(ε2) < 0. Differentiating eq. (230) with respect to ε2, we find that 
+
+λ
+
+1+ λ ξ2 + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξg ′(ε2) + g′(ε2) = 0 (232) where ξ = g(ε2), and solving for g′(ε), we find that 
+
+g′(ε2) = − λξ 2
+
+(1+ λ)(1+2 λνξ ) + 2 λε 2ξ < 0, (233) which proves property (i). To prove property (ii), let ξ0 = g(0) denote the positive root of eq. (230) when ε2 = 0 . Then this root satisfies 
+
+ξ20 = 1+ λλ − ξ0
+
+λν < 1+ λλ , (234) from which the result follows. Moreover, it follows from eqs. (233–234) that 
+
+g′(0) = − λξ 20
+
+(1+ λ)(1 + 2 λνξ 0) > − λξ 20
+
+1+ λ > − λ
+
+1+ λ
+
+1+ λλ = −1, (235) 34 Batch and match: black-box variational inference with a score-based divergence 0 20 40 60 80 100 00.2 0.4 0.6 0.8 1
+
+Figure D.2: Plot of the function g in Lemma D.14 and eq. (231) for several different values of λ and ν.thus proving property (iii). To prove property (iv) that g is convex, it suffices to show g′′ (ε2) > 0. Differentiating eq. (232) with respect to ε2, we find that 
+
+4λξ 
+
+1+ λ g′(ε2) + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+ 
+
+ξg ′′ (ε2) + g′(ε2)2
+
++ g′′ (ε2) = 0 . (236) To proceed, we re-arrange terms to isolate g′′ (ε2) on the left side and use eq. (232) to re-express the term on the right. In this way, we find: 
+
+
+
+1 + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξ
+
+
+
+g′′ (ε2) = − 4λξ 
+
+1+ λ g′(ε2) − 2λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+g′(ε2)2, (237) 
+
+= − g′(ε2)
+
+ξ
+
+ 4λξ 2
+
+1+ λ + 2 λ
+
+
+
+ν + ε2
+
+1+ λ
+
+
+
+ξg ′(ε2)
+
+
+
+, (238) 
+
+= − g′(ε2)
+
+ξ
+
+ 4λξ 2
+
+1+ λ − λξ 2
+
+1+ λ − g′(ε2)
+
+
+
+, (239) 
+
+= − g′(ε2)
+
+ξ
+
+ 3λξ 2
+
+1+ λ − g′(ε2)
+
+
+
+. (240) Note that the term in brackets on the left side is strictly positive, and because g is monotonically decreasing, with g′(ε2) < 0,so is the term on the right. It follows that g′′ (ε2) > 0, thus proving property (iv). Finally, to prove property (v), we combine the results that g is monotonically decreasing, that its derivative at zero is greater than -1, and that it is convex: 
+
+|g(ε2) − g(0) | = g(0) − g(ε2) ≤ g(0) − (g(0) + g′(0) ε2) = −g′(0) ε2 ≤ ε2. (241) 
+
+E. Additional experiments and details 
+
+E.1. Implementation of baselines 
+
+In Algorithm 2, we describe the version of ADVI implemented in the experiments. In particular, we use ADAM as the optimizer for updating the variational parameters. We also implemented an alternate version of ADVI using the score-based divergence and the Fisher divergence in place of the (negative) ELBO loss. In Algorithm 3, we also describe the implementation of the GSM algorithm (Modi et al., 2023). 35 Batch and match: black-box variational inference with a score-based divergence 
+
+Algorithm 2 Implementation of ADVI 
+
+1: Input: Iterations T , batch size B, unnormalized target ˜p, learning rate λt > 0, initial variational mean μ0 ∈ RD , initial variational covariance Σ0 ∈ SD
+
+> ++
+
+2: for t = 0 , . . . , T − 1 do 
+
+3: Sample z1, . . . , z B ∼ qt = N (μt, Σt)
+
+4: Compute stochastic estimate of the (negative) ELBO 
+
+L(t)
+
+> ELBO
+
+(z1: B ) = −
+
+> B
+
+X
+
+> b=1
+
+log(˜ p(zb) − log qt(zb)) 
+
+5: Update variational parameters wt := ( μt, Σt) with gradient 
+
+wt+1 = wt − λt∇w L(t)
+
+> ELBO
+
+(z1: B ) # Our implementation uses the ADAM update. 
+
+6: end for 
+
+7: Output: variational parameters μT , ΣT
+
+Algorithm 3 Implementation of GSM 
+
+1: Input: Iterations T , batch size B, unnormalized target ˜p, initial variational mean μ0 ∈ RD , initial variational covariance Σ0 ∈ SD
+
+> ++
+
+2: for t = 0 , . . . , T − 1 do 
+
+3: Sample z1, . . . , z B ∼ qt = N (μt, Σt)
+
+4: for b = 1 , . . . , B do 
+
+5: Compute the score of the sample sb = ∇z log(˜ p(zb)) 
+
+6: Calculate intermediate quantities 
+
+εb = Σ tsb − μt + zb, and solve ρ(1+ ρ) = s⊤ 
+
+> b
+
+Σtsb + (μt − zb)⊤sb
+
+2 for ρ > 0
+
+7: Estimate the update for mean and covariance 
+
+δμ b = 11+ ρ
+
+h
+
+I − (μt−zb)s⊤
+
+> b
+> 1+ ρ+( μt−zb)⊤sb
+
+i
+
+εb
+
+δΣb = ( μt − zb)( μt − zb)⊤ − (˜ μb − zb)(˜ μb − zb)⊤, where ˜μb = μt + δμ b
+
+8: end for 
+
+9: Update variational mean and covariance 
+
+μt+1 = μt + 1
+
+> BB
+
+X
+
+> b=1
+
+δμ b, Σt+1 = Σ t + 1
+
+> BB
+
+X
+
+> b=1
+
+δΣb
+
+10: end for 
+
+11: Output: variational parameters μT , ΣT
+
+E.2. Wallclock timings 
+
+In the main paper, we report the number of gradient evaluations as a measure of the cost of the algorithm. While the complete cost is not captured by the number of gradient evaluations alone, here we show that the computational cost of the algorithms are dominated by gradient evaluations, and so number of gradient evaluations is a good proxy of the computational cost. We additionally note that all work with full covariance matrices make a basic assumption that O(D2) is not prohibitive because there are O(D2) parameters in the model itself. While the BaM update (when B ≥ D) takes O(D3) computation per iteration, in this setting, O(D3) is not generally regarded as prohibitive in models where there are O(D2) parameters to estimate. In Figure E.1, we plot the wallclock timings for Gaussian targets of increasing dimension, where D = 4 , 16 , 64 , 128 , 256 .We observe that for dimensions 64 and under, all methods have similar timings; for the larger dimensions, we observe that the low-rank BaM solver has a similar timing. All experiments in the paper fit into the lower-dimensional regime or the low-rank regime, with the exception of the deep generative models application, which includes larger batch sizes. Thus, for the lower-dimensional regime and the low-rank examples, we report the number of gradient evaluations as the primary measure of cost; the cost per iteration for the mini-batch regime is O(D2B + B3). For the deep generative model example, we additionally report in Figure E.7 the wallclock timings. We note that the wallclock timings themselves are heavily dependent on implementation and JIT-compilation details and hardware. 36 Batch and match: black-box variational inference with a score-based divergence 
+
+Figure E.1: Wallclock timings for the Gaussian targets example. 10 0 10 1 10 2 10 3 10 4 10 5                   
+
+> # of gradient evaluations
+> 10 6
+> 10 2
+> 10 2
+> Forward KL
+> lambda_t = B * 1
+> B=2
+> B=10
+> B=20
+> B=40
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> lambda_t = BD * 1 10 010 110 210 310 410 5
+> # of gradient evaluations
+> 10 5
+> 10 2
+> 10 1
+> Forward KL
+> lambda_t = B * 1/t
+> B=2
+> B=10
+> B=20
+> B=40
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> lambda_t = BD * 1/t
+
+Figure E.2: Gaussian target, D = 16 
+
+E.3. Gaussian target 
+
+Each target distribution was generated randomly; here the covariance was constructed by generating a D × D matrix A and computing Σ∗ = AA ⊤.For all experiments, the algorithms were initialized with μ0 ∼ uniform [0 , 0.1] and Σ0 = I. In Figure E.3, we report the results for the reverse KL divergence. We observe largely the same conclusions as with the forward KL divergence presented in Section 5. In addition, we evaluated BaM with a number of different schedules for the learning rates: λt = B, BD, Bt+1 , BD t+1 . We show one such example for D = 16 in Figure E.2, where each figure represents a particular choice of λt, and where each line is the mean over 10 runs. For the constant learning rate, the lines for B = 20 , 40 are on top of each other. Here we observe that the constant learning rates perform the best for Gaussian targets. For the gradient-based methods (ADVI, Score, Fisher), the learning rate was set by choosing the best value over a grid search. For ADVI and Fisher, the selected learning rate was 0.01. For Score, a different learning rate was selected for each dimension D = 4 , 16 , 64 , 256 : [0 .01 , 0.005 , 0.001 , 0.001] .
+
+E.4. Non-Gaussian target 
+
+Here we again consider the sinh-arcsinh distribution with D = 10 , where we vary the skew and tails. We present the reverse KL results in Figure E.4. All algorithms were initialized with a random initial mean μ0 and Σ0 = I. In Figure E.5, we present several alternative plots showing the forward and reverse KL divergence when varying the learning rate. We investigate the performance for different schedules corresponding to λt = BD, BD √t+1 , BD  
+
+> (t+1)
+
+, and we varied the batch size B = 2 , 5, 10 , 20 , 40 . Unlike for Gaussian targets, we found that constant λt did not perform as well as those with a varying schedule. In particular, we found that λt = BD t+1 typically converges faster than the other schedule. 37 Batch and match: black-box variational inference with a score-based divergence 10 0 10 1 10 2 10 3 10 4              
+
+> # gradient evaluations
+> 10 7
+> 10 3
+> 10 1
+> 10 5
+> Reverse KL  D=4
+> BaM-5
+> BaM-2
+> GSM
+> Score
+> Fisher
+> ADVI
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=16
+> BaM-15
+> BaM-2
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=64
+> BaM-40
+> BaM-2
+> 10 010 110 210 310 4
+> # gradient evaluations
+> D=256
+> BaM-150
+> BaM-2
+
+Figure E.3: Gaussian targets of increasing dimension. Solid curves indicate the mean over 10 runs (transparent curves). ADVI, Score, Fisher, and GSM use batch size of 2. The batch size for BaM is given in the legend. 10 2 10 4            
+
+> # gradient evaluations
+> 10 0
+> 10 1
+> Reverse KL
+> s=0.2, =1.0
+> BaM-10
+> BaM-5
+> GSM
+> Score
+> Fisher
+> ADVI
+> 10 210 4
+> # gradient evaluations
+> s=1.0, =1.0
+> 10 210 4
+> # gradient evaluations
+> s=1.8, =1.0 10 210 4
+> # gradient evaluations
+> 10 1
+> 10 0
+> 10 1
+> Reverse KL
+> s=0.0, =0.1
+> 10 210 4
+> # gradient evaluations
+> s=0.0, =0.9
+> 10 210 4
+> # gradient evaluations
+> s=0.0, =1.7
+
+Figure E.4: Non-Gaussian targets constructed using the sinh-arcsinh distribution, varying the skew s and the tail weight t.ADVI and GSM use a batch size of B = 5 .For the gradient-based methods (ADVI, Score, Fisher), a grid search was run over the learning rate for ADAM. The final selected learning rates were 0.02 for ADVI and 0.05 for Fisher. For Score, more tuning was required: for the targets with fixed tails τ = 1 and varying skew s = 0 .2, 1, 1.8, the learning rates [0 .01 , 0.001 , 0.001] were used, and for the targets with fixed skew s = 0 and varying tails τ = 0 .1, 0.9, 1.7, the learning rates [0 .001 , 0.01 , 0.01] , respectively. We note that for the score-based divergence, several of the highly skewed targets led to divergence (with respect to the grid search) on most of the random seeds that were run. 
+
+E.5. Posteriordb models 
+
+In Bayesian posterior inference applications, it is common to measure the relative mean error and the relative standard deviation error (Welandawe et al., 2022): relative mean error = μ − ˆμσ 2
+
+, relative SD error = σ − ˆσσ 2
+
+, (242) where ˆμ, ˆσ are computed from the variational distribution, and μ, σ are the posterior mean and standard deviation. We estimated the posterior mean and standard deviation using the reference samples from HMC. In the evaluation, all algorithms were initialized with μ0 ∼ uniform [0 , 0.1] and Σ0 = I. The results for the relative mean error are presented in Section 5. In Figure E.6, we present the results for the relative SD error. Here we typically observe the same trends as for the mean, except in the hierarchical example, in which BaM learns the mean quickly but converges to a larger relative SD error. However, the low error of GSM suggests that more robust tuning of the learning rate may lead to better performance with BaM. 
+
+E.6. Deep learning model 
+
+In Figure E.7, we present the results from the main paper but with wallclock times on the x-axis. We arrive at similar conclusions: here BaM with B = 300 converges the fastest compared to GSM and ADVI using any batch size. We provide additional details for the experiment conducted in Section 5.3. We first pre-train the neural network Ω( ·, ˆθ) (the “decoder”) using variational expectation-maximization. That is, ˆθ maximizes the marginal likelihood p({xn}Nn=1 | θ), where 
+
+{xn}Nn=1 denotes the training set. The marginalization step is performed using an approximation 
+
+q(zn|xn) ≈ p(zn|xn, θ ),
+
+obtained with amortized variational inference. In details, we optimize the ELBO over the family of factorized Gaussians and learn an inference neural network (the “encoder”) that maps xn to the parameters of q(zn | xn). This procedure is standard 38 Batch and match: black-box variational inference with a score-based divergence 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 2
+
+10 3
+
+> Forward KL
+
+s=0.2, lambda_t=BD 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=BD 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=BD 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 1
+
+10 2
+
+10 3
+
+> Forward KL
+
+s=0.2, lambda_t=(BD)/t^0.5 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=(BD)/t^0.5 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=(BD)/t^0.5 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 1
+
+10 2
+
+10 3
+
+> Forward KL
+
+s=0.2, lambda_t=(BD)/t 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=(BD)/t 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=(BD)/t 
+
+(a) Forward KL: varying λt and skew 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 8
+
+10 3
+
+10 2
+
+> Forward KL
+
+tau=0.1, lambda_t=BD 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=0.9, lambda_t=BD 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=1.7, lambda_t=BD 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 8
+
+10 3
+
+10 2
+
+> Forward KL
+
+tau=0.1, lambda_t=(BD)/t^0.5 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=0.9, lambda_t=(BD)/t^0.5 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=1.7, lambda_t=(BD)/t^0.5 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 8
+
+10 4
+
+10 0
+
+> Forward KL
+
+tau=0.1, lambda_t=(BD)/t 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=0.9, lambda_t=(BD)/t 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=1.7, lambda_t=(BD)/t (b) Forward KL: varying λt and tails 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 2
+
+10 3
+
+> Reverse KL
+
+s=0.2, lambda_t=BD 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=BD 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=BD 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 1
+
+10 2
+
+10 3
+
+> Reverse KL
+
+s=0.2, lambda_t=(BD)/t^0.5 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=(BD)/t^0.5 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=(BD)/t^0.5 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 1
+
+10 2
+
+10 3
+
+> Reverse KL
+
+s=0.2, lambda_t=(BD)/t 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.0, lambda_t=(BD)/t 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+s=1.8, lambda_t=(BD)/t 
+
+(c) Reverse KL: varying λt and skew 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 10 
+
+10 6
+
+10 2
+
+> Reverse KL
+
+tau=0.1, lambda_t=BD 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=0.9, lambda_t=BD 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=1.7, lambda_t=BD 10 1 10 3 10 5
+
+# of gradient evaluations 
+
+10 9
+
+10 5
+
+10 1
+
+> Reverse KL
+
+tau=0.1, lambda_t=(BD)/t^0.5 
+
+B=2 
+
+B=5 
+
+B=10 
+
+B=20 
+
+B=40 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=0.9, lambda_t=(BD)/t^0.5 
+
+10 1 10 3 10 5
+
+# of gradient evaluations 
+
+tau=1.7, lambda_t=(BD)/t^0.5 (d) Reverse KL: varying λt and tails 
+
+Figure E.5: Non-Gaussian target, D = 10 . Panels (a) and (b) show the forward KL, and panels (c) and (d) show the reverse KL. 39 Batch and match: black-box variational inference with a score-based divergence 10 0 10 1 10 2 10 3 10 4 10 5           
+
+> # of gradient evaluations
+> 10 1
+> 10 0
+> 10 1
+> 10 2
+> Rel. SD error
+> Nearly Gaussian
+> BaM
+> GSM
+> ADVI
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> 10 0
+> 10 1
+> 10 2
+> Gaussian Process
+> 10 010 110 210 310 410 5
+> # of gradient evaluations
+> 10 0
+> 2 × 10 0
+> Hierarchical
+
+Figure E.6: Posterior inference in Bayesian models measured by the relative standard deviation error. The curves denote the mean over 5 runs, and shaded regions denote their standard error. Solid curves ( B = 32 ) correspond to larger batch sizes than the dashed curves ( B = 8 ). 0 100 200 300       
+
+> Wall time (s)
+> 0.0
+> 0.1
+> 0.2
+> Mean Squared Error  B=10
+> GSM
+> ADVI
+> BaM
+> Amortized VI
+> 0100 200 300
+> Wall time (s)
+> B=100
+> 0100 200 300
+> Wall time (s)
+> B=300
+
+Figure E.7: Image reconstruction error when the posterior mean of z′ is fed into the generative neural network. The x-axis denotes the wallclock time in seconds. for training a VAE (Kingma & Welling, 2014; Rezende et al., 2014; Tomczak, 2022). For the decoder and the encoder, we use a convolution network with 5 layers. The optimization is performed over 100 epochs, after which the ELBO converges (Figure E.8). For the estimation of the posterior on a new observation, we draw an image x′ from the test set. All VI algorithms are initialized at a standard Gaussian. For ADVI and BaM, we conduct a pilot experiment of 100 iterations and select the learning rate that achieves the lowest MSE for each batch size ( B = 10 , 100 , 300 ). For ADVI, we consistently find the best learning rate to be ℓ = 0 .02 (after searching ℓ = 0 .001 , 0.01 , 0.02 , 0.05 ). For BaM, we find that different learning rates work better for different batch sizes: • B = 10 , λ = 0 .1 selected from λ = 0 .01 , 0.1, 0.2, 10 .• B = 100 , λ = 50 selected from λ = 2 , 20 , 50 , 100 , 200 .• B = 300 , λ = 7500 selected from λ = 1000 , 5000 , 7500 , 10000 .For B = 300 , all candidate learning rates achieve the minimal MSE (since BaM converges in less than 100 iterations), and so we pick the one that yields the fastest convergence. 0 20 40 60 80 100  
+
+> Epochs
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> 1e6 Negative ELBO
+
+Figure E.8: ELBO for variational autoencoder over 100 epochs 40
