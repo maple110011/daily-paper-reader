@@ -1,0 +1,1827 @@
+Title: A lift for input-convex neural network training
+
+URL Source: https://arxiv.org/pdf/2605.24274v1
+
+Published Time: Tue, 26 May 2026 00:33:50 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# A LIFT FOR INPUT -CONVEX NEURAL NETWORK TRAINING 
+
+A P REPRINT 
+
+Ali Siahkoohi, Anirudh Thatipelli 
+
+Department of Computer Science University of Central Florida 
+
+ABSTRACT 
+
+Input-convex neural networks (ICNNs) are widely used for a range of learning tasks—log-concave density estimation, convex-potential normalizing flows, optimal transport, and transport-map inversion for high-dimensional Bayesian posteriors. All of these tasks share a structural constraint: the inter-layer weights of the ICNN must remain non-negative. The standard recipe for enforcing it, projected gradient descent (PGD) onto the non-negative cone, applies a hard, non-smooth projection—the stiff-penalty limit of an ADMM-style constraint splitting—and its classical convergence guarantees do not transfer to the non-smooth ICNN training landscape; the differentiable alternative, softplus reparametrization, instead attenuates the gradient exponentially in the weight magnitude, stalling training with dead inter-layer weights and plateaued loss. To address this limitation, and inspired by the parameter-extension lifts of PDE-constrained inverse problems, we propose the lift : instead of constraining the inter-layer weights directly, we train an unconstrained hypernetwork that emits them from a permutation-invariant summary of the input batch. This adds a source of stochasticity to the training dynamics that softens the loss landscape, letting the iterates escape the gradient-attenuated region where direct softplus stalls. We trace this softening to three structural ingredients—a learnable bias acting as slack , a hypernetwork body that conditions on the target batch, and a cross-covariance 
+
+coupling the two through batch stochasticity—and prove each one necessary: deleting any single ingredient collapses the cross-covariance that carries the softening. By means of log-concave energy-based modeling at scales from one-dimensional toy targets to image-flavored latents, and convex-potential normalizing flows on a 21-dimensional tabular benchmark, we show that the lift reaches a lower test loss than both PGD and direct softplus, and turns a plateau-bounded training trajectory into a valley-descending one .
+
+1 Introduction 
+
+Input-convex neural networks (ICNNs) (Amos et al., 2017) parametrize the convex scalar fields that drive several modern learning tasks in probabilistic modeling and Bayesian inference. They underlie the negative log-density of a log-concave (Prékopa, 1971; Saumard and Wellner, 2014) energy-based model, the convex potential whose gradient defines a convex-potential normalizing flow (Huang et al., 2021), the convex potential of a PCP-Map (Bunne et al., 2022; Wang et al., 2025) for transport-map posterior sampling, and the Brenier potential of ICNN-parametrized optimal transport (Korotin et al., 2021; Makkuva et al., 2020). These transport-map constructions sit within a broader move toward generative posterior sampling for high-dimensional Bayesian inverse problems, a setting in which score-based and diffusion-model samplers have also been applied to seismic imaging (Baldassari et al., 2024; Siahkoohi et al., 2026). Across the ecosystem the ambient dimension ranges from a single coordinate on toy targets to thousands of pixels on image-density and PCP-Map applications, and all four applications share one structural feature: input-convexity demands positivity of the inter-layer weights, i.e., θ ⪰ 0.The dominant practical recipe for enforcing this constraint is projected gradient descent (PGD) (Amos et al., 2017): an unconstrained step on θ followed by the projection θ ← max( θ, 0) . The projection is non-differentiable on the active set, where the iterates concentrate, and PGD’s classical convergence guarantees ( O(1 /k ) for smooth convex problems with a closed convex constraint and O(1 /√k) to stationarity for smooth non-convex problems (Beck, 2017; Nesterov, 2018)) assume a Lipschitz-smooth objective that the ICNN training landscape violates there, so they do not 
+
+> arXiv:2605.24274v1 [cs.LG] 22 May 2026
+
+A lift for input-convex neural network training A P REPRINT ¡1.0 ¡0.5 0.0 0.5 1.0         
+
+> ®(toward θPGD )
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (trajectory-PCA  ⟂ d1)
+> PGD-anchored slice (21-dimensional tabular target)
+> 0.992 1.005
+> ¡0.005
+> 0.003 zoom (1 ;0)
+> hypernet (orange, solid squares)
+> direct softplus (red, dashed open circles)
+> PGD on cone (green, dotted triangles)
+> converged hypernet θ⋆(origin)
+> ¡0.420
+> 0.017
+> 0.455
+> 0.892
+> 1.330
+> 1.767
+> 2.205
+> 2.642
+> log 10  (loss  ¡ minloss)
+
+(a) Parameter-space view. 10 3           
+
+> training iteration (log scale)
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> training EBM loss (log scale)
+> 1000 2000 3000 4000
+> iter >1000
+> 23
+> 24
+> 25
+> 26
+> 27
+> EBM loss
+> 4.2 nats
+> 22.85
+> 27.01
+> late training
+> 0100 200
+> iteration
+> 10 2
+> 10 4
+> 10 6
+> 10 8
+> EBM loss
+> early training (iter 1-200)
+> hypernet
+> direct softplus
+> PGD on cone
+> direct: 443.88 nat
+> PGD: 27.01 nat
+> hypernet: 22.85 nat
+> 4.2 nat
+> Moreau benefit
+> ¼19 £gap
+> Arrhenius trap
+
+(b) Loss-space view. 
+
+Figure 1: Three positivity reparametrizations on log-concave EBM training, three different fates (21-dimensional tabular target; test negative log-likelihood reported at each method’s lowest-validation-loss checkpoint). (a) Loss landscape on a two-dimensional PGD-anchored slice (Section 5.3), the converged hypernet at the origin (gold star); 
+
+(b) held-out validation loss versus iteration on the same run. Hypernet descends through the basin to the deepest loss; 
+
+PGD lands at the cone boundary; direct softplus is trapped on the readout shoulder (Section 2.2), an order of magnitude above the other two. The lift’s margin above PGD is the landscape-smoothing benefit of Lemma 1; the gap above 
+
+direct is the Kramers escape of Corollary 1. Code to partially reproduce the results is available on GitHub. transfer. A differentiable alternative reparametrizes the inter-layer weights as θ = ψ( ˜θ) with ˜θ ∈ Rd unconstrained and ψ a monotone non-negative map, of which there are two genuine families—the smooth one, softplus, and the non-smooth max-based one, the ReLU-type readouts ψ(˜θ) = max( ˜θ, ϵ ) that project onto the non-negative cone (the cone projection being the ϵ = 0 case). Each enforces θ ⪰ 0 by construction, and each introduces a chain-rule prefactor ψ′( ˜θ) that multiplies every downstream gradient and collapses on an extended region of parameter space: the softplus prefactor ψ′(˜θ) vanishes smoothly as ˜θ → −∞ (Hoedt and Klambauer, 2023), while the ReLU-type prefactor is identically zero on the gated set and matches PGD at the cost of differentiability. Stochastic gradient descent escapes this attenuated region only on a time scale that grows exponentially with the inverse noise level (Corollary 1)—the Kramers–Arrhenius (Hänggi et al., 1990; Kramers, 1940; Xie et al., 2021) regime, fundamentally slower than the polynomial classical PGD rates. Existing remediations treat the symptom rather than the structure: specialized initialization schedules (Hoedt and Klambauer, 2023) each tame an individual failure mode; plain alternating direction method of multipliers (ADMM) with positivity (Boyd et al., 2011) enforces the constraint by a closed-form prox on the slack but leaves the primal block without data-conditioned reparametrization, and its stiff-penalty limit 
+
+ρ → ∞ reduces structurally to PGD on the cone. Inspired by the parameter-extension lifts of full-waveform inversion (FWI) (Symes et al., 2020; van Leeuwen and Herrmann, 2013)—where a stiff variable is recast in a larger space to turn a hard non-convex problem into a smoother one—we propose the lift . Rather than constraining the inter-layer weights directly, we train an unconstrained hypernet-work (Ha et al., 2017) that emits them from the input batch. Because the batch is resampled at every step, the emitted weights fluctuate as training proceeds—an additional source of stochasticity in the training dynamics. Unlike ordinary mini-batch gradient noise, this fluctuation is not suppressed by the gradient attenuation that stalls direct softplus, and it softens the loss landscape around the region where training would otherwise plateau. We trace the effect to three structural ingredients of the construction—a learnable slack, the batch-conditioned body, and the stochastic coupling between them—and prove that none is dispensable (Theorem 1). On a one-dimensional log-concave energy-based model (EBM) and a convex-potential normalizing flow on a 21-dimensional tabular benchmark, the lift descends to a lower test loss than both PGD and direct softplus, turning a plateau-bounded trajectory into a valley-descending one (Figure 1). 
+
+1.1 Contributions (1) The lift. We propose the hypernetwork-emitted ICNN parametrization of equation (1) , which introduces an additional source of stochasticity into the training dynamics that effectively smooths the loss landscape around the 2A lift for input-convex neural network training A P REPRINT 
+
+readout shoulder. We then read the parametrization as a split-variable decomposition (Section 3, Section 4.2), an interpretation that delivers the lift’s conditioning advantage without invoking the rate-theoretic assumptions that an ADMM convergence analysis would require. 
+
+(2) Three jointly necessary structural ingredients. We identify three ingredients of the lift’s conditioning advantage— an identity-Jacobian slack , a data-conditioned body , and a non-vanishing cross-covariance between them—and prove that each is necessary for an operationally measurable cross-covariance estimator (Theorem 1). An implicit strong-convexification result links the cross-covariance to an added curvature modulus on the loss landscape, scoped to the stochastic-readout regime. 
+
+(3) Empirical evidence across two ICNN paradigms. On one-dimensional log-concave EBM targets, a four-architecture ablation isolates each ingredient and a 30-seed paired sweep bounds the lift’s distributional improvement across the log-concave family (Section 5.1). On a 21-dimensional tabular target and on two-dimensional synthetic targets for convex potential flows, the lift improves test loss over direct softplus and produces a measurably smoother training trajectory and a better-conditioned loss-landscape geometry (Section 5.2, Section 5.3). The remainder of the paper is organized as follows. We first name the chain-rule attenuation pathology that motivates the lift (Section 2), introduce the slack-plus-batch-summary reparametrization that resolves it (Section 3), and decompose the conditioning advantage into three structural ingredients (Section 4). We then contrast the construction against plain ADMM-with-positivity (Section 4.2) and present the empirical evidence across log-concave EBM training and convex-potential flow estimation (Section 5). The PGD-baseline ablation (Section 6) and a discussion of scope and related work (Section 7) close out the argument before the conclusion (Section 8). 
+
+2 Positivity-reparametrized ICNNs attenuate the gradient on the readout shoulder 
+
+Before introducing the lift, we name the structural pathology it resolves: a positivity readout ψ whose chain-rule prefactor ψ′ collapses on an extended region of parameter space, trapping stochastic gradient descent (SGD). Section 2.1 fixes the ICNN training setup; Section 2.2 defines the readout shoulder; Section 2.3 closes the case that both readout families—smooth softplus and the non-smooth ReLU-type—fail there uniformly. 
+
+2.1 ICNN training and the positivity constraint 
+
+We train ICNN-parametrized models (Amos et al., 2017) by SGD on a data-driven loss L. The running example is a single-component ICNN-EBM, pθ (x) ∝ exp( −Eθ (x)) , with Eθ an input-convex neural network whose convex non-decreasing activations and non-negative inter-layer weights θl ⪰ 0 together enforce input-convexity of Eθ ; convex potential flows, PCP-Map, and ICNN-parametrized optimal transport share the same structure. Positivity is enforced through a monotone non-negative readout ψ : R → R≥0, θ = ψ( ˜θ), with ˜θ ∈ Rd unconstrained. The canonical instance is ψ = softplus , whose derivative ψ′(˜θ) ∈ (0 , 1) multiplies every downstream gradient through the chain rule. Throughout, θ ∈ Rd denotes the flattened vector of inter-layer weights to which the positivity constraint applies; the ICNN’s other parameters (per-layer biases and any unconstrained weights) are absorbed into the function Eθ but are not analyzed separately, because the lift mechanism acts only on the constrained weights. 
+
+2.2 The readout shoulder 
+
+The locus ψ′( ˜θ) = σs ≪ 1 is the softplus shoulder of width σs (Figure 2). The shoulder is an extended region of parameter space, not a thin set: at σs = 0 .05 it includes the entire half-line ˜θ ≲ −3, so an iterate that enters it has room to wander. Once inside the shoulder, the chain-rule prefactor ψ′( ˜θ) is exponentially small in the weight magnitude, and SGD escapes only on a time scale that grows exponentially with the inverse noise level—the Kramers–Arrhenius regime (Hänggi et al., 1990; Kramers, 1940) quantified by Corollary 1 in Section 4.1. The same exponential escape time appears for the other canonical positivity reparametrizations (Remark 1). 
+
+2.3 Direct readouts fail uniformly on the shoulder 
+
+The direct softplus parametrization treats ˜θ as a free parameter and updates it through the chain-rule gradient ∇ ˜θ L =
+
+ψ′( ˜θ) ⊙ ∇ θ L. On the softplus shoulder the prefactor ψ′ vanishes and the trajectory stalls; on the ReLU-type gate the prefactor is identically zero on the gated set and the trajectory is trapped. The direct softplus is feasible by construction but is not amenable to gradient descent in the high-attenuation regime, a property shared by every canonical positivity reparametrization. 3A lift for input-convex neural network training A P REPRINT ¡10 ¡8 ¡6 ¡4 ¡2 0 2 4
+
+pre-readout ~μ    
+
+> 0
+> 1
+> 2
+> 3
+> 4
+> Ã(~μ)
+> Ã(~μ) = softplus( ~μ)
+> Ã0(~μ)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Ã 0(~μ)
+> ¾s= 0 :05
+> shoulder ( Ã0¿1): chain-rule attenuation
+
+Figure 2: Softplus shoulder: an extended region of parameter space where the chain-rule prefactor ψ′ collapses. 
+
+The readout ψ(˜θ) = softplus( ˜θ) (black, left axis) and its derivative ψ′(˜θ) (red dashed, right axis) on a single scalar coordinate ˜θ; the shaded region is the shoulder {˜θ : ψ′(˜θ) < σ s} with σs = 0 .05 . Iterates that enter the shoulder have body-path gradient ∂θ/∂h ϕ = ψ′( ˜θ) attenuated below σs; the lift’s identity-Jacobian slack channel (Section 3) provides the unmodulated escape route. 
+
+Remark 1 (Generality of the positivity reparametrization.) . The lift analysis below uses only that ψ : R → R≥0 is differentiable monotone, with a chain-rule prefactor ψ′ that is small on an extended region of parameter space, so chain-rule attenuation is genuinely active on a non-trivial subset of parameter space. The first condition is met by any smooth monotone-positive reparametrization; the second is the operative restriction, and it holds for softplus (ψ′(u) ∈ (0 , 1) , with ψ′(u) → 0 as u → −∞ ) and, more generally, for any smooth monotone ψ with infimum zero, since such a map necessarily has a prefactor that decays toward zero over an unbounded sub-level region rather than only on a thin set. The non-differentiable limit—the ReLU-type readout at ϵ = 0 , where ψ(u) = max( u, 0) and 
+
+ψ′(u) = 1[u > 0] , the cone projection—is treated in Section 6.2 as the projection limit, in which the gated coordinates have exactly zero gradient and the bias-channel identity Jacobian remains the only escape route. 
+
+3 The lift: slack-plus-hypernetwork reparametrization of the constrained weights 
+
+While mini-batch gradient noise reliably escapes sharp basins in standard deep-learning training (Hochreiter and Schmidhuber, 1997; Jastrz˛ ebski et al., 2017; Keskar et al., 2017; Li et al., 2017; Mandt et al., 2017), the previous section showed that the readout shoulder attenuates this very noise: the chain-rule prefactor ψ′ shrinks the deterministic drift and the stochastic kick at the same rate, and SGD stalls. In this section we introduce the lift, a reparametrization that gives SGD a structurally distinct noise source bypassing ψ′: Section 3.1 makes the construction precise, Section 3.2 reads off the two structural channels it opens, Section 3.3 traces how they combine with batch stochasticity to deliver an implicit smoothing of the shoulder, and Section 3.4 packages the result as a one-call wrapper for any existing ICNN training pipeline. The formal claims behind the intuition land in Section 4. 
+
+3.1 Routing the constraint through a slack-plus-hypernetwork emission 
+
+The lift (Figure 3) replaces the direct softplus’s free parameter ˜θ with the sum of a learnable slack bias and a permutation-invariant hypernetwork emission, then routes the result through the positivity readout: 
+
+θ = ψ( ˜θ), ˜θ = b + hϕ(X), hϕ(X) ≡ h(2) 
+
+> ϕ
+
+ 1
+
+> nn
+
+X
+
+> i=1
+
+h(1)  
+
+> ϕ
+
+(xi)
+
+
+
+. (1) Here b ∈ Rd is the per-coordinate slack bias; h(1)  
+
+> ϕ
+
+and h(2)  
+
+> ϕ
+
+are fully-connected branches with collected weights ϕ,applied per-point and after mean-pooling respectively over the conditioning batch X = ( x1, . . . , xn); and ψ is the positivity readout of Section 2. The DeepSets-style mean-pool makes hϕ permutation-invariant in the ordering of 
+
+X (Zaheer et al., 2017); this DeepSets-hypernetwork emission pattern was first applied to generative-model training by Mayer et al. (2024), where conditioning the emitted weights on a permutation-invariant batch summary mitigates model autophagy disorder in self-consumed training loops (Alemohammad et al., 2024), and a function-space variant was applied by Thatipelli and Siahkoohi (2026) to produce grid-independent finite-dimensional representations of functional data for downstream clustering. Training minimizes the same ICNN loss L as the direct softplus, but over 4A lift for input-convex neural network training A P REPRINT   
+
+> x1
+> x2
+> ...
+> xn
+> h(1)
+> ϕ
+> per-point
+> 1
+> n
+> Ph(2)
+> ϕ
+> readout
+
+⊕   
+
+> ˜θ
+> (free param.)
+> b
+> slack bias
+> ψ(·)
+> softplus
+> θ⪰0
+> constr.
+> ICNN
+> Eθ(x)
+
+direct 
+
+> softplus
+
+lift 
+
+> (ours)
+
+Figure 3: The lift in one picture. Top row (red, direct softplus baseline): the pre-readout iterate ˜θ is a free parameter, passed through the positivity readout ψ to produce the constrained weight θ ⪰ 0, then through the ICNN energy 
+
+Eθ (x). Bottom row (orange, lift): the conditioning batch X = ( x1, . . . , xn) feeds the DeepSets hypernetwork 
+
+hϕ(X) = h(2) 
+
+> ϕ
+
+  1
+
+> n
+
+P 
+
+> i
+
+h(1)  
+
+> ϕ
+
+(xi); its emission is summed with the slack bias b at the ⊕ node to produce ˜θ = b + hϕ(X),which feeds the same shared ψ → θ → Eθ (x) tail. The slack and body channels and their Jacobians through the readout are analyzed in Sections 3.2 and 4. the lifted parameters (ϕ, b) in place of θ directly: 
+
+The lift’s training objective: min   
+
+> ϕ,b
+
+L ψ( ˜θ) (2) The loss family, the model class, the data, and the evaluation metric are unchanged relative to the direct softplus, which is recovered by freezing b ≡ 0 and hϕ ≡ 0 and optimizing ˜θ in their place. Only the optimization variable differs. 
+
+3.2 The lift decomposes the pre-readout iterate into a constant slack and a batch-conditioned body 
+
+The slack-plus-hypernetwork decomposition ˜θ = b + hϕ(X) splits the pre-readout iterate into two terms with very different dependence on the conditioning batch X. The slack b is a parameter, constant across SGD iterations that draw different batches. The body hϕ(X) is a function of the batch—its output varies as X varies. Both terms enter ˜θ
+
+additively, so their first-order Jacobians are identical ( ∂ ˜θ/∂ b = ∂ ˜θ/∂h ϕ = Id) and each picks up the same readout prefactor diag( ψ′( ˜θ)) when chain-ruled to the constrained weight θ = ψ( ˜θ). The asymmetry the lift introduces is not in the Jacobians—both optimization variables see the same shoulder attenuation as the direct softplus—but in which term carries the batch dependence. At iteration t, a fresh batch X(t) is drawn and the lifted iterate evaluates to ˜θ(t) = b + hϕ(X(t)). Across a trailing window of T iterations at approximately fixed (ϕ, b)—the SGD updates to these parameters are slow relative to the batch-to-batch variation in hϕ(X(t))—let ¯˜θ := 1
+
+> T
+
+P 
+
+> s
+
+˜θ(s) denote the trailing mean and δ ˜θ(t) := ˜θ(t) − ¯˜θ the batch-induced fluctuation of the iterate. The slack contributes a constant offset and drops out of the fluctuation; the body carries it entirely: 
+
+δ ˜θ(t) = δh ϕ(X(t)). (3) The direct softplus parametrization has no analog: its pre-readout iterate is a free parameter, independent of X, so 
+
+δ ˜θ(t) ≡ 0. Section 3.3 shows how this batch-induced fluctuation couples to mini-batch gradient noise and delivers an implicit smoothing of the readout shoulder. 
+
+3.3 Why this helps: implicit landscape smoothing through batch stochasticity 
+
+The previous subsection split the pre-readout iterate into a constant slack and a batch-conditioned body; we now walk, in four steps, why that split lets SGD escape a shoulder on which the direct softplus stalls. The mathematics is assembled formally in Section 4; here we keep only the intuitive chain. 
+
+Step 1: the shoulder kills every gradient-driven channel, the lift included. Every parameter update the optimizer takes is a gradient step, and every gradient in ˜θ-coordinates factors through the chain rule as a Jacobian acting on 
+
+g = ψ′( ˜θ) ⊙ ∇ θ L, so it carries the readout prefactor ψ′( ˜θ). On the shoulder ψ′( ˜θ) ≈ σs ≪ 1, and the gradient-driven part of the lifted increment ∆ ˜θ is bilinear in g—hence of order ψ′( ˜θ)2 in every term—so the deterministic drift and 5A lift for input-convex neural network training A P REPRINT 
+
+the gradient-sourced kick collapse together. The lift’s gradient descent therefore freezes on the shoulder exactly as the direct softplus’s does; whatever advantage the lift carries cannot come from a gradient step. 
+
+Step 2: but the lift’s iterate keeps moving without a gradient step. The lifted pre-readout iterate is ˜θ(t) =
+
+b + hϕ(X(t)), and at the variance-maximizing operating point n = 1 of Remark 3 the conditioning sample X(t)
+
+is redrawn on every forward pass. Even with the parameters (b, ϕ) held frozen—and hence with no gradient step taken—the iterate jitters from one pass to the next by δ ˜θ(t) = δh ϕ(X(t)) of (3) : a re-evaluation of the emission on a fresh batch, not a gradient, carrying no ψ′ factor. The direct softplus has no body to re-evaluate—its pre-readout iterate is a free parameter, δ ˜θ(t) ≡ 0—so once its gradients die on the shoulder, its iterate is motionless. The batch-resampling jitter of the lifted iterate is the one channel of motion that the shoulder leaves intact. 
+
+Step 3: that jitter is a genuine SGD noise channel, σJac . In the stochastic differential equation (SDE) picture of SGD (Li et al., 2017; Mandt et al., 2017), mini-batch SGD is a drift plus a diffusion, and the diffusion of the lifted iterate has two parts: a ψ′-attenuated gradient-noise part of scale σ2 
+
+> s
+
+σ2obj , which dies on the shoulder with the rest of the gradient-driven channel, and the unattenuated batch-resampling part. The second part is measured by the trace of the cross-covariance between the iterate jitter δ ˜θ and the gradient fluctuation δg = g − EX [g],
+
+bΣ(t)slack = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+δ ˜θ(s) (δg(s))⊤, σ2Jac ≡ tr EX
+
+δ ˜θ δg⊤, (4) with s indexing SGD iterations in the trailing window [t−T, t −1] . This is a cross -covariance—the jitter δ ˜θ against the gradient fluctuation δg—and it is nonzero because both ride the same conditioning batch X: the body emits ˜θ from X
+
+and the loss gradient is evaluated on the same X, so their fluctuations are correlated rather than independent. The direct softplus has δ ˜θ ≡ 0, so its σJac is identically zero; σJac is the lift’s surviving noise channel in one number. 
+
+Step 4: how σJac enters the equations. The lifted iterate’s effective SGD diffusion is the sum of the two parts of Step 3, σ2eff = σ2 
+
+> s
+
+σ2obj + σ2Jac ; on the shoulder the first term collapses and σ2eff ≈ σ2Jac , so SGD continues to sample its surroundings on a shoulder that has frozen the direct softplus. This residual diffusion enters the downstream equations at two places, each made formal in Section 4. Through the small-noise expansion of the SGD invariant measure, it adds to the effective landscape a strong-convexity modulus μeff = Θ( σ2Jac /(dκ 2)) , with κ = ∥ ˜θ∥∞ the typical readout scale and d the constrained-weight dimension—an implicit smoothing of the shoulder that requires no change to ψ (formal statement: Lemma 1). And it sits in the Kramers escape exponent of the bias-channel SDE, 
+
+E[τhyper ] ∝ exp(2 α/ (σ2 
+
+> s
+
+σ2obj + σ2Jac )) against the direct softplus’s exp(2 α/ (σ2 
+
+> s
+
+σ2obj )) , with α the height of the loss barrier across the shoulder: the unattenuated σ2Jac lifts the exponent, and once it grows comparable to the barrier the exponential saturates and the escape crosses over to a polynomial σ−2Jac free-diffusion scaling (formal statement: Corollary 1; the diffusive regime is probed empirically in Section 5.1.2). 
+
+The cross-covariance estimator is the deployable signature. The cross-covariance estimator (4) is nonzero only when the slack, the body, and their batch-coupled cross-correlation are all simultaneously present (Theorem 1); the four-architecture ablation of Figure 6 tests this architecturally—deleting any one ingredient zeros the estimator, and only the full lift returns a finite reading. The estimator is cheap (an O(d2) accumulator over the trailing window, well below 
+
+1% overhead in our experiments), so it doubles as a structural test of the mechanism and a deployable training-time monitor. Figure 4 renders this signature on an actual ICNN-EBM training loop: the slack-channel cross-covariance peaks during the descent into the shoulder and sustains a finite reading once a non-trivial tail of the ICNN weights enters the shoulder window—the nonzero plateau, not the spike, is what Lemma 1 measures. 
+
+Remark 2 (Loss-agnosticism of the lift mechanism.) . The three ingredients depend on the loss L at exactly one place: the cross-covariance estimator picks up the gradient g = ∇ ˜θ L as a factor. The slack’s identity Jacobian, the body’s batch-induced fluctuation, and the shared batch stochasticity between body and gradient are properties of the lift’s structure, not of L. The decomposition therefore applies to convex potential flows (Huang et al., 2021), PCP-Map transport-map estimation (El Moselhy and Marzouk, 2012; Wang et al., 2025), ICNN-parametrized optimal transport (Korotin et al., 2021; Makkuva et al., 2020), score-matching for log-concave EBMs (Vincent, 2011), and any other data-driven SGD-trained ICNN loss whose gradient noise shares batch-level structure with the body’s batch summary; the conditioning advantage degenerates only in the deterministic-gradient regime with no batch-level stochasticity, outside the ICNN-application ecosystem. 6A lift for input-convex neural network training A P REPRINT 10 ¡7
+
+> 10 ¡6
+> 10 ¡5
+> 10 ¡4
+> 10 ¡3
+> 10 ¡2
+> kc
+> §slack kF
+
+¾2Jac sustains a finite floor on the shoulder                
+
+> hypernet ( N= 3 seeds, light = per-seed)
+> in shoulder (min ~μ < ¡3, all seeds)
+> sustained ¾2Jac »10 ¡4
+> throughout shoulder window
+> 0500 1000 1500 2000 2500
+> training iteration
+> ¡3.0
+> ¡2.5
+> ¡2.0
+> ¡1.5
+> ~μl across coords  l 10th--90th percentile band
+> 25th--75th percentile band
+> median across ~μl(all l, all seeds)
+> shoulder threshold ~μl=¡3
+
+Figure 4: The slack-channel cross-covariance is sustained throughout the shoulder window, not transient. Three seeds of the full lift trained under forward-KL on the one-dimensional Gumbel target; the gray band marks iterations where the minimum across coordinates of ˜θl sits below the readout shoulder threshold. Top: per-iteration Frobenius magnitude ∥ bΣslack ∥F of the slack-channel cross-covariance on the trailing window (light orange per seed, bold orange median). The slack-channel cross-covariance peaks during the descent and sustains a finite reading once the lower tail of the weight distribution enters the shoulder—distinct from the structural zero returned by every architecture that deletes one of the lift’s three ingredients (Figure 6). Bottom: the per-coordinate ensemble of pre-readout weights ˜θl
+
+across the positivity-tagged ICNN coordinates and all three seeds, with the dashed line at the shoulder threshold. The median weight stays above the threshold throughout training, but the lower percentile band brushes it from mid-training onward: a non-trivial tail of the ICNN’s weights lives in the shoulder, and this tail’s batch-induced fluctuation produces the sustained cross-covariance floor in the top panel. 
+
+3.4 A drop-in wrapper for any ICNN training pipeline 
+
+Before the code, two structural points orient the implementation: a hyperparameter choice that determines the magnitude of the batch-induced fluctuation of Section 3.2, and a parameter-count clarification for the experimental comparisons of Section 5. 
+
+Remark 3 (Conditioning-batch dimension as a tuning knob.) . The hypernetwork’s conditioning-batch size n is a hyperparameter independent of the loss-batch dimension. The mean-pool variance scales as Var X [hϕ] ∝ 1/n , so larger 
+
+n tightens the emission toward its mean and silences the batch-induced fluctuation that drives the lift’s mechanism (Section 3.3). The variance-maximizing operating point is n = 1 with the conditioning sample resampled fresh per forward pass while L is computed over the full data batch. On a two-dimensional gamma-mode target the n=1 limit lifts Var X [ ˜θ] by three to four orders of magnitude over the larger-conditioning-batch configuration; we adopt n=1 
+
+throughout. At this operating point the mean-pool acts on a single conditioning sample, so hϕ reduces to a per-instance emission and the permutation-invariance of the DeepSets pool is not exercised; the pooling is the general-n form of the construction, and the lift’s mechanism is defined for any n.
+
+Remark 4 (Parameter-count comparison is between optimization algorithms on a shared model class) . The hypernet’s body ϕ is an optimization-time auxiliary: at convergence the deployed model is the emitted ICNN with effective weights 
+
+˜θ⋆ = b + hϕ(X), which has identical architecture and parameter count to the direct-softplus method. The comparison reported throughout Section 5 is therefore between two optimization algorithms acting on the same model class, not between models of different capacities; matching on the body’s auxiliary parameter count would be tantamount to comparing different objects. The body’s extra parameters are training-time machinery that does not appear in the deployed ICNN’s forward pass, exactly as the multiplier and slack variables of an ADMM splitting do not appear 7A lift for input-convex neural network training A P REPRINT                           
+
+> #Mark constrained weights once at construction time :
+> class MyConvexNet ( nn . Module ) : def __init__ ( self , ...) : ... for win self . constrained_weights : w . _pos_required =True
+> #Then wrap with the lift :
+> icnn =MyConvexNet (...) hyper =HyperNetwork ( input_size = code_dim , hidden_sizes =[64 , 64 , 96] , downstream_network = icnn )
+
+Figure 5: The lift as a two-line drop-in wrapper. Mark the constrained weights of any user-supplied convex network with a _pos_required flag, then wrap with HyperNetwork . No manual list of positivity-tagged parameter names, no manual softplus, no constraint code in the training loop. in the converged primal solution. Carrying the body during training adds roughly 20 –35% to wall-clock time on the convex-potential-flow runs; this overhead is training-time only—inference uses the emitted ICNN alone—and is justified by the lower minimum the lift reaches. With these two points in hand, the lift drops into any existing ICNN training pipeline as a generic wrapper around the user’s convex network: a one-time positivity tag at construction time, then a two-line swap at the call site (Figure 5). The hypernetwork walks the user-supplied module’s named_parameters() , picks up every tensor flagged 
+
+_pos_required = True , and routes only those readouts through the positivity reparametrization; all other weights are emitted unconstrained. Every result in Section 5 is produced by exactly this wrapper; the surrounding training script (loss, optimizer, log-det estimator, evaluation grid) is bit-identical to the direct-softplus baseline. 
+
+4 Three structural ingredients drive the conditioning advantage 
+
+We now state the formal core of the lift mechanism that Section 3.3 developed intuitively. Proofs are in Section A; the prose between formal statements carries the story in compact form. The slack-channel cross-covariance E[δ ˜θ δg⊤] of Section 3.3 reaches the lifted parameter’s two blocks—the body 
+
+ϕ ∈ Rp and the slack b ∈ Rd—through their respective Jacobians ∂ ˜θ/∂ ϕ ∈ Rd×p and ∂ ˜θ/∂ b = Id:
+
+ ∂ ˜θ/∂ ϕ⊤E[δ ˜θ δg⊤]
+
+| {z }
+
+> body-channel reading
+
+vs.  ∂ ˜θ/∂ b⊤E[δ ˜θ δg⊤] = E[δ ˜θ δg⊤]
+
+| {z }
+
+> slack-channel reading, identity Jacobian
+
+. (5) The body-channel reading composes the cross-covariance with the body Jacobian, which the readout attenuates as the shoulder squeezes; the slack-channel reading is the cross-covariance itself, with no further attenuating composition. Its trace is the σ2Jac of (6) , structurally zero for direct softplus ( δ ˜θ ≡ 0) and generically nonzero for the lift. The estimator (4) of σ2Jac is also a structural test: delete any one of the three ingredients and it zeros out. 
+
+Theorem 1 (Each structural ingredient is necessary for the cross-covariance estimator to be nonzero) . Let bΣ(t)slack 
+
+denote the slack-channel cross-covariance estimator (4) . Deleting any one of the lift’s three structural ingredients—(i) the slack channel b, (ii) the batch-dependence of the body hϕ(X), or (iii) the batch-coupling of g and ˜θ—makes the slack-channel reading of the estimator vanish: (i) and (ii) zero it identically for every t and window length T , while (iii) zeros the population cross-covariance, of which the estimator is the unbiased, O(T −1/2)-consistent sample version. Full statement (including the regularity assumptions of Section A) and proof in Section A.1. Intuition. Each of the three deletions zeros the estimator by a distinct mechanism: a zero slack Jacobian premultiplies every summand (i), a vanishing iterate fluctuation δ ˜θ makes every summand zero (ii), or conditional independence makes the population coupling—and hence the limit of the estimator—zero (iii). The four-architecture ablation of Figure 6 realizes the three deletions architecturally; only the full lift returns a finite reading. The theorem is a necessity statement for the estimator , not for the conditioning advantage itself: a structural zero of bΣslack certifies that the slack channel of Equation (5) is inactive, but the converse—that any method with a structural zero must lose the advantage—is not claimed, and PGD (a structural zero by the bias-only deletion) is observed in Section 6.2 to reach the lift’s total variation (TV) on the lowest-dimensional target. The four-architecture ablation realizing the deletions is constructed in Section 5.1.1. 8A lift for input-convex neural network training A P REPRINT direct softplus direct softplus           
+
+> with bias bhypernet
+> without bias
+> full lift
+> 10 ¡7
+> 10 ¡6
+> 10 ¡5
+> 10 ¡4
+> ¹S = kc
+> §slack kF (small-¾ region,  T = 200)
+> 0 (sentinel) 0 (sentinel) 0 (sentinel)
+> 8.88e-05
+> only finite
+> stable reading
+> full lift: ¹S= 8 :88 e¡05 other three: ¹S= 0 (sentinel)
+
+Only the full lift returns a non-zero cross-covariance ¹S
+
+Figure 6: Only the architecture that retains all three ingredients returns a finite cross-covariance reading. Time-averaged Frobenius norm of the slack-channel cross-covariance on the small-σ region, across the four-architecture ablation of Section 5.1.1. The three deletions (direct softplus, direct with bias, body without bias) return the structural zero predicted by Theorem 1, plotted at the figure floor for log-axis legibility. The full lift (orange, dashed box) is the only architecture that admits a finite stable reading. 
+
+4.1 The cross-covariance strong-convexifies the loss landscape on the readout shoulder 
+
+We adopt the SDE-of-SGD proxy of Li et al. (2017); Mandt et al. (2017): in the small-learning-rate limit, the SGD trajectory on ϕ is approximated by dϕ = −∇ ϕL dt + Σ1/2(ϕ) dBt, with diffusion sourced by mini-batch noise and batches X i.i.d. from the target. Three scalars characterize the regime—the gradient-noise variance, the slack-channel cross-covariance, and the shoulder prefactor: 
+
+σ2obj ≡ tr Var X [∇θ L], σ2Jac ≡ tr EX
+
+δ ˜θ δg⊤, σs ≡ ψ′( ˜ ws), (6) with ˜ws the shoulder location and δg = g − EX [g] the centered fluctuation of the pre-readout gradient g = ∇ ˜θ L. Here 
+
+σ2obj is the variance of the constrained-coordinate gradient ∇θ L, taken before the readout prefactor is applied, so that the once-attenuated objective-noise variance entering the bias-channel diffusion is the product σ2 
+
+> s
+
+σ2obj (the prefactor is counted exactly once); and σ2Jac is the trace of the cross-covariance between the centered iterate fluctuation δ ˜θ and δg.Their dimensionless ratio 
+
+ϱ ≡ σ2Jac /(σ2 
+
+> s
+
+σ2obj ) (7) measures which noise channel carries the lift’s effective variance— ϱ ≫ 1 when the unmodulated Jacobian noise outweighs the prefactor-attenuated gradient noise, so that σ2eff ,hyper ≈ σ2Jac (ϱ to disambiguate from the ADMM penalty 
+
+ρ of (10) ). The two results below hold under the regularity assumptions (A1)–(A5) stated in full in Section A: a small-η
+
+SDE-of-SGD model with i.i.d. batches, a slowly-varying single-prefactor idealization of the shoulder, the identity slack Jacobian, a forward-KL Hessian linearization of the gradient fluctuation, and—for Corollary 1 only—a metastable single-barrier potential. 
+
+Lemma 1 (Implicit strong-convexification from data-conditioned Jacobian noise) . Under the regularity assumptions of Section A, the curvature H⋆ ≡ ∇ 2 
+
+> ϕ
+
+˜L(ϕ⋆) of the pullback forward-KL landscape ˜L(ϕ) ≡ EX [L(ψ(b + hϕ(X)))] at the converged ϕ⋆ acquires, on the slack subspace, an added curvature sourced by the slack-channel cross-covariance: 
+
+tr H⋆ ≥ tr EX [∇2˜θ L] + d μ eff , μeff = Θ  σ2Jac /(d κ 2), (8) 
+
+with κ = ∥ ˜θ∥∞ the typical readout scale and d the slack dimension, the inequality holding to leading order in the iterate-fluctuation magnitude. The slack-channel cross-covariance therefore strongly-convexifies the landscape that SGD samples by a per-dimension modulus μeff set by σ2Jac , without deforming ψ.Intuition. The lift’s extra noise channel—the resampled-batch fluctuation of the emitted weights—enters the sampled landscape as an added strongly-convex quadratic, an implicit smoothing of the effective optimization geometry that requires no change to the readout ψ; the cross-covariance is the formal measure of that channel. Full statement and proof in Section A.2. 9A lift for input-convex neural network training A P REPRINT 
+
+Remark 5 (Scope and properties of Lemma 1) . The strong-convexification of Lemma 1 is delivered through σ2Jac =tr EX [δ ˜θ δg⊤], whose magnitude scales with the batch-induced fluctuation δh ϕ(X). Three properties follow: (a) the smoothing is iterate-adaptive through δh ϕ(X); (b) genuinely anisotropic on Tϕ— (8) reports the trace, the dimension-averaged modulus, while the added curvature is in general a quadratic form aligned with the batch-coupled gradient noise rather than a multiple of I; (c) regime-conditional on (A1). The lemma is therefore conditional on the emission being a genuinely stochastic function of X: if an external constraint freezes X to a fixed anchor, then σ2Jac → 0 and 
+
+μeff → 0, and the lift falls silent until batch stochasticity is restored. The same requirement asymmetrizes the lift across forward vs reverse KL: in forward KL both hϕ(X) and g are driven by the same target batch and σ2Jac is generically nonzero; in reverse KL the two decouple, σ2Jac ≈ 0, and the smoothing channel is inactive. The dependence of μeff on 
+
+1/d is explicit: across the paper’s targets d ranges over one to a few tens, and the per-dimension modulus is reported with that factor carried. 
+
+Corollary 1 (Mean first-passage time across the shoulder, Arrhenius regime) . Under the regularity assumptions of Section A and a non-vanishing barrier of reference action α > 0 along the bias-channel direction, the mean first-passage times across the shoulder satisfy 
+
+E[τdirect ] ≍ exp  2α(σ2 
+
+> s
+
+σ2obj ) vs. E[τhyper ] ≍ exp  2α(σ2 
+
+> s
+
+σ2obj + σ2Jac ), (9) 
+
+where ≍ denotes equality of the leading exponential factor up to a sub-exponential prefactor. The lifted excess σ2Jac 
+
+is the slack-channel cross-covariance contribution of Equation (5) , structurally absent for direct softplus, so the lift escapes the shoulder strictly faster than the direct softplus. Intuition. The unattenuated σ2Jac enters the Kramers escape exponent additively, so the lift escapes the shoulder strictly faster than the direct softplus. Full statement and proof in Section A.3. 
+
+Remark 6 (Scope of Corollary 1) . Each Kramers exponent has units of action divided by variance, as required by 
+
+E[τ ] ≍ exp(2∆ V /σ 2). The barrier α is the reference action of the un-smoothed potential L ◦ ψ held fixed across the comparison; the lift’s benefit enters through the effective variance σ2eff in the denominator, not through a deformation of 
+
+α. Equation (9) is the metastable, small-noise asymptotic: once the unattenuated σ2Jac grows comparable to the barrier 
+
+2α, the lifted exponent drops to order one, the effective noise is no longer small relative to the barrier so (A5) fails, and the escape crosses over to a free-diffusion regime with polynomial Θ( σ−2Jac ) scaling. The drift-free one-dimensional Gumbel SDE of Section 5.1.2 sits in that crossover, outside the Arrhenius scope, and is read at the level of the SDE rather than its Kramers asymptotics; no experiment in this paper is run in the metastable regime of (A5), so Equation (9) is the idealized prediction that the diffusive probe brackets rather than confirms. 
+
+4.2 The lift as an ADMM consensus reformulation 
+
+The lift of Section 3 is a reparametrization, not an alternating algorithm: the boxed objective (2) is optimized by plain SGD on (ϕ, b) simultaneously. The reparametrization nonetheless structurally resembles an ADMM consensus splitting. Introduce an auxiliary primal z and a Lagrange multiplier y for the consensus constraint z = ψ(b + hϕ(X)) , giving the augmented-Lagrangian saddle-point problem 
+
+min    
+
+> ϕ,b,z
+
+max  
+
+> y
+
+L(z) + y⊤ z − ψ(b + hϕ(X))  + ( ρ/ 2) z − ψ(b + hϕ(X)) 22. (10) The lift is (10) restricted to its feasible set: where z = ψ(b + hϕ(X)) exactly, the penalty and multiplier terms vanish and the objective collapses to (2) . We use (10) only to locate the lift within the ADMM family—it is a structural lens, not a training objective: z and y are never instantiated, we do not run the alternating schedule, and we do not claim the lift as a ρ → ∞ limit, since eliminating z would interchange that limit with a non-convex stochastic infimum. The classical ADMM convergence theory does not transfer either— L is non-convex over the ICNN energy parameters—so the resemblance is structural, not an inherited algorithm or rate theorem. The empirical contrast with plain ADMM-with-positivity that is run, its z-step a cone projection, is Section 6.1. What survives this non-convex setting is the cross-covariance reading of (5) : the slack channel reads the cross-covariance through an identity Jacobian with no attenuating composition, and the cross-covariance is structurally nonzero for the lift and identically zero for the slack-free direct parametrization. The empirical evidence of Section 5 measures this cross-covariance, independent of whether the optimizer runs synchronous SGD or alternating ADMM updates. 
+
+5 Empirical evidence across two ICNN paradigms 
+
+Two training paradigms put ICNNs to work within this paper’s scope: log-concave energy-based modeling (Section 5.1) and convex potential flow estimation (Section 5.2). Every comparison reported below is a three-way reading of 10 A lift for input-convex neural network training A P REPRINT 
+
+hypernet vs direct-softplus vs PGD —PGD on the non-negative cone is the original ICNN recipe (Amos et al., 2017) and a structurally-zero sentinel under the same argument as the bias-only deletion of Section 4.2. The log-concave EBM subsection carries the structural evidence: a four-architecture cross-covariance ablation (the load-bearing test of Theorem 1), a diffusive-escape SDE on a one-dimensional Gumbel target, and a four-target log-concave gallery with paired 30-seed TV bounds. The convex potential flow subsection transfers the lift to the change-of-variables likelihood on two-dimensional synthetic targets and on a 21-dimensional tabular benchmark, with the loss-landscape geometry rendered in both parameter spaces. A closing subsection (Section 5.3) visualizes the loss landscape across both paradigms in both the constrained ICNN-θ and lifted (ϕ, b) coordinate systems. 
+
+5.1 Log-concave EBM training: structural evidence for the lift mechanism 
+
+We train ICNN-EBMs with the forward-KL objective. The model parametrizes a density pθ (x) =
+
+Z(θ)−1 exp( −Eθ (x)) with Eθ : Rd → R the output of an ICNN, θ = ψ( ˜θ) (softplus by default) enforcing positiv-ity, and the hypernet emit (1) routing ˜θ through the slack-plus-body decomposition of Section 3. The non-negative inter-layer weights are initialized with the folded-normal scheme of Hoedt and Klambauer (2023). The forward KL divergence between data and model takes the form 
+
+LFKL (θ) = Ex∼pdata 
+
+ Eθ (x)  + log Z(θ), (11) with the data expectation estimated by a mini-batch average and the log-normalizer log Z(θ) = log R exp( −Eθ (x)) dx
+
+estimated by self-normalized importance sampling (SNIS) (Owen, 2013) against a conditional sampler flow qϕ trained jointly with the energy; we use a Student-t-ν = 3 base for qϕ following Jaini et al. (2020), because log-concave ICNN-EBMs have at-most-exponential tails (Saumard and Wellner, 2014) that a Gaussian-base flow cannot cover at high dimension and SNIS has finite variance only when the proposal has at-least-as-heavy tails as the target. The optimizer is Adam (Kingma and Ba, 2015) on all parameters at lr = 10 −3 with the sampler flow updated jointly with the EBM at a 1 : 1 inner-outer schedule. We adopt n=1 for the hypernetwork’s conditioning-batch size throughout (see Remark 3 in Section 3.4). The three-way method comparison is identical across all experiments below: the hypernet body is the same batch-summary multilayer perceptron (MLP) throughout, the direct-softplus baseline is the slack-free b ≡ 0, hϕ ≡ 0
+
+limit of (1) , and the PGD baseline takes an unconstrained step on θ followed by the projection θ ← max( θ, 0) , the standard ICNN training recipe (Amos et al., 2017) and the ρ → ∞ stiff-penalty limit of plain ADMM-with-positivity (Section 4.2). The structural reading of the lift’s contribution—slack, body, and cross-covariance—is settled by the four-architecture ablation of Section 5.1.1 rather than by any single test-time outcome (Section 6.2). 
+
+5.1.1 Only the full lift returns a finite cross-covariance reading 
+
+The four architectures of Figure 6 realize the three deletions of Theorem 1. Direct softplus, ψ( ˜θ), has no slack and no body. Direct softplus with bias, ψ(b + ˜θ), has slack but no body, so the pre-activation has no batch-induced variance. Hypernet without bias, ψ(hϕ(X)) , has body but no slack. The full lift, ψ(b + hϕ(X)) , retains all three ingredients. For each architecture, we wire the cross-covariance estimator (4) into the trailing window and report the time-averaged Frobenius norm of bΣslack on the small-σ region min ˜θ < −3 (Figure 6). The three deletions return zero for distinct structural reasons. Direct softplus lacks b entirely. Direct softplus with bias has scalar slack with no batch-induced variance. The body-only architecture keeps min ˜θ above the shoulder threshold throughout training, so the small-σ region is never entered. The full lift is the only architecture whose trajectory enters the small-σ region and whose cross-covariance is finite and stable. PGD has neither slack to differentiate nor a data-conditioned body, so its reading is structurally zero by the same argument as the bias-only architecture. The lift’s finite cross-covariance is the load-bearing structural reading of the mechanism, body width alone cannot close the conditioning gap, and the sentinel zero on the three deletions is invariant to seed. 
+
+5.1.2 Diffusive-escape SDE: the lift’s escape rate rises with the bias-channel noise 
+
+The SDE we simulate is drift-free: both terms are martingale increments, so the regime is diffusive escape from an absorbing region under a state-dependent noise variance, not Arrhenius barrier-crossing. The toy stochastic differential equation that mirrors the lift’s diffusive escape evolves 256 replicates of the bias-channel SDE 
+
+d ˜wt = −ψ′( ˜ wt) σobj dW obj  
+
+> t
+
++ σJac dW jac 
+
+> t
+
+across an absorbing shoulder ˜ws = −13 .82 from an initial condition ˜w0 = −16 for niters = 20 ,000 steps. The first term carries the readout-prefactor-attenuated objective noise; the second term carries the unmodulated bias-channel cross-covariance. 11 A lift for input-convex neural network training A P REPRINT 0 0.05 0.15 0.3 0.6                                               
+
+> ¾jac
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> escape rate (20,000 steps, 256 replicates)
+> 0.00 0.00
+> 0.12
+> 0.51
+> 0.72
+> init eμ0=¡16
+> shoulder eμs=¡13 :82
+> (a) Escape rate: hypernet rises in ¾jac
+> PGD (no shoulder; rate = 1)
+> direct (sentinel; rate = 0)
+> hypernet
+> 2£10 ¡13£10 ¡14£10 ¡16£10 ¡1
+> ¾jac
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> mean first-passage time (steps)  direct: ¿=1
+> at 20,000-step budget
+> (b) Mean first-passage time vs ¾Jac
+> hypernet (empirical)
+> prediction: (eμs¡eμ0)2=¾ 2jac
+> PGD ¼0:23 steps (no shoulder)
+> 2£10 ¡13£10 ¡14£10 ¡16£10 ¡1
+> ¾jac (three highest-noise cells)
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> mean first-passage time (steps)  12243
+> 8144
+> 4415
+> (c) Power-law slope ¼ ¡ 0:74 (vs theory ¡2)
+> empirical
+> fit slope = ¡0:74
+> theory slope = ¡2
+
+Figure 7: The lift’s escape rate rises monotonically with the bias-channel noise; direct softplus cannot escape. 
+
+A synthetic bias-channel SDE that illustrates the diffusive-escape mechanism—not an ICNN run; the real-ICNN confirmation is Figure 8. (a) Escape rate vs σJac : hypernet rises monotonically; direct softplus cannot escape because the slack channel is absent; PGD never enters a readout shoulder, so the escape question is degenerate. (b) Mean first-passage time on log-log axes, decreasing with σJac ; the gray dashed line is the idealized diffusive envelope 
+
+( ˜ ws − ˜w0)2/σ 2Jac , an upper reference the finite-budget SDE does not attain. (c) Zoomed first-passage time with a power-law fit; the empirical exponent is shallower than the idealized −2 because the SDE’s effective escape distance is shorter than the nominal ˜ws − ˜w0.Figure 7 reports the empirical escape rates and first-passage times (FPTs) for the three-way hypernet /direct /PGD 
+
+reading. The empirical FPT decreases monotonically with σJac , the qualitative signature of the diffusive mechanism; the idealized envelope E[τ ] ∝ ( ˜ ws − ˜w0)2/σ 2Jac is an upper reference the finite-budget SDE does not attain, since the effective escape distance is shorter than the nominal ˜ws − ˜w0. As expected, at the two lowest-noise cells the prefactor-attenuated objective noise dominates the unmodulated Jacobian noise and no replicate escapes at the 20 ,000 -step budget. This SDE is a synthetic illustration of the mechanism; the escape behavior on an actual ICNN-EBM is measured in Figure 8. The three-way comparison closes structurally. The direct -softplus method corresponds to the σJac = 0 slice of the SDE—no unmodulated Jacobian-side noise, no escape at any budget. The PGD method has no ψ at all, so its iterate is never trapped on a readout shoulder; the diffusive-escape question is degenerate for PGD, consistent with the bias-only reading of Section 4.2. The escape is not only a property of the synthetic SDE. Figure 8 measures the same escape on an actual ICNN-EBM— the lift and direct softplus trained under forward-KL on the one-dimensional Gumbel target, five seeds, with the full per-coordinate pre-readout iterate logged so escape reads as a cohort statistic. The reading is decisive and seed-consistent: for direct softplus the readout shoulder is an absorbing trap, its shoulder-coordinate population monotone non-decreasing and shoulder-touching coordinates almost never leaving; for the lift the shoulder is transient, coordinates cycling in and out as the batch-coupled slack channel keeps the iterate wandering across the shoulder boundary. The conditional escape statistics factor out the initialization and isolate the mechanism itself—the lift’s per-coordinate leave-rate is more than an order of magnitude above direct softplus’s. A real ICNN cannot reproduce the synthetic SDE’s controlled σJac sweep, since σJac is emergent rather than a dial; what it confirms is the binary structural fact the SDE abstracts—with the slack channel, shoulder coordinates escape; without it, they do not. 
+
+5.1.3 The conditioning advantage transfers from one-dimensional toy targets to a 32-dimensional image-flavored latent 
+
+The lift’s median TV-to-target sits strictly below direct softplus on every one of four log-concave one-dimensional targets, with the gap widening as the target’s support tightens. Figure 9 delivers both readings in a single 4 × 2
+
+panel: single-seed density overlays (top row) and paired TV-to-target histograms across 30 seeds (bottom row) for the 
+
+hypernet and direct softplus methods across four log-concave one-dimensional targets (Gumbel, Laplace, Gamma, Beta). The hypernet median sits strictly below the direct median on every target, with widening margins as the support tightens—Beta on [0 , 1] separates the two methods most strongly. The conditioning advantage is loss-agnostic across the log-concave family of Remark 1. PGD on the same Gumbel target reaches the hypernet ’s TV (Section 6.2); the structural probe that distinguishes hypernet from PGD is the cross-covariance reading of Section 5.1.1, not the test-time density. 
+
+MNIST autoencoder-latent. A frozen convolutional autoencoder maps each 28 × 28 MNIST (LeCun et al., 1998) digit image to a 32-dimensional latent vector, and a per-class log-concave EBM is fit to each digit’s empirical latent 12 A lift for input-convex neural network training A P REPRINT 0 500 1000 1500 2000 2500 3000         
+
+> training iteration
+> 0
+> 20
+> 40
+> 60
+> 80
+> # pre-readout coords in shoulder
+> (a) shoulder occupancy: direct fills, never drains
+> direct (median of 5 seeds)
+> hypernet (median of 5 seeds)
+> 0500 1000 1500 2000 2500 3000
+> training iteration
+> ¡4.0
+> ¡3.5
+> ¡3.0
+> ¡2.5
+> ¡2.0
+> ¡1.5
+> pre-readout ~μl (pooled coords, seeds)
+> readout shoulder ~μ < ¡3
+> (b) direct tail sinks deep; lift tail only brushes
+> direct median
+> direct 5th pct
+> hypernet median
+> hypernet 5th pct
+> 300-iter
+> leave-rate
+> dwell
+> fraction
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> fraction
+> 22x
+> (c) escape | in shoulder: lift churns, direct frozen
+> direct
+> hypernet
+> Real ICNN-EBM on one-dimensional Gumbel (forward-KL): the lift's pre-readout coordinates escape the readout shoulder; direct-softplus stays trapped
+
+Figure 8: On a real ICNN-EBM the lift’s readout shoulder is transient, while direct softplus’s is an absorbing trap. The hypernet and direct softplus methods trained under forward-KL on the one-dimensional Gumbel target, five seeds, with the pre-readout iterate logged per coordinate. (a) Shoulder occupancy versus iteration: the direct softplus 
+
+population grows monotonically and never drains, while the hypernet population stays a thin tail. (b) Per-coordinate pre-readout-iterate ensemble: the direct tail sinks deep into the shoulder, the hypernet tail only brushes the threshold. 
+
+(c) Conditional escape statistics—leave-rate and dwell fraction, conditioned on a coordinate already being in the shoulder so initialization is factored out: the hypernet leave-rate is more than an order of magnitude above direct softplus ’s, and its dwell fraction is roughly half. ¡5 0 5 10                              
+
+> x
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> density
+> Gumbel
+> target
+> hypernet
+> direct
+> ¡505
+> x
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Laplace
+> 0.0 2.5 5.0 7.5 10.0 12.5
+> x
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Gamma( ®= 2)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> x
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Beta(2 ;5)
+> 0.00 0.05 0.10 0.15 0.20 0.25
+> TV( pμ; p target )
+> 0
+> 2
+> 4
+> 6
+> 8
+> # seeds
+> med: hyp=0.118, dir=0.145 ( £1.22)
+> hypernet (n=30)
+> direct (n=30)
+> 0.0 0.1 0.2 0.3 0.4
+> TV( pμ; p target )
+> 0
+> 5
+> 10
+> 15
+> med: hyp=0.144, dir=0.151 ( £1.05)
+> 0.0 0.1 0.2 0.3
+> TV( pμ; p target )
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> med: hyp=0.085, dir=0.175 ( £2.07)
+> 0.00 0.05 0.10 0.15
+> TV( pμ; p target )
+> 0
+> 5
+> 10
+> 15
+> med: hyp=0.030, dir=0.113 ( £3.74)
+
+Figure 9: The lift uniformly improves the convergence distribution across four log-concave one-dimensional ICNN-EBM targets. Top row: single-seed density fits. Target (black) vs hypernet vs direct softplus (dashed). The 
+
+hypernet curve overlays the target on every panel; the direct curve over-shoots the mode or mis-fits the tail. Bottom row: per-seed total-variation distance to the target across 30 seeds per method, with color-matched dashed medians and a dotted success threshold. The probe that distinguishes the lift from PGD is in the cross-covariance reading of Figure 6; the landscape geometry of the lift versus the direct constraint is rendered in Section 5.3. distribution under forward-KL. Decoding posterior samples through the frozen autoencoder recovers an image-quality reading on top of the latent test-loss metric. The setup transfers the lift verbatim: each per-class hypernet emits the same softplus-tagged inter-layer weights as the one-dimensional EBM line, and the same batch-summary plus slack-bias decomposition applies. All ten digit classes are recovered and the basin/plateau geometry holds seed-by-seed. The MNIST autoencoder-latent line extends the EBM evidence to 32-dimensional image-flavored latents while remaining inside the log-concave scope of the paper’s analysis. The per-class ensemble of Figure 10 shows the lift’s conditioning advantage transfers beyond the one-dimensional gallery of Figure 9, and the loss-landscape view in Figure 11 is the train-time signature that the test-loss bar in Figure 12 corroborates at the operating point. Figure 13 aggregates the EBM line across one-, two-, six-, and 32-dimensional log-concave targets and shows that the lift’s metric advantage scales without breaking. 13 A lift for input-convex neural network training A P REPRINT digit 0   
+
+> digit 1
+> digit 2
+> digit 3
+> digit 4
+> digit 5
+> digit 6
+> digit 7
+> digit 8
+> digit 9
+> Per-class log-concave EBM samples (hypernet, D= 32 AE-latent)
+
+Figure 10: The lift recovers all ten digit classes. Decoded samples from the per-class hypernet EBM through the frozen autoencoder—one row per digit class, all ten recovered with class-recognizable character. The headline lift contrast lives in the multi-seed convergence and landscape figures below. 
+
+5.2 Convex potential flows: the lift transfers to the change-of-variables likelihood 
+
+The convex-potential-flow paradigm (Huang et al., 2021) replaces the forward-KL data expectation of Section 5.1 with a change-of-variables likelihood, and the lift transfers to it without modification. The transport map T : Rd → Rd is realized as the gradient of a convex potential fθ : Rd → R implemented by an ICNN with non-negative inter-layer weights θl ⪰ 0 enforced by the same readout ψ as in the EBM line. The pushed-forward density takes the form 
+
+log pX (x) = log pN
+
+ ∇fθ (x); 0, I + log det  ∇2fθ (x), (12) in which det ∇2fθ is the Jacobian determinant of the Brenier map (Brenier, 1991) and is estimated stochastically (Hutchinson–CG (Huang et al., 2021)) when the ambient dimension makes exact evaluation infeasible. The hypernet emit (1) replaces the direct ˜θ by the slack-plus-body decomposition , leaving every other component of the CPFlow stack unchanged. The two-dimensional experiments use a 3-layer ICNN of hidden width 64 with strong-convexity coefficient 0.05 ; the 21-dimensional tabular experiment uses the PICNN of Amos et al. (2017) configured per the PCP-Map recipe of Wang et al. (2025) as the convex potential, trained as an unconditional density by collapsing the PICNN’s conditioning input to a constant. The CPFlow experiments below are run as a two-way comparison— hypernet vs direct-softplus ; the three-way structural reading that includes PGD is settled by the cross-covariance test of Section 5.1.1. What this subsection adds is loss-agnostic confirmation: the same conditioning advantage the EBM line measured under forward-KL carries through the change-of-variables likelihood. 
+
+5.2.1 Two-dimensional synthetic targets: the lift’s advantage surfaces in the convergence distribution 
+
+The two-dimensional demo trains a single-block convex potential flow on the 8-Gaussians and 2-spirals targets, both backends, under an apples-to-apples symmetric initialization: each backend’s positivity readout receives the same per-element N (0 , σ 2 
+
+> bh
+
+) pre-softplus jitter, so the only remaining difference between the arms is the lift itself. Training is 
+
+6,000 Adam iterations at lr = 10 −3, batch size 64 , held-out 1024-sample test loss; the sweep runs 100 paired seeds per method per target. 14 A lift for input-convex neural network training A P REPRINT ¡1 0 1
+
+® (direct ¡hypernet end-difference)      
+
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (trajectory-PCA  ⟂ d1)
+> seed 0
+> hypernet (orange, solid squares)
+> direct softplus (red, dashed open circles)
+> converged hypernet θ⋆(origin)
+> ¡101
+
+® (direct ¡hypernet end-difference)   
+
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (trajectory-PCA  ⟂ d1)
+> seed 1
+> ¡101
+
+® (direct ¡hypernet end-difference) 
+
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (trajectory-PCA  ⟂ d1)
+> seed 2
+> ¡1.766
+> ¡1.328
+> ¡0.891
+> ¡0.453
+> ¡0.016
+> 0.422
+> 0.859
+> 1.297
+> log 10  (loss  ¡ minloss)
+> ¡1.752
+> ¡1.315
+> ¡0.877
+> ¡0.440
+> ¡0.002
+> 0.435
+> 0.873
+> 1.310
+> log 10  (loss  ¡ minloss)
+> ¡1.819
+> ¡1.381
+> ¡0.944
+> ¡0.506
+> ¡0.069
+> 0.369
+> 0.806
+> 1.244
+> log 10  (loss  ¡ minloss)
+> MNIST autoencoder-latent loss landscape, three seeds
+
+(a) Parameter-space view (three seeds). 10 2 10 3                        
+
+> training iteration (log scale)
+> 10 2
+> 6£10 1
+> 7£10 1
+> 8£10 1
+> 9£10 1
+> test loss (log scale)
+> 60.34 63.35
+> 1000 1500 2000 2500 3000 3500 4000
+> iter >800
+> 60
+> 62
+> 64
+> 66
+> test loss
+> 3.01 nats
+> 60.34
+> 63.35
+> late training
+> 025 50 75 100 125 150 175 200
+> iteration
+> 10 2
+> 10 3
+> EBM loss
+> early training (iter 1-200)
+> hypernet (3 seeds)
+> direct softplus (3 seeds)
+
+(b) Loss-space view (pooled, three seeds). 
+
+Figure 11: On a 32-dimensional image-flavored latent the lift descends through the basin while direct softplus pins to a higher plateau. Three seeds; test loss at each method’s lowest-validation-loss checkpoint. (a) Loss landscape on a two-dimensional slice through the converged hypernet (origin, gold star), one panel per seed; legend mirrors Figure 1(a). (b) Held-out test loss versus iteration pooled across the same three seeds. The hypernet descends through the basin while direct softplus pins to the readout shoulder—a gap that holds seed-by-seed in (b)’s late-training inset. Axes of (a) are constructed by the adaptive scheme of Section 5.3. A lifted-space companion panel is omitted because the per-iteration hypernet snapshots were not persisted for this run. 0 1 2 3 4 5 6 7 8 9
+
+digit class 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60 
+
+70          
+
+> test loss (nats,  # ) 47.8
+> 28.0
+> 57.3
+> 52.6 52.3 54.6
+> 49.1 47.1
+> 52.5
+> 46.7
+> 49.9
+> 33.3
+> 58.8
+> 54.9 54.3 56.0
+> 51.4 50.4
+> 54.8
+> 49.0
+> 50.8
+> 33.6
+> 60.5
+> 56.2 55.6 57.1
+> 52.6 52.2
+> 56.1
+> 50.3
+
+Per-class held-out test loss on the 32-dimensional MNIST autoencoder-latent 
+
+hypernet (lift) PGD on cone Gaussian (full-cov) 
+
+Figure 12: The lift sits below both PGD and a classical Gaussian on every digit class. Per-class held-out test loss on the 32-dimensional MNIST autoencoder-latent target: the hypernet , PGD on the non-negative cone, and a per-class full-covariance Gaussian baseline, each fit on the same per-class latent partition. The hypernet sits strictly below PGD ,which in turn sits below the Gaussian , on all ten digits—the per-class reading of the same three-way ordering the rest of Section 5.1 reports. The all-class direct-softplus contrast on the same dataset is in Figure 11. Figure 14 reports the demo distributionally—the held-out test loss of all 100 seeds per method. The reading is consistent with the ϱ ≪ 1 regime of (7) on the CPFlow loss landscape: the CG-Hutchinson log-det stochastic estimator injects an 
+
+O(d) gradient-noise floor that dilutes the dimensionless control ϱ below the Arrhenius-to-diffusive threshold, so the lift’s advantage surfaces as a shift of the convergence distribution—exactly as Remark 5 (c) predicts for regime-conditional smoothing. The 100-seed sweep separates a hypernet basin from a direct plateau on both targets, with the hypernet ’s median sitting well below the direct ’s. Adopting a data-honest threshold τ between the hypernet minimum and the direct median, a large majority of hypernet seeds reach the lower-loss mode while essentially no direct seed does (Figure 14). The 
+
+direct plateau—the red dashed rectangle in each panel—is the operational signature of the failure mode and tracks the 15 A lift for input-convex neural network training A P REPRINT 1-dimensional                      
+
+> Gumbel
+> (TV #)
+> 2-dimensional
+> Gamma--Gauss
+> (TV #)
+> 6-dimensional
+> UCI POWER
+> (loss #)
+> 32-dimensional
+> MNIST AE-latent
+> (loss #)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> metric / direct-softplus mean
+> 0.50 0.45 0.40 0.95
+> Normalized: hypernet metric =direct-softplus metric
+> Direct softplus
+> Hypernet
+> 1-dimensional
+> Gumbel
+> (TV #)
+> 2-dimensional
+> Gamma--Gauss
+> (TV #)
+> 6-dimensional
+> UCI POWER
+> (loss #)
+> 32-dimensional
+> MNIST AE-latent
+> (loss #)
+> 10 ¡2
+> 10 ¡1
+> 10 0
+> 10 1
+> 10 2
+> metric value (log scale)
+> 0.128
+> 0.262
+> 7.77
+> 63.2
+> 0.064
+> 0.119
+> 3.08
+> 60.1
+> Absolute (TV at low dimension, loss at higher)
+> Direct softplus
+> Hypernet
+> Test-time gap holds across ambient dimension (3 seeds each)
+
+Figure 13: The lift’s conditioning advantage scales with ambient dimension without breaking. Hypernet vs direct softplus , three seeds each, across four representative log-concave targets at one-, two-, six-, and 32-dimensional scales. Left: normalized metric (value relative to the direct mean); at every dimension the hypernet bar lands well below the 
+
+direct reference (lower is better). Right: absolute values on log scale with the numbers annotated. 0.5 1.0 1.5 2.0 2.5 3.0 3.5 
+
+test NLL (nats / sample) 
+
+0
+
+5
+
+10 
+
+15     
+
+> density
+> thr=0.93
+> direct plateau
+> (does not converge)
+> hyp med 0.79 [0.69,0.90]; dir med 3.55 [3.54,3.56]; frac ∙0.93: hyp 81%, dir 0%
+
+8-Gaussians 
+
+> direct-softplus (n=100)
+> hypernet (n=100)
+
+2.25 2.50 2.75 3.00 3.25 3.50 3.75 4.00 
+
+test NLL (nats / sample) 
+
+0
+
+5
+
+10 
+
+15 
+
+20     
+
+> density
+> thr=3.45
+> direct plateau
+> (does not converge)
+> hyp med 2.47 [2.41,2.54]; dir med 3.90 [3.89,3.92]; frac ∙3.45: hyp 100%, dir 0%
+
+2-spirals 
+
+> direct-softplus (n=100)
+> hypernet (n=100)
+
+Figure 14: The lift shifts the convergence distribution toward a basin the direct softplus essentially never reaches. 
+
+Paired test-loss histograms on two-dimensional convex potential flows across 100 seeds per method per target. Left panel is 8-Gaussians, right is 2-spirals; step histograms of the held-out test loss, with dashed median lines per method and a dotted vertical line at the data-honest threshold τ separating the hypernet ’s converged mode from the direct 
+
+method’s plateau (red dashed rectangle, “ direct plateau”). same shape as the paired-TV bound of Section 5.1.3. The mechanism applies loss-agnostically: the change-of-variables likelihood replaces the forward-KL data expectation as the source of batch-coupled gradient noise, but ingredient (iii) of Section 4 survives. The lift shifts the convergence distribution toward a basin the direct softplus essentially never reaches at this budget. 
+
+5.2.2 Loss-landscape geometry: the lift carves a valley where the direct softplus sees a plateau 
+
+Figure 15 reports the change-of-variables likelihood of (12) on a two-dimensional slice through a single seed of the symmetric-init sweep on the 8-Gaussians target, with both methods’ per-iteration trajectories projected onto the plane. This is one seed of the same configuration that drives Figure 14, so both 8-Gaussians figures are one apples-to-apples experiment. The slice convention is the adaptive scheme of Section 5.3, instantiated separately for the constrained and lifted parameter spaces. The slice planes are constructed by the adaptive scheme of Section 5.3, instantiated separately for the constrained and lifted spaces. A strict random-direction slice in the same neighborhood looks bowl-shaped because two random filter-norm directions almost surely miss the narrow channel separating the methods; in contrast, the adaptive frame is dense in the directions of optimization interest and renders the basin/plateau geometry that Lemma 1 predicts. The reading is the structural signature Lemma 1 predicts. In θ-space both trajectories trace nearly the same path for most of training, pinned to the plateau around the converged direct softplus, before the hypernet’s emitted PICNN escapes the plateau and descends to the origin (gold star). In lifted space the same trajectory traces a clean valley with no plateau structure intervening. The lift converts a plateau-bounded trajectory in constrained space into a valley-descending trajectory in lifted space. 16 A lift for input-convex neural network training A P REPRINT ¡0.50 ¡0.25 0.00 0.25 0.50 0.75 1.00 1.25          
+
+> ®(filter-norm units)
+> ¡0.6
+> ¡0.4
+> ¡0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> ¯ (filter-norm units)
+> constrained ICNN θspace
+> hypernet (orange)
+> direct softplus (red)
+> converged hypernet θ⋆
+> converged direct
+> ¡1.0 ¡0.5 0.0 0.5 1.0
+> ®(filter-norm units)
+> ¡1.2
+> ¡1.0
+> ¡0.8
+> ¡0.6
+> ¡0.4
+> ¡0.2
+> 0.0
+> 0.2
+> 0.4
+> ¯ (filter-norm units)
+> lifted ( ϕ; b ) space
+> ¡6.85
+> ¡5.12
+> ¡3.39
+> ¡1.66
+> 0.07
+> 1.80
+> 3.52
+> 5.25
+> log 10  (loss  ¡ minloss)
+> ¡6.09
+> ¡3.23
+> ¡0.37
+> 2.49
+> 5.36
+> 8.22
+> 11.08
+> 13.94
+> log 10  (loss  ¡ minloss)
+> CPFlow loss-landscape on eight-gaussians (seed 0)
+
+(a) Parameter-space view (two spaces: constrained θ left; lifted (ϕ, b) right). 10 0 10 1 10 2 10 3
+
+training iteration 
+
+> 10 1
+> 10 3
+> 10 5
+> val loss
+> +3.54
+> +0.58
+> hypernet
+> direct softplus
+
+(b) Loss-space view. 
+
+Figure 15: The same training trajectory traces a plateau in constrained space and a clean valley in lifted space. 
+
+Convex potential flow on the 8-Gaussians target, a single seed of the same symmetric-init sweep that drives Figure 14. 
+
+(a) Left: constrained ICNN parameter space anchored at the converged hypernet . Right: lifted hypernet parameter space; axes are the top two trajectory-PCA components of the lifted hypernet snapshots. (b) Held-out loss versus iteration on the same run. In panel (a), the hypernet descends to the origin (gold star) and direct softplus pins to the plateau in constrained space, while the lifted-space sub-panel renders the same hypernet trajectory as a clean valley. Panel (b) shows the loss-space counterpart: the hypernet descends to a held-out loss of 0.58 nats, while direct softplus 
+
+stalls on the constrained-space plateau at 3.54 nats—the single-seed signature of the distributional gap that the 100-seed paired sweep of Figure 14 quantifies. 
+
+5.2.3 UCI HEPMASS: the lift improves over a literature-scale direct-softplus convex-potential flow 
+
+On the 21-dimensional tabular benchmark (Baldi et al., 2016; Papamakarios et al., 2017), at the five-block convex-potential flow architecture of Huang et al. (2021), the lift descends to a lower test loss than direct softplus; the direct-softplus reproduction itself matches the published convex-potential flow result of Huang et al. (2021), so the comparison is anchored at literature scale. The two-dimensional evidence above adjudicates the lift at the lowest non-degenerate ambient dimension; this tabular reading is the literature-scale CPFlow benchmark, confirming that the per-block strong-convexification of Lemma 1 translates from the two-dimensional toy to the canonical tabular regime—each CPFlow block emits a non-negative inter-layer weight stack through the same hypernet readout, so the per-block conditioning advantage compounds across depth without modification to the change-of-variables likelihood or the log-det stochastic estimator. The structural reading—slack, body, and cross-covariance—is settled by the four-architecture ablation of Section 5.1.1; Figure 16 reports the loss-space trace against the literature reference. 
+
+5.3 The same trajectory traces a valley in lifted space and a plateau in constrained space 
+
+The lift is a coordinate change. The same training trajectory has two coexisting renderings—i.e., one in the constrained ICNN/PICNN θ-space the direct softplus optimizes, one in the lifted (ϕ, b)-space the hypernet optimizes—and side-by-side comparison localizes Lemma 1’s landscape smoothing on the surface that gradient descent actually walks. Figure 17 arranges two representative ICNN-EBM problems as rows (one-dimensional Gumbel, two-dimensional gamma-mode) and the two coordinate systems as columns. 17 A lift for input-convex neural network training A P REPRINT ¡400 ¡300 ¡200 ¡100 0       
+
+> ®(top trajectory-PCA direction d1in lifted ( ϕ; b ) space)
+> ¡200
+> ¡100
+> 0
+> 100
+> 200
+> ¯ (second trajectory-PCA direction  d2 in lifted ( ϕ; b ) space)
+> CPFlow at HEPMASS: lifted-space loss landscape (21-dimensional tabular target)
+> trajectory
+> hypernet (orange, solid squares)
+> converged hypernet ( ϕ⋆; b ⋆) (origin)
+> ¡1.701
+> ¡1.264
+> ¡0.826
+> ¡0.389
+> 0.049
+> 0.486
+> 0.924
+> 1.361
+> 1.799
+> log 10  (loss  ¡ minloss)
+
+(a) Lifted-space loss landscape with hypernet trajectory. 10 0 10 1 10 2 10 3 10 4 10 5
+
+training iteration (log scale) 
+
+> 20
+> 25
+> 30
+> validation loss (nats)
+> 16.12
+> 16.93
+> hypernet
+> direct softplus
+> Huang+2021 (16.93)
+
+(b) Test loss versus iteration (both methods). 
+
+Figure 16: The lift improves over a literature-scale direct-softplus convex-potential flow. (a) Lifted hypernetwork-parameter space (ϕ, b); the hypernet trajectory descends a coherent valley from initialization to the converged basin at the origin (gold star). White tiles mark offsets where the log-det estimator diverged: infeasible regions of the convex-potential parameter space, and the training trajectory stays inside the feasibility envelope. (b) Held-out test loss versus iteration; dashed gray line marks the published reference from Huang et al. (2021). The direct softplus reproduces the published number, and the lift improves on it—the per-block strong-convexification of Lemma 1 compounds across depth without modifying the change-of-variables likelihood or the log-det estimator. 
+
+Landscape visualization method. All loss-landscape figures in this section evaluate the test loss on a two-dimensional slice of parameter space centered at the converged hypernet . The slice plane is chosen adaptively per figure to expose the gap between the methods. In constrained parameter space, the first axis is the converged direct -minus-hypernet 
+
+end-difference and the second is the top trajectory-PCA direction orthogonal to it. In lifted parameter space, both axes are the top two trajectory-PCA components of the lifted hypernet snapshots. Filter-normalization follows Li et al. (2018). A strict random-direction slice in the same neighborhood looks bowl-shaped because two random filter-norm directions almost surely miss the narrow channel separating the methods in non-trivial parameter spaces. The converged 
+
+hypernet sits at the origin (gold star) in every panel. The reading is consistent across both rows. The constrained-space panel pins the direct softplus trajectory to a flat basin while the hypernet trajectory descends to a converged point at substantially lower loss; the lifted-space panel renders that same trajectory as a smooth descent down a single contiguous valley. The loss-versus-iteration companion, Figure 18, shows the lift converging to a lower loss than direct softplus on both rows. 18 A lift for input-convex neural network training A P REPRINT ¡1.0 ¡0.5 0.0 0.5 1.0  
+
+> ®(filter-norm units)
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (filter-norm units)
+
+Constrained problem (shared ICNN/PICNN θ)        
+
+> 1-D Gumbel
+> (ICNN-EBM)
+> shared θspace
+> hypernet (orange)
+> direct softplus (red)
+> converged hypernet θ⋆
+> converged direct
+> ¡2.150
+> ¡1.712
+> ¡1.275
+> ¡0.837
+> ¡0.400
+> 0.038
+> 0.475
+> 0.913
+> log 10  (loss  ¡ minloss)
+> ¡1.0 ¡0.5 0.0 0.5 1.0
+> ®(filter-norm units)
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (filter-norm units)
+
+Lifted problem (hypernetwork ϕ; b )            
+
+> lifted ( ϕ; b ) space
+> ¡0.869
+> ¡0.431
+> 0.006
+> 0.444
+> 0.881
+> 1.319
+> 1.756
+> 2.194
+> log 10  (loss  ¡ minloss)
+> ¡1.0 ¡0.5 0.0 0.5 1.0
+> ®(filter-norm units)
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (filter-norm units)
+> 2-D gamma-mode
+> (ICNN-EBM)
+> shared θspace
+> ¡2.601
+> ¡2.164
+> ¡1.726
+> ¡1.289
+> ¡0.851
+> ¡0.414
+> 0.024
+> 0.461
+> 0.899
+> log 10  (loss  ¡ minloss)
+> ¡1.0 ¡0.5 0.0 0.5 1.0
+> ®(filter-norm units)
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (filter-norm units)
+> lifted ( ϕ; b ) space
+> ¡0.500
+> ¡0.062
+> 0.375
+> 0.812
+> 1.250
+> 1.688
+> 2.125
+> 2.562
+> 3.000
+> log 10  (loss  ¡ minloss)
+
+Figure 17: The lift reshapes a plateau-bounded constrained-space surface into a valley-descending lifted-space surface. Same training trajectory viewed in two parameter spaces (columns) across two problems (rows: one-dimensional Gumbel and two-dimensional gamma-mode ICNN-EBM). Left column: constrained parameter space. Right column: lifted parameter space. Hypernet (solid squares) and direct softplus (dashed open circles) trajectories; converged hypernet at the origin (gold star). Slice planes constructed by the adaptive scheme of Section 5.3. The loss-vs-iter companion is Figure 18. 10 2 10 3
+
+iter (log) 
+
+1.6 £ 10 0
+
+1.7 £ 10 0
+
+1.8 £ 10 0
+
+1.9 £ 10 0
+
+2 £ 10 0
+
+2.1 £ 10 0
+
+2.2 £ 10 0
+
+2.3 £ 10 0
+
+> val loss (log)
+> 1.66
+> 1.58
+
+one-dimensional Gumbel (ICNN-EBM)     
+
+> 1500 2000 2500 3000
+> iter > 1199
+> 1.575
+> 1.600
+> 1.625
+> 1.650
+> 1.675
+> 1.700
+> 1.725
+> val loss
+> 0.08 nats
+> late training
+> hypernet
+> direct softplus
+> 10 210 3
+
+iter (log) 
+
+2.4 £ 10 0
+
+2.6 £ 10 0
+
+2.8 £ 10 0
+
+3 £ 10 0
+
+3.2 £ 10 0
+
+3.4 £ 10 0
+
+3.6 £ 10 0
+
+> val loss (log)
+> 2.49
+> 2.32
+
+two-dimensional gamma-mode (ICNN-EBM)    
+
+> 1500 2000 2500 3000
+> iter > 1199
+> 2.35
+> 2.40
+> 2.45
+> 2.50
+> 2.55
+> 2.60
+> val loss
+> 0.17 nats
+> late training
+
+Loss-vs-iter companion to the two-spaces landscape: validation loss across the two problems 
+
+Figure 18: The lift’s lower converged loss holds across both problems. Loss-space companion to Figure 17: one panel per problem (one-dimensional Gumbel and two-dimensional gamma-mode ICNN-EBM), held-out validation loss on log-log axes, late-training inset on linear y. On both rows the hypernet descends to a lower converged loss than 
+
+direct softplus , matching the basin/plateau geometry of the corresponding rows in Figure 17. 
+
+6 Is the lift necessary? 
+
+Three structural rejoinders threaten the lift’s contribution. (i) Plain ADMM-with-positivity could enforce the non-negativity constraint without a data-conditioned body, in which case the body provides no advantage above the projection-enforcement alternative. (ii) The PGD baseline could match the lift’s test-time metric without the body’s batch-conditioning machinery, in which case ingredient (ii) of Section 4 is not load-bearing. (iii) The hypernet’s body could be doing nothing more than over-parametrizing the search, in which case widening the direct softplus to the hypernet’s parameter count should recover the lift’s metric. Sections 6.1 to 6.3 test each directly. 19 A lift for input-convex neural network training A P REPRINT 10 1 10 2 10 3   
+
+> test loss at lowest-validation-loss checkpoint (log scale)
+> hypernet (lift)
+> fixed ½= 10
+> residual-balance auto-½
+> ½-doubling toward stiff
+> PGD on cone
+> direct softplus
+> 22.85
+> 169.43
+> 170.74
+> 96.78
+> 27.01
+> 443.88
+> Plain ADMM-with-positivity stays above PGD
+
+Figure 19: Plain ADMM-with-positivity does not close the lift-vs-PGD gap. Three stable schedules of textbook ADMM-with-positivity—fixed ρ=10 , residual-balance auto-ρ, and ρ-doubling toward stiff—trained on the same ICNN architecture, budget, and forward-KL objective as the hypernet , direct softplus , and PGD baselines of Section 6.2; test loss is read on the projected iterate max( ˜θ, 0) at each method’s lowest-validation-loss checkpoint. All three ADMM schedules plateau several-fold above PGD (green dashed line), and the hypernet sits several-fold below the best of them—the data-conditioned body, not the constraint-enforcement mechanism, is the load-bearing source of the lift’s advantage over ADMM-with-positivity (ingredient (ii) of Section 4). 
+
+6.1 Plain ADMM-with-positivity does not close the gap 
+
+If the lift is merely an ADMM consensus reformulation (Section 4.2), why introduce a body at all? Standard ADMM-with-positivity— min L(θ) + ( ρ/ 2) ∥θ − z + y/ρ ∥2 with z ⪰ 0, closed-form prox z ← max( θ + y/ρ, 0) , and dual step y ← y + ρ(θ − z)—requires no body and inherits the O(1 /k ) rate under per-block convexity (Boyd et al., 2011; He and Yuan, 2012). While the constraint is enforced, the optimization pathology is left untouched: the failure mode of direct-softplus training is not infeasibility but a diffusively slow escape on the readout shoulder. The primal variable θ has no data-conditioned reparametrization, so Var X [ ˜θ] = 0 and ingredient (ii) of Section 4 is identically zero. The empirical version of this argument is the PGD baseline of Section 6.2, the ρ → ∞ stiff-penalty limit of plain ADMM. The lift’s contribution above plain ADMM is precisely ingredient (ii), and (4) is the diagnostic that measures it. Empirically, every stable ρ schedule of plain ADMM-with-positivity we tried—fixed ρ (Boyd et al., 2011), residual-balance auto-ρ (Boyd et al., 2011; He et al., 2000; Wohlberg, 2017), and ρ-doubling toward stiff (Bertsekas, 1999)—plateaus several-fold above PGD (Figure 19). The lift sits several-fold below the best stable plain-ADMM cell at the same compute budget. Sophisticated ADMM accelerators that adapt ρ via Barzilai–Borwein dual steps and line search (Zarepisheh et al., 2018) attack the same ρ-sensitivity issue; the Barzilai–Borwein component is a drop-in replacement for the dual update and would behave qualitatively similarly to our residual-balance schedule, since both adapt ρ from the primal–dual residual ratio. The line-search component is not deep-learning-compatible: each candidate dual step requires re-solving the inner primal optimization (re-training the network) at every candidate y, which is prohibitively expensive for neural-network training. The structural argument therefore survives any acceleration of plain ADMM: ingredient (ii) is not what ADMM-with-positivity provides at any ρ schedule, however adaptively chosen. The standard rescue for non-convex ADMM is to move toward Boyd’s exact-solve regime by taking many Adam steps per outer iteration on the augmented Lagrangian. This does not help here either, for a structural reason: the forward-KL loss is not bounded below on the off-cone region of ˜θ, because the importance-sampling proposal for log Z becomes uncovered when the ICNN energy is improper, so the inner subproblem min ˜θ L( ˜θ) + ( ρ/ 2) ∥ ˜θ − z + y/ρ ∥2 has no finite minimum. Additional inner steps only extend the off-cone drift more aggressively. PGD avoids this pathology because it carries no penalty term: it is one Adam step on L(θ) followed by a hard projection, with no dual variable to track and no approximate primal solve to accumulate error. 
+
+6.2 Projection alone misses the lift’s margin 
+
+PGD (Amos et al., 2017; Bertsekas, 1999) takes an unconstrained step on θ followed by the projection θ ← max( θ, 0) ,avoids the readout shoulder by construction (no ψ reparametrization), and is the ρ → ∞ stiff-penalty limit of plain ADMM-with-positivity of Section 4.2. It shares with ADMM-with-positivity an identity-Jacobian path through the 20 A lift for input-convex neural network training A P REPRINT ¡1.0 ¡0.5 0.0 0.5 1.0          
+
+> ®(filter-norm units)
+> ¡1.0
+> ¡0.5
+> 0.0
+> 0.5
+> 1.0
+> ¯ (filter-norm units)
+> Direct-anchored slice (21-dimensional tabular target)
+> 0.985 1.010
+> ¡0.003
+> 0.004
+> fine-grid zoom near (1 ;0) ¢®= 0 :025, ¢ ¯= 0 :007
+> trajectory
+> hypernet (orange, solid squares)
+> direct softplus (red, dashed open circles)
+> PGD on cone (green, dotted triangles)
+> converged hypernet θ⋆(origin)
+> ¡0.500
+> ¡0.062
+> 0.375
+> 0.812
+> 1.250
+> 1.688
+> 2.125
+> 2.562
+> 3.000
+> log 10  (loss  ¡ minloss)
+
+(a) Direct-anchored slice. 10 3
+
+training iteration (log scale)            
+
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> training EBM loss (log scale)
+> 1000 2000 3000 4000
+> iter >1000
+> 23
+> 24
+> 25
+> 26
+> 27
+> EBM loss
+> 4.2 nats
+> 22.85
+> 27.01
+> late training
+> 0100 200
+> iteration
+> 10 2
+> 10 4
+> 10 6
+> 10 8
+> EBM loss
+> early training (iter 1-200)
+> hypernet
+> direct softplus
+> PGD on cone
+> direct: 443.88 nat
+> PGD: 27.01 nat
+> hypernet: 22.85 nat
+> 4.2 nat
+> Moreau benefit
+> ¼19 £gap
+> Arrhenius trap
+
+(b) Loss-vs-iter trace. 10 2 10 3
+
+> test loss (nats, log scale)
+> hypernet
+> PGD
+> direct softplus
+> Gaussian: 29.80
+
+Test loss on a 21-dimensional tabular target 
+
+> 22.85
+> 27.01
+> 443.88
+> Arrhenius-trapped
+
+(c) Final test loss (log-x). 
+
+Figure 20: Three positivity recipes on a 21-dimensional tabular target. Same training run as Figure 1, with the slice in (a) anchored at the converged direct softplus so its trapped trajectory is in-plane. (a) Direct-anchored landscape slice. 
+
+(b) Held-out validation loss versus iteration on the same run. (c) Final test loss on log-x; single-Gaussian shown as a dashed reference. The hypernet sits at the origin (gold star) of (a) and at the lowest loss in (c); direct softplus is pinned on the readout shoulder; PGD ’s converged point lies off-axis. The PGD -anchored companion slice is Figure 1(a). constraint and the absence of a data-conditioned body, so the verdict on PGD is the verdict on whether the body’s batch-conditioning is structurally necessary above the projection alternative. On the one-dimensional Gumbel target, PGD reaches the hypernet’s TV but returns a structurally zero reading on the cross-covariance probe of Section 5.1.1, since PGD has neither slack nor data-conditioned body. PGD and the lift are therefore operationally equivalent in TV at d=1 , but the cross-covariance diagnostic separates them: the lift’s contribution is the structural reading, not the test-time TV. The question becomes empirical at higher dimension: does the smooth-autodiff alternative reach the lift’s loss? On the 21-dimensional tabular benchmark (single seed; Figure 20), the three methods separate by orders of magnitude: direct softplus is trapped on the readout shoulder and fails to converge at this budget, PGD escapes the cone boundary, and the hypernet sits below both. The lift’s margin above PGD—a 4.2-nat gap, read off Figure 20(c)—is the landscape-smoothing benefit of Lemma 1; PGD escapes the cone but does not deliver it. 
+
+6.3 Capacity vs conditioning: widened-direct ablation 
+
+A natural rejoinder is that the hypernet’s body has many more parameters than the ICNN it emits, so the advantage could be raw over-parametrization rather than the slack-plus-body decomposition. We test this directly by widening the direct ICNN to match the hypernet’s parameter count, training under forward-KL on three seeds, otherwise identical to the headline configuration. The widened direct softplus collapses on both targets (Figure 21): on a one-dimensional Gumbel target it saturates at the worst possible total-variation distance, never learning a normalized density; on a six-dimensional tabular target it diverges to many orders of magnitude in test loss. The hypernet at the same parameter 21 A lift for input-convex neural network training A P REPRINT seed 0 seed 1 seed 2             
+
+> 10 ¡1
+> 10 0
+> TV (  # )
+> One-dimensional Gumbel, widened direct »10 6params
+> Gaussian (0.138)
+> Direct θ
+> Hypernet ϕ
+> seed 0 seed 1 seed 2
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> test loss (nat,  # )
+> Six-dimensional tabular target, widened direct »10 6params
+> Gaussian (7.699)
+> Direct θ
+> Hypernet ϕ
+> Widening direct θto the hypernet parameter count does not close the gap
+
+Figure 21: Widening the direct θ-space to the hypernet parameter count does not rescue it. Per-seed final metric on two representative targets (one-dimensional Gumbel and UCI POWER at six-dimensional, three seeds each, forward-KL-direct, otherwise identical to the headline configuration), with the matched-capacity direct softplus ( ∼10 6
+
+parameters at hidden dim =512 , nlayers =5 ) against the hypernet at the same parameter budget; single-Gaussian dashed for reference. Left: one-dimensional Gumbel TV ( ↓); the matched-capacity direct saturates at TV ≈ 1 (never learns a normalized density) while the hypernet stays at TV ≈ 0.04 . Right: UCI POWER test loss ( ↓); direct diverges to 
+
+10 4–10 5 nat while the hypernet sits at ≈ 3.1 nat. The hypernet matches its narrow-width performance at the higher budget, so the gap is not closed by raw capacity—it is the conditioning landscape, not the parameter count. budget matches its narrow-width performance on both targets. Widening the direct θ-space does not close the gap: the saddles of the readout shoulder are invariant under widening, only the dimension of the space they live in changes. The lift’s advantage is the optimization landscape opened by the slack and the body, not the parameter count. 
+
+7 Discussion 
+
+The positivity constraint on the inter-layer weights of an ICNN is what makes the architecture work: without it, the network ceases to be a convex function of its input, and the downstream applications—log-concave density estimation, convex potential flows, optimal transport, transport-map inversion—lose their structural guarantees. However, neither existing recipe for enforcing this constraint reshapes the optimization landscape the way the lift does. Projected gradient descent onto the non-negative cone is the standard ICNN recipe and escapes the cone boundary efficiently, but its hard, non-smooth projection is the stiff-penalty limit of an ADMM-style constraint splitting whose classical convergence guarantees do not transfer to the non-smooth ICNN landscape, and it delivers no landscape smoothing; softplus reparametrization installs a chain-rule prefactor that vanishes on an extended region of parameter space and exponentially attenuates the gradient there. The lift improves on both by routing the constraint through a slack-plus-hypernetwork emission, opening a batch-stochastic channel into the pre-readout iterate that survives the readout prefactor (Theorem 1). 
+
+Differences from extended-source FWI. The lift’s structural antecedent is the parameter-extension family of full-waveform inversion (Aghamiry et al., 2019; Siahkoohi et al., 2026; Symes, 2008; Symes et al., 2020; van Leeuwen and Herrmann, 2013, 2016): a point source is lifted to a generalized source field, the data-fit objective is augmented by a wave-equation residual penalty, and the lifted problem becomes amenable to gradient descent where the unlifted variant is non-convex through cycle skipping. The structure is identical—a constraint lifted into a higher-dimensional space reappears as a consensus penalty—and the lift here inherits the favorable conditioning of those parameter-extension formulations. The lift belongs to a broader family of methods that recast a hard nonconvex problem as a tractable convex one: functional lifting convexifies nonconvex variational problems in imaging by lifting them to a higher dimension (Pock et al., 2010; Vogt et al., 2020), and lossless convexification and extended convex lifting do the same in optimal and robust control (Açıkme¸ se and Blackmore, 2011; Zheng et al., 2026). Those methods reach exact convexity; the lift here trades dimension for a smoother landscape, not a convex one—the ICNN training loss remains non-convex. The two settings differ in the driving mechanism: deterministic landscape smoothing for extended-source FWI versus 
+
+data-driven Fokker–Planck escape for the ICNN lift. A transfer test—an ICNN-style hypernet-plus-bias lift on an FWI cycle-skipping problem—is left to future work. 22 A lift for input-convex neural network training A P REPRINT 
+
+Differences from NTK/lazy/mean-field analyses. The lift does not fit cleanly into the neural tangent kernel (NTK) (Ja-cot et al., 2018), lazy (Chizat et al., 2019), or mean-field (Mei et al., 2018) regimes. The body’s Jacobian is genuinely data-dependent and finite-width; the slack’s identity Jacobian is constant by construction rather than by Taylor ap-proximation around the initialization; and the body’s scaling is fixed by the hypernet architecture rather than by the 
+
+1/√N feature-learning law. The closest analogue is the regularization-driven separation of Wei et al. (2019), which shows finite-width regularized networks can be polynomially more sample-efficient than their NTK kernel limit; this concerns feature learning, not constraint traversal. A prefactor-precise theory of the lift’s diffusive escape would combine ADMM-style consensus optimization with stochastic-gradient analysis; neither alone explains the σ−2Jac scaling of Section 5.1.2. 
+
+Reach to other ICNN paradigms. The cross-covariance mechanism is loss-agnostic at the structural level (Remark 2): only the gradient g picks up the loss, while the slack’s identity Jacobian and the body’s batch-induced fluctuation are properties of the lift’s architecture. The convex-potential-flow application is exercised directly (Section 5.2); the same structural argument applies to PCP-Map transport-map estimation (Baptista et al., 2024; El Moselhy and Marzouk, 2012; Spantini et al., 2018; Wang et al., 2025), ICNN-parametrized optimal transport (Korotin et al., 2021; Makkuva et al., 2020), and score matching for log-concave EBMs (Vincent, 2011). Empirical adjudication on those targets is left to future work, but the loss-agnosticism makes the structural transfer routine: what changes across applications is the gradient noise structure, not the slack-channel decomposition. 
+
+What the lift does not do. The framework makes structural claims at the per-instance cross-covariance level. The ADMM-style reading of Section 4.2 is a structural interpretation, not an algorithm we run: there is no explicit dual update on b, and the classical rate theorems of ADMM do not transfer to the non-convex ICNN setting. The lift is correctly silent in the deterministic-readout regime of Remark 5, where freezing the conditioning batch to a fixed anchor shuts off the extra noise channel—the resampled-batch fluctuation of the emitted weights—and collapses σ2Jac to zero, a negative result that validates the scope rather than contradicting it. The smooth-autodiff PGD alternative reaches the cone boundary efficiently but does not deliver the landscape smoothing of Lemma 1; the empirical 4.2-nat gap above PGD is the operating-point signature of that distinction. A learnable per-iterate adaptation of the conditioning-batch dimension n (Remark 3), tying the smoothing strength to the trajectory’s distance from the shoulder, would tighten the mechanism but is outside the present scope. 
+
+8 Conclusion 
+
+Input-convex neural networks demand non-negative inter-layer weights, and current approaches to enforcing this constraint each leave the optimization landscape unsmoothed: projected gradient descent, the standard ICNN recipe, escapes the cone boundary but applies a hard, non-smooth projection—the stiff-penalty limit of an ADMM-style constraint splitting—whose classical convergence guarantees do not transfer to the non-smooth ICNN landscape, and softplus reparametrization installs a chain-rule prefactor that vanishes on an extended region of parameter space and traps SGD on a time scale exponential in the inverse noise level. The lift replaces the constrained weight by an unconstrained hypernetwork emission summed with a learnable slack bias—a split-variable reparametrization that adds an extra source of stochasticity to the training dynamics, the resampled-batch fluctuation of the emitted weights, which the readout attenuation does not suppress and which softens the loss landscape. Three structural ingredients decompose its conditioning advantage: an identity-Jacobian slack , a data-conditioned body , and a non-vanishing cross-covariance 
+
+coupling them through batch stochasticity. Each is necessary (Theorem 1); the cross-covariance acts as an implicit strong-convexification of the loss landscape (Lemma 1). On log-concave EBM training across one-, two-, six-, and 32-dimensional targets, and on convex-potential normalizing flows on a 21-dimensional tabular benchmark, the lift descends to a lower test loss than both projected gradient descent and direct softplus, and converts a plateau-bounded training trajectory into a valley-descending one. The four-architecture cross-covariance ablation isolates each ingredient empirically, and the widened-direct ablation shows the advantage cannot be closed by raw capacity. The natural next step is the deterministic-readout regime in which Remark 5 predicts the lift to fall silent—a structural test the framework predicts in advance, and that no current ICNN application directly enters. 
+
+Acknowledgments 
+
+AS and AT acknowledge support from the Institute for Artificial Intelligence at the University of Central Florida. AS thanks Felix J. Herrmann, whose long-standing intuition that the parameter-extension methods of full-waveform inversion (Section 7) might cross into deep learning first gave this paper its lift, and Maarten V. de Hoop, whose deep insight, sustained support, and faith in the direction kept it aloft. 23 A lift for input-convex neural network training A P REPRINT 
+
+A Proofs 
+
+This appendix collects the full statements and proofs of the theorem, lemma, and corollary stated succinctly in Section 4 and its subsections. Each subsection title names the result it proves, and gives the complete formal statement—with all regularity conditions—immediately before its proof. 
+
+Regularity assumptions 
+
+The formal results of Section 4 hold under the following load-bearing hypotheses. (A1) SDE-of-SGD with η small, i.i.d. batches, and gradient-noise covariance Lipschitz in ϕ. (A2) ψ ∈ C1(R) monotone non-decreasing, and on the operative shoulder region its derivative is approximately constant across coordinates, ψ′( ˜θ) ≈ σs Id with σs = ψ′( ˜ ws)
+
+(a single-prefactor idealization of the shoulder; justified because the operative region is a narrow band of the softplus shoulder over which ψ′ varies slowly). (A3) the slack Jacobian ∂ ˜θ/∂ b = Id has full rank. (A4) on the operative region the forward-KL gradient fluctuation is, to leading order, the expected loss Hessian acting on the iterate fluctuation, 
+
+δg = H ˜θ δ ˜θ + r with H ˜θ ≡ EX [∇2˜θ L] ⪰ 0 symmetric positive semi-definite (PSD) and r a remainder of order ∥δ ˜θ∥2
+
+(justified because g = ∇ ˜θ L, so two iterate-driven perturbations of g are coupled through ∇2˜θ L, which is PSD near a local minimum of the locally convex forward-KL population loss of a log-concave target). (A5) for Corollary 1 only, the one-dimensional bias-channel projection of ˜L has a C2 single-barrier potential and the effective noise is small relative to the barrier (the metastable regularity Kramers’ asymptotics require). Theorem 1 uses only (A1); Lemma 1 uses (A1), (A3), (A4); Corollary 1 uses (A1)–(A5). 
+
+A.1 Each structural ingredient is necessary for the cross-covariance estimator to be nonzero 
+
+Statement (restatement of Theorem 1). Let bΣ(t)slack denote the slack-channel cross-covariance estimator 
+
+bΣ(t)slack = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+δ ˜θ(s) (δg(s))⊤.
+
+If any one of (i) the slack channel b is absent ( ∂ ˜θ/∂ b ≡ 0); (ii) the body hϕ(X) is constant in X (δ ˜θ ≡ 0); (iii) g and ˜θ are independent conditional on ϕ, with i.i.d. batches (A1); holds, then the slack-channel reading of the estimator vanishes: under (i) the contraction of the estimator with the slack Jacobian is identically zero, under (ii) the estimator itself is identically zero, both for every t and every window length 
+
+T , and under (iii) the population cross-covariance is zero and the estimator is its unbiased, O(T −1/2)-consistent sample version. 
+
+Proof. The estimator bΣ(t)slack is the empirical second moment of the pair (δ ˜θ(s), δ g(s)) over the trailing window, and its slack-channel reading is the contraction with the slack Jacobian Jb ≡ ∂ ˜θ/∂ b. We do not claim a single product factorization of the estimator: each of the three deletions zeros it by a distinct mechanism, and we treat them separately. The statement places no condition on the readout ψ beyond its presence; (A2) is used downstream in Lemma 1 but is not needed here, since each deletion zeros the estimator before any property of ψ is invoked. 
+
+Case (i) (slack channel absent: slack-channel reading is identically zero). Under deletion of the slack channel, the slack Jacobian satisfies Jb ≡ 0, and the slack-channel reading of the estimator is the contraction 
+
+J⊤ 
+
+> b
+
+bΣ(t)slack = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+J⊤ 
+
+> b
+
+δ ˜θ(s) (δg(s))⊤ ≡ 0,
+
+identically for every t and every T , since each summand is pre-multiplied by the zero slack Jacobian. 
+
+Case (ii) (body constant in X, identical zero). If hϕ(X) is constant in X, the per-batch fluctuation of (3) vanishes: 
+
+δ ˜θ(s) = δh ϕ(X(s)) ≡ 0 a.s. over the trailing window. Substituting into the estimator gives 
+
+bΣ(t)slack = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+0 · (δg(s))⊤ ≡ 0,
+
+24 A lift for input-convex neural network training A P REPRINT 
+
+identically for every t and every T . This deletion is realized architecturally by the direct-softplus parametrization, whose pre-readout iterate is independent of X.
+
+Case (iii) (independence of g and ˜θ conditional on ϕ, population zero). If g(s) ⊥⊥ ˜θ(s) | ϕ, then the centered fluctuations δg(s) and δ ˜θ(s) are also conditionally independent, and the population cross-covariance factors: 
+
+Σslack ≡ E[δ ˜θ δg⊤ | ϕ] = E[δ ˜θ | ϕ] E[δg⊤ | ϕ] = 0,
+
+the last equality using E[δ ˜θ | ϕ] = E[δg | ϕ] = 0 by the centering construction. The factorization is legitimate because, under (A1), conditional independence at fixed s together with cross-iteration independence of the i.i.d. batches makes the whole window collection { ˜θ(s)} independent of {g(s)} given ϕ, so the trailing-window-centered fluctuations δ ˜θ(s)
+
+and δg(s)—each a function of one of the two collections—remain conditionally independent. Unlike cases (i) and (ii), this does not make the finite-window estimator identically zero. The summands δ ˜θ(s)(δg(s))⊤ are identically distributed with mean 0, but not independent across s, since each shares the common window means ¯˜θ and ¯g; subtracting those means, the standard sample-cross-covariance identity rewrites the estimator as the difference of an i.i.d. average and a mean-product term, 
+
+bΣ(t)slack = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+δ ˜θ(s) (δg(s))⊤ = 1
+
+T
+
+> t−1
+
+X
+
+> s=t−T
+
+  ˜θ(s) − E[ ˜θ | ϕ]  g(s) − E[g | ϕ]⊤ − ¯˜θc ¯g⊤ 
+
+> c
+
+,
+
+where ¯˜θc, ¯gc are the window means of the E[· | ϕ]-centered fluctuations. The summands of the first average are genuinely i.i.d. matrix-valued with mean 0 (each depends on batch s alone), so the estimator is unbiased, E[ bΣ(t)slack ] = 0,and by the strong law of large numbers the first average converges a.s. to 0 while the mean-product term is O(T −1);hence bΣ(t)slack a.s.
+
+−−−−→  
+
+> T→∞
+
+0,
+
+with finite-T fluctuations of order O(T −1/2). Case (iii) thus zeros the population cross-covariance the estimator targets, and the estimator inherits this zero in expectation and in the large-window limit. 
+
+A.2 Implicit strong-convexification from data-conditioned Jacobian noise 
+
+Statement (restatement of Lemma 1). Under the regularity assumptions (A1), (A3), (A4) of Section A, let ˜L(ϕ) ≡
+
+EX [L(ψ(b + hϕ(X)))] denote the pullback forward-KL landscape on ϕ. In the small-noise expansion of the invariant measure of the Itô process 
+
+dϕ = −∇ ϕL dt + Σ1/2(ϕ) dBt,
+
+the second-order term in ϕ − ϕ⋆ around the converged ϕ⋆ is a quadratic form whose curvature H⋆ ≡ ∇ 2 
+
+> ϕ
+
+˜L(ϕ⋆)
+
+receives an additive contribution from the slack-channel cross-covariance: on the slack subspace, 
+
+tr H⋆ ≥ tr EX
+
+∇2˜θ L + d μ eff , μeff = Θ  σ2Jac /(d κ 2),
+
+where κ = ∥ ˜θ∥∞ is the typical readout scale, d the slack dimension, and the inequality holds up to leading order in the iterate-fluctuation magnitude with an O(η σ 2Jac /(d κ 2)) Itô–Taylor truncation correction. The cross-covariance therefore adds a strongly-convex quadratic of per-dimension modulus μeff to the landscape that SGD samples, without deforming ψ.
+
+Proof. The argument proceeds in four steps: the small-η ergodic expansion of the invariant measure, the quadratic expansion of the pullback landscape around ϕ⋆, the effective-Hessian decomposition that imports the cross-covariance, and the resulting added strong-convexity modulus. In the small-learning-rate ergodic limit of Li et al. (2017); Mandt et al. (2017), the Itô process of the statement is ergodic with invariant measure 
+
+π(ϕ) ∝ exp  −2 ˜L(ϕ)/η  det Σ(ϕ)−1/2  1 + O(η),
+
+under (A1)’s Lipschitz-covariance condition (which controls the Itô–Taylor remainder). The leading dependence on ϕ
+
+is through the Boltzmann factor exp( −2 ˜L(ϕ)/η ); the prefactor det Σ(ϕ)−1/2 contributes a sub-leading correction at 
+
+O(η) and does not affect the quadratic structure around ϕ⋆.Taylor-expand the pullback landscape ˜L(ϕ) ≡ EX [L(ψ(b + hϕ(X)))] around the converged critical point ϕ⋆ to second order. The first-order term vanishes at the critical point, and the remainder is cubic: 
+
+˜L(ϕ) = ˜L(ϕ⋆) + 12 (ϕ − ϕ⋆)⊤ H⋆ (ϕ − ϕ⋆) + O ∥ϕ − ϕ⋆∥3, H⋆ ≡ ∇ 2 
+
+> ϕ
+
+˜L(ϕ⋆).
+
+25 A lift for input-convex neural network training A P REPRINT 
+
+Around ϕ⋆ the invariant measure is therefore a Gaussian whose precision is set by H⋆ (up to the O(η) prefactor), so the quadratic form H⋆ governs the curvature of the landscape that SGD samples from. The Hessian H⋆, a symmetric matrix, decomposes into a deterministic loss-curvature piece and a stochastic cross-covariance piece. Differentiating ˜L twice and changing variables from ϕ to ˜θ = b + hϕ(X) via the body Jacobian, the curvature on the slack subspace has a Gauss–Newton-like contribution EX [∇2˜θ L] plus a fluctuation-induced contribution sourced by the slack-channel cross-covariance Σslack = EX [δ ˜θ δg⊤] of (4) . Because H⋆ is symmetric, only the symmetric part of the cross-covariance contributes; with the body-Jacobian-to-parameter rescaling that converts ˜θ-units to ϕ-units through the typical readout scale κ = ∥ ˜θ∥∞, the decomposition reads 
+
+H⋆ = EX
+
+∇2˜θ L + 1
+
+κ2 · 12
+
+ Σslack + Σ⊤
+
+> slack
+
+.
+
+The cross-covariance Σslack is itself not symmetric and not a priori sign-definite, so its symmetric part and its trace must be sign-controlled before any curvature claim. This is the role of (A4). Substituting the forward-KL chain 
+
+δg = H ˜θ δ ˜θ + r with H ˜θ = EX [∇2˜θ L] ⪰ 0 symmetric PSD, 
+
+Σslack = EX
+
+δ ˜θ δg⊤ = EX
+
+δ ˜θ δ ˜θ⊤ H ˜θ + EX
+
+δ ˜θ r ⊤,
+
+and writing V ≡ EX [δ ˜θ δ ˜θ⊤] ⪰ 0 for the iterate-fluctuation covariance, the symmetric part of the leading term is  
+
+> 12
+
+(V H ˜θ + H ˜θ V ). Its trace splits into a sign-controlled leading term and a subleading remainder: 
+
+σ2Jac = tr Σslack = tr  V H ˜θ
+
+ + tr EX
+
+δ ˜θ r ⊤, tr  V H ˜θ
+
+ ≥ 0,
+
+the inequality holding because the trace of the product of the two PSD matrices V and H ˜θ is non-negative, and the remainder tr EX [δ ˜θ r ⊤] = O(E∥δ ˜θ∥3) being a higher-order central moment. So σ2Jac ≥ 0 to leading order in the iterate-fluctuation magnitude—a genuine non-negative quantity once the cubic remainder is dropped—and (A4)—not (A3)—is what supplies its sign. ((A3), the full-rank slack Jacobian ∂ ˜θ/∂ b = Id, is what makes the slack subspace the full Rd so that the added curvature is not confined to a proper subspace.) The smoothing modulus is now extracted from the trace, with no operator inequality on a non-symmetric matrix and no isotropy assumption. Taking the trace of the Hessian decomposition and dividing the cross-covariance contribution by the readout rescaling κ2,
+
+tr H⋆ = tr EX
+
+∇2˜θ L + 1
+
+κ2 tr 12
+
+ Σslack + Σ⊤
+
+> slack
+
+ = tr EX
+
+∇2˜θ L + σ2Jac 
+
+κ2 ,
+
+using tr 12 (Σslack + Σ⊤
+
+> slack
+
+) = tr Σslack = σ2Jac , since the trace is insensitive to the symmetrization. Writing the added trace as d μ eff defines the per-dimension modulus 
+
+μeff = σ2Jac 
+
+d κ 2 = Θ  σ2Jac /(dκ 2),
+
+which carries the dimension factor 1/d explicitly. The leading term tr( V H ˜θ ) ≥ 0 established above makes σ2Jac ≥ 0
+
+to leading order, so the added trace is non-negative: the cross-covariance can only add curvature. Since the deterministic term EX [∇2˜θ L] is itself PSD at a local minimum of L ◦ ψ, the trace inequality 
+
+tr H⋆ ≥ tr EX
+
+∇2˜θ L + d μ eff on the slack subspace at ϕ⋆
+
+follows. The cross-covariance therefore adds a strongly-convex quadratic of per-dimension modulus μeff to the second-order term of the invariant measure: the landscape that SGD samples is strongly-convexified by Θ( σ2Jac /(dκ 2)) without any deformation of ψ. The added curvature is in general anisotropic—a quadratic form aligned with the batch-coupled gradient noise, not a multiple of I (Remark 5)—and (8) reports its trace, the dimension-averaged modulus, which needs no isotropy. We do not claim that ˜L is the Moreau envelope (Beck, 2017) of L ◦ ψ, only that the batch-stochastic channel reproduces the second-order signature of one, an added strongly-convex quadratic. The remainder is the Itô–Taylor truncation error, O(η σ 2Jac /(dκ 2)) at leading order in the small-η expansion. 
+
+A.3 Mean first-passage time across the shoulder 
+
+Statement (restatement of Corollary 1). Adopt the regularity assumptions (A1)–(A5) of Section A—the hypotheses (A1), (A3), (A4) of Lemma 1, the single-prefactor idealization (A2), and the metastable regularity (A5)—and assume in addition a non-vanishing barrier of reference action α = ( L ◦ ψ)( ˜ ws) − (L ◦ ψ)( ˜ wb) > 0, with ˜wb the pre-barrier 26 A lift for input-convex neural network training A P REPRINT 
+
+basin minimum and ˜ws the shoulder location, along the bias-channel direction (Arrhenius regime). Reduce the Itô process of Lemma 1 to its bias-channel projection d ˜w = − ˜L′( ˜ w) dt + σeff ( ˜ w) dB t, with direct effective variance 
+
+σ2eff ,direct = σ2 
+
+> s
+
+σ2obj and lifted effective variance σ2eff ,hyper = σ2 
+
+> s
+
+σ2obj + σ2Jac , the lifted excess σ2Jac being the slack-channel cross-covariance contribution of Equation (5), which is structurally absent for direct softplus. Then the mean first-passage times across the shoulder satisfy (9) , where ≍ denotes equality of the leading exponential factor up to a sub-exponential prefactor. 
+
+Proof. The argument is in two steps: the reduction of the Itô process to a one-dimensional bias-channel SDE, and the Kramers asymptotics for that SDE under (A5). 
+
+Bias-channel reduction. Let eb be the unit vector along the slack-channel direction of Lemma 1 and project the iterate onto it, ˜w ≡ e⊤ 
+
+> b
+
+(b + hϕ(X)) . Projecting the Itô process dϕ = −∇ ϕL dt + Σ1/2 dBt onto eb and writing the drift through the pullback landscape ˜L gives a scalar SDE 
+
+d ˜w = − ˜L′( ˜ w) dt + σeff ( ˜ w) dB t,
+
+where ˜L′ is the bias-channel derivative of ˜L and σ2eff ( ˜ w) = e⊤ 
+
+> b
+
+Σ(ϕ) eb is the projected diffusion. The diffusion has two contributions: the readout-prefactor-attenuated gradient-driven part, which is bilinear in g = ψ′( ˜θ)∇θ L and hence carries the prefactor as ψ′( ˜θ)2, contributing σ2 
+
+> s
+
+σ2obj (the prefactor σ2 
+
+> s
+
+of (A2) times the gradient-noise variance σ2obj 
+
+of (6) ), and the slack-channel cross-covariance of (5) , contributing σ2Jac . Direct softplus has δ ˜θ ≡ 0 and hence only the attenuated part, while the lift has both, giving 
+
+σ2eff ,direct = σ2 
+
+> s
+
+σ2obj , σ2eff ,hyper = σ2 
+
+> s
+
+σ2obj + σ2Jac .
+
+Kramers asymptotics. By (A5) the bias-channel projection of ˜L has a C2 single-barrier potential and the effective noise is small relative to the barrier α; the SDE is then a metastable one-dimensional diffusion in the Arrhenius regime. The diffusion coefficient σ2eff ( ˜ w) is in general state-dependent, but the rate-limiting barrier band is the narrow operative shoulder region of (A2), over which ψ′—and hence the attenuated component σ2 
+
+> s
+
+σ2obj —varies slowly; treating σ2Jac 
+
+as locally constant on the same band, the effective variance is constant to leading order across the barrier. For a metastable diffusion with effective variance σ2eff constant across the barrier band, the Kramers (Eyring–Arrhenius) escape law (Hänggi et al., 1990; Kramers, 1940) gives the mean first-passage time over the barrier 
+
+E[τ ] ≍ exp  2α/σ 2eff 
+
+,
+
+where ≍ denotes equality of the leading exponential factor up to a sub-exponential prefactor set by the curvatures at the basin minimum and the barrier top. Substituting the two effective variances yields (9) . The barrier α is the reference action of the un-smoothed L ◦ ψ held fixed across the comparison, so the lift’s benefit enters through σ2eff alone. The asymptotic (9) is the metastable, small-noise prediction. When the unattenuated σ2Jac grows comparable to the barrier 2α the lifted exponent drops to order one, the effective noise is no longer small relative to the barrier, and (A5) fails: the escape leaves the Arrhenius regime and is governed instead by free diffusion over the escape distance, with mean first-passage time the polynomial Θ( σ−2Jac ) of the standard Brownian hitting-time identity. The drift-free Gumbel probe of Section 5.1.2 sits in this crossover (Remark 6). 
+
+References 
+
+B. Açıkme¸ se and L. Blackmore. Lossless convexification of a class of optimal control problems with non-convex control constraints. Automatica , 47(2):341–347, 2011. H. S. Aghamiry, A. Gholami, and S. Operto. Improving full-waveform inversion by wavefield reconstruction with the alternating direction method of multipliers. Geophysics , 84(1):R139–R162, 2019. S. Alemohammad, J. Casco-Rodriguez, L. Luzi, A. I. Humayun, H. Babaei, D. LeJeune, A. Siahkoohi, and R. Baraniuk. Self-consuming generative models go MAD. In International Conference on Learning Representations , 2024. B. Amos, L. Xu, and J. Z. Kolter. Input convex neural networks. In International Conference on Machine Learning ,2017. L. Baldassari, A. Siahkoohi, J. Garnier, K. Solna, and M. V. de Hoop. Conditional score-based diffusion models for Bayesian inference in infinite dimensions. In Advances in Neural Information Processing Systems , 2024. P. Baldi, K. Cranmer, T. Faucett, P. Sadowski, and D. Whiteson. Parameterized neural networks for high-energy physics. 
+
+European Physical Journal C , 76(5):235, 2016. R. Baptista, Y. Marzouk, and O. Zahm. On the representation and learning of monotone triangular transport maps. 
+
+Foundations of Computational Mathematics , 24:2063–2108, 2024. 27 A lift for input-convex neural network training A P REPRINT 
+
+A. Beck. First-Order Methods in Optimization . SIAM, 2017. D. P. Bertsekas. Nonlinear Programming . Athena Scientific, 2nd edition, 1999. S. Boyd, N. Parikh, E. Chu, B. Peleato, and J. Eckstein. Distributed optimization and statistical learning via the alternating direction method of multipliers. Foundations and Trends in Machine Learning , 3(1):1–122, 2011. Y. Brenier. Polar factorization and monotone rearrangement of vector-valued functions. Communications on Pure and Applied Mathematics , 44(4):375–417, 1991. C. Bunne, A. Krause, and M. Cuturi. Supervised training of conditional Monge maps. In Advances in Neural Information Processing Systems , 2022. L. Chizat, E. Oyallon, and F. Bach. On lazy training in differentiable programming. In Advances in Neural Information Processing Systems , 2019. T. A. El Moselhy and Y. M. Marzouk. Bayesian inference with optimal maps. Journal of Computational Physics , 231 (23):7815–7850, 2012. D. Ha, A. M. Dai, and Q. V. Le. HyperNetworks. In International Conference on Learning Representations , 2017. P. Hänggi, P. Talkner, and M. Borkovec. Reaction-rate theory: fifty years after Kramers. Reviews of Modern Physics ,62(2):251–341, 1990. B. He and X. Yuan. On the o(1 /n ) convergence rate of the Douglas–Rachford alternating direction method. SIAM Journal on Numerical Analysis , 50(2):700–709, 2012. B. He, H. Yang, and S. L. Wang. Alternating direction method with self-adaptive penalty parameters for monotone variational inequalities. Journal of Optimization Theory and Applications , 106(2):337–356, 2000. S. Hochreiter and J. Schmidhuber. Flat minima. Neural Computation , 9(1):1–42, 1997. P.-J. Hoedt and G. Klambauer. Principled weight initialisation for input-convex neural networks. In Advances in Neural Information Processing Systems , 2023. C.-W. Huang, R. T. Q. Chen, C. Tsirigotis, and A. Courville. Convex potential flows: universal probability distributions with optimal transport and convex optimization. In International Conference on Learning Representations , 2021. A. Jacot, F. Gabriel, and C. Hongler. Neural tangent kernel: convergence and generalization in neural networks. In 
+
+Advances in Neural Information Processing Systems , 2018. P. Jaini, I. Kobyzev, M. Brubaker, and Y. Yu. Tails of Lipschitz triangular flows. In International Conference on Machine Learning , 2020. S. Jastrz˛ ebski, Z. Kenton, D. Arpit, N. Ballas, A. Fischer, Y. Bengio, and A. Storkey. Three factors influencing minima in SGD. arXiv preprint arXiv:1711.04623, 2017. N. S. Keskar, D. Mudigere, J. Nocedal, M. Smelyanskiy, and P. T. P. Tang. On large-batch training for deep learning: generalization gap and sharp minima. In International Conference on Learning Representations , 2017. D. P. Kingma and J. Ba. Adam: a method for stochastic optimization. In International Conference on Learning Representations , 2015. A. Korotin, L. Li, J. Solomon, and E. Burnaev. Continuous Wasserstein-2 barycenter estimation without minimax optimization. In International Conference on Learning Representations , 2021. H. A. Kramers. Brownian motion in a field of force and the diffusion model of chemical reactions. Physica , 7(4): 284–304, 1940. Y. LeCun, L. Bottou, Y. Bengio, and P. Haffner. Gradient-based learning applied to document recognition. Proceedings of the IEEE , 86(11):2278–2324, 1998. H. Li, Z. Xu, G. Taylor, C. Studer, and T. Goldstein. Visualizing the loss landscape of neural nets. In Advances in Neural Information Processing Systems , 2018. Q. Li, C. Tai, and W. E. Stochastic modified equations and adaptive stochastic gradient algorithms. In International Conference on Machine Learning , 2017. A. V. Makkuva, A. Taghvaei, J. Lee, and S. Oh. Optimal transport mapping via input convex neural networks. In 
+
+International Conference on Machine Learning , 2020. S. Mandt, M. D. Hoffman, and D. M. Blei. Stochastic gradient descent as approximate Bayesian inference. Journal of Machine Learning Research , 18(134):1–35, 2017. P. Mayer, L. Luzi, A. Siahkoohi, D. H. Johnson, and R. G. Baraniuk. Improving fairness and mitigating MADness in generative models. arXiv preprint arXiv:2405.13977, 2024. 28 A lift for input-convex neural network training A P REPRINT 
+
+S. Mei, A. Montanari, and P.-M. Nguyen. A mean field view of the landscape of two-layer neural networks. Proceedings of the National Academy of Sciences , 115(33):E7665–E7671, 2018. Y. Nesterov. Lectures on Convex Optimization . Springer, 2nd edition, 2018. A. B. Owen. Monte carlo theory, methods and examples. https://artowen.su.domains/mc/ , 2013. G. Papamakarios, T. Pavlakou, and I. Murray. Masked autoregressive flow for density estimation. In Advances in Neural Information Processing Systems , 2017. T. Pock, D. Cremers, H. Bischof, and A. Chambolle. Global solutions of variational models with convex regularization. 
+
+SIAM Journal on Imaging Sciences , 3(4):1122–1145, 2010. A. Prékopa. Logarithmic concave measures with application to stochastic programming. Acta Scientiarum Mathemati-carum (Szeged) , 32:301–316, 1971. A. Saumard and J. A. Wellner. Log-concavity and strong log-concavity: a review. Statistics Surveys , 8:45–114, 2014. A. Siahkoohi, K. Aghazade, and A. Gholami. Dual-space posterior sampling for Bayesian inference in constrained inverse problems. arXiv preprint arXiv:2603.00393, 2026. A. Spantini, D. Bigoni, and Y. Marzouk. Inference via low-dimensional couplings. Journal of Machine Learning Research , 19(66):1–71, 2018. W. W. Symes. Migration velocity analysis and waveform inversion. Geophysical Prospecting , 56(6):765–790, 2008. W. W. Symes, H. Chen, and S. E. Minkoff. Full-waveform inversion by source extension: why it works. In SEG Technical Program Expanded Abstracts , pages 765–769, 2020. A. Thatipelli and A. Siahkoohi. Hypernetwork-based approach for grid-independent functional data clustering. arXiv preprint arXiv:2602.22823, 2026. T. van Leeuwen and F. J. Herrmann. Mitigating local minima in full-waveform inversion by expanding the search space. 
+
+Geophysical Journal International , 195(1):661–667, 2013. T. van Leeuwen and F. J. Herrmann. A penalty method for PDE-constrained optimization in inverse problems. Inverse Problems , 32(1):015007, 2016. P. Vincent. A connection between score matching and denoising autoencoders. Neural Computation , 23(7):1661–1674, 2011. T. Vogt, E. Strekalovskiy, D. Cremers, and J. Lellmann. Lifting methods for manifold-valued variational problems. In 
+
+Handbook of Variational Methods for Nonlinear Geometric Data , pages 95–119. Springer, 2020. Z. O. Wang, R. Baptista, Y. Marzouk, L. Ruthotto, and D. Verma. Efficient neural network approaches for conditional optimal transport with applications in Bayesian inference. SIAM Journal on Scientific Computing , 47(4):C979–C1005, 2025. C. Wei, J. D. Lee, Q. Liu, and T. Ma. Regularization matters: generalization and optimization of neural nets v.s. their induced kernel. In Advances in Neural Information Processing Systems , 2019. B. Wohlberg. ADMM penalty parameter selection by residual balancing. arXiv preprint arXiv:1704.06209, 2017. Z. Xie, I. Sato, and M. Sugiyama. A diffusion theory for deep learning dynamics: stochastic gradient descent exponentially favors flat minima. In International Conference on Learning Representations , 2021. M. Zaheer, S. Kottur, S. Ravanbakhsh, B. Póczos, R. Salakhutdinov, and A. J. Smola. Deep sets. In Advances in Neural Information Processing Systems , 2017. M. Zarepisheh, L. Xing, and Y. Ye. A computation study on an integrated alternating direction method of multipliers for large scale optimization. Optimization Letters , 12(1):3–15, 2018. Y. Zheng, C.-F. R. Pai, and Y. Tang. Benign nonconvex landscapes in optimal and robust control, Part II: extended convex lifting. IEEE Transactions on Automatic Control , pages 1–16, 2026. 29
