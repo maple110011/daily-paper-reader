@@ -1,0 +1,1046 @@
+Title: Pre-trained Tabular Foundation Models as Versatile Summary Networks for Neural Posterior Estimation
+
+URL Source: https://arxiv.org/pdf/2605.07765v1
+
+Published Time: Mon, 11 May 2026 01:36:02 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+# Pre-trained Tabular Foundation Models as Versatile Summary Networks for Neural Posterior Estimation 
+
+Elliot Pickens 1, Chiraag Gohel 2, Sidharth Satya 3
+
+> 1
+
+University of Pennsylvania, 2The George Washington University, 3Brown University 
+
+> 1
+
+epickens@seas.upenn.edu , 2chiraaggohel@gwu.edu , 3sidharth_satya@brown.edu 
+
+## Abstract 
+
+In this work, we study TabPFN as a training-free, modular summary network for simulation-based Bayesian inference (SBI). Tabular foundation models such as TabPFN are pretrained on broad families of synthetic tabular data-generating processes and adapt at test time through in-context learning, making them natural candidates for SBI, where posterior estimation often depends on learning infor-mative summaries of simulated observations. We propose PFN-NPE: a general recipe that uses a pretrained TabPFN encoder as a fixed summary network for simulator outputs, then pairs the resulting summaries with a downstream inference head chosen for the problem. With normalizing flows as the default inference head, PFN-NPE matches established posterior approximation methods and sometimes outperforms them. More importantly, diagnostic probes show that the TabPFN-derived summaries often preserve useful posterior location and marginal informa-tion. These analyses also reveal a limitation in that TabPFN-derived summaries may struggle to represent the joint posterior structure even when the marginals are well recovered. Still, our experiments show that TabPFN can serve as an effective summary network across a diverse set of SBI settings, with the inference network left modular and task-dependent. 
+
+## 1 Introduction 
+
+Many scientific models use a simulator x ∼ p(x | θ) whose likelihood is intractable or expensive to evaluate. Simulation-based inference (SBI) handles this setting by training conditional posterior, likelihood, or ratio estimators on simulated parameter–observation pairs [Cranmer et al., 2020, Papamakarios and Murray, 2016, Greenberg et al., 2019]. Once trained, these estimators can answer posterior queries for a fixed observation xo, but their quality depends on the simulation budget and on how simulator observations are represented. Prior-fitted networks (PFNs) offer another route to amortization. A PFN is trained offline on synthetic datasets drawn from a prior over data-generating processes and adapts at test time through in-context examples [Müller et al., 2022]. TabPFN applies this idea to tabular prediction without task-specific gradient updates [Hollmann et al., 2023, 2025]. Because simulator pairs {(θi, x i)}ni=1 can be written as tabular contexts, TabPFN is a natural candidate for SBI. Recent work uses this connection in NPE-PFN, which queries TabPFN directly as an autoregressive posterior sampler [Vetter et al., 2025]. We study a different use of TabPFN: a frozen summary model for neural posterior estimation. PFN-NPE builds a parameter-wise TabPFN context, extracts frozen embeddings for simulated and observed outputs, applies a fixed projection, and trains a normalizing flow for qϕ(θ | s(x)) . This shifts posterior sampling to conditional density estimation over fixed TabPFN-derived summaries. It also lets us test which posterior features those summaries preserve.  
+
+> Research code available at epickens/pfn-npe
+> Preprint.
+> arXiv:2605.07765v1 [cs.LG] 8 May 2026
+
+We make three contributions. First, we formulate PFN-NPE as a frozen-summary neural poste-rior estimation method. Second, we evaluate it across standard SBIBM benchmarks, controlled nuisance-coordinate variants, and structured time-series simulators under matched simulation budgets [Lueckmann et al., 2021a]. Third, we use marginal C2ST, rank-space C2ST, and quantile probes to measure posterior discrepancies beyond aggregate joint C2ST [Lopez-Paz and Oquab, 2017]. The empirical comparison shows that performance depends on the task. With a budget of 10 ,000 sim-ulations, NPE-PFN has the lowest mean joint C2ST on most reported tasks. PFN-NPE performs best on mixture and nuisance-coordinate settings and improves over the learned-summary NPE baseline on most tasks where both methods are available. Diagnostics show that TabPFN-derived summaries often encode one-dimensional posterior location, scale, and quantiles in a linearly accessible form. But joint and rank-space C2ST remain elevated on high-gap tasks, so accurate multivariate posterior structure remains the main challenge for this frozen-summary method. 
+
+## 2 Background and Related Work 
+
+2.1 Simulation-based inference 
+
+Simulation-based inference (SBI) addresses Bayesian inference problems where simulator samples 
+
+x ∼ p(x | θ) are available but likelihood evaluation is inaccurate, expensive, or unavailable. Modern neural SBI trains reusable posterior, likelihood, or ratio estimators from simulated parameter– observation pairs [Cranmer et al., 2020]. Neural posterior estimation fits qϕ(θ | x) directly, often with normalizing flows [Papamakarios and Murray, 2016, Greenberg et al., 2019, Durkan et al., 2019]. Neural likelihood estimation fits qϕ(x | θ) and combines it with the prior for posterior sampling [Papamakarios et al., 2019]. Neural ratio estimation learns likelihood-ratio functions through classification objectives [Hermans et al., 2020, Durkan et al., 2020]. Flow-matching methods provide another route to conditional posterior sampling [Wildberger et al., 2023]. Recent amortized Bayesian inference work also uses transformers and transformer-backed diffusion models [Mittal et al., 2025, Gloeckler et al., 2024]. SBI needs diagnostics on posterior samples. SBIBM provides standardized simulator tasks, reference posterior samples, and benchmark metrics [Lueckmann et al., 2021a]. We use classifier two-sample tests (C2ST), where chance-level accuracy means that approximate and reference posterior samples are hard to distinguish [Lopez-Paz and Oquab, 2017]. Aggregate C2ST scores summarize sample quality but do not show whether errors come from marginal calibration, dependence structure, or coverage [Talts et al., 2018, Hermans et al., 2022, Lemos et al., 2023]. This motivates the marginal, rank-space, and quantile diagnostics used in section 5. 
+
+2.2 Prior-fitted networks 
+
+Prior-data fitted networks (PFNs) amortize inference over a distribution of tasks. A PFN is trained offline on synthetic datasets sampled from a prior over data-generating processes. At test time, it receives a dataset in context and returns predictions in a single forward pass [Müller et al., 2022]. This connects Bayesian prediction, meta-learning, and in-context learning. TabPFN applies this framework to tabular prediction. The original model was trained on synthetic tabular classification tasks and predicts labels for small datasets without task-specific gradient updates [Hollmann et al., 2023]. Recent TabPFN variants extend this setting to broader tabular tasks while preserving fast in-context prediction [Hollmann et al., 2025]. In SBI, simulated pairs (θi, x i) can be formatted as tabular contexts, with simulator parameters as prediction targets. This makes TabPFN a reusable component to test for posterior inference. The key question is which posterior features this supervised tabular pretraining preserves. TabPFN is trained under its pretraining prior, so its behavior depends on the match between that prior, the in-context encoding, and the simulator family at test time. Theoretical work on PFNs shows that architectural symmetries alone do not guarantee Bayesian consistency under arbitrary task shifts [Nagler, 2023]. For SBI, this shifts attention to empirical diagnostics of the representation, posterior samples, and task-dependent failures. 22.3 TabPFN for SBI 
+
+The closest prior work is NPE-PFN [Vetter et al., 2025], which uses TabPFN as a training-free posterior estimator. Given simulated parameter–observation pairs, NPE-PFN formats each parameter coordinate as a scalar regression target and queries TabPFN autoregressively to sample from the posterior. This gives a fast in-context SBI method with strong simulation efficiency in several benchmark settings. Its samples are constrained by TabPFN’s context size, scalar target interface, and autoregressive parameter ordering. PFN-NPE uses TabPFN through a different interface. It freezes TabPFN, extracts intermediate embeddings as simulator-output summaries, and trains a conditional density estimator for θ | s(x).This separates the foundation-model representation from posterior sampling. It also lets us test whether frozen TabPFN summaries carry posterior information that a standard neural posterior estimator can use. Section 3 formalizes this construction. 
+
+## 3 Method 
+
+3.1 Problem setup 
+
+For each simulator task, we construct pairs D = {(θi, x i)}ni=1 , where θi ∼ p(θ) and xi ∼ p(x | θi).Given a new observation xo, we target the posterior p(θ | xo). We split the simulated pairs into training and validation sets. We use the training set to define the TabPFN contexts and fit posterior estimators. The validation set supports early stopping and hyperparameter selection where applicable. Unless otherwise stated, experiments use n = 10 ,000 training simulations, 2,000 validation simulations, and the ten reference observations provided by SBIBM for each task [Lueckmann et al., 2021b]. 
+
+3.2 PFN-NPE 
+
+PFN-NPE uses TabPFN as a frozen summary network for simulator outputs, then passes the sum-maries to a posterior estimator. The procedure has three configurable components: the in-context TabPFN construction, the embedding transformation, and the conditional density estimator. In our experiments, the TabPFN context is a uniformly sampled subset of m = min(1000 , n ) training simulations. The summary network is the TabPFN v2 regressor with a single ensemble member [Hollmann et al., 2023, 2025]. The TabPFN weights remain fixed throughout. The summary is parameter-wise. PFN-NPE first samples a shared context index set Ictx of size m.For each parameter coordinate d ∈ { 1, . . . , D θ }, it forms a scalar TabPFN regression context 
+
+Cd = {(xi, θ i,d ) : i ∈ Ictx },
+
+where simulator outputs xi are tabular features and the scalar parameter coordinate θi,d is the regression target. Every coordinate uses the same context observations; only the scalar target changes. With Cd fixed, we query TabPFN on each training simulation, validation simulation, and reference observation. Let hd(x) denote the final-layer query embedding for output x under coordinate context 
+
+Cd.PFN-NPE repeats this embedding pass once per parameter coordinate and concatenates the embed-dings, 
+
+hraw (x) = h1(x), . . . , h Dθ (x).
+
+This gives a fixed representation of simulator output x. By default, we fit PCA on {hraw (xi)}ni=1 
+
+from the training simulations and keep the projection fixed. The same projection maps training, validation, and reference summaries to 
+
+s(x) = g(hraw (x)) ∈ R64 .
+
+We use PCA for g by default. Section B.9 reports a matched PCA/no-PCA ablation. All TabPFN queries happen during summary precomputation. The conditional density estimator then trains on fixed pairs {(s(xi), θ i)}ni=1 , uses validation summaries for early stopping, and draws samples for a reference observation from the trained model at s(xo). This makes the frozen summary stage reusable across posterior estimators and limits task-specific training to the conditional density estimator. 3Figure 1: Three posterior-inference workflows using the same simulated training set D =
+
+{(θi, x i)}Ni=1 and observed data xo. Standard NPE trains an amortized posterior estimator directly on simulations. NPE-PFN uses a pretrained TabPFN autoregressively at inference time to draw posterior samples. PFN-NPE uses a frozen TabPFN as a summary network and trains a conditional density estimator on the resulting embeddings. 
+
+3.3 Conditional density estimator 
+
+PFN-NPE maps each simulator output xi to a fixed summary s(xi). The posterior estimator trains on pairs {(s(xi), θ i)}ni=1 and represents qϕ(θ | s(x)) . TabPFN is queried only during summary precomputation, so training, validation, and reference observations all use the same summary map. All experiments use a neural spline flow (NSF) for qϕ [Durkan et al., 2019]. We standardize parameter vectors with the training-set mean μθ and standard deviation σθ , then train the flow by minimizing negative log likelihood, 
+
+L(ϕ) = − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+log qϕ
+
+ θi − μθ
+
+σθ
+
+s(xi)
+
+
+
+.
+
+Validation simulations determine early stopping and hyperparameter selection. Section A.2 reports architecture and optimization details. At inference time, we embed a reference observation xo with the same TabPFN contexts {C d}Dθ
+
+> d=1
+
+,transform it with the fixed map g, and pass it to the trained flow as s(xo). We draw posterior samples from qϕ(· | s(xo)) in standardized parameter space and transform them back to the original scale. In the local benchmark, each method draws 1000 posterior samples per reference observation. The learned-summary NPE baseline uses the same NSF posterior estimator and training protocol with a task-specific MLP summary map aη (x) ∈ R64 . The MLP and NSF train jointly on the same simulations, validation split, seeds, and reference observations. This gives a matched learned-summary comparison at the same summary dimension. 44 Empirical Comparison 
+
+We evaluate PFN-NPE across standard SBI benchmarks, nuisance-rich observation variants, and structured time-series simulators. The comparison includes direct NPE-PFN inference, a learned-summary NPE control with the same NSF posterior estimator, and external neural SBI baselines where available. We ask how TabPFN-derived summaries perform under matched simulation budgets and where posterior-sample discrepancies appear in joint, marginal, and rank-space diagnostics. We first define the task suite and metrics, then report budget-scaling results and the fixed-budget pattern that motivates section 5. 
+
+4.1 Tasks and metrics 
+
+The task suite covers common SBI regimes: standardized benchmark simulators, nuisance-rich observations, and structured time series. The SBIBM suite provides standardized simulators, fixed reference observations, reference posterior samples, and established neural SBI baselines [Lueckmann et al., 2021a]. It covers low-dimensional multimodal tasks, Gaussian models with analytic structure, high-dimensional parameter tasks, and mechanistic ODE simulators. Controlled distractor variants append independent Gaussian-mixture nuisance coordinates to simulator outputs and permute the columns. Since these nuisance coordinates are independent of θ, the base-task reference posterior remains valid as the observation dimension grows. The custom time-series tasks include an AR(1) Gaussian process, an Ornstein–Uhlenbeck process, and a solar-dynamo simulator, giving structured sequential observations with dimensions between 50 and 100. Each default run uses 10 ,000 training simulations, 2,000 validation simulations, and the ten fixed reference observations for the task. Each method returns 1000 posterior samples per reference observation. We evaluate three random seeds, average metrics over reference observations within each seed, and report means and standard deviations across seeds. Budget-scaling figures vary the number of training simulations and keep the reference observations, posterior sample count, and evaluation protocol fixed. We use joint classifier two-sample test (C2ST) as the main posterior-quality metric [Lopez-Paz and Oquab, 2017]. C2ST trains a classifier to distinguish approximate posterior samples from reference posterior samples. Accuracy 0.5 means the sample sets are indistinguishable, while larger values indicate greater discrepancy. The joint score applies this test in multivariate θ-space. We also report marginal and rank-space C2ST to localize posterior discrepancies. The marginal score averages one-dimensional C2ST values over parameter coordinates, 
+
+C2ST marg = 1
+
+DθDθX
+
+> d=1
+
+C2ST( q(θd | xo), p (θd | xo)) .
+
+This score summarizes one-dimensional marginal mismatch. The rank-space score maps approximate and reference samples through a pooled empirical CDF in each parameter coordinate, then applies C2ST to the transformed samples. This transform equalizes one-dimensional marginals while preserving sensitivity to dependence structure and other joint-distribution errors. These diagnostics identify cases where PFN-derived summaries preserve marginal posterior information but leave joint discrepancies. For quantile diagnostics, we use pinball loss at τ ∈ { 0.05 , 0.25 , 0.5, 0.75 , 0.95 },
+
+ℓτ (y, ˆqτ ) = max {τ (y − ˆqτ ), (τ − 1)( y − ˆqτ )} .
+
+These scores give another view of marginal posterior calibration and one-dimensional uncertainty. 
+
+4.2 Budget-scaling comparison 
+
+Figure 2 summarizes joint C2ST across the standard and extended task suite. The standard SBIBM row shows strong task dependence. The Gaussian linear tasks approach the C2ST floor for all local methods by 10 4–10 5 simulations. Two moons and Gaussian mixture improve steadily with budget, with PFN-NPE close to the learned-summary NPE baseline at the default budget. Bernoulli GLM and SIR favor autoregressive NPE-PFN through the default-budget region. 5Table 1: Compact 10 ,000 -simulation summary by task family. Counts report how often each local method has the lowest mean joint C2ST within the family. The median columns summarize PFN-NPE and the best available local method per task. Lower C2ST is better. Task family # tasks PFN-NPE best Learned summary best NPE-PFN best Median PFN-NPE Median best SBIBM reference 10 1 1 8 0.641 0.577                                        
+
+> Distractor variants 42020.628 0.576
+> Time series 31110.866 0.857 0.50
+> 0.75
+> 1.00
+> C2ST
+> Two moons Gauss. mix Gauss. linear Bernoulli GLM SLCP SIR Lotka-Volterra
+> 10 210 310 410 5
+> Budget
+> 0.50
+> 0.75
+> 1.00
+> C2ST
+> Two moons
+> (+ distr.)
+> 10 210 310 410 5
+> G. mix
+> (+ distr.)
+> 10 210 310 410 5
+> Bern. GLM
+> (+ distr.)
+> 10 210 310 410 5
+> SIR
+> (+ distr.)
+> 10 210 310 410 5
+> OU
+> 10 210 310 410 5
+> AR(1), T=50
+> 10 210 310 410 5
+> Solar dynamo
+> PFN-NPE
+> Learned-summary NPE
+> NPE-PFN
+> NPE (sbibm)
+> NLE (sbibm)
+> SNPE (sbibm)
+> SNLE (sbibm)
+
+Figure 2: Joint C2ST vs. simulation budget across the standard and extended task suite. The first row shows the seven standard SBIBM tasks. The second row shows four distractor variants followed by three time-series tasks. The dotted line marks the ideal C2ST value of 0.5.SLCP and Lotka–Volterra define the high-error end of the standard suite. PFN-based curves retain high joint C2ST across the displayed budget range on these tasks. Several external baseline curves decrease at larger budgets, especially shipped SNLE on SLCP, showing that the high-error regime depends on the inference interface. This pattern motivates the diagnostic analysis: additional simulations help on several tasks, while structured joint posterior geometry remains limiting for PFN-based approaches. The extended row tests nuisance-coordinate robustness and structured time-series behavior. In the distractor variants, PFN-NPE has its clearest advantage on two_moons_distractors and 
+
+gaussian_mixture_distractors , reaching 0.582 ± 0.02 and 0.605 ± 0.04 at 10 4 simulations. Bernoulli GLM and SIR distractor variants follow their base-task pattern and favor NPE-PFN. The time-series tasks retain high C2ST across local methods, with different default-budget leaders across OU, AR(1), and solar dynamo. Overall, PFN-NPE gains concentrate in mixture and nuisance-coordinate settings, while sequence tasks leave substantial joint posterior error across local methods. 
+
+4.3 Fixed-budget summary 
+
+At the default budget of 10 ,000 training simulations, the joint C2ST table shows a task-dependent ranking across the three local methods (table 4). NPE-PFN attains the lowest mean joint C2ST on 11 of 17 tasks, with its strongest relative performance on Bernoulli GLM variants, SIR variants, and Lotka–Volterra. Direct autoregressive TabPFN inference is therefore a strong fixed-budget baseline on many standard benchmark tasks. PFN-NPE gives the lowest joint C2ST on gaussian_mixture ,
+
+gaussian_mixture_distractors , two_moons_distractors , and ou , and it improves over the learned-summary NPE baseline on most tasks where that baseline is available. The high-C2ST rows in table 4 show where all local methods struggle, including SLCP, Lotka–Volterra, OU, solar dynamo, and AR(1). These results set up the diagnostic analysis in section 5: PFN-NPE is strongest in mixture and nuisance-coordinate regimes, while structured joint posterior geometry remains the main failure mode. 60 2 4 6 8 10      
+
+> Encoder layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Ridge val  R2
+> A. Mean-parameter decoding
+> 0246810
+> Encoder layer
+> 1
+> 2
+> 3
+> 5
+> 10
+> 20
+> Pinball ratio (probe / reference)
+> B. Quantile decoding
+> standard SBIBM
+> distractor variants
+> high-dim/time-series
+
+Figure 3: Layer-wise linear-probe diagnostics for parameter information in frozen TabPFN summaries. Panel A shows ridge-probe R2 for decoding posterior mean parameters across tasks, with thin lines for tasks and thick lines for task-family means. Panel B shows marginal-quantile probe pinball loss normalized by empirical-reference-quantile pinball loss on the same reference observations; 1× is the reference target. 
+
+## 5 Diagnostic Analysis of Marginals and Joints 
+
+The empirical results in section 4 show task-dependent behavior across PFN-NPE, NPE-PFN, and learned-summary NPE. We use probes to ask two questions: whether frozen TabPFN summaries carry marginal posterior information, and whether PFN-NPE samples match the joint posterior after the conditional density estimator is fitted. A linear probe keeps the representation fixed and trains a simple linear predictor for a chosen target [Alain and Bengio, 2018, Hewitt and Manning, 2019]. High validation performance means the target information is linearly accessible. Low validation performance does not rule out nonlinear or task-dependent encodings. Prior TabPFN interpretability work uses similar probes to study linearly decodable structure inside TabPFN representations [Gupta et al., 2026]. This matters for PFN-NPE because the summary has built-in coordinate structure. For each parameter coordinate d, PFN-NPE builds a TabPFN regression context with θd as the target and stores the query embedding hd(x). The raw summary concatenates these chunks as [h1(x), . . . , h Dθ (x)] . The probes test what each frozen chunk makes linearly accessible. The C2ST diagnostics then evaluate samples after PCA and the normalizing flow. 
+
+5.1 Linear probes for marginal information 
+
+Figure 3 measures whether frozen summaries contain linearly accessible information about posterior marginals before fitting the density head. We fit ridge probes from layer-wise summaries to posterior mean parameters and linear quantile probes to empirical reference-posterior marginal quantiles. The posterior-mean probe improves across encoder depth, and the marginal-quantile probe moves toward the empirical-reference pinball target on many tasks. The raw-observation ablation shows the same trend (table 17): PFN summaries give higher predicted-versus-reference quantile correlations than standardized raw observations on SLCP, SIR, Lotka–Volterra, AR(1), Bernoulli GLM variants, and several distractor settings. These results show that the summaries retain useful one-dimensional information about posterior location, scale, and quantiles. The quantile diagnostics also vary by task. The pinball ratio is near the empirical-reference target on the Gaussian and two-moons tasks. SIR, Lotka–Volterra, OU, solar dynamo, and AR(1) have larger pinball ratios (table 17). The summaries often expose marginal posterior signal even when final joint C2ST remains elevated. 70.00 0.05 0.10 0.15 0.20 0.25 
+
+> Joint C2ST - marginal C2ST
+> Gaussian lin.
+> Gaussian lin. unif.
+> SIR
+> Two moons
+> Gaussian mix. + distr.
+> Two moons + distr.
+> SIR + distr.
+> Gaussian mix.
+> AR(1)
+> Bernoulli GLM
+> Bernoulli + distr.
+> OU
+> Solar dynamo
+> SLCP
+> SLCP + distr.
+> Lotka-Volterra
+> all 16 gaps > 0; median=0.07, mean=0.10
+> standard SBIBM
+> distractor variants
+> high-dim/time-series
+
+Figure 4: Marginal-vs-joint C2ST gap for PFN-NPE at ntrain = 10 ,000 . Bars show joint C2ST minus marginal C2ST, averaged over available seeds. A zero gap corresponds to equal joint and mean marginal C2ST. 
+
+5.2 Joint error after marginal normalization 
+
+Figure 4 summarizes the posterior-sample diagnostic. PFN-NPE has higher joint C2ST than marginal C2ST on every reported task. The joint-minus-marginal gap ranges from 0.025 on Gaussian linear to 0.226 on Lotka–Volterra, with large gaps on SLCP ( 0.206 ), SLCP with distractors ( 0.220 ), OU (0.144 ), and solar dynamo ( 0.148 ) (table 9). These gaps locate recurring error beyond average one-dimensional marginal mismatch. Rank-space C2ST gives another view of the same pattern. The rank transform normalizes each param-eter coordinate by the pooled empirical CDF before applying C2ST. This reduces one-dimensional marginal effects while retaining dependence information. Across the task suite, rank C2ST remains close to joint C2ST and well above the marginal score on high-gap tasks (table 9). This pattern links accessible marginal information with elevated joint C2ST after fitting the sample distribution. 
+
+5.3 Parameter-level heterogeneity 
+
+The cross-θ probe in the appendix asks how parameter information is distributed across parameter-specific summary chunks. Let hraw (x) = [ e1(x), . . . , e Dθ (x)] denote the per-parameter concatenated TabPFN embedding at a given layer. For each source chunk i and target parameter j, we fit a ridge probe, ˆθj = a⊤ 
+
+> ij
+
+ei(x) + bij , on training simulations and report validation R2 
+
+> ij
+
+. The matched score is R2 
+
+> jj
+
+; the off-mean score averages R2 
+
+> ij
+
+over i̸ = j. Table 16 reports these quantities for the final encoder layer, averaged across seeds. The final-layer probe table shows heterogeneous accessibility across simulator parameters. In SLCP, the two location parameters are decodable from their matched chunks with R2 ≈ 0.60 , the two scale parameters have near-zero R2, and the correlation-like parameter is partly decodable in the base task (R2 = 0 .38 ). In AR(1), ρ is strongly localized to its matched chunk ( 0.82 vs. 0.19 ), and log σ is accessible from both chunks. The same frozen summary construction can therefore produce localized, distributed, and weakly linear parameter signals. The frozen summaries make some coordinates linearly accessible from their matched chunks, make others accessible across chunks, and leave some weak under this linear probe. The C2ST decompo-sition shows where sample error remains: after fitting the conditional density estimator, PFN-NPE samples still show discrepancies in dependence and parameter interactions. Overall, the diagnostics show that PFN-NPE carries useful one-dimensional posterior information into posterior estimation, with remaining error concentrated in multivariate structure. 86 Discussion 
+
+PFN-NPE treats a pretrained TabPFN as a reusable summary network and pairs the embeddings with a task-specific posterior estimator. Across the benchmark suite, it provides a task-dependent alternative to direct NPE-PFN inference and learned-summary NPE. PFN-NPE performs best on mixture and nuisance-coordinate settings, including gaussian_mixture , gaussian_mixture_distractors ,and two_moons_distractors . Direct NPE-PFN gives the lowest fixed-budget joint C2ST on many standard benchmark tasks. These results support PFN-NPE as a modular summary-based method with specific strengths, especially when frozen TabPFN summaries provide useful input to a downstream density estimator. The diagnostics explain this pattern. Linear probes recover posterior means and marginal quantiles from frozen TabPFN summaries across a range of tasks, showing that the representations often contain useful one-dimensional posterior information. The joint-minus-marginal C2ST gap and rank-space C2ST locate remaining error in the multivariate sampled posterior. Together, these results suggest that PFN-derived summaries often preserve marginal posterior signal, while dependence error remains in the final samples. This matches the TabPFN pretraining objective: TabPFN is trained on scalar supervised prediction tasks drawn from a prior over structural causal models [Hollmann et al., 2023, 2025]. In the PFN view of Nagler [2023], the learned predictor approximates a posterior predictive distribution under this pretraining prior. SBI tasks whose summaries resemble scalar prediction can align with that prior; tasks that require accurate multivariate dependence can expose a mismatch between the summaries and the target posterior. The diagnostics support this view for the fitted PFN-NPE system, but they do not fully separate representation error from density-estimator error. 
+
+6.1 Limitations 
+
+The benchmark suite covers standardized SBIBM simulators, nuisance-coordinate variants, and three structured time-series tasks under a common evaluation protocol. It remains small relative to the SBI problem space and emphasizes accessible benchmarks. Broader coverage of expensive mechanistic simulators, higher-dimensional parameter spaces, and controlled dependence structures would clarify where PFN-NPE is most useful. The evaluation also relies heavily on C2ST. C2ST measures sample-level discrepancy, but source attribution requires additional diagnostics. Appendix C.1 illustrates this point through a detailed SLCP case study. Finally, the default PFN-NPE implementation fixes the PCA-64 representation and one normalizing-flow configuration. Other compression choices and posterior estimators may change the ranking. 
+
+6.2 Future work 
+
+The results point to several extensions. One direction is to make joint structure explicit in PFN-NPE, for example by coupling parameter-specific embeddings, adding summaries that target simulator dependence, or fine-tuning a tabular foundation model on parameter-prediction objectives. These experiments would test whether the marginal-vs-joint gap comes from the frozen representation, the posterior estimator, or their interaction. A second direction is a broader benchmark suite with gradual changes in multimodality, dependence strength, observation dimension, and simulation cost. Appendix B.1 reports wall-clock and anytime Pareto analyses for two moons, SLCP, and AR(1), treating runtime for ten posterior queries as an empirical constraint. Extending these timing sweeps to larger-budget simulators, including problems such as the pyloric network benchmark studied by Vetter et al. [2025], would clarify the tradeoff between simulation budget and wall-clock budget. Finally, richer versions of PFN-NPE could prove fruitful. For example, one could explore gains from pairing TabPFN embeddings with hand-crafted simulator summary statistics, combining per-dimension summary embeddings in different ways (as opposed to PCA), or using a more expressive inference head, like a transformer-based diffusion model, that may be better suited to multimodal or strongly dependent posteriors. 
+
+## Acknowledgments and Disclosure of Funding 
+
+We thank the maintainers of TabPFN, SBIBM, sbi, BayesFlow, NPE-PFN, Zuko, uv, and the scientific Python ecosystem for making their software available. 9References 
+
+Guillaume Alain and Yoshua Bengio. Understanding intermediate layers using linear classifier probes, 2018. URL https://arxiv.org/abs/1610.01644 .Kyle Cranmer, Johann Brehmer, and Gilles Louppe. The frontier of simulation-based inference. 
+
+Proceedings of the National Academy of Sciences , 117(48):30055–30062, 2020. doi: 10.1073/ pnas.1912789117. URL https://www.pnas.org/doi/abs/10.1073/pnas.1912789117 .Simon Dirmeier, Carlo Albert, and Fernando Pérez-Cruz. Simulation-based inference for high-dimensional data using surjective sequential neural likelihood estimation. arXiv preprint , 2023. Conor Durkan, Artur Bekasov, Iain Murray, and George Papamakarios. Neural spline flows. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett, ed-itors, Advances in Neural Information Processing Systems , volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/file/ 7ac71d433f282034e088473244df8c02-Paper.pdf .Conor Durkan, Iain Murray, and George Papamakarios. On contrastive learning for likelihood-free inference. In Hal Daumé III and Aarti Singh, editors, Proceedings of the 37th International Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research ,pages 2771–2781. PMLR, 13–18 Jul 2020. URL https://proceedings.mlr.press/v119/ durkan20a.html .Manuel Gloeckler, Michael Deistler, Christian Weilbach, Frank Wood, and Jakob H. Macke. All-in-one simulation-based inference, 2024. URL https://arxiv.org/abs/2404.09636 .David Greenberg, Marcel Nonnenmacher, and Jakob Macke. Automatic posterior transformation for likelihood-free inference. In Kamalika Chaudhuri and Ruslan Salakhutdinov, editors, Proceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research , pages 2404–2414. PMLR, 09–15 Jun 2019. URL https://proceedings. mlr.press/v97/greenberg19a.html .Aviral Gupta, Armaan Sethi, and Dhruv Kumar. Tabpfn through the looking glass: An interpretability study of tabpfn and its internal representations, 2026. URL https://arxiv.org/abs/2601. 08181 .Joeri Hermans, Volodimir Begy, and Gilles Louppe. Likelihood-free mcmc with amortized approxi-mate ratio estimators, 2020. URL https://arxiv.org/abs/1903.04057 .Joeri Hermans, Arnaud Delaunoy, François Rozet, Antoine Wehenkel, Volodimir Begy, and Gilles Louppe. A crisis in simulation-based inference? beware, your posterior approximations can be unfaithful. Transactions on Machine Learning Research , 2022. ISSN 2835-8856. URL 
+
+https://openreview.net/forum?id=LHAbHkt6Aq .John Hewitt and Christopher D. Manning. A structural probe for finding syntax in word represen-tations. In Jill Burstein, Christy Doran, and Thamar Solorio, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Hu-man Language Technologies, Volume 1 (Long and Short Papers) , pages 4129–4138, Minneapolis, Minnesota, June 2019. Association for Computational Linguistics. doi: 10.18653/v1/N19-1419. URL https://aclanthology.org/N19-1419/ .Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. Tabpfn: A transformer that solves small tabular classification problems in a second, 2023. URL https://arxiv.org/ abs/2207.01848 .Noah Hollmann, Samuel G. Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 637:319 – 326, 2025. URL https://api.semanticscholar. org/CorpusID:275420209 .Pablo Lemos, Adam Coogan, Yashar Hezaveh, and Laurence Perreault-Levasseur. Sampling-based accuracy testing of posterior estimators for general inference. arXiv preprint , 2023. 10 David Lopez-Paz and Maxime Oquab. Revisiting classifier two-sample tests. In International Conference on Learning Representations (ICLR) , 2017. Jan-Matthis Lueckmann, Jan Boelts, David Greenberg, Pedro Goncalves, and Jakob Macke. Bench-marking simulation-based inference. In Arindam Banerjee and Kenji Fukumizu, editors, Proceed-ings of The 24th International Conference on Artificial Intelligence and Statistics , volume 130 of Proceedings of Machine Learning Research , pages 343–351. PMLR, 13–15 Apr 2021a. URL 
+
+https://proceedings.mlr.press/v130/lueckmann21a.html .Jan-Matthis Lueckmann, Jan Boelts, David Greenberg, Pedro Goncalves, and Jakob Macke. Bench-marking simulation-based inference. In Arindam Banerjee and Kenji Fukumizu, editors, Proceed-ings of The 24th International Conference on Artificial Intelligence and Statistics , volume 130 of Proceedings of Machine Learning Research , pages 343–351. PMLR, 13–15 Apr 2021b. URL 
+
+https://proceedings.mlr.press/v130/lueckmann21a.html .Sarthak Mittal, Niels Leif Bracher, Guillaume Lajoie, Priyank Jaini, and Marcus Brubaker. Amortized in-context bayesian posterior estimation, 2025. URL https://arxiv.org/abs/2502.06601 .Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Transformers can do Bayesian inference. In International Conference on Learning Representations (ICLR) , 2022. Thomas Nagler. Statistical foundations of prior-data fitted networks. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett, editors, 
+
+Proceedings of the 40th International Conference on Machine Learning , volume 202 of Pro-ceedings of Machine Learning Research , pages 25660–25676. PMLR, 23–29 Jul 2023. URL 
+
+https://proceedings.mlr.press/v202/nagler23a.html .George Papamakarios and Iain Murray. Fast ϵ-free inference of simulation models with bayesian conditional density estimation. In D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, and R. Gar-nett, editors, Advances in Neural Information Processing Systems , volume 29. Curran Asso-ciates, Inc., 2016. URL https://proceedings.neurips.cc/paper_files/paper/2016/ file/6aca97005c68f1206823815f66102863-Paper.pdf .George Papamakarios, David Sterratt, and Iain Murray. Sequential neural likelihood: Fast likelihood-free inference with autoregressive flows. In Kamalika Chaudhuri and Masashi Sugiyama, editors, 
+
+Proceedings of the Twenty-Second International Conference on Artificial Intelligence and Statistics ,volume 89 of Proceedings of Machine Learning Research , pages 837–848. PMLR, 16–18 Apr 2019. URL https://proceedings.mlr.press/v89/papamakarios19a.html .Sean Talts, Michael Betancourt, Daniel Simpson, Aki Vehtari, and Andrew Gelman. Validating Bayesian inference algorithms with simulation-based calibration. arXiv preprint , 2018. Julius Vetter, Manuel Gloeckler, Daniel Gedon, and Jakob H. Macke. Effortless, simulation-efficient bayesian inference using tabular foundation models, 2025. URL https://arxiv.org/abs/ 2504.17660 .Jonas Wildberger, Maximilian Dax, Simon Buchholz, Stephen Green, Jakob H Macke, and Bernhard Schölkopf. Flow matching for scalable simulation-based inference. In A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neural Information Processing Systems , volume 36, pages 16837–16864. Curran Associates, Inc., 2023. URL https://proceedings.neurips.cc/paper_files/paper/2023/file/ 3663ae53ec078860bb0b9c6606e092a0-Paper-Conference.pdf .11 A Additional Method Details 
+
+A.1 Pseudocode: PFN-NPE Algorithm 1 PFN-NPE 
+
+Require: Observation xo, training simulations D = {(θi, xi)}ni=1 , frozen TabPFN encoder hψ (·),dimensionality reduction g (e.g. PCA to 64 dimensions), inference head qϕ
+
+Extract summary embeddings  
+
+> 1:
+
+Sample in-context subset C ⊆ D with |C| = min(1000 , n ) uniformly without replacement  
+
+> 2:
+
+for d = 1 , . . . , D θ do  
+
+> 3:
+
+Cd = {(xi, θ i,d ) : ( θi, xi) ∈ C}  
+
+> 4:
+
+for each (θi, xi) ∈ D do  
+
+> 5:
+
+hd(xi) ← final-layer embedding from hψ with context Cd and query xi 
+
+> 6:
+
+end for  
+
+> 7:
+
+end for  
+
+> 8:
+
+for each (θi, xi) ∈ D do  
+
+> 9:
+
+hraw (xi) ← [h1(xi), . . . , h Dθ (xi)]  
+
+> 10:
+
+end for 
+
+Fit transformation and inference head  
+
+> 11:
+
+Fit g on {hraw (xi)}ni=1 ▷ g is fixed after this step; TabPFN is not queried again  
+
+> 12:
+
+s(xi) ← g hraw (xi) for each i ▷ compute fixed summary vectors  
+
+> 13:
+
+Train qϕ by minimizing − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+log qϕ
+
+ θi − μθ
+
+σθ
+
+s(xi)
+
+
+
+▷ flow trained on fixed embeddings 
+
+Inference  
+
+> 14:
+
+for d = 1 , . . . , D θ do  
+
+> 15:
+
+hd(xo) ← final-layer embedding from hψ with context Cd and query xo 
+
+> 16:
+
+end for  
+
+> 17:
+
+hraw (xo) ← h1(xo), . . . , h Dθ (xo) 
+
+> 18:
+
+s(xo) ← g hraw (xo) 
+
+> 19:
+
+Draw standardized samples ˜θ ∼ qϕ
+
+ · | s(xo) 
+
+> 20:
+
+Rescale samples θ ← μθ + σθ ⊙ ˜θ 
+
+> 21:
+
+return θ = [ θ1, θ 2, ..., θ Dθ ]⊤ ▷ posterior sample 
+
+A.2 Flow training details 
+
+For tasks with Dθ ≤ 5, the flow uses five spline transforms, eight spline bins, and conditioner hidden widths [128 , 128] . For higher-dimensional parameter spaces, it uses eight transforms and hidden widths [256 , 256] . We train this head by minimizing negative log likelihood, 
+
+L(ϕ) = − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+log qϕ
+
+ θi − μθ
+
+σθ
+
+s(xi)
+
+
+
+,
+
+where μθ and σθ are computed from the training parameters. Optimization uses Adam with learning rate 5 × 10 −4, batch size 256, cosine learning-rate decay, gradient clipping at norm 5, early stopping after 20 validation epochs without improvement, and at most 200 epochs. 
+
+A.3 Task List 
+
+Table 2 lists the task families used in the empirical comparison. The SBIBM tasks provide the externally comparable benchmark setting. The distractor and time-series tasks stress high-dimensional observations. The time-series tasks and slcp_distractors are not in the SBIBM package; they are custom implementations included in the project repository referenced in section A.6. 12 Table 2: SBI Task Families Family Tasks Purpose SBIBM reference suite two_moons , gaussian_mixture ,
+
+slcp , slcp_distractors ,
+
+gaussian_linear ,
+
+gaussian_linear_uniform ,
+
+bernoulli_glm , bernoulli_glm_raw ,
+
+sir , lotka_volterra 
+
+Standardized comparison using established SBI tasks and reference pos-teriors. Controlled distractor variants 
+
+two_moons_distractors ,
+
+gaussian_mixture_distractors ,
+
+bernoulli_glm_distractors ,
+
+sir_distractors 
+
+Nuisance-coordinate stress test with a pre-served target posterior. High-dimensional time series 
+
+ar1_ts_t50 , ou , solar_dynamo Structured sequential observations with grid-based reference posterior samples. 
+
+A.4 Custom time-series simulators 
+
+The three custom time-series tasks are synthetic stress tests, not calibrated scientific models. They test inference from structured sequential observations with low-dimensional parameters and grid-based reference posteriors. The Ornstein–Uhlenbeck and solar-dynamo tasks are inspired by the high-dimensional SBI settings in Dirmeier et al. [2023], but we use the custom definitions, priors, reference observations, and posterior grids described below. 
+
+AR(1). The ar1_ts_t50 task has parameter θ = ( ρ, log σ) and observation x = ( x1, . . . , x 50 ).The prior is 
+
+ρ ∼ Uniform( −0.95 , 0.95) , log σ ∼ Uniform(log 0 .05 , log 2) .
+
+Given θ, the simulator draws 
+
+x1 ∼ N 
+
+
+
+0, σ2
+
+1 − ρ2
+
+
+
+, xt = ρx t−1 + ϵt, ϵt ∼ N (0 , σ 2),
+
+for t = 2 , . . . , 50 . The implementation clamps 1 − ρ2 below by 10 −4 when computing the stationary initial variance. 
+
+Ornstein–Uhlenbeck. The ou task has parameter θ = ( α, β, σ ), observation length 100 , and time step ∆t = 0 .1. The prior is uniform on [0 , 10] × [0 , 5] × [0 , 2] . The simulator uses the exact Gaussian transition 
+
+xt+1 | xt ∼ N 
+
+
+
+α + ( xt − α) exp( −β∆t), σ2{1 − exp( −2β∆t)}
+
+2β
+
+
+
+,
+
+with initial state 
+
+x1 ∼ N 
+
+
+
+α, σ2
+
+2β
+
+
+
+.
+
+For numerical stability, the implementation evaluates these expressions with β bounded below by 
+
+10 −6.
+
+Solar-dynamo-inspired toy model. The solar_dynamo task has parameter θ =(αmin , α range , ϵ max ) and observation length 100 . The prior is uniform on [0 .9, 1.4] × [0 .05 , 0.25] ×
+
+[0 .02 , 0.15] . Starting from fixed initial state p0 = 1 , the simulator iterates 
+
+pt+1 = αtf (pt)pt + ϵt, αt ∼ Uniform( αmin , α min + αrange ), ϵt ∼ Uniform(0 , ϵ max ),
+
+where 
+
+f (p) = 12
+
+
+
+1 + erf 
+
+ p − 0.60.2
+
+  
+
+1 − erf 
+
+ p − 1.00.8
+
+ 
+
+.
+
+This task is only intended as a nonlinear sequential benchmark; we do not use it as a calibrated model of solar-cycle dynamics. 13 Reference posteriors. For each custom time-series task, we generate ten fixed reference observa-tions from prior draws using seed 12345 and cache 10 ,000 reference posterior samples per observation. The AR(1) task evaluates the exact likelihood on a 401 × 301 grid over (ρ, log σ). The OU and solar-dynamo tasks evaluate their analytic transition likelihoods on 80 3 parameter grids. Posterior samples are drawn by normalizing the grid log posterior and sampling grid cells with replacement. 
+
+A.5 Computational Resources 
+
+The benchmark, diagnostic, ablation, case-study, and amortized wall-clock experiments ran on an Ubuntu workstation with one NVIDIA RTX 3090 Ti GPU with 24 GB of VRAM. The anytime Pareto frontier wall-clock analysis in fig. 6 ran on a local Linux x86_64 workstation with 16 physical CPU cores, 22 logical CPU cores, 61.0 GB of RAM, and one NVIDIA RTX 3500 Ada Gen-eration Laptop GPU with 12,282 MB of VRAM (CUDA compute capability 8.9, driver 595.58.03). 
+
+A.6 Software 
+
+The code for this project is available in the epickens/pfn-npe GitHub repository. Package depen-dencies can be installed from the pyproject requirements using uv .14 B Additional results 
+
+B.1 Wall-clock comparison 
+
+The timing appendix reports implementation-level runtimes for the local timing suite. Train time includes simulation plus task-specific fitting or embedding steps. Sampling time measures 1000 
+
+posterior draws for each of ten reference observations. These measurements depend on hardware and implementation, so they describe this implementation rather than the methods in general. Table 3: Wall-clock cost on the timing suite. Task Method Train (s) Sample (s) Total (s) 
+
+slcp NPE-PFN 0 ± 0 253 ± 0 256 ± 0
+
+PFN-NPE (NSF) 43 ± 4 0 ± 0 46 ± 4
+
+Learned summary + NSF 41 ± 7 0 ± 0 41 ± 7
+
+Vanilla NPE 70 ± 5 0 ± 0 73 ± 5
+
+PyMC HMC 0 ± 0 43 ± 1 46 ± 1
+
+two_moons_distractors NPE-PFN 0 ± 0 396 ± 26 400 ± 26 
+
+PFN-NPE (NSF) 73 ± 4 0 ± 0 75 ± 4
+
+Learned summary + NSF 19 ± 2 0 ± 0 19 ± 2
+
+Vanilla NPE 21 ± 1 0 ± 0 24 ± 1
+
+PyMC HMC — — —
+
+gaussian_linear NPE-PFN 0 ± 0 331 ± 0 334 ± 0
+
+PFN-NPE (NSF) 27 ± 1 0 ± 0 30 ± 1
+
+Learned summary + NSF 20 ± 1 0 ± 0 20 ± 1
+
+Vanilla NPE 17 ± 1 0 ± 0 20 ± 1
+
+PyMC HMC 0 ± 0 4 ± 0 7 ± 0
+
+Table 3 separates setup cost from repeated posterior-query cost at ntrain = 10 ,000 . NPE-PFN has little task-specific fitting cost beyond simulation and uses in-context inference for each posterior query. PFN-NPE adds task-specific embedding and flow fitting, followed by low sampling cost for repeated observations. PyMC HMC is included only for tasks with tractable analytic likelihoods. 10 0 10 1 10 2       
+
+> Posterior queries
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Total wall-clock time (s)  d_theta=2
+> Two moons
+> 10 010 110 2
+> Posterior queries
+> d_theta=5
+> SLCP
+> 10 010 110 2
+> Posterior queries
+> d_theta=10
+> Bernoulli GLM
+> NPE-PFN PFN-NPE base PFN-NPE large PFN-NPE XL
+
+Figure 5: Amortized runtime for repeated posterior queries. Figure 5 shows how total runtime changes as posterior queries increase. Lines show mean total runtime across timing-only seeds, and error bars show across-seed standard deviation. PFN-NPE variants pay a one-time flow-training cost and keep low sampling cost in repeated-use settings. NPE-PFN avoids task-specific fitting, which helps for one-off queries, but it performs TabPFN in-context inference inside each posterior query. In the timing suite, ten reference observations require 253 –396 
+
+seconds of NPE-PFN sampling time, while PFN-NPE pays 27 –73 seconds up front and its repeated sampling cost rounds to zero at table precision (table 3). For many observed datasets from the same simulator setup, this per-query cost can dominate total runtime even when NPE-PFN has no training phase. 15 10 0 10 1 10 2 10 3                 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Joint C2ST error
+> Two moons
+> Seed means
+> 10 010 110 210 3
+> Two moons
+> Individual seeds
+> 10 010 110 210 3
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Joint C2ST error
+> SLCP
+> 10 010 110 210 3
+> SLCP
+> 10 010 110 2
+> Runtime for 10 posteriors (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Joint C2ST error
+> AR(1), T=50
+> 10 010 110 2
+> Runtime for 10 posteriors (s)
+> AR(1), T=50
+> Pareto frontier PFN-NPE NPE-PFN Raw-x NSF sbi-FMPE
+
+Figure 6: Anytime quality-runtime comparison on the timing suite. Figure 6 evaluates posterior quality under a wall-clock constraint on two moons, SLCP, and AR(1). Rows correspond to tasks. The left column shows seed means for each method and training budget, with non-dominated points connected by the Pareto frontier. The right column overlays individual seeds and seed means. Runtime includes posterior sampling for ten reference observations. The vertical axis reports joint C2ST error, 2(C2ST joint − 0.5) , so lower-left points have lower runtime and lower posterior discrepancy. The frontier depends on the task. On two moons, NPE-PFN reaches low joint C2ST error within tens of seconds, while higher-budget PFN-NPE reaches the lowest observed aggregate error at longer runtimes. On SLCP, PFN-NPE contributes most of the intermediate frontier, with NPE-PFN and PFN-NPE defining the high-runtime end. On AR(1), all methods retain high joint C2ST error; PFN-NPE is competitive at short runtimes, and NPE-PFN gives the lowest observed aggregate error among the plotted configurations. The seed-level panels show moderate seed variation with the same task-level pattern. 16 Table 4: Per-task joint C2ST at ntrain = 10 ,000 .Task PFN-NPE Learned summary + NSF NPE-PFN ar1_ts_t50 0.783 ± 0.02 0.692 ± 0.01 0.728 ± 0.01 
+
+bernoulli_glm 0.657 ± 0.00 0.701 ± 0.02 0.559 ± 0.01 
+
+bernoulli_glm_distractors 0.680 ± 0.01 0.763 ± 0.01 0.562 ± 0.01 
+
+bernoulli_glm_raw 0.707 ± 0.02 — 0.593 ± 0.01 
+
+gaussian_linear 0.553 ± 0.01 0.545 ± 0.00 0.510 ± 0.00 
+
+gaussian_linear_uniform 0.588 ± 0.00 0.551 ± 0.01 0.509 ± 0.01 
+
+gaussian_mixture 0.625 ± 0.05 0.626 ± 0.02 0.704 ± 0.01 
+
+gaussian_mixture_distractors 0.605 ± 0.04 0.762 ± 0.01 0.739 ± 0.00 
+
+lotka_volterra 0.931 ± 0.01 0.944 ± 0.01 0.832 ± 0.01 
+
+ou 0.866 ± 0.01 0.910 ± 0.00 0.890 ± 0.00 
+
+sir 0.608 ± 0.02 0.647 ± 0.02 0.544 ± 0.01 
+
+sir_distractors 0.626 ± 0.01 0.645 ± 0.01 0.563 ± 0.01 
+
+slcp 0.826 ± 0.01 0.811 ± 0.01 0.810 ± 0.00 
+
+slcp_distractors 0.861 ± 0.01 — 0.836 ± 0.01 
+
+solar_dynamo 0.868 ± 0.01 0.944 ± 0.00 0.857 ± 0.00 
+
+two_moons 0.581 ± 0.02 0.561 ± 0.01 0.602 ± 0.00 
+
+two_moons_distractors 0.582 ± 0.02 0.917 ± 0.00 0.603 ± 0.00 
+
+Table 5: SBIBM external-baseline comparison at ntrain = 10 ,000 .Task PFN-NPE NPE NLE NRE FMPE SNPE SNLE Two moons 0.58 0.61 0.71 0.76 — 0.55 0.57 
+
+Gaussian mixture 0.62 0.66 0.73 0.75 — 0.58 0.70 
+
+Gaussian linear 0.55 0.55 0.55 0.56 — 0.54 0.55 
+
+Bernoulli GLM 0.66 0.68 0.60 0.81 — 0.61 0.55 
+
+SLCP 0.82 0.90 0.77 0.95 0.83 0.84 0.71 
+
+SIR 0.61 0.68 0.75 0.77 — 0.56 0.74 
+
+Lotka-Volterra 0.93 1.00 0.96 1.00 — 0.95 0.74 
+
+B.2 Full per-task joint C2ST table 
+
+The full 10 ,000 -simulation table expands the compact family summary in the main text to individual tasks. Entries are joint C2ST means with across-seed standard deviations; lower values indicate posterior samples closer to the reference samples, and bold marks the lowest mean in each row. The external-baseline table uses the standard SBIBM benchmark rows and reports rounded joint C2ST values at the same simulation budget. PFN-NPE is recomputed from local posterior samples; the other shipped baselines use the SBIBM benchmark results. FMPE appears where a local result is available. 
+
+B.3 High-budget performance tables 
+
+The high-budget tables repeat the main comparison at ntrain = 100 ,000 , where available. The compact table reports which local method has the lowest mean joint C2ST within each task family. The per-task table reports local-method means and across-seed standard deviations. The external-baseline table gives the corresponding standard SBIBM comparison with rounded joint C2ST values. Dashes mark configurations without a completed local run at this budget. 
+
+B.4 Marginal-vs-joint C2ST decomposition 
+
+The C2ST decomposition reports the PFN-NPE posterior-sample diagnostics used in section 5. Joint C2ST applies the classifier test to the full parameter vector. Marginal C2ST averages one-dimensional tests over parameter coordinates. Rank C2ST applies a marginal rank transform before testing the 17 Table 6: Compact 100 ,000 -simulation summary by task family. Task family # tasks PFN-NPE best Learned summary best NPE-PFN best Median PFN-NPE Median best SBIBM reference 10 2 1 7 0.564 0.536             
+
+> Distractor variants 42020.559 0.551
+> Time series 31110.864 0.859
+
+Table 7: Per-task joint C2ST at ntrain = 100 ,000 .Task PFN-NPE Learned summary + NSF NPE-PFN ar1_ts_t50 0.783 ± 0.01 0.581 ± 0.02 0.724 ± 0.01 
+
+bernoulli_glm 0.591 ± 0.01 0.586 ± 0.01 0.532 ± 0.00 
+
+bernoulli_glm_distractors 0.594 ± 0.01 0.633 ± 0.01 0.554 ± 0.00 
+
+bernoulli_glm_raw — — 0.567 ± 0.01 
+
+gaussian_linear 0.532 ± 0.00 0.522 ± 0.00 0.509 ± 0.00 
+
+gaussian_linear_uniform — 0.521 ± 0.00 0.515 ± 0.00 
+
+gaussian_mixture 0.541 ± 0.01 0.551 ± 0.01 0.568 ± 0.00 
+
+gaussian_mixture_distractors 0.552 ± 0.01 0.629 ± 0.01 0.741 ± 0.00 
+
+lotka_volterra 0.861 ± 0.00 0.828 ± 0.00 0.690 ± 0.01 
+
+ou 0.864 ± 0.01 0.900 ± 0.01 0.907 ± 0.00 
+
+sir 0.564 ± 0.02 0.573 ± 0.03 0.518 ± 0.00 
+
+sir_distractors 0.565 ± 0.01 0.599 ± 0.01 0.549 ± 0.00 
+
+slcp 0.732 ± 0.02 0.680 ± 0.01 0.708 ± 0.01 
+
+slcp_distractors — — 0.777 ± 0.00 
+
+solar_dynamo 0.864 ± 0.01 0.922 ± 0.01 0.859 ± 0.01 
+
+two_moons 0.527 ± 0.01 0.529 ± 0.00 0.557 ± 0.00 
+
+two_moons_distractors 0.527 ± 0.01 0.602 ± 0.01 0.604 ± 0.00 
+
+joint sample, retaining sensitivity to dependence structure. The final column reports joint C2ST minus marginal C2ST. Values near 0.5 indicate smaller sample discrepancies. 
+
+B.5 Per-dimension specialization probe overview (cross-θ probe) 
+
+The cross-θ probe asks whether the per-parameter concatenated embedding organizes information by target parameter coordinate. We split the embedding into parameter-indexed chunks, then use ridge probes to decode the matching parameter dimension or nonmatching dimensions. Here, “off-diag” means any parameter not placed in the target slot of the TabPFN summary network. Across tasks, the target-slot parameter is more linearly decodable, especially from layer 4 onward. Other “off-diag” parameters are often, but not always, partly decodable from the same embeddings. 
+
+B.6 High-budget filter diagnostic 
+
+The filter diagnostic tests whether the standardized-Euclidean top-10 ,000 filter used by the au-toregressive PFN method improves a standard NSF posterior estimator. Entries are joint C2ST at 
+
+ntrain = 100 ,000 , with means and across-seed standard deviations. The ∆ column is paired by seed and equals PFN-NPE+filter minus PFN-NPE, so positive values mean higher C2ST after adding the filter. 
+
+B.7 TabPFN v2.5 comparison 
+
+The TabPFN v2.5 comparison repeats PFN-NPE with the updated TabPFN encoder on tasks with paired seeds. The three tables report joint, marginal, and rank C2ST. The ∆ column is v2.5 minus v2, paired by seed, so negative values mean lower C2ST with v2.5 on matched runs. 
+
+B.8 Projection-capacity ablation 
+
+The default PFN-NPE configuration compresses the concatenated per-parameter TabPFN embedding to a 64-dimensional summary before fitting the NSF posterior estimator. We test whether this 18 Table 8: SBIBM external-baseline comparison at ntrain = 100 ,000 .Task PFN-NPE NPE NLE NRE SNPE SNLE Two moons 0.53 0.54 0.67 0.63 0.53 0.58 
+
+# Gaussian mixture 0.54 0.56 0.76 0.73 0.53 0.62 
+
+# Gaussian linear 0.53 0.51 0.51 0.54 0.51 0.52 
+
+# Bernoulli GLM 0.59 0.56 0.54 0.75 0.52 0.52 
+
+# SLCP 0.73 0.83 0.70 0.92 0.67 0.58 
+
+# SIR 0.56 0.58 0.73 0.69 0.57 0.65 
+
+# Lotka-Volterra 0.86 0.98 0.95 1.00 0.93 0.70 
+
+Table 9: PFN-NPE C2ST decomposition. Task n Joint Marginal Rank Joint - marg. Gaussian linear 4 0.553 ± 0.01 0.528 ± 0.00 0.550 ± 0.01 0.025 ± 0.01 Gaussian linear uniform 3 0.588 ± 0.00 0.543 ± 0.00 0.584 ± 0.00 0.045 ± 0.00 SIR 5 0.608 ± 0.02 0.560 ± 0.01 0.606 ± 0.02 0.048 ± 0.02 Two moons 5 0.581 ± 0.02 0.526 ± 0.01 0.614 ± 0.02 0.055 ± 0.01 Gaussian mixture + distractors 5 0.605 ± 0.04 0.550 ± 0.01 0.601 ± 0.04 0.055 ± 0.03 Two moons + distractors 5 0.582 ± 0.02 0.522 ± 0.01 0.614 ± 0.02 0.060 ± 0.01 SIR + distractors 5 0.626 ± 0.01 0.564 ± 0.01 0.622 ± 0.01 0.061 ± 0.01 Gaussian mixture 5 0.625 ± 0.05 0.555 ± 0.02 0.621 ± 0.05 0.070 ± 0.03 AR(1) time series 3 0.783 ± 0.02 0.713 ± 0.01 0.780 ± 0.01 0.070 ± 0.00 Bernoulli GLM 5 0.657 ± 0.00 0.556 ± 0.01 0.651 ± 0.01 0.102 ± 0.01 Bernoulli GLM + distractors 5 0.680 ± 0.01 0.566 ± 0.00 0.676 ± 0.01 0.114 ± 0.01 Ornstein-Uhlenbeck 3 0.866 ± 0.01 0.722 ± 0.00 0.880 ± 0.01 0.144 ± 0.01 Solar dynamo 3 0.868 ± 0.01 0.720 ± 0.01 0.870 ± 0.01 0.148 ± 0.01 SLCP 5 0.826 ± 0.01 0.620 ± 0.01 0.833 ± 0.01 0.206 ± 0.01 SLCP + distractors 5 0.861 ± 0.01 0.640 ± 0.01 0.863 ± 0.01 0.220 ± 0.00 Lotka-Volterra 3 0.931 ± 0.01 0.705 ± 0.02 0.924 ± 0.01 0.226 ± 0.02 projection limits joint posterior recovery on SLCP by repeating the experiment with a wider learned linear projector and with the raw concatenated embedding. All three settings use the same training budget, validation split, random seeds, reference observations, and NSF training protocol. 
+
+B.9 PCA projection ablation 
+
+The PCA ablation tests whether the default PCA-64 projection limits the final posterior estimator. The first table compares the default projection with full embeddings across the broad 10 4-simulation set and a smaller 5×10 4-simulation core set. The ∆ column is no-PCA minus PCA-64. The second table focuses on hard tasks and compares the default PCA-64 NSF estimator, the standard NSF estimator on full embeddings, and an XL NSF estimator on full embeddings with common seeds. 
+
+B.10 Parameter-role probe summary 
+
+The parameter-role table summarizes final-layer cross-θ probes for task parameters with interpretable simulator roles. Matched probes decode θj from the matching target chunk ej , and the off-mean column averages nonmatching chunks. The ∆ column is matched minus off mean. The table is descriptive because parameter semantics and identifiability differ across simulators. 
+
+B.11 Raw-observation quantile-probe ablation 
+
+The raw-observation ablation compares quantile probes trained on frozen PFN summaries with probes trained on standardized raw observations x. Each row uses the same task, seeds, training and validation sizes, ten reference observations, and quantile levels τ ∈ { 0.05 , 0.25 , 0.5, 0.75 , 0.95 }.19 Figure 7: Layer-wise cross-θ probe. Table 10: High-budget top-10 ,000 filter diagnostic. Task PFN-NPE PFN-NPE+filter ∆ AR NPE-PFN                                              
+
+> ar1_ts_t50 0.783 ±0.013 0.795 ±0.027 +0 .012 ±0.037 0.756 ±0.006 0.724 ±0.011
+> bernoulli_glm 0.591 ±0.005 0.697 ±0.005 +0 .106 ±0.005 0.546 ±0.004 0.532 ±0.002
+> slcp 0.732 ±0.019 0.793 ±0.011 +0 .061 ±0.029 0.764 ±0.008 0.708 ±0.010
+
+Correlations measure predicted-versus-reference marginal quantile variation. Pinball ratios divide probe pinball loss by empirical-reference-quantile pinball loss on the same reference observations; 1×
+
+is the empirical reference target. Raw-task variants are excluded to match the paper-facing benchmark set. 20 Table 11: TabPFN v2.5 joint C2ST comparison. Task Seeds TabPFN v2 TabPFN v2.5 ∆
+
+slcp 5 0.826 ± 0.01 0.799 ± 0.01 −0.027 ± 0.02 
+
+slcp_distractors 5 0.861 ± 0.01 0.831 ± 0.01 −0.030 ± 0.02 
+
+bernoulli_glm_distractors 5 0.673 ± 0.01 0.682 ± 0.01 +0 .009 ± 0.02 
+
+two_moons_distractors 5 0.597 ± 0.02 0.576 ± 0.02 −0.021 ± 0.01 
+
+ou 3 0.866 ± 0.01 0.892 ± 0.00 +0 .026 ± 0.01 
+
+Table 12: TabPFN v2.5 marginal C2ST comparison. Task Seeds TabPFN v2 TabPFN v2.5 ∆
+
+slcp 5 0.620 ± 0.01 0.606 ± 0.01 −0.013 ± 0.01 
+
+slcp_distractors 5 0.640 ± 0.01 0.621 ± 0.01 −0.019 ± 0.01 
+
+bernoulli_glm_distractors 5 0.562 ± 0.00 0.564 ± 0.01 +0 .001 ± 0.01 
+
+two_moons_distractors 5 0.528 ± 0.01 0.526 ± 0.01 −0.002 ± 0.01 
+
+ou 3 0.722 ± 0.00 0.748 ± 0.01 +0 .025 ± 0.01 
+
+Table 13: TabPFN v2.5 rank C2ST comparison. Task Seeds TabPFN v2 TabPFN v2.5 ∆
+
+slcp 5 0.833 ± 0.01 0.812 ± 0.01 −0.021 ± 0.01 
+
+slcp_distractors 5 0.863 ± 0.01 0.836 ± 0.02 −0.028 ± 0.02 
+
+bernoulli_glm_distractors 5 0.670 ± 0.01 0.672 ± 0.01 +0 .002 ± 0.02 
+
+two_moons_distractors 5 0.640 ± 0.02 0.610 ± 0.02 −0.029 ± 0.02 
+
+ou 3 0.880 ± 0.01 0.903 ± 0.00 +0 .024 ± 0.02 
+
+Table 14: PCA-64 versus no-PCA PFN-NPE. Budget Task PCA-64 No PCA ∆10 4 Two moons 0.584 ± 0.01 0.583 ± 0.01 -0.001 
+
+10 4 Gaussian mixture 0.607 ± 0.05 0.608 ± 0.05 +0.001 
+
+10 4 Gaussian linear 0.552 ± 0.01 0.553 ± 0.01 +0.001 
+
+10 4 Gaussian linear uniform 0.588 ± 0.00 0.590 ± 0.01 +0.002 
+
+10 4 Bernoulli GLM 0.658 ± 0.00 0.660 ± 0.00 +0.002 
+
+10 4 SLCP 0.829 ± 0.02 0.828 ± 0.02 +0.000 
+
+10 4 SIR 0.611 ± 0.03 0.612 ± 0.03 +0.001 
+
+10 4 Lotka-Volterra 0.931 ± 0.01 0.932 ± 0.01 +0.001 
+
+10 4 G. mixture + distractors 0.626 ± 0.04 0.655 ± 0.04 +0.029 
+
+10 4 Two moons + distractors 0.576 ± 0.02 0.568 ± 0.01 -0.008 
+
+10 4 Bernoulli GLM + distractors 0.685 ± 0.01 0.686 ± 0.00 +0.001 
+
+10 4 SIR + distractors 0.620 ± 0.01 0.623 ± 0.01 +0.004 
+
+10 4 AR(1), T=50 0.783 ± 0.02 0.783 ± 0.02 +0.000 
+
+10 4 OU 0.866 ± 0.01 0.861 ± 0.01 -0.005 
+
+10 4 Solar dynamo 0.868 ± 0.01 0.879 ± 0.00 +0.011 
+
+5×10 4 Two moons 0.534 ± 0.00 0.533 ± 0.00 -0.001 
+
+5×10 4 Bernoulli GLM 0.606 ± 0.01 0.607 ± 0.01 +0.001 
+
+5×10 4 SLCP 0.743 ± 0.02 0.742 ± 0.02 -0.001 
+
+5×10 4 G. mixture + distractors 0.562 ± 0.02 0.553 ± 0.02 -0.008 
+
+5×10 4 AR(1), T=50 0.771 ± 0.01 0.771 ± 0.01 +0.000 21 Table 15: XL no-PCA flow-estimator diagnostic. Budget Task PCA-64 NSF No-PCA NSF XL no-PCA NSF ∆XL −PCA 
+
+10 4 SLCP 0.829 ± 0.02 0.828 ± 0.02 0.822 ± 0.01 -0.006 
+
+10 4 Lotka-Volterra 0.931 ± 0.01 0.932 ± 0.01 0.943 ± 0.00 +0.012 
+
+10 4 OU 0.866 ± 0.01 0.861 ± 0.01 0.856 ± 0.00 -0.010 
+
+10 4 AR(1), T=50 0.783 ± 0.02 0.783 ± 0.02 0.785 ± 0.01 +0.002 
+
+10 4 Solar dynamo 0.868 ± 0.01 0.879 ± 0.00 0.888 ± 0.01 +0.020 
+
+5×10 4 SLCP 0.743 ± 0.02 0.742 ± 0.02 0.751 ± 0.02 +0.008 
+
+5×10 4 Lotka-Volterra 0.906 ± 0.02 — 0.920 ± 0.01 +0.014 
+
+5×10 4 OU 0.857 ± 0.01 — 0.856 ± 0.01 -0.001 
+
+5×10 4 AR(1), T=50 0.771 ± 0.01 0.771 ± 0.01 0.773 ± 0.01 +0.002 
+
+5×10 4 Solar dynamo 0.863 ± 0.01 — 0.873 ± 0.01 +0.010 Table 16: Final-layer parameter-role probe summary. Task Parameter Role Matched Off mean ∆
+
+SLCP θ0 mean 1 location 0.60 ± 0.02 0.41 ± 0.02 0.20 ± 0.03 SLCP θ1 mean 2 location 0.60 ± 0.02 0.43 ± 0.03 0.18 ± 0.04 SLCP θ2 scale 1 scale -0.00 ± 0.00 -0.00 ± 0.00 -0.00 ± 0.00 SLCP θ3 scale 2 scale -0.00 ± 0.00 -0.00 ± 0.00 -0.00 ± 0.00 SLCP θ4 corr. correlation 0.38 ± 0.02 0.01 ± 0.00 0.37 ± 0.02 SLCP + distr. θ0 mean 1 location 0.60 ± 0.02 0.19 ± 0.02 0.41 ± 0.03 SLCP + distr. θ1 mean 2 location 0.60 ± 0.02 0.20 ± 0.03 0.40 ± 0.05 SLCP + distr. θ2 scale 1 scale -0.01 ± 0.01 -0.00 ± 0.00 -0.01 ± 0.01 SLCP + distr. θ3 scale 2 scale -0.00 ± 0.00 -0.00 ± 0.00 -0.00 ± 0.00 SLCP + distr. θ4 corr. correlation 0.00 ± 0.00 -0.00 ± 0.00 0.00 ± 0.00 OU α long-run mean location 0.97 ± 0.00 0.91 ± 0.01 0.06 ± 0.01 OU β reversion rate rate 0.59 ± 0.01 0.32 ± 0.01 0.27 ± 0.02 OU σ diffusion scale scale 0.93 ± 0.00 0.86 ± 0.00 0.07 ± 0.00 Solar dynamo αmin growth floor location/rate 0.98 ± 0.00 0.96 ± 0.00 0.02 ± 0.00 Solar dynamo αrange growth range scale/range 0.69 ± 0.01 0.67 ± 0.01 0.02 ± 0.01 Solar dynamo ϵmax noise bound scale 0.14 ± 0.03 0.17 ± 0.01 -0.04 ± 0.01 AR(1) ρ autocorrelation correlation/rate 0.82 ± 0.01 0.19 ± 0.00 0.63 ± 0.01 AR(1) log σ innovation scale scale 0.96 ± 0.00 0.96 ± 0.00 -0.00 ± 0.00 SIR β infection rate rate 0.98 ± 0.01 0.91 ± 0.02 0.07 ± 0.02 SIR γ recovery rate rate 0.83 ± 0.01 0.79 ± 0.02 0.04 ± 0.01 Lotka-Volterra α prey growth rate 0.98 ± 0.01 0.82 ± 0.01 0.16 ± 0.02 Lotka-Volterra β predation interaction 0.91 ± 0.01 0.71 ± 0.00 0.20 ± 0.00 Lotka-Volterra γ predator death rate 0.96 ± 0.01 0.82 ± 0.01 0.13 ± 0.00 Lotka-Volterra δ predator growth interaction 0.95 ± 0.01 0.77 ± 0.01 0.18 ± 0.01 22 Table 17: Raw-observation quantile-probe ablation. Task n PFN r Raw x r PFN pinball ratio Raw x pinball ratio Two moons 3 0.973 ± 0.010 0.985 ± 0.001 1.14 ± 0.07 1.04 ± 0.02 Gaussian mixture 3 1.000 ± 0.000 1.000 ± 0.000 1.01 ± 0.00 1.01 ± 0.00 Gaussian linear 3 0.994 ± 0.000 0.998 ± 0.000 1.01 ± 0.01 1.00 ± 0.00 Gaussian linear uniform 3 0.999 ± 0.000 0.984 ± 0.000 1.01 ± 0.01 1.09 ± 0.00 Bernoulli GLM 3 0.995 ± 0.002 0.971 ± 0.000 1.15 ± 0.01 1.89 ± 0.00 SIR 3 0.992 ± 0.001 0.972 ± 0.001 2.43 ± 0.27 5.28 ± 0.06 Lotka-Volterra 3 0.992 ± 0.001 0.875 ± 0.005 2.71 ± 0.09 11.05 ± 0.11 SLCP 3 0.846 ± 0.025 0.470 ± 0.005 1.32 ± 0.06 1.78 ± 0.04 SLCP + distractors 3 0.676 ± 0.009 0.460 ± 0.009 1.49 ± 0.02 1.79 ± 0.01 Two moons + distractors 3 0.967 ± 0.023 0.985 ± 0.003 1.11 ± 0.03 1.05 ± 0.01 Gaussian mixture + distractors 3 1.000 ± 0.000 1.000 ± 0.000 0.99 ± 0.10 1.04 ± 0.01 Bernoulli GLM + distractors 3 0.990 ± 0.001 0.970 ± 0.000 1.28 ± 0.04 1.90 ± 0.01 SIR + distractors 3 0.997 ± 0.000 0.970 ± 0.001 3.01 ± 0.31 5.32 ± 0.07 AR(1) time series 3 0.974 ± 0.006 0.585 ± 0.014 1.88 ± 0.18 5.53 ± 0.05 Ornstein-Uhlenbeck 3 0.921 ± 0.043 0.949 ± 0.000 4.64 ± 1.21 2.65 ± 0.03 Solar dynamo 3 0.998 ± 0.001 0.996 ± 0.000 2.27 ± 0.05 3.04 ± 0.08 23 C Additional Case Studies 
+
+This appendix expands two case studies used to inspect posterior errors beyond aggregate C2ST. Each case study combines a parameter-specific cross-θ probe with posterior-shape diagnostics. The probe splits the concatenated TabPFN summary into parameter-indexed chunks ej and fits ridge regressors that decode θj from the matching chunk ej and from nonmatching chunks ei, i̸ = j. The posterior diagnostics use reference observation 1 for marginal KDE and bivariate contour displays. The moment and highest-density-region (HDR) summaries aggregate across available reference observations and seeds. Mean errors are measured in reference-posterior standard-deviation units. Dispersion and HDR quantities are reported as log ratios relative to the reference posterior. Values near zero mean closer agreement with the reference summaries. 
+
+C.1 SLCP case study 
+
+The SLCP probe in fig. 8 shows heterogeneous parameter accessibility in the frozen summaries. The two location coordinates are decodable from their matching chunks in both the original and distractor variants, with final-layer validation R2 values around 0.60. The nonmatching-chunk average for these location parameters is about 0.41–0.43 in the original task and about 0.19–0.20 after adding distractors. The two scale coordinates have validation R2 values near zero for both matching and nonmatching chunks. The correlation-like coordinate has matched-chunk R2 = 0 .38 in the original task and about 0.00 in the distractor variant. These results suggest that the summaries preserve location information, carry little linearly accessible scale information under this probe, and encode a correlation-like signal that is sensitive to observation augmentation. The posterior-shape diagnostics in figs. 9 to 11 show how these representation patterns appear in posterior samples. The marginal KDEs compare PFN-NPE and NPE-PFN against the SBIBM reference posterior, with colored curves for increasing simulation budgets and vertical lines for marginal posterior means. The location marginals and bivariate location contours move toward the reference geometry as the budget grows. The scale and correlation-like marginals retain visible shape mismatch, especially at low budgets. Across reference observations and seeds, the median absolute marginal mean error falls from 0.65 to 0.10 for PFN-NPE and from 0.43 to 0.10 for NPE-PFN over the reported budgets. At high budgets, most marginal mean and dispersion curves lie close to zero, while the HDR region-size proxies remain positive, indicating residual joint-region inflation. 
+
+C.2 AR(1) case study 
+
+The AR(1) probe in fig. 12 gives a two-parameter view of the same diagnostic. The autocorrelation parameter ρ has final-layer validation R2 = 0 .82 from its matching chunk and R2 = 0 .19 from the nonmatching chunk. The innovation-scale parameter log σ has validation R2 values of about 0.96 from both chunks. In this task, autocorrelation information is concentrated in its coordinate-specific chunk, while innovation-scale information is broadly available across chunks. The AR(1) posterior diagnostics focus on (ρ, log σ) for reference observation 1. The marginal KDEs and bivariate contours compare PFN-NPE and NPE-PFN against the grid-reference posterior, using the same conventions as the SLCP diagnostics. Low-budget posterior samples show large errors in ρ,and increasing the budget moves both marginal and bivariate summaries toward the reference posterior. The moment and HDR trajectories show the same budget trend across reference observations. Mean error for ρ contracts sharply from n = 100 to n = 10 ,000 for both displayed methods. The dispersion and HDR log ratios remain positive at high budget, so the remaining error involves posterior width and joint region size in addition to marginal location. 24 0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> 0: mean 1
+> Ridge val  R2
+> n=3 seeds
+
+SLCP SLCP + distractors 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> 1: mean 2
+> Ridge val  R2
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> 2: scale 1
+> Ridge val  R2
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> 3: scale 2
+> Ridge val  R2
+
+0 2 4 6 8 10 
+
+Encoder layer 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> 4: corr.
+> Ridge val  R2
+
+0 2 4 6 8 10 
+
+Encoder layer 
+
+SLCP parameter-specific probe 
+
+matching target chunk ( ej j)
+
+mean nonmatching chunks ( ei j, i j)
+
+individual nonmatching chunks 
+
+layer 4 transition region Figure 8: SLCP parameter-specific cross-θ probe. 25 Figure 9: SLCP marginal posterior KDEs across simulation budgets. 26 Figure 10: SLCP bivariate location-posterior KDEs across simulation budgets. 27 Figure 11: SLCP marginal moment and HDR region-size diagnostics. 28 0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> : autocorr.
+> Ridge val  R2
+> n=3 seeds
+
+AR(1) 
+
+0 2 4 6 8 10 
+
+Encoder layer 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> log  : innovation scale
+> Ridge val  R2
+
+AR(1) parameter-specific probe 
+
+matching target chunk ( ej j)
+
+mean nonmatching chunks ( ei j, i j)
+
+individual nonmatching chunks 
+
+layer 4 transition region Figure 12: AR(1) parameter-specific cross-θ probe. 
+
+Figure 13: AR(1) marginal posterior KDEs across simulation budgets. 29 Figure 14: AR(1) bivariate posterior KDEs across simulation budgets. 30 Figure 15: AR(1) marginal moment and HDR region-size diagnostics. 31

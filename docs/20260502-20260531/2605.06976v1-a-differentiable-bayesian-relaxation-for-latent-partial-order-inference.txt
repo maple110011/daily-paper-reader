@@ -1,0 +1,3335 @@
+Title: A Differentiable Bayesian Relaxation for Latent Partial-Order Inference
+
+URL Source: https://arxiv.org/pdf/2605.06976v1
+
+Published Time: Mon, 11 May 2026 00:23:48 GMT
+
+Number of Pages: 50
+
+Markdown Content:
+# A Differentiable Bayesian Relaxation for Latent Partial-Order Inference 
+
+Dongqing Li University of Oxford 
+
+dongqing.li@kellogg.ox.ac.uk 
+
+Geoff K. Nicholls University of Oxford 
+
+geoffrey.nicholls@stats.ox.ac.uk 
+
+Shiyi Sun University of Oxford 
+
+shiyi.sun@spc.ox.ac.uk 
+
+You Luo University College London 
+
+you.luo.25@ucl.ac.uk 
+
+May 11, 2026 
+
+Abstract 
+
+Many ranking and agent trace datasets are recorded as linear orders even though their latent structure is only partially ordered. This is especially common in agent and workflow traces, where observed order may reflect arbitrary linearization rather than true prerequisites. We introduce a differentiable relaxation for latent partial-order inference from such traces. Starting from a hard frontier-constrained model of noisy linear extensions, we replace discontinuous product-order precedence and binary frontier feasibility with smooth surrogates, yielding a continuous posterior that preserves closure-level partial-order semantics and supports gradient-based MCMC and variational inference. We prove soft transitivity, sharp-limit frontier recovery, and convergence to the hard likelihood. Experiments on synthetic data, records of social dominance relations, and cloud-agent traces show close posterior fidelity to hard MCMC on small instances and improved runtime–accuracy trade-offs on larger problems. 
+
+## 1 Introduction 
+
+Rank-data and action-trace datasets are typically recorded as linear sequences, although the constraints governing valid outcomes are often only partially ordered. These constraints may be temporal or process-based [ 24 , 23 , 16 ], causal [ 5], or dominance-based [ 28 ], and are usually not observed directly. Inferring them is important because they encode interpretable structure and support feasibility evaluation on new sequences. In these settings, however, the underlying relation is often incomplete: the latent structure is a partial order, or poset , in which pairs of items that can occur in either order have no precedence relation. Consequently, an observed order need not imply a true prerequisite relation; it may reflect scheduling, logging, or a single valid linearization of the latent partial order. Treating all observed precedences as real can therefore produce overly sequential and unrealistic structures, especially in workflow or LLM-agent settings where unnecessary ordering induces extra execution steps and compute. A latent partial order separates stable prerequisites from reorderable actions. Bayesian inference is natural because sparse or noisy traces support multiple compatible partial orders. A posterior over precedence relations allows us to distinguish high-confidence prerequisites from unresolved relations. The main obstacle is computational: current MCMC-based Bayesian Partial Order inference or “hard-PO” [ 27 ] is combinatorial, and counting linear extensions of a poset 1
+
+> arXiv:2605.06976v1 [stat.ML] 7 May 2026
+
+is #P-complete [ 7 ]. These difficulties become acute as traces grow longer: inference with hard-PO has the right semantics but does not scale; its discontinuous precedence constraints prevent use of efficient gradient-based methods. We address this bottleneck with a differentiable Bayesian relaxation for latent partial-order inference from noisy linear extensions . Our key contribution is a differentiable posterior over closure-level partial-order structure that preserves frontier semantics while replacing discrete poset exploration with gradient-based inference. This is most useful when observations are linearizations of a latent workflow and non-observed pair reversals should be treated as uncertainty rather than evidence of precedence. Building on the hard frontier-softmax likelihood [ 17 ], we introduce a product-order relaxation by smoothing precedence, frontier feasibility, and successor utility, with provable soft transitivity, sharp-limit frontier recovery, and convergence to the hard likelihood; Figure 1 summarizes the pipeline. a. Classical partial order  b. Differentiable relaxation                                          
+
+> Latent partial order Two valid linearizations
+> 1
+> 23
+> 4
+> dashed edge added by transitivity
+> l1
+> 1
+> 2
+> 3
+> 4
+> l2
+> 1
+> 3
+> 2
+> 4
+> Frontier step (after choosing 1)
+> 1
+> Available frontier
+> 23
+> 4not in the available frontier
+> Soft-relaxed frontier (after choosing 1)
+> 12
+> 3
+> 4
+> 60%
+> 40%
+> 1234
+> 1
+> 2
+> 3
+> 4
+> –111
+> 0–01
+> 00–1
+> 000–
+> DU(z,x)
+> 123
+> 1
+> 2
+> 3
+> 4
+> –.99 .98 .98
+> .02 –.07 .96
+> .03 .06 –.95
+> .01 .02 .02 –
+> Hard precedence Soft precedence
+> 4
+> c. Posterior inference
+> Inference methods Recovered partial
+> order
+> 1
+> 23
+> 4
+> Edge probabilities
+> 1 → 2 : 0.98
+> 1 → 3 : 0.95
+> 2 → 4 : 0.93
+> 3 → 4 : 0.91
+> …not in the available frontier
+> Relaxed-MCMC
+> FullRank-VI
+> step1
+> step2 step1
+> step2 Flow-VI
+
+Figure 1: Overview of the proposed framework. (a) A latent partial order induces multiple valid linearizations; after selecting item 1, items 2 and 3 lie on the hard frontier, while item 4 is not yet feasible. (b) The hard precedence matrix HU is replaced by a differentiable soft precedence matrix DU , which induces a soft-relaxed frontier and the relaxed frontier-softmax likelihood. (c) The resulting continuous posterior supports Relaxed-MCMC , FullRank-VI , and Flow-VI ,yielding posterior edge probabilities and a recovered partial order. 
+
+Contributions. (i) We introduce a differentiable Bayesian relaxation for latent partial-order inference from noisy linear extensions. (ii) We develop a smooth frontier-constrained likelihood that preserves hard-model semantics while enabling gradient MCMC and variational inference. (iii) We prove sharp-limit recovery of the hard model and show strong posterior fidelity and runtime–accuracy trade-offs on synthetic, ranking, and agent-trace data. 
+
+## 2 Notation and Preliminaries 
+
+We provide an overview of the related concepts and terminology in Figure 6 in Appendix A.3. 
+
+Partial orders, Choice sets and Observation lists: Let M = [ M ] := {1, . . . , M } denote the universe of items. The data will be sequences of items chosen from M. Let BM be the set of all nonempty subsets of M. For a generic choice set S ∈ B M write m = |S| for its size. A (strict) 
+
+partial order h = ( S, ≻h) on S is a binary relation ≻h satisfying asymmetry (if x1 ≻h x2 for some 2x1, x 2 ∈ S then not x2 ≻h x1) and transitivity (if x1 ≻h x2 and x2 ≻h x3 then x1 ≻h x3). Relations may be incomplete so for x, z ∈ S it is possible that neither x ≻h z nor z ≻h x hold. Let HS be the class of all partial orders on items in S.If h ∈ H S and for every x̸ = z in S either x ≻h z or z ≻h x then h is a complete order . Complete orders are in one-to-one correspondence with permutations of S. A sequence y = ( y1, . . . , y m)
+
+respects h if yi ≻h yj implies i < j , so higher precedence items come first. A linear extension of h
+
+respects h and contains each element of S exactly once. Figure 1(a) illustrates a latent partial order in transitive closure, and two valid linear extensions. 
+
+Closure, Reduction, and max-set: The transitive reduction TR (h) of a poset h ∈ H S drops all relations implied by transitivity. The transitive closure TC (h) includes all relations. We recover closure-level relations; the reduction is used for its Hasse-diagram visualization. For any choice set 
+
+S and partial order h = ( S, ≻h), define the maximal set 
+
+max( h) = {x ∈ S : ∄ z ∈ S such that z ≻h x}.
+
+When constructing a linear extension sequentially, the next item must be chosen from the max-set of the remaining suborder h. The frontier at each choice step is this maximal set. 
+
+2.1 Frontier-softmax likelihood 
+
+The data will be N ranking lists of items. In our motivating application (Section 5.3) a generic list 
+
+y1: m = ( y1, . . . , y m) is a noisy sequential execution of a latent partial order. The basic modeling approach [ 17 ] is that at each step the next item in the sequence is chosen from the current frontier ,i.e., from the maximal elements of the remaining suborder. Let h = ( M, ≻h) be a partial order on 
+
+M, let S ∈ B M be a choice set, and let y1: m be a linear extension of the suborder h[S] = ( S, ≻h).This includes all constraints on the order of items in S imposed by h. At step t = 1 , . . . , m the remaining items are yt, . . . , y m = ( yt, . . . , y m), and h[yt, . . . , y m] = ( yt, . . . , y m, ≻h) is the suborder for unplaced items. The feasible hard frontier ,
+
+F (h; yt, . . . , y m) := max( h[yt, . . . , y m]) , (1) is just the max-set of h[yt, . . . , y m]. These are the “next” items available to grow the sequence. In order to weight selection over feasible items, we assign each x ∈ yt, . . . , y m a successor count 
+
+St(x; h) = ∑ 
+
+> z∈yt,...,y m
+
+1[x ≻h z], (2) which counts the remaining items that must follow x. This encodes a “hardest-path-first” heuristic: items that dominate larger suborders are preferred. Following Li et al. [17] , we define the frontier-softmax utility, where F (h; yt, . . . , y m) is the feasible frontier defined in (1). 
+
+Qt(x; h) = log (1 + St(x; h)) for x ∈ F (h; y≥t), (3) Given inverse temperature β ≥ 0, the corresponding noise-free selection probability is 
+
+q(x | h[yt, . . . , y m], β ) ∝ exp {βQ t(x; h)}, x ∈ F (h; yt, . . . , y m) (4) As β increases, the distribution concentrates more strongly on high-utility frontier elements. The likelihood for h ∈ H S given one order y1: m is 
+
+p(y1: m | h[S], β ) = ∏mt=1 q(yt | h[yt, . . . , y m], β ). (5) which defines a generative ranking model for linear extensions. It is a sequential random utility model, see Seshadri [32] for discussion of this class of model. 33 Differentiable Relaxation of the Latent Partial Order 
+
+The hard latent partial-order sequence-model p(y1: m | h, β ) is semantically natural but computa-tionally difficult. We therefore introduce a continuous latent variable parameterisation of partial orders and show how to smooth the model’s dependence on the new parameters. 
+
+Latent product-order parameterisation. Give each item x ∈ M a latent embedding ux ∈ Rd
+
+and let U = ( ux)x∈M so that U is an RM ×d embedding matrix. The hard latent precedence relation 
+
+hU = ( M, ≻U ), h U ∈ H M parameterised by U is the product order 
+
+z ≻U x ⇐⇒ 1[uz,k > u x,k ] = 1 ∀k = 1 , . . . , d. (6) The dimension d controls how expressive the embedding is (Appendix A.2): when d = 1 , the induced order is complete; if d > 1, pairs can be incomparable (for example uz, 1 > u x, 1 but ux, 2 > u z, 2). See [28] for discussion crediting [39]. When we parameterise h via hU the likelihood p(y1: m | hU , β ) depends on U through h. However, 
+
+U is processed through the non-differentiable precedence indicator in (6) , so we replace precedence with a smooth product-order score, lift it to differentiable surrogates for feasibility (1) and utility (4) and use these to define a relaxed frontier-softmax likelihood. 
+
+Soft pairwise precedence. If for z, x ∈ M and k = 1 , . . . , d we define coordinate-wise gaps 
+
+∆k(z, x ) = uz,k − ux,k and let 
+
+mU (z, x ) = min  
+
+> k=1 ,...,d
+
+∆k(z, x ) (7) (the pairwise margin ) then (6) can be written 
+
+z ≻U x ⇐⇒ 1[mU (z, x ) > 0] = 1 . (8) Motivated by product-order embedding models for transitive asymmetric structure [ 36 ], we replace the discontinuous minimum mU in (8) by the standard log-sum-exp soft minimum [ 26 ] and the indicator by a sigmoid. For τ > 0, let smin τ be defined by (9) , and define the relaxed pairwise margin MU by (10). 
+
+smin τ (a1, . . . , a d) = −τ log  
+
+> (d∑
+> k=1
+
+e−ak /τ 
+
+> )
+
+. (9) 
+
+MU (z, x ) = smin τ
+
+> (
+
+∆1(z, x ), . . . , ∆d(z, x )), (10) 
+
+MU (z, x ) is a smooth approximation to mU (z, x ) (See Lemma 3). Let γ > 0 be a sharpness parameter and σ(t) = (1 + e−t)−1 the sigmoid function. The soft precedence score 
+
+DU (z, x ) = σ(γM U (z, x )), (11) is a differentiable surrogate for the hard indicator 1[z ≻U x]. The diamond partial order in Figure 1a can be represented either by the binary closure matrix in Figure 1b (at left) or by the soft precedence matrix in Figure 1b (at right). The relaxed matrix replaces the binary precedence event by a score in [0 , 1] while preserving the same latent geometric structure. 
+
+Soft frontier. The pairwise score DU (z, x ) must be lifted to a set-level frontier weight. For the remaining set yt, . . . , y m, the hard frontier indicator and its relaxation are 
+
+Ft(x; h) := 1[x ∈ F (h; yt, . . . , y m)] = ∏
+
+> z∈yt,...,y m\{ x}
+> (
+
+1 − 1[z ≻h x]),
+
+> ˜
+
+Ft(x; U ) := ∏
+
+> z∈yt,...,y m\{ x}
+> (
+
+1 − DU (z, x )). (12) 4The product form says that x is feasible iff no remaining item precedes it in h. The relaxation replaces each hard precedence indicator by the soft score DU (z, x ), so ˜Ft(x; U ) is small when some remaining item strongly precedes x, and close to one when x is frontier-feasible. 
+
+Soft successor utility and relaxed likelihood. The descendant count in (2) and successor utility in (3) are relaxed to give 
+
+> ˜
+
+St(x; U ) = ∑
+
+> z∈yt,...,y m\{ x}
+
+DU (x, z ), ˜Qt(x; U ) = log (1 + ˜St(x; U )) (13) respectively. Substituting ˜Ft and ˜Qt into (4) yields the relaxed one-step likelihood 
+
+> ˜
+
+p(yt | yt, . . . , y m, U, β, γ ) ∝ ˜Ft(x; U ) exp {β ˜Qt(x; U )}, x ∈ yt, . . . , y m (14) and the relaxed full likelihood is 
+
+> ˜
+
+p(y1: m | U, β, γ ) = ∏mt=1 ˜pyt,...,y m (yt | yt, . . . , y m, U, β, γ ). (15) Figure 7 in Appendix A.4 contrasts the hard and relaxed frontier likelihoods. Both place mass on frontier-feasible choices, but they differ off the frontier: the hard likelihood assigns zero probability, whereas the relaxed likelihood remains small but nonzero via ˜Ft. This yields a differentiable objective while retaining a strong bias toward feasible actions. Figure 8 visualizes the overall relaxation, from hard product-order precedence to a soft precedence matrix DU used in the relaxed frontier and utility terms, making the likelihood smooth in U .
+
+3.1 Structural properties of the relaxation 
+
+We now state the main structural guarantees of the relaxation: uniform approximation of the hard margin, soft transitivity, frontier recovery, and sharp-limit convergence back to the hard frontier-softmax model. We begin with uniform approximation of the hard margin. 
+
+Proposition 1 (Soft-min approximation) . For any a = ( a1, . . . , a d) ∈ Rd and any τ > 0,
+
+min  
+
+> k
+
+ak − τ log d ≤ smin τ (a1, . . . , a d) ≤ min  
+
+> k
+
+ak, (16) 
+
+and smin τ (a) → min k ak as τ ↓ 0.
+
+The relaxed model exhibits a soft-transitivity which converges to hard transitivity as τ ↓ 0.
+
+Theorem 1 (Soft transitivity) . For any x, y, z ∈ S,
+
+MU (z, x ) ≥ MU (z, y ) + MU (y, x ). (17) 
+
+Consequently, 
+
+logit DU (z, x ) ≥ logit DU (z, y ) + logit DU (y, x ). (18) Figure 2 gives the geometric intuition behind soft transitivity. The hard product order is transitive because the product-order embedding in (6) composes: if for k = 1 , . . . , d we have 
+
+uz,k > u y,k and uy,k > u x,k then uz,k > u x,k . The relaxed score inherits this geometry by replacing the hard minimum with a soft-min margin and sigmoid precedence score. 
+
+Assumption 1 (Margin separation) . The margin mU (z, x )̸ = 0 in (7) for all distinct x, z ∈ S.
+
+5x   
+
+> y
+> z
+> x
+> y
+> z
+> D(z,x)
+> D(y,x)
+> logit D(z,x) ≥ logit D(z,y) + logit D(y,x)
+> D(z,y)
+
+Figure 2: Hard and soft transitivity under product-order precedence. (a) Hard product-order transitivity; (b) Relaxed transitivity: strong DU (z, y ) and DU (y, x ) induce strong DU (z, x )
+
+This means the hard decision is off the boundary. A boundary case means uz,k = ux,k for some 
+
+k = 1 , . . . d , and since the prior for U is continuous, Assumption 1 holds almost surely. 
+
+Theorem 2 (Sharp-limit frontier recovery) . Under Assumption 1, for all x ∈ yt, . . . , y m,
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜Ft(x; U ) = 1[x ∈ F (hU ; yt, . . . , y m)] , t = 1 , . . . , m. (19) Theorem 2 supports the weak convergence of the data distributions p and ˜p.
+
+Theorem 3 (Convergence of the relaxed frontier-softmax likelihood) . Under Assumption 1, for every step t,
+
+lim  
+
+> γ→∞
+
+lim   
+
+> τ↓0
+
+˜p(yt | yt, . . . , y m, U, β, γ ) = p(yt | yt, . . . , y m, h U , β ), (20) 
+
+and consequently 
+
+lim  
+
+> γ→∞
+
+lim   
+
+> τ↓0
+
+˜p(y | U, β, γ ) = p(y | hU , β ). (21) For fixed τ > 0, γ > 0, β ≥ 0, the relaxed likelihood ˜p(yt | yt, . . . , y m, U, β, γ ) is clearly C∞ in U
+
+so in summary we have a continuously differentiable likelihood that converges to the likelihood we want to approximate as the hyperprameters γ and τ go to zero. However, for positive τ and γ, the relaxed posterior is still approximate: the experiments assess fidelity at γ, τ > 0.
+
+## 4 Bayesian Learning and Inference 
+
+We parameterise the partial order using coordinatewise dominance, relaxing hard precedence and frontier constraints using the surrogates in Section 3. The posterior is based on the frontier-softmax likelihood and that gives a continuous target for Relaxed-MCMC and VI. 
+
+Prior and non-centred parameterization. Following [ 28 ], the hard-PO partial order h = hU
+
+in (6) and our relaxation DU are given by the item embedding matrix U = ( ux)x∈M of Section 3. These have an exchangeable Gaussian prior, 
+
+ux | ρ ∼ N (0 , Σρ), x ∈ M , Σρ = (1 − ρ)Id + ρ 11 ⊤, ρ ∈ (0 , 1) ,
+
+We write U in term of standard normal variables zx ∼ N (0 , I d), x ∈ M , taking ux = Lρzx with 
+
+Σρ = LρL⊤ 
+
+> ρ
+
+so that U = ZL ⊤ 
+
+> ρ
+
+. Further priors are ρ ∼ Beta (aρ, b ρ), β ∼ Gamma (aβ , b β ), and 
+
+γ ∼ Gamma( aγ , b γ ). The soft-min temperature τ is fixed and checked by ablation. [28 ] show the family of marginal priors πS (h), S ∈ B M is marginally consistent. This means that if h ∼ πM(·) then the suborder h[S] ∼ πS (·). Here DU = [ DU (z, x )] z,x ∈M , D U ∈ (0 , 1) M ×M
+
+6is the continuous surrogate for h = ( M, ≻h) and the equivalent result holds. Let πS (DU ) be the marginal prior given by our Z, ρ and γ priors, constructed using zx, x ∈ S only. If DU ∼ πM(·)
+
+then DU [S, S ] is the matrix we get by deleting rows and columns of DU in M \ S.
+
+Theorem 4 (Marginal Consistency, Appendix B.7) . If DU ∼ πM(·) then DU [S, S ] ∼ πS (·).
+
+Inference methods. In our data D = {y(n)}Nn=1 , y(n) are lists ordering the elements of choice sets S(n) which are given and fixed. We compare four inference routes. Hard-MCMC targets the non-differentiable reference posterior 
+
+p(Z, ρ, β |D ) ∝ p(Z, ρ, β ) ∏Nn=1 p(y(n)|hU [S(n)], β )
+
+and uses the likelihood in (5) . The continuous methods target the relaxed posterior p(Z, ρ, β, γ |D )
+
+with prior p(Z, ρ, β, γ ) and list-likelihood ˜p(y(n)|U, β, γ ), n = 1 , . . . , N given in (15) . Relaxed-MCMC uses NUTS [ 12 ], implemented in Stan [ 8 ]; FullRank-VI follows automatic differentiation variational inference [ 15 ]; and Flow-VI uses a normalizing-flow variational family [ 31 ]. Full derivations are given in Appendix C.1.1. Table 1: Inference routes used in the paper.             
+
+> Method Hard-MCMC Relaxed-MCMC FullRank-VI Flow-VI
+> Target hard posterior relaxed posterior relaxed posterior relaxed posterior Approx. discrete-state MCMC gradient MCMC full-rank VI normalizing-flow VI
+
+Posterior decoding. For closure-level evaluation, we decode each posterior draw: 
+
+H(s) 
+
+> ij
+
+= 1
+
+> [
+
+u(s) 
+
+> i,ℓ
+
+> u (s) 
+
+> j,ℓ
+
+∀ℓ = 1 , . . . , d 
+
+> ]
+
+, H(s) 
+
+> ii
+
+= 0 ,̂ Pij = S−1
+
+> S∑
+> s=1
+
+H(s) 
+
+> ij
+
+.
+
+We estimate ̂ h by thresholding ̂ P at ζ = 1 /2 (ζ = 1 /3 for n = 100 ), breaking threshold-induced cycles, and taking the transitive closure. 
+
+Scalability. A poset on m items admits up to m! linear extensions, and counting them is #P-complete [ 7 ]. Hard-MCMC avoids this because it is based on the Frontier-Softmax likelihood in Section 2.1, but exploring the space of partial orders HM still slows dramatically with increasing trace length M = |M| . By contrast, after precomputing the soft-precedence matrix, one relaxed likelihood evaluation costs O(M 2d + ∑ 
+
+> n
+
+T 2 
+
+> n
+
+), so for fixed d the dominant cost is quadratic in trace length. Full derivations are in Appendix C.5. 
+
+## 5 Experiments 
+
+We ask whether the differentiable relaxation preserves the hard Bayesian partial-order posterior while making inference practical beyond the regime of discrete posterior exploration. On synthetic data, where long-run Hard-MCMC is feasible, we measure posterior fidelity using Mean Absolute Error (MAE) between pairwise precedence posteriors and compare runtime; at larger scales, we evaluate closure recovery and predictive fit. We study two real data settings: the Bishops witness-list corpus [ 14 ], using WAIC, and the Cloud agent-trace benchmark [ 17 ], using closure recovery and next-action prediction. Our baselines isolate distinct alternatives. Hard-MCMC serves as the discrete posterior refer-ence, testing fidelity to the original frontier-constrained Bayesian target. Majority (Appendix D.3.1) 7tests whether simple pairwise precedence counts suffice without posterior inference or closure con-straints. SoftDAG-Frontier ([ 41 , 19 ], Appendix D.3.2) uses the same frontier-softmax likelihood but replaces the product-order representation with a generic differentiable DAG, inspired by continuous DAG learning and testing whether product-order geometry is an essential inductive bias rather than a convenience. When ground truth is available, we report closure precision, recall, and F1; predictive fit is measured by held-out NLL and WAIC (Appendix D.1). 
+
+5.1 Synthetic Experiments 
+
+Synthetic experiments test whether the relaxation preserves the hard partial-order posterior while improving scalability. We generate datasets with n ∈ { 5, 10 , 20 , 30 , 50 , 100 }, ρ ∈ { 0.5, 0.9}, and three seeds per configuration. Training traces are selected to maximize incomparable-pair coverage under a budget of n to 2n lists; test traces are drawn from the same ground-truth partial order. Full generation details and results are in Appendix E.1.1. Figure 3 summarizes posterior fidelity, runtime, and closure recovery. Where the Hard-MCMC 
+
+reference is feasible, the relaxed methods achieve substantially lower posterior MAE than Majority: they approximate the hard Bayesian posterior rather than merely exploiting pairwise frequencies. As n grows, Hard-MCMC becomes rapidly more expensive, while continuous inference maintains strong closure recovery at much lower runtime. Relaxed-MCMC is closest to the hard reference, 
+
+FullRank-VI gives a strong accuracy–speed trade-off up to n = 50 , and Flow-VI scales to 
+
+n = 100 (Figure 12). The same figure also includes SoftDAG-Frontier, a generic differentiable DAG with the frontier-softmax likelihood; its weaker closure recovery suggests that the product-order geometry is an important inductive bias, not just an implementation choice; see details in Appendix D.3.2. Appendix diagnostics confirm two sensitivities: IP-Cov shows that missing reversals between incomparable pairs can induce false precedences, while the τ ablation shows that τ ∈ { 0.1, 0.3}
+
+tracks the hard reference and τ = 1 .0 over-smooths (Appendices E.1.3 and E.1.4). 5 10 20 30 50                   
+
+> Number of items n
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> MAE to Hard-MCMC posterior
+> MAE
+> (SoftDAG omitted: MAP baseline)
+> 510 20 30 50 100
+> Number of items n
+> 10 −3
+> 10 −1
+> 10 1
+> 10 3
+> 10 5
+> Runtime (s, log scale)
+> Runtime
+> 510 20 30 50 100
+> Number of items n
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Closure F1
+> Closure F1
+> (SoftDAG: thr=0.5 for n<100, thr=1/3 at n=100)
+> Hard MCMC Relaxed MCMC Full-rank VI Flow VI Majority SoftDAG-Frontier
+
+Figure 3: Synthetic scaling at relaxation temperature τ = 0 .3 with full IP-Cov. Panels show posterior MAE to Hard-MCMC , runtime on a log scale, and closure F1 as n grows. SoftDAG-Frontier is a generic differentiable-DAG baseline using the same frontier-softmax likelihood. Points average completed seeds over ρ ∈ { 0.5, 0.9}; bands show ± one SEM. The wide Relaxed-MCMC band at n = 50 is driven by one high-variance seed. SoftDAG-Frontier closure F1 uses θDAG = 0 .5 for 
+
+n < 100 and θDAG = 1 /3 for n = 100 .85.2 Bishops witness-list corpus 
+
+We evaluate on a set of data drawn from the Royal-Acta corpus published by the The Charters of William II and Henry I project [ 34 , 28 ]. Our data contains 68 incomplete ordered witness lists over n = 45 actors; list lengths and choice sets vary, so observations inform overlapping suborders of the underlying partial order. With no ground-truth partial order, we report list-level WAIC [38 , 10 ], runtime, and threshold-free posterior comparisons. As external total-order baselines, we fit PLMIX models with G ∈ { 1, 2, 3} mixture components [ 20 , 25 ], with WAIC computed on PLMIX likelihood. These baselines test whether finite mixtures of total orders can close the predictive gap (Appendix E.2). The relaxed methods use d = 3 and τ = 0 .10 ; all partial-order methods fix β = 0 , corresponding to uniform frontier selection. Relaxed-MCMC gives the best WAIC ( 956 .5), followed by FullRank-VI (999 .4), Hard-MCMC (1010 .4), and Flow-VI (1034 .6). All Plackett–Luce baselines are substantially worse under the same list-level WAIC criterion: G = 1 gives 1588 .6, G = 2 gives 
+
+1820 .5, and G = 3 gives 1733 .5. In runtime, FullRank-VI is the fastest partial-order method at 5.5 minutes, followed by Flow-VI at around 9 minutes, Relaxed-MCMC at 27 minutes, and Hard-MCMC at 70 minutes. Thus, Relaxed-MCMC gives the best predictive fit, while 
+
+FullRank-VI offers the best practical trade-off, improving over Hard-MCMC in both WAIC and runtime for short lists over a large item universe. Because thresholded graphs depend on the cutoff, Figure 4 compares posterior pairwise precedence probabilities directly against Hard-MCMC . Relaxed-MCMC is closest to the hard posterior (MAE = 0 .049 ), followed by FullRank-VI (MAE = 0 .068 ); Flow-VI is more diffuse (MAE 
+
+= 0 .123 ). Disagreement is concentrated on intermediate-probability pairs. Additional heatmaps, Hasse diagrams, and scalar summaries are in Appendix E.2. The recovered Hasse diagrams (Figure 14) broadly align with recorded titles, which are not used in fitting, supporting the partial order as an interpretable social-precedence summary rather than a forced total ranking. 0.0 0.2 0.4 0.6 0.8 1.0                                               
+
+> hard partial order: Pr( i≻j∣)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> compared: Pr( i ≻ j ∣ ) MAE =0.049
+> disagree @0.5: 4.9%
+> hard partial order · continuous MCMC
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> hard partial order: Pr( i≻j∣)
+> MAE =0.068
+> disagree @0.5: 6.2%
+> hard partial order · full-rank VI
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> hard partial order: Pr( i≻j∣)
+> MAE =0.123
+> disagree @0.5: 11.9%
+> hard partial order · flow VI
+> hard ij < 0.1
+> 0.1 ≤ hard ij ≤ 0.9
+> hard ij > 0.9
+> threshold ζ= 0.5
+> disagree across ζ
+
+Figure 4: Pairwise closure agreement on the Bishops corpus. For each ordered pair (i, j ),panels compare Pr (i ≻ j | D ) under hard RJ-MCMC ( x-axis) with relaxed MCMC, full-rank VI, and flow VI ( y-axis, left to right). The dashed diagonal marks agreement; rings indicate pairs crossing the threshold ζ, and insets show mean absolute deviation. 
+
+5.3 Cloud agent-trace benchmark 
+
+The Cloud agent-trace benchmark, adapted from Li et al. [17] , contains 54 successful workflow traces generated by multiple LLM agents across six infrastructure-as-code scenarios. The 12 evaluation cases correspond to six scenarios and two train/test seeds, with workflow sizes ranging from 5 to 12 actions. We use this benchmark to test whether the relaxation preserves the hard partial-order semantics of the Li et al. hard-MCMC baseline while improving efficiency, treating each trace as a linearization of an underlying workflow (Figure 16). 9Table 2: Cloud agent-trace benchmark: mean structural, predictive, and runtime metrics over 12 cases. Trace NLL, Step NLL are posterior-predictive quantities over retained draws. SoftDAG-Frontier is a MAP diagnostic baseline with the same frontier-softmax.                                           
+
+> Method Runs Time (s) F1 Prec. Rec. Trace NLL Step NLL
+> Hard-MCMC 12 1455 0.99 1.00 0.97 5.61 0.70
+> Relaxed-MCMC 12 291 0.98 0.97 1.00 3.70 0.49
+> FullRank-VI 12 54 0.96 0.93 0.99 3.85 0.51
+> Flow-VI 12 99 0.88 0.81 0.99 3.87 0.54
+> SoftDAG-Frontier 12 40 0.56 0.62 0.70 5.23 0.72
+
+Table 2 shows a trade-off among structural recovery, predictive performance, and runtime. 
+
+Hard-MCMC gives the strongest closure recovery but is by far the slowest. Relaxed-MCMC 
+
+nearly matches its closure structure and gives the best posterior-predictive Trace NLL and Step NLL. 
+
+FullRank-VI is slightly weaker structurally but is the fastest posterior method, giving the strongest practical speed–accuracy trade-off. Flow-VI improves Step NLL relative to Hard-MCMC , but has weaker closure recovery. Appendix E.3 provides additional diagnostics, including Hasse diagrams (Figure 17), convergence traces (Figure 18), per-scenario next-action results (Table 8), and scalar posterior variation (Figure 19). 
+
+## 6 Related work 
+
+Our work connects repeated-selection ranking models, Bayesian inference for latent partial orders, and differentiable relaxations of discrete order structures. 
+
+Ranking models and repeated selection. Many classical ranking models treat an observed order as a sequence of choices from a shrinking set, including the Plackett model for permutations [ 20 , 30 ]and some Mallows models [ 22 ]. This repeated-selection view is developed more generally in modern ranking models [ 33 ] and has been extended to top-k partial orders with stopping decisions [ 3]. Our likelihood follows the same sequential-choice principle, but the feasible set at each step is the frontier of a partial order rather than the full remaining set. Fast approximate likelihoods for models for rank data based on discrete latent parameters have been given [ 18 ] but ours is the first differentiable relaxation of a ranking model with a discrete parameter or any model for Bayesian inference of a partial order. 
+
+Bayesian partial-order inference. Bayesian partial-order models are natural when rank-data can be viewed as random linear extensions and uncertainty over precedence relations matters [ 28 ]. The main challenge is combinatorial: partial orders form a discrete space, and counting linear extensions is #P-complete [ 7]. Prior Bayesian work has imposed tractable structure [ 14 ] or sampled partial orders as an auxiliary search space for Bayesian-network structure discovery [ 29 ]. Related combinatorial work finds posets that contain a given set of linear orders [ 9 ] (without uncertainty) and samples linear extensions of a fixed poset [ 35 ] (without poset estimation). Closest to our setting, Li et al. [17] infer latent prerequisite structure from agent traces using a hard frontier-constrained likelihood and long-run MCMC. We retain the same frontier semantics but relax hard precedence and frontier indicators to allow scalable gradient-based MCMC and variational inference. 
+
+Geometric order representations and differentiable graph learning. Geometric order representations encode transitive asymmetric structure using ordered point embeddings, density embeddings, or box/lattice measures [ 36 , 2, 37 ]. These works motivate our product-order geometry 10 but do not define generative models for rank data and traces. Our relaxation is also related to smooth surrogates for discrete choices [ 21 , 13 ] and to differentiable graph learning [ 41 , 19 , 1]. Unlike these methods, we observe linearized traces and infer the latent partial order itself, and in particular, SoftDAG-Frontier, which we developed as a diagnostic baseline inspired by [ 4], was not set out by its authors as a model for rank-data or intended to express the kind of transitive relations we get for free in a product order embedding. 
+
+## 7 Discussion and Limitations 
+
+We introduced a differentiable Bayesian relaxation for latent partial-order inference from noisy linear extensions. The approximate posterior preserves the frontier-constrained semantics of hard partial-order inference while enabling gradient-based MCMC and variational inference, and is actually a good model in its own right. Across synthetic, ranking, and cloud-trace data, the relaxed methods closely match Hard-MCMC where feasible and give better runtime–accuracy trade-offs at larger scale, with Relaxed-MCMC closest to the hard posterior and FullRank-VI often giving the best speed–accuracy compromise. The main limitations are scope and inductive bias. Hard-posterior fidelity can only be checked on small and medium instances; at larger n, we rely on structural recovery, predictive fit, and finite-temperature theory. Scaling stops at M = 100 . Memory demands make M = 200 infeasible, though careful coding may deal with that. We treat d and τ as fixed hyperparameters and infer γ
+
+under the posterior, reflecting the bias–smoothness trade-off of the relaxation. The product-order representation needs d ≥ ⌊ M/ 2⌋ to express all high-dimension posets [ 11 ], while β, γ, and the decoding threshold ζ remain modeling choices. We therefore report posterior probabilities and sensitivity diagnostics rather than relying on a single decoded graph. 
+
+## References 
+
+[1] Yashas Annadani, Nick Pawlowski, Joel Jennings, Stefan Bauer, Cheng Zhang, and Wenbo Gong. BayesDAG: Gradient-based posterior inference for causal discovery. In Advances in Neural Information Processing Systems , volume 36, 2023. [2] Ben Athiwaratkun and Andrew Gordon Wilson. Hierarchical density order embeddings. In 
+
+International Conference on Learning Representations (ICLR) , 2018. [3] Amel Awadelkarim and Johan Ugander. Statistical models of top-k partial orders. In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining , pages 39–48, 2024. [4] Taiyu Ban, Lyuzhou Chen, Xiangyu Wang, Xin Wang, Derui Lyu, and Huanhuan Chen. Differentiable structure learning with partial orders. In Advances in Neural Information Processing Systems , volume 37, 2024. doi: 10.52202/079017-3728. [5] Niko Beerenwinkel, Nicholas Eriksson, and Bernd Sturmfels. Conjunctive Bayesian networks. 
+
+Bernoulli , 13(4):893–909, 2007. doi: 10.3150/07-BEJ6133. [6] Kenneth P. Bogart. Maximal dimensional partially ordered sets I. Hiraguchi’s theorem. Discrete Mathematics , 5:21–31, 5 1973. ISSN 0012-365X. doi: 10.1016/0012-365X(73)90024-1. [7] Graham Brightwell and Peter Winkler. Counting linear extensions. Order , 8(3):225–242, 1991. doi: 10.1007/BF00383444. 11 [8] Bob Carpenter, Andrew Gelman, Matthew D. Hoffman, Daniel Lee, Ben Goodrich, Michael Betancourt, Marcus Brubaker, Jiqiang Guo, Peter Li, and Allen Riddell. Stan: A probabilistic programming language. Journal of Statistical Software , 76(1):1–32, 2017. doi: 10.18637/jss. v076.i01. URL https://www.jstatsoft.org/article/view/v076i01 .[9] Proceso L. Fernandez, Lenwood S. Heath, Naren Ramakrishnan, Michael Tan, and John Paul C. Vergara. Mining posets from linear orders. Discrete Mathematics, Algorithms and Applications ,5(4):1350030, 2013. [10] Andrew Gelman, Jessica Hwang, and Aki Vehtari. Understanding predictive information criteria for Bayesian models. Statistics and Computing , 24(6):997–1016, 2014. doi: 10.1007/ s11222-013-9416-2. [11] Toshio Hiraguchi. On the dimension of partially ordered sets. The Science Reports of the Kanazawa University , 1(2):77–94, 1951. [12] Matthew D. Hoffman and Andrew Gelman. The no-u-turn sampler: Adaptively setting path lengths in hamiltonian monte carlo. Journal of Machine Learning Research , 15(47):1593–1623, 2014. URL https://jmlr.org/papers/v15/hoffman14a.html .[13] Eric Jang, Shixiang Gu, and Ben Poole. Categorical reparameterization with Gumbel-Softmax. In International Conference on Learning Representations , 2017. URL https://openreview. net/forum?id=rkE3y85ee .[14] Chuxuan Jiang, Geoff K. Nicholls, and Jeong Eun Lee. Bayesian inference for vertex-series-parallel partial orders. In Proceedings of the Thirty-Ninth Conference on Uncertainty in Artificial Intelligence , volume 216 of Proceedings of Machine Learning Research , pages 995–1004, 2023. [15] Alp Kucukelbir, Dustin Tran, Rajesh Ranganath, Andrew Gelman, and David M. Blei. Auto-matic differentiation variational inference. Journal of Machine Learning Research , 18(14):1–45, 2017. URL https://jmlr.org/papers/v18/16-107.html .[16] Sander J. J. Leemans, Sebastiaan J. van Zelst, and Xixi Lu. Partial-order-based process mining: A survey and outlook. Knowledge and Information Systems , 65:1–29, 2023. doi: 10.1007/s10115-022-01777-3. [17] Dongqing Li, Zheqiao Cheng, Geoff K. Nicholls, and Quyu Kong. De-linearizing agent traces: Bayesian inference of latent partial orders for efficient execution, 2026. URL https://arxiv. org/abs/2602.02806 .[18] Qinghua Liu, Valeria Vitelli, Carlo Mannino, Arnoldo Frigessi, and Ida Scheel. Pseudo-mallows for efficient probabilistic preference learning, 2022. URL https://arxiv.org/abs/2205.13911 .[19] Lars Lorch, Jonas Rothfuss, Bernhard Schölkopf, and Andreas Krause. DiBS: Differentiable bayesian structure learning. In Advances in Neural Information Processing Systems , volume 34, pages 24111–24123, 2021. [20] R. Duncan Luce. Individual Choice Behavior: A Theoretical Analysis . Wiley, New York, 1959. [21] Chris J Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous relaxation of discrete random variables. In International Conference on Learning Representations (ICLR) , 2017. 12 [22] Colin L Mallows. Non-null ranking models. i. Biometrika , 44(1/2):114–130, 1957. [23] Heikki Mannila. Finding total and partial orders from data for seriation. In Jean-François Boulicaut, Michael R. Berthold, and Tamás Horváth, editors, Discovery Science, 11th Interna-tional Conference, DS 2008, Budapest, Hungary, October 13–16, 2008, Proceedings , volume 5255 of Lecture Notes in Computer Science , pages 16–25, Berlin, Heidelberg, 2008. Springer. doi: 10.1007/978-3-540-88411-8_4. [24] Heikki Mannila and Christopher Meek. Global partial orders from sequential data. In Proceedings of the Sixth ACM SIGKDD International Conference on Knowledge Discovery and Data Mining ,KDD ’00, page 161–168, New York, NY, USA, 2000. Association for Computing Machinery. ISBN 1581132336. doi: 10.1145/347090.347122. URL https://doi.org/10.1145/347090.347122 .[25] Cristina Mollica and Luca Tardella. Bayesian Plackett–Luce mixture models for partially ranked data. Psychometrika , 82(2):442–458, 2017. doi: 10.1007/s11336-016-9530-0. [26] Yurii Nesterov. Smooth minimization of non-smooth functions. Mathematical Programming ,103(1):127–152, 2005. [27] Geoff K Nicholls and Alexis Muir Watt. Partial order models for episcopal social status in 12th century England. IWSM 2011 , page 437, 2011. [28] Geoff K. Nicholls, Jeong Eun Lee, Nicholas Karn, David Johnson, Rukuang Huang, and Alexis Muir-Watt. Bayesian inference for partial orders from random linear extensions: Power relations from 12th century royal acta. The Annals of Applied Statistics , 19(2):1663–1690, 2025. doi: 10.1214/24-AOAS2002. [29] Teppo Niinimäki, Pekka Parviainen, and Mikko Koivisto. Structure discovery in bayesian networks by sampling partial orders. Journal of Machine Learning Research , 17(57):1–47, 2016. [30] Robin L. Plackett. The analysis of permutations. Journal of the Royal Statistical Society. Series C (Applied Statistics) , 24(2):193–202, 1975. doi: 10.2307/2346567. [31] Danilo Jimenez Rezende and Shakir Mohamed. Variational inference with normalizing flows. In Proceedings of the 32nd International Conference on Machine Learning , volume 37 of 
+
+Proceedings of Machine Learning Research , pages 1530–1538. PMLR, 2015. URL https: //proceedings.mlr.press/v37/rezende15.html .[32] A. Seshadri. Learning preferences from choices and rankings . PhD thesis, Stanford University Department of Electrical Engineering, 2021. URL https://purl.stanford.edu/zv003vd9732 .[33] Arjun Seshadri, Stephen Ragain, and Johan Ugander. Learning rich rankings. In Advances in Neural Information Processing Systems , volume 33, pages 9435–9446. Curran Associates, Inc., 2020. [34] Richard Sharpe, David X. Carpenter, Hugh Doherty, Mark Hagger, and Nicholas Karn. The charters of William II and Henry I, 2014. URL https://actswilliam2henry1.wordpress. com/the-charters/ . Online database; accessed 1 October 2022. [35] Topi Talvitie, Teppo Niinimäki, and Mikko Koivisto. The mixing of markov chains on linear extensions in practice. In Proceedings of the Twenty-Sixth International Joint Conference on Artificial Intelligence , pages 524–530. IJCAI, 2017. doi: 10.24963/ijcai.2017/74. 13 [36] Ivan Vendrov, Ryan Kiros, Sanja Fidler, and Raquel Urtasun. Order-embeddings of images and language. In International Conference on Learning Representations , 2016. URL https: //arxiv.org/abs/1511.06361 . ICLR 2016 Oral. [37] Luke Vilnis, Xiang Li, Shikhar Murty, and Andrew McCallum. Probabilistic embedding of knowledge graphs with box lattice measures. In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 263–272, Melbourne, Australia, 2018. Association for Computational Linguistics. doi: 10.18653/v1/P18-1025. [38] Sumio Watanabe. Asymptotic equivalence of Bayes cross validation and widely applicable information criterion in singular learning theory. Journal of Machine Learning Research , 11 (116):3571–3594, 2010. URL https://www.jmlr.org/papers/v11/watanabe10a.html .[39] Peter Winkler. Random orders. Order , 1(4):317–331, 1985. [40] Mihalis Yannakakis. The complexity of the partial order dimension problem. SIAM Journal on Algebraic Discrete Methods , 3(3):351–358, 1982. [41] Xun Zheng, Bryon Aragam, Pradeep K. Ravikumar, and Eric P. Xing. DAGs with NO TEARS: Continuous optimization for structure learning. In Advances in Neural Information Processing Systems , volume 31, 2018. 
+
+## A Partial Order Basics 
+
+A.1 Notation reference 
+
+Sets, traces, and hard partial orders 
+
+M = [ M ] Universe of items. 
+
+BM Set of all nonempty subsets of M .
+
+HS Class of all partial orders on items in S.
+
+S Local item set. 
+
+m = |S| Number of items in the local item set. 
+
+y = ( y1, . . . , y T ) Observed local trace or ranking. In complete rankings, T = m.
+
+y<t Prefix (y1, . . . , y t−1) observed before step t.
+
+yt, . . . , y m Remainder set (yt, . . . , y T ) at step t, i.e., items not yet selected. 
+
+h = ( S, ≻h) Latent strict partial order on S.
+
+z ≻h x Hard precedence relation: item z must occur before item x.
+
+F (h; yt, . . . , y m) Hard frontier at step t: remaining items with no remaining predecessor. 
+
+Ft(x; h) Hard frontier indicator, Ft(x; h) := 1{x ∈ F (h; y≥t)}.
+
+St(x; h) Hard descendant count of item x in the current remainder set. 
+
+Qt(x; h) Hard successor utility, Qt(x; h) = log (1 + St(x; h)) for x ∈ F (h; y≥t).
+
+Latent product-order embedding 
+
+d Latent embedding dimension. 
+
+ux =(ux, 1, . . . , u x,d )⊤ ∈ Rd
+
+Latent embedding vector for item x.
+
+14 U ∈ Rm×d Matrix of latent embeddings; the x-th row is u⊤ 
+
+> x
+
+.
+
+zx ∈ Rd Non-centred latent coordinate associated with item x.
+
+Z ∈ Rm×d Matrix of non-centred latent coordinates; the x-th row is z⊤ 
+
+> x
+
+.
+
+ρ ∈ (0 , 1) Correlation parameter for the latent Gaussian prior. 
+
+Σρ = (1 − ρ)Id + ρ11 ⊤ Prior covariance for centred embedding coordinates. 
+
+Lρ Cholesky factor of Σρ, so that Σρ = LρL⊤ 
+
+> ρ
+
+.
+
+ux = Lρzx Non-centred parameterization of the latent embedding. Equivalently, U =
+
+ZL ⊤ 
+
+> ρ
+
+.
+
+∆k(z, x ) = uz,k − ux,k Coordinatewise gap between items z and x.
+
+mU (z, x ) =min k ∆k(z, x )
+
+Hard pairwise margin; its sign determines hard precedence. 
+
+≻U Product-order relation induced by U .
+
+z ≻U x Hard latent precedence relation induced by coordinatewise dominance: uz,k >ux,k for all k.
+
+hU = ( S, ≻U ) Hard latent partial order induced by the embedding U .
+
+Differentiable relaxation 
+
+smin τ (a1, . . . , a d) Soft minimum with temperature τ > 0.
+
+τ > 0 Soft-min temperature controlling the sharpness of the smooth minimum. Treated as fixed in the main experiments. 
+
+MU (z, x ) Soft pairwise margin, 
+
+MU (z, x ) = smin τ (∆ 1(z, x ), . . . , ∆d(z, x )) .
+
+It is a smooth approximation to mU (z, x ).
+
+γ > 0 Steepness parameter for the soft precedence score. 
+
+DU (z, x ) =
+
+σ(γM U (z, x )) 
+
+Soft precedence score; a differentiable surrogate for 1[z ≻U x].
+
+˜Ft(x; U ) Soft frontier weight; a differentiable surrogate for 1[x ∈ F (hU ; yt, . . . , y m)] .
+
+˜St(x; U ) Soft descendant count, obtained by summing DU (x, z ) over z ∈ yt, . . . , y m \{x}.
+
+˜Qt(x; U ) Relaxed successor utility, 
+
+˜Qt(x; U ) = log(1 + ˜St(x; U )) .β > 0 Inverse temperature in the frontier-softmax selection rule. 
+
+˜p(yt |
+
+yt, . . . , y m, U, β, γ )
+
+Relaxed stepwise repeated-selection probability. 
+
+˜p(y | U, β, γ ) Relaxed local-trace likelihood. 
+
+Theory quantities 
+
+δt(U ) Local separation margin at step t,
+
+δt(U ) = min 
+
+> x,z ∈yt,...,y m
+> x̸=z
+
+|mU (z, x )|.
+
+15 κt(U, τ, γ ) Finite-temperature approximation scale, 
+
+κt(U, τ, γ ) = τ log d + exp (−γ(δt(U ) − τ log d)).
+
+Bayesian inference 
+
+D Observed dataset of local traces. 
+
+Θ = ( Z, ρ, β, γ ) Full parameter vector under the non-centred relaxed Bayesian model. 
+
+p(D, Z, ρ, β, γ ) Joint density of the data and latent variables under the relaxed Bayesian model. 
+
+w = (vec( Z), η ρ, η β , η γ ) Unconstrained parameter vector used for variational inference. 
+
+T (w) Smooth map from unconstrained coordinates w to constrained parameters 
+
+Θ.
+
+¯p(D, w ) Transformed joint density in unconstrained coordinates, including the Jaco-bian correction. 
+
+qϕ(w) Normalizing-flow variational posterior on unconstrained coordinates. 
+
+ϕ Variational parameters of the normalizing flow. 
+
+LNF (ϕ) Normalizing-flow evidence lower bound. 
+
+qλ(w) Full-rank Gaussian variational posterior on unconstrained coordinates. 
+
+LFR (λ) Full-rank Gaussian variational evidence lower bound. 
+
+KL( q∥p) Kullback–Leibler divergence from q to p.
+
+Eq [·] Expectation with respect to distribution q.
+
+Table 3: Notation for the hard partial-order model, the differentiable relaxation, and Bayesian posterior approximation. 
+
+Conventions. The hard quantities Ft, St, and Qt are defined with respect to the hard latent partial order h or hU . Their relaxed counterparts are marked with tildes. We use ≻ throughout so that the notation matches the semantics “must occur before.” In particular, the frontier set F (h; y≥t) consists of maximal remaining items. 
+
+A.2 Poset dimension and the role of the embedding dimension 
+
+The embedding dimension d in the product-order representation is closely related to the classical order dimension of a finite poset. This connection is standard in the partial-order literature and is discussed in detail in prior work on Bayesian partial-order inference from Royal Acta data [ 28 ]. We therefore do not treat order-dimension estimation as a main contribution of this paper. Instead, we use small fixed values of d as a structured inductive bias: d = 4 for the synthetic generator and d = 3 for the main real-data relaxed fits, with exact choices reported in Appendix F. The product-order model used in this paper gives a geometric version of the same idea. If each item x is assigned an embedding ux ∈ Rd, then 
+
+x ≻U y ⇐⇒ ux,k > u y,k for all k = 1 , . . . , d. 
+
+With no coordinate ties, each coordinate induces a linear order by sorting the items along that coordinate. The product order is therefore the intersection of these d coordinate-wise linear orders. Thus, fixing d restricts the model to posets that can be represented, or well approximated, by a realizer of size at most d. See Figure 5 The dimension of an arbitrary poset can be large. For m ≥ 4, Hiraguchi’s bound gives 
+
+dim( h) ≤
+
+⌊ m
+
+2
+
+⌋
+
+,
+
+16 1 2 3 4
+
+coordinate d
+
+z
+
+x
+
+w z ≻U x
+
+incomparable 
+
+(a) Embedding view. 1 2 3 4coordinate d
+
+z
+
+x
+
+∆1 ∆2
+
+min d ∆d ∆4
+
+(b) Gap view. 
+
+Figure 5: Latent product-order embedding. Left: comparable and incomparable pairs. Right: 
+
+z ≻U x is determined by the minimum coordinatewise gap. 
+
+and this worst-case order is attained by the standard-example, or crown-like, family [ 11 , 6]. Computing 
+
+dim (h) exactly is NP-hard in general [ 40 ]. Consequently, choosing d = ⌊m/ 2⌋ would give a conservative worst-case representation, but it would remove the intended low-dimensional regularization and substantially increase the cost of continuous inference. 
+
+Use in this paper. Our goal is not to recover the exact order dimension of the unknown latent poset. Rather, d is a modeling choice controlling the expressiveness of the product-order prior. Small d gives a parsimonious low-dimensional hierarchy and can underfit high-dimension or highly entangled posets; large d
+
+gives a richer class but weakens regularization and increases computational cost. We therefore use moderate fixed values of d, following the product-order modeling strategy developed in prior work, and focus on whether the differentiable relaxation makes Bayesian partial-order inference practical under this structured geometry. 
+
+A.3 Illustration of notation and preliminaries (a)  Latent partial order  (b)  Two linear extensions  (c)  Sequential frontier 
+
+(d)  Frontier-softmax                                                 
+
+> max( h) = {1, 4}
+> 14
+> 23
+> 5
+> closure relation
+> transitive reduction
+> transitive closure
+> 14235
+> 41325
+> both respect h
+> Incomparable items may appear in either order.
+> t= 1
+> {1, 2, 3, 4, 5}
+> t= 2
+> {2, 3, 4, 5}
+> t= 3
+> {2, 3, 5}
+> 14
+> 23
+> 5
+> F1= {1, 4}
+> choose y1= 1
+> 234
+> 5
+> F2= {2, 3, 4}
+> choose y2= 4
+> 23
+> 5
+> F3= {2, 3}
+> frontier not feasible yet
+> Sequential likelihood for one observed order
+> ，
+> Concrete step: t= 2, frontier F2= {2, 3, 4}
+> x234
+> S2(x;h)110
+> Q2(x;h)log 2 log 2 0
+> weight eβlog 2 eβlog 2 1
+> Larger Stgives larger Qt; β controls sharpness.
+
+Figure 6: From a latent partial order to the frontier-softmax likelihood. (a) The latent partial order and its current max-set. (b) Two valid linear extensions consistent with the same partial order. (c) Sequential construction of a ranking, where each item is chosen from the current frontier. (d) The frontier-softmax likelihood, illustrated by the step-t = 2 utility. 17 A.4 Relaxed Partial Order Model Details chosen action  frontier / feasible item  off-frontier / low-feasibility item 
+
+(a)  Strict frontier likelihood  (b)  Relaxed frontier likelihood 
+
+t = 1  t = 2  t = 3  t = 1  t = 2  t = 3 
+
+1
+
+2 3
+
+4
+
+1
+
+2 3
+
+4
+
+1
+
+2 3
+
+4
+
+1
+
+2 3
+
+4
+
+1
+
+2 3
+
+4
+
+1
+
+2 3
+
+4
+
+F1 = {1}  
+
+> p(y1= 1) = 1
+
+F2 = {2, 3}    
+
+> p(y2= 2) = p(y2= 3) = 0.5
+
+4 ∉ F3 
+
+> p(y3= 4) = 0
+
+F  1(1) ≈ 1  
+
+> p̃ (y1= 1) ≈ 1
+
+F  2(2) ≈  F  2(3)    
+
+> p̃ (y2= 2) ≈ p̃ (y2= 3)
+
+F  3(4) > 0  
+
+> p̃ (y3= 4) > 0
+> small but nonzero
+
+Figure 7: Strict versus relaxed frontier likelihood on a four-node partial order. In the hard model, probability mass is assigned only to items on the current frontier; an off-frontier action such as choosing item 4 before its predecessors receives zero probability. In the relaxed model, the soft frontier weight ˜Ft strongly down-weights such actions but does not make their probability exactly zero. 
+
+## B Auxiliary proofs for the relaxed partial-order model 
+
+This appendix collects the proofs of the theoretical guarantees stated in Section 3.1. We begin with two auxiliary lemmas on the hard product order and the nonemptiness of finite frontiers, then prove the soft-min approximation, soft transitivity, frontier recovery, and likelihood convergence in turn. The final subsection gives a finite-temperature strengthening of Theorem 3. 
+
+B.1 Auxiliary lemmas 
+
+We first record two elementary facts used repeatedly below. 
+
+Lemma 1 (The hard product order is a strict partial order) . The relation ≻U defined by 
+
+z ≻U x ⇐⇒ ∆k(z, x ) > 0 for all k = 1 , . . . , d 
+
+is irreflexive and transitive. Proof. Irreflexivity is immediate, since ∆k(x, x ) = 0 for every k, so x̸ ≻U x.For transitivity, suppose z ≻U y and y ≻U x. Then for every coordinate k,
+
+∆k(z, x ) = ∆ k(z, y ) + ∆ k(y, x ) > 0
+
+Hence z ≻U x. Therefore ≻U is a strict partial order. 
+
+18 A Product-order geometry  B Hard indicator -> smooth precedence score 
+
+C Binary closure matrix becomes a soft precedence matrix  D Use the same sequential model, but relaxed       
+
+> 01234
+> 3.0
+> 2.0
+> 1.0
+> 0.0
+> −0.5
+> coordinate k= 1
+> coordinate  k = 2
+
+1
+
+2
+
+3
+
+4
+
+5
+
+above-right of 5 
+
+precedes item 5 
+
+> larger in
+> both coordinates
+> Product order:
+> z precedes x only if
+> all coordinates are larger.
+
+d > 1 allows 
+
+incomparability. 
+
+> Here, item 4 has one high
+> coordinate and one low coordinate,
+> so it is incomparable with 5.
+
+For each ordered pair (z, x): 
+
+Δk = u z,k  − u x,k  mU = min k Δk 1[ mU > 0] 
+
+non-differentiable threshold 
+
+Δ1, ..., Δ d MU = smin τ(Δ)  DU = σ(γ MU)
+
+smooth score in [0,1] 
+
+smin τ(a 1, …, a d) = −τ log ∑ k e−a k/τ 
+
+Examples from panel A: 
+
+(2, 5) : both gaps positive  ⇒ high  DU(2, 5) 
+
+(4, 5) : one gap negative  ⇒ low  DU(4, 5)         
+
+> indicator
+> sigmoid
+> margin
+> score
+> −2.0 −1.5 −1.0 −0.5 0.0 0.5 1.0 1.5 2.0
+
+Entry  (z, x)  asks whether row item  z should come before column item  x.
+
+Hard closure matrix (0/1)  Soft precedence matrix  DU                                                
+
+> 12345
+> 1
+> 2
+> 3
+> 4
+> 5
+> -1101
+> 0-001
+> 00-01
+> 000-0
+> 0000-
+> row z
+> column x
+> relax
+> 12345
+> 1
+> 2
+> 3
+> 4
+> 5
+> -0.97 0.95 0.08 1.00
+> 0.00 -0.04 0.00 0.89
+> 0.00 0.04 -0.00 0.89
+> 0.00 0.02 0.00 -0.16
+> 0.00 0.00 0.00 0.00 -
+> row z
+> column x
+
+The semantics stay the same: choose from a frontier, then weight choices. 
+
+U hU: binary poset  pS(y | hU, β) 
+
+hard: natural, but the threshold blocks gradients in U 
+
+U DU(z, x)  ∈ [0,1]  p̄ S(y | U, β) 
+
+relaxed: smooth scores give smooth choice probabilities 
+
+Replace the hard event 1[z precedes x] 
+
+by the soft score D_U(z,x). 
+
+Then frontier and utility surrogates vary smoothly with U. 
+
+τ: soft-min smoothing γ: sigmoid sharpness Figure 8: Differentiable relaxation of the latent product order. Items have embeddings 
+
+ux ∈ Rd. Coordinatewise dominance induces the hard relation z ≻U x (with d > 1 allowing incomparability). We replace the hard min-margin test with a soft-min and the binary indicator with a sigmoid, yielding the smooth precedence score DU (z, x ) ∈ [0 , 1] . The resulting soft precedence matrix replaces the binary closure and enables relaxed frontier/utility computations with a likelihood that is smooth in U .
+
+Lemma 2 (Finite frontiers are nonempty) . Let S ∈ B M, and let ≻h be a strict partial order on S. If R ⊆ S
+
+is non-empty, then the set of maximal elements 
+
+max( R, ≻h) := {x ∈ R : ∄ z ∈ R such that z ≻h x}
+
+is nonempty. Proof. Assume for contradiction that max (R, ≻h) = ∅. Then every x1 ∈ R has a predecessor x2 ∈ R such that x2 ≻h x1. Repeating inductively yields a sequence x1, x 2, x 3, . . . of distinct elements of R such that 
+
+xj+1 ≻h xj for all j. Since R is finite, some state must repeat, producing a cycle. By transitivity, this implies 
+
+x ≻h x for some x ∈ R, contradicting irreflexivity of a strict partial order. Hence max( R, ≻h)̸ = ∅.
+
+B.2 Proof of Proposition 1 
+
+Proof of Proposition 1. Let 
+
+m := min 
+
+k=1 ,...,d ak.
+
+Then d∑
+
+k=1 
+
+e−ak /τ = e−m/τ d∑
+
+k=1 
+
+e−(ak −m)/τ .
+
+Since ak − m ≥ 0 for all k,
+
+1 ≤
+
+d∑
+
+k=1 
+
+e−(ak −m)/τ ≤ d. 
+
+19 Taking logarithms and multiplying by −τ yields 
+
+m − τ log d ≤ − τ log 
+
+> d
+
+∑
+
+> k=1
+
+e−ak /τ ≤ m, 
+
+which proves (16) and then smin τ (a) → min k ak as τ ↓ 0 follows since τ log d → 0.
+
+Lemma 3 (Margin approximation) . For every pair z, x ∈ S,
+
+|MU (z, x ) − mU (z, x )| ≤ τ log d. (22) 
+
+Proof. Apply Proposition 1 to the vector 
+
+a = (∆1(z, x ), . . . , ∆d(z, x )).
+
+Since 
+
+mU (z, x ) = min  
+
+> k
+
+∆k(z, x ) and MU (z, x ) = smin τ
+
+(∆1(z, x ), . . . , ∆d(z, x )),
+
+the bound follows immediately. 
+
+B.3 Proof of Theorem 1 
+
+Lemma 4 (Superadditivity of the soft minimum) . For any a, b ∈ Rd and any τ > 0,
+
+smin τ (a + b) ≥ smin τ (a) + smin τ (b), (23) 
+
+where a + b is taken coordinatewise. Proof. Let 
+
+uk := e−ak /τ , vk := e−bk /τ ,
+
+so that d∑
+
+> k=1
+
+e−(ak +bk )/τ =
+
+> d
+
+∑
+
+> k=1
+
+ukvk.
+
+Since uk, v k ≥ 0, d∑
+
+> k=1
+
+ukvk ≤
+
+( d∑
+
+> k=1
+
+uk
+
+) ( d∑
+
+> k=1
+
+vk
+
+)
+
+=
+
+( d∑
+
+> k=1
+
+e−ak /τ 
+
+) ( d∑
+
+> k=1
+
+e−bk /τ 
+
+)
+
+.
+
+Applying −τ log( ·) to both sides gives 
+
+smin τ (a + b) = −τ log 
+
+> d
+
+∑
+
+> k=1
+
+e−(ak +bk )/τ ≥ − τ log 
+
+> d
+
+∑
+
+> k=1
+
+e−ak /τ − τ log 
+
+> d
+
+∑
+
+> k=1
+
+e−bk /τ ,
+
+which proves (23). 
+
+Proof of Theorem 1. For any x, y, z ∈ S, the coordinate-wise differences satisfy 
+
+∆k(z, x ) = ∆ k(z, y ) + ∆ k(y, x ), k = 1 , . . . , d. 
+
+Hence (∆1(z, x ), . . . , ∆d(z, x )) = (∆1(z, y ), . . . , ∆d(z, y )) + (∆1(y, x ), . . . , ∆d(y, x )),
+
+with addition taken coordinatewise. Applying Lemma 4, 
+
+MU (z, x ) = smin τ
+
+(∆( z, x )) ≥ smin τ
+
+(∆( z, y )) + smin τ
+
+(∆( y, x )) = MU (z, y ) + MU (y, x ),
+
+which proves (17). 
+
+20 Since 
+
+DU (a, b ) = σ(γM U (a, b )) and logit( σ(t)) = t, 
+
+we have 
+
+logit DU (a, b ) = γM U (a, b ).
+
+Multiplying (17) by γ > 0 gives 
+
+logit DU (z, x ) ≥ logit DU (z, y ) + logit DU (y, x ),
+
+which proves (18). 
+
+B.4 Proof of Theorem 2 
+
+We first prove an auxiliary result supporting Theorem 2. For each step 1 ≤ t ≤ m, define 
+
+δt(U ) := min 
+
+> x,z ∈yt,...,y m
+> x̸=z
+
+|mU (z, x )|. (24) This is the magnitude of the margin for the closest pair at step t.
+
+Proposition 2 (Quantitative frontier bounds) . Assume Assumption 1. Fix a step t and an item x ∈
+
+yt, . . . , y m.If x ∈ F (hU ; yt, . . . , y m), then 
+
+˜Ft(x; U ) ≥ ∏
+
+> z∈yt,...,y m\{ x}
+
+(
+
+1 − σ(−γ|mU (z, x )|))
+
+≥
+
+(
+
+1 − σ(−γδ t(U )) 
+
+)|yt,...,y m|− 1
+
+. (25) 
+
+If x / ∈ F (hU ; yt, . . . , y m), then for every τ > 0,
+
+˜Ft(x; U ) ≤ 1 − σ(γ(δt(U ) − τ log d)). (26) 
+
+In particular, whenever τ < δ t(U )/ log d,
+
+˜Ft(x; U ) → 0 as γ → ∞ . (27) 
+
+Proof. Fix a step t and an item x ∈ yt, . . . , y m.
+
+Case 1: x ∈ F (hU ; yt, . . . , y m). By definition of the hard frontier, for every z ∈ yt, . . . , y m \ { x} we have 
+
+z̸ ≻U x. Under Assumption 1, this implies 
+
+mU (z, x ) < 0.
+
+Hence |mU (z, x )| = −mU (z, x ), and Lemma 3 gives 
+
+MU (z, x ) ≤ mU (z, x ) = −| mU (z, x )|.
+
+Since the sigmoid is monotone increasing, 
+
+DU (z, x ) = σ(γM U (z, x )) ≤ σ(−γ|mU (z, x )|).
+
+Therefore 
+
+1 − DU (z, x ) ≥ 1 − σ(−γ|mU (z, x )|).
+
+Multiplying over all z ∈ yt, . . . , y m \ { x} yields 
+
+˜Ft(x; U ) = ∏
+
+> z∈yt,...,y m\{ x}
+
+(1 − DU (z, x )) ≥ ∏
+
+> z∈yt,...,y m\{ x}
+
+(
+
+1 − σ(−γ|mU (z, x )|))
+
+.
+
+Since |mU (z, x )| ≥ δt(U ) by definition of δt(U ), factors are at least 1 − σ(−γδ t(U )) , proving (25). 
+
+21 Case 2: x / ∈ F (hU ; yt, . . . , y m). Then there exists some z⋆ ∈ yt, . . . , y m \ { x} such that z⋆ ≻U x,equivalently mU (z⋆, x ) > 0. By definition of δt(U ),
+
+mU (z⋆, x ) ≥ δt(U ).
+
+Lemma 3 gives 
+
+MU (z⋆, x ) ≥ mU (z⋆, x ) − τ log d ≥ δt(U ) − τ log d. 
+
+Applying monotonicity of σ,
+
+DU (z⋆, x ) = σ(γM U (z⋆, x )) ≥ σ(γ(δt(U ) − τ log d)).
+
+Since every factor in the product defining ˜Ft(x; U ) is at most 1,
+
+˜Ft(x; U ) ≤ 1 − DU (z⋆, x ) ≤ 1 − σ(γ(δt(U ) − τ log d)),
+
+which proves (26). The limit (27) follows immediately when τ < δ t(U )/ log d.We now prove Theorem 2. 
+
+Proof of Theorem 2. Fix t and x ∈ yt, . . . , y m.If x ∈ F (hU ; yt, . . . , y m), then Proposition 2 gives 
+
+˜Ft(x; U ) ≥
+
+(
+
+1 − σ(−γδ t(U )) 
+
+)|yt,...,y m|− 1
+
+.
+
+Because δt(U ) > 0, the right-hand side converges to 1 as γ → ∞ . Since ˜Ft(x; U ) ≤ 1, the squeeze theorem gives 
+
+lim 
+
+> γ→∞
+
+˜Ft(x; U ) = 1 ,
+
+and therefore also 
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜Ft(x; U ) = 1 .
+
+If x / ∈ F (hU ; yt, . . . , y m), choose any τ0 ∈ (0 , δ t(U )/ log d). For all 0 < τ ≤ τ0, Proposition 2 gives 
+
+˜Ft(x; U ) ≤ 1 − σ(γ(δt(U ) − τ log d)),
+
+and since δt(U ) − τ log d > 0, the right-hand side tends to 0 as γ → ∞ . Hence 
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜Ft(x; U ) = 0 .
+
+Combining the two cases proves 
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜Ft(x; U ) = 1[x ∈ F (hU ; yt, . . . , y m)] ,
+
+which is the result claimed in Theorem 2. 
+
+B.5 Proof of Theorem 3 
+
+We first show that the soft successor counts in (13) converge to the hard descendant counts in (2). 
+
+Proposition 3 (Sharp-limit recovery of descendant counts) . Under Assumption 1, for every step t and every 
+
+x ∈ yt, . . . , y m,
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜St(x; U ) = St(x; hU ). (28) 
+
+22 Proof. Fix t and x ∈ yt, . . . , y m. For each z ∈ yt, . . . , y m \ { x}, Lemma 3 gives 
+
+MU (x, z ) → mU (x, z ) as τ ↓ 0.
+
+Under Assumption 1, mU (x, z )̸ = 0 . Therefore 
+
+lim  
+
+> γ→∞
+
+lim   
+
+> τ↓0
+
+DU (x, z ) = lim  
+
+> γ→∞
+
+σ(γm U (x, z )) = 1[mU (x, z ) > 0] = 1[x ≻U z].
+
+Since the sum in (13) is finite, 
+
+lim  
+
+> γ→∞
+
+lim  
+
+> τ↓0
+
+˜St(x; U ) = ∑
+
+> z∈yt,...,y m\{ x}
+
+1[x ≻U z] = St(x; hU ),
+
+which proves (28). We now prove the convergence of the full soft likelihood in Equation (21) of Theorem 3. 
+
+Proof of Theorem 3. Fix a step t. For each a ∈ yt, . . . , y m, define the relaxed rational score 
+
+˜rt(a; U ) := ˜Ft(a; U ) exp {β ˜Qt(a; U )}, (29) and the corresponding hard rational score 
+
+rt(a; hU ) := 1[a ∈ F (hU ; yt, . . . , y m)] exp {β Q t(a; hU )}. (30) By Theorem 2, ˜Ft(a; U ) → 1[a ∈ F (hU ; yt, . . . , y m)] 
+
+in the sharp limit. By Proposition 3, ˜St(a; U ) → St(a; hU ).
+
+Since ˜Qt(a; U ) = log (1 + ˜St(a; U )) and Qt(a; hU ) = log (1 + St(a; hU )),
+
+continuity of log(1 + s) implies 
+
+˜Qt(a; U ) → Qt(a; hU ).
+
+Therefore 
+
+˜rt(a; U ) → rt(a; hU ) for every a ∈ yt, . . . , y m.
+
+Because yt, . . . , y m is finite, 
+
+∑
+
+> a∈yt,...,y m
+
+˜rt(a; U ) → ∑
+
+> a∈yt,...,y m
+
+rt(a; hU ).
+
+By Lemma 1, hU = ( S, ≻U ) is a strict partial order, so its restriction to yt, . . . , y m is also a finite strict partial order. Hence by Lemma 2, 
+
+F (hU ; yt, . . . , y m)̸ = ∅.
+
+Therefore ∑
+
+> a∈yt,...,y m
+
+rt(a; hU ) = ∑  
+
+> a∈F(hU;yt,...,y m)
+
+exp {β Q t(a; hU )} > 0.
+
+It follows that ˜rt(yt; U )
+
+∑ 
+
+> a∈yt,...,y m
+
+˜rt(a; U ) → rt(yt; hU )
+
+∑ 
+
+> a∈yt,...,y m
+
+rt(a; hU ) .
+
+lim  
+
+> γ→∞
+
+lim   
+
+> τ↓0
+
+˜p(yt | yt, . . . , y m, U, β, γ ) = p(yt | yt, . . . , y m, h U , β ),
+
+which proves (20). 
+
+23 Finally, the trace likelihood is a finite product of step likelihoods: 
+
+˜p(y | U, β, γ ) = 
+
+> T
+
+∏
+
+> t=1
+
+˜p(yt | yt, . . . , y m, U, β, γ ).
+
+Applying (20) stepwise and continuity of finite products gives 
+
+lim  
+
+> γ→∞
+
+lim   
+
+> τ↓0
+
+˜p(y | U, β, γ ) = p(y | hU , β ),
+
+which proves (21) and completes the proof of Theorem 3. 
+
+B.6 Effect of the relaxation temperature τ
+
+The temperature τ controls the gap between the hard product-order margin and its soft-min relaxation. For 
+
+mU (z, x ) = min 
+
+> k=1 ,...,d
+
+{uz,k − ux,k }, M τU (z, x ) = −τ log 
+
+> d
+
+∑
+
+> k=1
+
+exp 
+
+{
+
+− uz,k − ux,k 
+
+τ
+
+}
+
+,
+
+the standard soft-min bound gives 
+
+mU (z, x ) − τ log d ≤ M τU (z, x ) ≤ mU (z, x ). (31) Thus τ introduces at most τ log d downward bias in each pairwise margin, and M τU (z, x ) → mU (z, x ) uniformly as τ ↓ 0.Let 
+
+DτU (z, x ) = σ(γM τU (z, x )) 
+
+be the soft precedence score. At step t, let Rt be the remaining set and define the local margin separation 
+
+δt(U ) = min 
+
+> a,b ∈Rt
+> a̸=b
+
+|mU (a, b )|.
+
+If τ < δ t(U )/ log d, then the effective margin is positive. Defining 
+
+εt(τ, γ ) = exp {− γ(δt(U ) − τ log d)},
+
+we obtain the pairwise recovery bounds 
+
+z ≻U x =⇒ 1 − εt(τ, γ ) ≤ DτU (z, x ) ≤ 1, (32) and 
+
+z̸ ≻U x =⇒ 0 ≤ DτU (z, x ) ≤ εt(τ, γ ). (33) Hence the relaxation separates true precedences from non-precedences whenever 
+
+δt(U ) − τ log d > 0, equivalently τ < δt(U )log d .
+
+More generally, to achieve pairwise error at most η, it is sufficient that 
+
+τ ≤ δt(U ) − γ−1 log(1 /η )log d . (34) This shows the statistical role of τ : larger τ smooths the posterior but reduces the effective margin available for graph recovery. Conversely, smaller τ better approximates the hard model, but makes the objective more sharply curved. Indeed, if 
+
+pk = exp {− ∆k/τ }
+
+∑dℓ=1 exp {− ∆ℓ/τ } ,
+
+then 
+
+∇2∆M τU = − 1
+
+τ
+
+(diag( p) − pp ⊤) , ∥∇ 2∆M τU ∥2 = O(1 /τ ).
+
+Thus τ trades off approximation accuracy and optimization stability: too large a value makes the recovery bound weak or vacuous, while too small a value can make gradient-based inference ill-conditioned. 
+
+24 B.7 Proof of Theorem 4 
+
+Prior beliefs about soft orders DU on a subset S ∈ B M of items U = ( ux)x∈S are unchanged by the absence of omitted items (items in M \ S). If we construct the DU prior for orders over a choice set S with m items from the start (so U ∈ Rm×d), or construct the DU prior for orders over M (so U ∈ RM ×d) then throw out items in M \ S by dropping those rows and columns of DU then we get the same prior distribution on DU .
+
+Theorem 4 (Marginal Consistency) If DU ∼ πM(·) then DU [S, S ] ∼ πS (·).
+
+Proof. For U ∈ RM ×d let U [S, :] be the matrix we get by deleting rows of U in M\ S. Since DU [S, S ] = DU [S, :] 
+
+and the rows ux of U are independent, omitting rows give us a random matrix U [S, :] with the same distribution it has if formed on S from the start, and hence DU [S, :] ∼ πS (·).
+
+## C Model inference 
+
+C.1 Posterior Derivation 
+
+This section gives the unconstrained posterior target, Jacobian corrections, variational objectives, and decoding procedure used by the continuous inference methods in Section 4. 
+
+C.1.1 Relaxed posterior target 
+
+Let 
+
+Θ = ( Z, ρ, β, γ )
+
+denote the relaxed model parameters. Under the non-centred parameterization, the joint density is 
+
+p(D, Θ) = p(ρ)p(β)p(γ)
+
+[ m∏
+
+> x=1
+
+N (zx; 0 , I d)
+
+] N∏
+
+> n=1
+
+˜p
+
+(
+
+y(n) | U (Z, ρ ), β, γ 
+
+)
+
+.
+
+For continuous inference, we work in unconstrained coordinates 
+
+w = (vec( Z), η ρ, η β , η γ
+
+) ∈ Rq , q = md + 3 ,
+
+with transforms 
+
+ρ = σ(ηρ), β = eηβ , γ = eηγ .
+
+Let T (w) = Θ . The transformed joint density is 
+
+¯p(D, w ) = p(D, T (w)) | det JT (w)|,
+
+or equivalently 
+
+log ¯ p(D, w ) = log p(D, T (w)) + log | det JT (w)|.
+
+For the above transforms, 
+
+log | det JT (w)| = log ρ + log(1 − ρ) + ηβ + ηγ .
+
+If β is fixed in a particular experiment, the ηβ coordinate, its prior, and its Jacobian term are omitted. 
+
+C.2 Continuous MCMC 
+
+Relaxed-MCMC targets the transformed relaxed posterior 
+
+¯p(w | D ) ∝ ¯p(D, w )
+
+using Relaxed-MCMC . This sampler targets the relaxed posterior directly and does not impose a variational family. In contrast, Hard-MCMC targets the original discrete hard partial-order posterior and is used as a reference when long-run discrete inference is feasible. 
+
+25 C.3 Stan full-rank Gaussian variational inference 
+
+We also consider a simpler Gaussian variational approximation using Stan’s full-rank automatic differentiation variational inference (ADVI). This serves as a baseline against the normalizing-flow posterior while keeping the target posterior model fixed. 
+
+Posterior target. The full-rank variational approximation is fit to the same relaxed local-poset posterior as the normalizing-flow method. In particular, the transformed joint density in unconstrained coordinates is 
+
+log ¯ p(D, w ) = log p(D, T (w)) + log |det JT (w)| , (35) where 
+
+w = (vec( Z), η ρ, η β , η γ
+
+) ∈ Rq
+
+is the unconstrained parameter vector and T (w) maps to the constrained parameters (Z, ρ, β, γ ).
+
+Variational family. Stan full-rank ADVI uses a single Gaussian approximation on the unconstrained coordinates: 
+
+qλ(w) = N (w; μ, Σ) , (36) where μ ∈ Rq is the variational mean and Σ ∈ Rq×q is a dense covariance matrix. This is more expressive than a mean-field Gaussian because it captures linear posterior dependence, but it is still limited to a single elliptical approximation. 
+
+ELBO objective. The variational parameters λ are obtained by maximizing 
+
+LFR (λ) = Eqλ(w)
+
+[
+
+log ¯ p(D, w ) − log qλ(w)
+
+]
+
+. (37) In practice, Stan uses a Monte Carlo estimator of the ELBO, ̂
+
+LFR (λ) = 1
+
+S
+
+> S
+
+∑
+
+> s=1
+
+[
+
+log ¯ p(D, w (s)) − log qλ
+
+(w(s))]
+
+, w(s) ∼ qλ, (38) and performs stochastic gradient optimization with respect to λ.
+
+Constrained parameters. As in the normalizing-flow formulation, the scalar parameters are represented in unconstrained form via 
+
+ρ = σ(ηρ), β = eηβ , γ = eηγ , (39) with the appropriate Jacobian contribution included automatically in the transformed density ¯p(D, w ).
+
+Practical configuration. In our implementation, full-rank ADVI is run with the same relaxed likelihood and prior specification as the normalizing-flow method, so that the comparison isolates the effect of the variational family. The main tuning parameters are the maximum number of optimization iterations, the number of Monte Carlo samples used for gradient estimates, the number of Monte Carlo samples used for ELBO evaluation, the stopping tolerance on relative objective improvement, and the length of the adaptation phase. 
+
+C.4 Normalizing-flow variational inference details 
+
+We provide the detailed construction of the normalizing-flow variational posterior used for the relaxed local partial-order model. 
+
+26 Variables and objective. We infer 
+
+Θ = ( Z, ρ, β, γ ),
+
+where Z ∈ Rm×d denotes the latent Gaussian coordinates, ρ controls the induced covariance structure of 
+
+U (Z, ρ ), β is the frontier-softmax sharpness, γ is the soft-precedence sharpness. The variational objective is the ELBO 
+
+L(ϕ) = Eqϕ(Θ) 
+
+[
+
+log p(D, Θ) − log qϕ(Θ) 
+
+]
+
+. (40) 
+
+Unconstrained coordinates. To handle positivity and unit-interval constraints, we work in uncon-strained coordinates 
+
+w = (vec( Z), η ρ, η β , η γ
+
+) ∈ Rq , q = md + 3 , (41) with transforms 
+
+ρ = (1 − ρtol )σ(ηρ), β = eηβ , γ = eηγ (if inferred) . (42) Let T (w) = Θ denote the overall transform from unconstrained to constrained parameters. The corresponding transformed joint density is 
+
+log ¯ p(D, w ) = log p(D, T (w)) + log |det JT (w)| . (43) 
+
+Base variational family and neural spline flows. We begin from a diagonal Gaussian base distribution 
+
+z0 = μ + σ ⊙ ξ, ξ ∼ N (0 , I q ), (44) where μ, σ ∈ Rq are variational parameters. We then apply K neural spline flow layers: 
+
+zk = Tk(zk−1), k = 1 , . . . , K, (45) where each Tk is an invertible rational-quadratic spline transformation. We use an autoregressive parameterisation. For each coordinate, 
+
+zk,i = Sk,i (zk−1,i ; θk,i (zk−1,<i )) , i = 1 , . . . , q, (46) where Sk,i is a monotone rational-quadratic spline and θk,i is produced by an autoregressive neural network. The spline parameters define positive bin widths, positive bin heights, and positive knot derivatives, which guarantee monotonicity and invertibility. Since the autoregressive Jacobian is triangular, the log-determinant is 
+
+log 
+
+∣∣∣∣det ∂z k
+
+∂z k−1
+
+∣∣∣∣ =
+
+> q
+
+∑
+
+> i=1
+
+log 
+
+∣∣∣∣
+
+∂z k,i 
+
+∂z k−1,i 
+
+∣∣∣∣ . (47) Therefore, after K flow layers, 
+
+log qϕ(zK ) = log q0(z0) −
+
+> K
+
+∑
+
+> k=1
+> q
+
+∑
+
+> i=1
+
+log 
+
+∣∣∣∣
+
+∂z k,i 
+
+∂z k−1,i 
+
+∣∣∣∣ . (48) We identify w = zK as the final unconstrained sample. 
+
+Soft partial-order construction. Given U = U (Z, ρ ), define the coordinate differences 
+
+∆ijr = Uir − Ujr . (49) The soft-minimum margin is 
+
+Mij (U ; τ ) = −τ log 
+
+> d
+
+∑
+
+> r=1
+
+exp 
+
+(
+
+− ∆ijr 
+
+τ
+
+)
+
+, (50) and the soft precedence score is 
+
+Dij (U ; γ, τ ) = σ(γM ij (U ; τ )), Dii = 0 . (51) 
+
+27 Trace likelihood. At step t, let Rt be the remaining set and let prat (yt | Rt, Θ) denote the relaxed frontier-based choice probability. We then use the form 
+
+p(yt | Rt, Θ) = prat (yt | Rt, Θ) . (52) The trace log-likelihood is therefore 
+
+log p(trace | Θ) = ∑
+
+> t
+
+log p(yt | Rt, Θ) . (53) Across the full dataset D = {y(n)}Nn=1 , the joint log density takes the form 
+
+log p(D, Z, ρ, β, γ ) = 
+
+> N
+
+∑
+
+> n=1
+
+log p(y(n) | U (Z, ρ ), β, γ ) + log p(ρ) + log p(β) + log p(γ)
+
+> m
+
+∑
+
+> x=1
+
+log N (zx; 0 , I d
+
+). (54) 
+
+Monte Carlo ELBO estimator. Using S Monte Carlo samples w(s) ∼ qϕ(w), we optimize ̂
+
+L(ϕ) = 1
+
+S
+
+> S
+
+∑
+
+> s=1
+
+[
+
+log ¯ p(D, w (s)) − log qϕ(w(s))
+
+]
+
+. (55) This estimator is fully differentiable under the reparameterization induced by the Gaussian base distribution and the flow transforms. 
+
+Optimization details. We optimize the ELBO using Adam with gradient clipping and optional antithetic sampling. The learning rate is scheduled as 
+
+lr( t) = lr 0 · warmup( t) · exp (log( α) · progress( t)), (56) where α is the final learning-rate factor. To improve robustness, we use multiple random restarts, retain the best evaluation-ELBO checkpoint within each restart, apply early stopping, and keep the globally best restart for posterior summaries and decoded structures. 
+
+C.5 Computational complexity and memory scaling 
+
+We summarize the dominant computational and memory costs of the relaxed model and the continuous inference procedures. Note that the costs for likelihood evaluation and storage for Hard-MCMC are qualitatively the same as for Relaxed-MCMC . The speedup we see in experiments is due to the more efficient MCMC methods available for differentiable targets. The speedup for the variational methods is because no likelihood evaluation is needed in simulation, once the variational approximation is constructed. 
+
+Per-draw relaxed likelihood cost. Fix one posterior draw Θ = ( Z, ρ, β, γ ). Let M be the size of the global item universe and let trace y = ( y1, . . . , y T ) have length T . The relaxed likelihood is defined through the soft-precedence scores DU (z, x ), the soft frontier weights ˜Ft(x; U ), the soft descendant counts ˜St(x; U ),and the frontier-softmax step probabilities ˜p(yt | y≥t, U, β, γ ); see Eqs. (11) . Given U = ZL ⊤ 
+
+> ρ
+
+, evaluating all pairwise soft-precedence scores requires 
+
+O(M 2d)
+
+work, since each ordered pair (z, x ) needs a soft minimum over d coordinates. Storing the resulting matrix 
+
+DU costs 
+
+O(M 2)
+
+memory. A naive evaluation of one trace would recompute, at every step t, the soft frontier products and successor sums over the remaining set y≥t, giving 
+
+> T
+
+∑
+
+> t=1
+
+O(|y≥t|2) = O(T 3).
+
+28 However, this can be reduced to quadratic time by caching the current frontier scores and successor counts. Define 
+
+ϕt(x) := log ˜Ft(x; U ) = ∑
+
+> z∈y≥t\{ x}
+
+log (1 − DU (z, x )),
+
+and ˜St(x; U ) := ∑
+
+> z∈y≥t\{ x}
+
+DU (x, z ).
+
+After selecting item yt, for every remaining x ∈ y≥t+1 we have 
+
+ϕt+1 (x) = ϕt(x) − log (1 − DU (yt, x )), ˜St+1 (x) = ˜St(x) − DU (x, y t).
+
+Thus, after an O(T 2) initialization of ϕ1 and ˜S1, each step only updates the surviving items and normalizes the resulting frontier-softmax probabilities, costing O(|y≥t|). Summing over t yields 
+
+O(T 2)
+
+time per trace once DU is available. For a dataset D = {y(n)}Nn=1 , this gives the total per-draw likelihood cost 
+
+Clike = O
+
+(
+
+M 2d +
+
+> N
+
+∑
+
+> n=1
+
+T 2
+
+> n
+
+)
+
+.
+
+In settings such as the Cloud benchmark where all traces are linear extensions of the same global order, 
+
+Tn = M and this simplifies to 
+
+Clike = O(M 2d + N M 2).
+
+Memory footprint. The model state stores: 
+
+• the embedding coordinates Z ∈ RM ×d, costing O(M d ),
+
+• the soft-precedence matrix DU ∈ [0 , 1] M ×M , costing O(M 2),
+
+• per-trace work vectors such as ϕt, ˜St, and frontier logits, costing O(M ).Hence the per-draw working memory is 
+
+O(M 2 + M d ),
+
+dominated by the M × M soft-precedence matrix. 
+
+Inference-method complexity. The continuous parameter dimension is 
+
+q = M d + 3 ,
+
+corresponding to vec( Z) and the unconstrained scalar parameters (ηρ, η β , η γ ).For Relaxed-MCMC , one gradient evaluation of the transformed log posterior log ¯ p(D, w ) costs O(Clike )
+
+up to a constant-factor reverse-mode autodiff overhead. If L leapfrog steps are used per retained draw, then the per-draw cost is 
+
+O(L C like ).
+
+For FullRank-VI , the ELBO uses the same likelihood term plus a dense Gaussian variational family 
+
+qλ(w) = N (w; μ, Σ) . Storing the covariance costs 
+
+O(q2) = O(M 2d2),
+
+and each Monte Carlo ELBO sample costs 
+
+O(Clike + q2)
+
+up to lower-order linear algebra terms. 
+
+29 For Flow-VI , the likelihood term is again O(Clike ), with an additional flow-transformation cost. For a 
+
+K-layer flow with per-layer cost cflow (q), one ELBO sample costs 
+
+O(Clike + K c flow (q)) .
+
+For planar layers, cflow (q) = O(q); for autoregressive spline layers, cflow (q) is typically O(qh ), where h is the conditioner width. The key scaling result is that, for fixed embedding dimension d, the relaxed likelihood can be evaluated in time quadratic in trace length after precomputing the pairwise soft-precedence matrix. Thus the dominant model-level cost is 
+
+O
+
+(
+
+M 2d +
+
+> N
+
+∑
+
+> n=1
+
+T 2
+
+> n
+
+)
+
+,
+
+with memory 
+
+O(M 2 + M d ).
+
+This should be contrasted with the hard discrete model, whose bottleneck is not merely the cost of a single likelihood evaluation but discrete posterior exploration over a combinatorial state space of partial orders and linear extensions. 
+
+## D Evaluation criteria 
+
+We evaluate methods using structural recovery, posterior fidelity, predictive fit, and computational cost. Structural metrics are used when a ground-truth partial order is available; posterior-fidelity metrics are used when long-run Hard-MCMC is feasible; predictive metrics are reported for both synthetic and real datasets. All predictive quantities below are computed from retained posterior or variational draws, rather than from posterior-mean plug-in parameters. 
+
+D.1 Evaluation metrics 
+
+Closure-level structural recovery. Let h⋆ be the ground-truth partial order and ̂ h an inferred partial order. Since the closure-level precedence relation is the primary object of inference, we compare transitive closures: 
+
+C⋆ = T C (h⋆),̂ C = T C (̂h).
+
+We report 
+
+Precision = |̂ C ∩ C⋆||̂C| , Recall = |̂C ∩ C⋆||C⋆| ,
+
+and 
+
+F1 = 2 Precision Recall Precision + Recall .
+
+Higher values indicate better closure recovery. 
+
+Posterior fidelity to Hard-MCMC. On small synthetic instances where long-run hard partial-order MCMC is feasible, we use Hard-MCMC as the reference posterior. For method a, define 
+
+H(s,a ) 
+
+> ij
+
+= 1{i ≻ j in the closure induced by draw s}, i̸ = j, 
+
+and estimate posterior pairwise precedence probabilities by ̂
+
+P (a) 
+
+> ij
+
+= 1
+
+S
+
+> S
+
+∑
+
+> s=1
+
+H(s,a ) 
+
+> ij
+
+.
+
+30 Let ̂ P (hard) denote the corresponding matrix from Hard-MCMC . We define 
+
+MAE hard (a) = 1
+
+M (M − 1) 
+
+∑
+
+> i̸=j
+
+∣∣∣̂ P (a) 
+
+> ij
+
+−̂ P (hard) 
+
+> ij
+
+∣∣∣ , (57) where M is the number of items. Lower values indicate closer agreement with the hard Bayesian reference posterior. We also report Pearson and Spearman correlations between the off-diagonal entries of ̂ P (a) and ̂
+
+P (hard) .
+
+Trace-level negative log-likelihood. For held-out traces Dtest and retained draws {Θ(s)}Ss=1 , we compute posterior-predictive trace-level negative log-likelihood as 
+
+Trace -NLL = − 1
+
+|D test |
+
+∑
+
+> y∈D test
+
+log 
+
+[
+
+1
+
+S
+
+> S
+
+∑
+
+> s=1
+
+p(y | Θ(s))
+
+]
+
+.
+
+Lower values indicate better predictive fit for complete held-out traces. 
+
+Step-level negative log-likelihood. For a held-out trace y = ( y1, . . . , y Ty ), let 
+
+Rt(y) = Sy \ { y1, . . . , y t−1}
+
+be the remaining choice set after the observed prefix, where Sy is the item set for that trace. For retained posterior or variational draws {Θ(b)}Bb=1 , the posterior-predictive probability of the next observed item is 
+
+¯pt(y) = 1
+
+B
+
+> B
+
+∑
+
+> b=1
+
+p
+
+(
+
+yt | Rt(y), Θ(b))
+
+.
+
+We define 
+
+Step -NLL = − 1
+
+Nstep 
+
+∑
+
+> y∈D test
+
+∑
+
+> t∈T y
+
+log ¯ pt(y), Nstep = ∑
+
+> y∈D test
+
+|T y |.
+
+In our Cloud experiments, Ty = {1, . . . , T y }, so the first action is scored from the empty prefix. If one wants to score only nonempty prefixes, the same definition applies with Ty = {2, . . . , T y }.
+
+WAIC. For Bayesian methods, we report WAIC using pointwise log-likelihoods over retained draws. Let 
+
+ℓis = log p(y(i) | Θ(s))
+
+be the log-likelihood contribution of observation i under draw s. We compute 
+
+lppd = ∑
+
+> i
+
+log 
+
+(
+
+1
+
+S
+
+> S
+
+∑
+
+> s=1
+
+exp( ℓis )
+
+)
+
+, pWAIC = ∑
+
+> i
+
+Var s=1 ,...,S (ℓis ),
+
+and 
+
+WAIC = −2(lppd − pWAIC ).
+
+Lower WAIC indicates better estimated out-of-sample predictive performance. Large pWAIC indicates high per-draw log-likelihood variability and should be interpreted as a warning that the posterior approximation may be unstable for WAIC. 
+
+Per-draw predictive models. For Hard-MCMC , predictive probabilities are evaluated using the hard frontier-softmax model on retained hard closure draws. For Relaxed-MCMC , FullRank-VI , and 
+
+Flow-VI , predictive probabilities are evaluated using the relaxed frontier-softmax model on each retained soft-precedence draw. Non-Bayesian baselines, when included, are evaluated at their fitted point estimate and are not assigned posterior-fidelity or WAIC uncertainty summaries. 
+
+31 Runtime. Runtime is wall-clock time for fitting the method and producing the posterior samples or variational draws used for evaluation. All runtime comparisons are reported in seconds. 
+
+D.2 Incomparable-pair coverage and trace sufficiency 
+
+We use incomparable-pair coverage (IP-Cov) to quantify trace diversity in settings where a ground-truth partial order is available. 
+
+Ground-truth incomparable pairs. Let h⋆ = ( S, ≻h⋆ ) be the ground-truth strict partial order. A pair (i, j ) is incomparable if neither item reaches the other in the transitive closure: 
+
+P∥(h⋆) = {(i, j ) : 1 ≤ i < j ≤ m, i ̸ ≻h⋆ j, j ̸ ≻h⋆ i}. (58) 
+
+Order induced by a trace. Each trace y ∈ D induces a total order over the items appearing in that trace. We write 
+
+i ≻y j
+
+if both i and j appear in y and i appears before j.
+
+Incomparable-pair coverage. Incomparable-pair coverage measures how often true incomparable pairs are observed in both relative orders across the dataset: 
+
+IP -Cov( D; h⋆) = 1
+
+|P ∥(h⋆)|
+
+∑
+
+> (i,j )∈P ∥(h⋆)
+
+1 [∃y, y ′ ∈ D : ( i ≻y j) ∧ (j ≻y′ i)] . (59) Intuitively, IP-Cov is the fraction of ground-truth incomparable pairs for which the data contain evidence in both directions. Such evidence helps distinguish genuine incomparability from strict precedence. 
+
+Trace sufficiency. We say that a trace set is incomparability-sufficient for h⋆ if 
+
+IP -Cov( D; h⋆) = 1 . (60) This condition does not by itself guarantee perfect recovery under finite data or model mismatch. Rather, it ensures that every ground-truth incomparable pair is witnessed in both relative orderings, providing the necessary evidence to distinguish concurrency from strict precedence. In our synthetic and reference-trace experiments, IP-Cov is used as a controllable measure of trace diversity. 
+
+D.3 Non-Bayesian structural baselines 
+
+We compare against two non-Bayesian structural baselines: Majority and Continuous DAG Learning. These baselines produce a directed cover graph rather than a Bayesian posterior. We therefore evaluate them only using closure-level precision, recall, F1, and runtime. 
+
+D.3.1 Majority baseline. 
+
+The Majority baseline estimates pairwise precedence frequencies from the observed traces. Let ̂
+
+r ij =
+
+∑ 
+
+> y∈D
+
+1[i appears before j in y]
+
+∑ 
+
+> y∈D
+
+1[i, j ∈ y] .
+
+We add edge i → j when ̂r ij > τ and ̂r ij >̂r ji , with default τ = 0 .5. Edge weights are set to |̂r ij − 0.5|, so more decisive pairwise majorities receive larger weights. See algorithm 2 
+
+32 Algorithm 1 CycleBreakAndCover (A, W )
+
+Require: adjacency A ∈ { 0, 1}n×n, weights W ∈ Rn×n
+
+> ≥0
+
+Ensure: DAG cover graph ̂ H 
+
+> 1:
+
+while HasCycle (A) do  
+
+> 2:
+
+C ← FindCycle (A) 
+
+> 3:
+
+(u, v ) ← arg min (i,j )∈C Wij  
+
+> 4:
+
+Auv ← 0 
+
+> 5:
+
+end while 
+
+> 6:
+
+̂ C ← TC( A)
+
+> 7:
+
+̂ H ← TR( ̂ C) 
+
+> 8:
+
+return ̂ H
+
+D.3.2 SoftDAG-Frontier diagnostic baseline 
+
+SoftDAG-Frontier is a MAP diagnostic baseline inspired by continuous DAG learning [ 41 , 19 ]. Unlike the proposed Bayesian product-order model, it directly parameterizes a soft adjacency matrix. Let A ∈ Rn×n be free edge logits and define 
+
+Wij = σ(Aij ), Wii = 0 .
+
+We encourage acyclicity using the NOTEARS penalty 
+
+h(W ) = tr {exp( W ◦ W )} − n. 
+
+To use the same trace observation model as the proposed method, we convert W into a soft reachability matrix 
+
+RK (W ) = 1 − exp 
+
+{
+
+−
+
+> K
+
+∑
+
+> ℓ=1
+
+W ℓ
+
+}
+
+, Rii = 0 ,
+
+with K = min (8 , n −1) . We substitute RK (W ) for the soft precedence matrix in the relaxed frontier likelihood: 
+
+˜Ft(x; R) = ∏
+
+> z∈Rt\{ x}
+
+(1 − Rzx ),
+
+˜St(x; R) = ∑
+
+> z∈Rt\{ x}
+
+Rxz , ˜Qt(x; R) = log(1 + ˜St(x; R)) .
+
+The model is fit by minimizing 
+
+L(A, β ) = − log ˜p(D | RK (W ), β ) + λ1∥W ∥1 + λh h(W )2.
+
+This baseline is not Bayesian and does not provide posterior uncertainty over closure relations. We therefore evaluate it using closure recovery, held-out NLL, and runtime, but not posterior-fidelity MAE or WAIC. 
+
+Implementation details. We use K = min (8 , n − 1) , three random restarts of Adam, and validation NLL for hyperparameter selection over λ1 ∈ { 10 −4, 10 −3, 10 −2} and λh ∈ { 1, 10 , 100 }. Because the trace likelihood already identifies the scale of β, we parameterize β = exp (ηβ ) and learn ηβ jointly with A for both synthetic and cloud experiments, matching the corresponding setting of the proposed method which also infers β jointly with the partial-order representation. We approximate the matrix exponential in the acyclicity penalty by its Taylor truncation to degree max (K, 12) , which is positive and equals zero iff W
+
+is acyclic, and is autodiff-friendly. The soft adjacency logits are initialised at Aij ∼ N (−2, 0.12) so that W
+
+starts sparse, and we run Adam for 400 steps at learning rate 0.05 . Hyperparameter selection never touches the test set or ground-truth structure; selection is done on validation step-NLL. 
+
+Optimization and model selection. For each synthetic instance, SoftDAG-Frontier is fit by MAP optimization with Adam. Hyperparameters are selected using an 80/20 split of the training traces into train and validation subsets, using validation Step-NLL only; neither the test traces nor the ground-truth closure 
+
+33 Algorithm 2 Majority pairwise-precedence baseline 
+
+Require: traces D = {y(t)}Nt=1 , threshold θmaj 
+
+Ensure: DAG cover graph ̂ Hmaj  
+
+> 1:
+
+Initialize C, T ∈ Rn×n to zero  
+
+> 2:
+
+for each trace y ∈ D do  
+
+> 3:
+
+compute positions pos y(·) 
+
+> 4:
+
+for all i̸ = j co-occurring in y do  
+
+> 5:
+
+Tij ← Tij + 1  
+
+> 6:
+
+if pos y(i) < pos y(j) then  
+
+> 7:
+
+Cij ← Cij + 1  
+
+> 8:
+
+end if  
+
+> 9:
+
+end for  
+
+> 10:
+
+end for  
+
+> 11:
+
+Initialize A, W ∈ Rn×n to zero  
+
+> 12:
+
+for all unordered pairs {i, j } do  
+
+> 13:
+
+if Tij = 0 or Tji = 0 then  
+
+> 14:
+
+continue  
+
+> 15:
+
+end if 
+
+> 16:
+
+̂ rij ← Cij /T ij ,̂ rji ← Cji /T ji  
+
+> 17:
+
+if ̂ rij > θ maj and ̂ rij >̂ rji then  
+
+> 18:
+
+Aij ← 1, Wij ← | ̂rij −̂ rji | 
+
+> 19:
+
+else if ̂ rji > θ maj and ̂ rji >̂ rij then  
+
+> 20:
+
+Aji ← 1, Wji ← | ̂rji −̂ rij | 
+
+> 21:
+
+end if  
+
+> 22:
+
+end for 
+
+> 23:
+
+̂ Hmaj ← CycleBreakAndCover (A, W ) 
+
+> 24:
+
+return ̂ Hmaj 
+
+are used for model selection. The grid search varies the sparsity and acyclicity penalties. For scalability, the optimization budget is reduced with n: we use 600 steps and 3 restarts for n ≤ 30 , 400 steps and 2 restarts for n = 50 , and 250 steps and 1 restart for n = 100 . All 36 synthetic configurations completed. 
+
+Decoding. Unlike the Bayesian methods, SoftDAG-Frontier returns a single MAP soft-reachability matrix rather than posterior precedence probabilities. The primary reported closure F1 uses ζ = 0 .5 for 
+
+n < 100 and ζ = 1 /3 for n = 100 . We use the lower threshold at n = 100 because SoftDAG produces MAP soft-reachability scores rather than posterior closure probabilities, and its large-n scores are not calibrated on the same scale as the Bayesian posterior means. 
+
+Observed degeneracies. The SoftDAG grid reveals two characteristic instabilities of this generic MAP baseline. First, at large n, some runs converge to a symmetric uninformative solution. In the two degenerate 
+
+n = 100 cases, the decoded closure contains zero directed edges and the test Step-NLL is approximately 
+
+3.6374 . This value matches the uniform frontier prediction 
+
+1100 
+
+> 100
+
+∑
+
+> r=1
+
+log r = log(100!) 100 ≈ 3.637 ,
+
+which is the per-step NLL obtained when all remaining actions receive equal score. Thus the zero F1 cases are not caused by an evaluation bug: the optimizer has found an uninformative symmetric solution, so the decoder has no strict directed preference to threshold. Second, for n = 5 , the train/validation split is extremely small: after the 80/20 split, the baseline is selected from only two training traces and one validation trace. Several selected runs therefore have very large 
+
+34 Table 4: Synthetic trace-generation summary across three seeds for each (n, ρ ) setting. train and 
+
+test are the mean numbers of training and test traces, respectively, with ranges across seeds shown in parentheses. IP -Cov is the mean incomparable-pair coverage, with the min–max range across seeds in parentheses. 
+
+n ρ train test mean IP-Cov 5 0.5 5.0 (5–5) 1.0 (1–1) 1.00 (1.00–1.00) 5 0.9 5.0 (5–5) 1.0 (1–1) 1.00 (1.00–1.00) 10 0.5 10.0 (10–10) 2.0 (2–2) 1.00 (1.00–1.00) 10 0.9 10.0 (10–10) 2.0 (2–2) 1.00 (1.00–1.00) 20 0.5 20.0 (20–20) 4.0 (4–4) 1.00 (1.00–1.00) 20 0.9 20.0 (20–20) 4.0 (4–4) 1.00 (1.00–1.00) 30 0.5 30.0 (30–30) 6.0 (6–6) 1.00 (1.00–1.00) 30 0.9 30.0 (30–30) 6.0 (6–6) 1.00 (1.00–1.00) 50 0.5 50.0 (50–50) 10.0 (10–10) 0.99 (0.99–1.00) 50 0.9 50.0 (50–50) 10.0 (10–10) 1.00 (1.00–1.00) 100 0.5 124.0 (109–132) 24.7 (22–26) 0.98 (0.97–0.98) 100 0.9 100.0 (100–100) 20.0 (20–20) 1.00 (1.00–1.00) learned inverse-temperature parameters β, indicating a highly unstable MAP objective under very limited data. This explains the high variance of SoftDAG at small n. By contrast, the Bayesian methods average over posterior uncertainty and are less sensitive to these small-sample validation artifacts. 
+
+## E Experiment 
+
+E.1 Synthetic Dataset 
+
+For each (n, ρ ) setting, we generated three random instances and summarized the resulting numbers of training and test traces, the target trace budget 2n, and the realized incomparable-pair coverage. See Table 4. 
+
+E.1.1 Full synthetic grid results 
+
+Table 5 reports the full synthetic grid results by graph size n, latent correlation ρ, and inference method. Results are averaged over the completed random seeds for each configuration. The hard sampler is used as the Bayesian reference whenever it is feasible; therefore its MAE to hard MCMC is zero by definition. For relaxed methods, MAE measures the average absolute difference between posterior pairwise precedence probabilities and the corresponding hard-MCMC posterior probabilities. Structural recovery is reported as closure-level F1 after thresholding posterior precedence probabilities at two decoding thresholds, 0.5 and 1/3.Predictive fit is measured by held-out trace-level NLL, step-level NLL, and WAIC. Runtime is wall-clock fitting time in seconds. 
+
+E.1.2 Ablation study: normalizing-flow sensitivity to τ across graph sizes 
+
+We study how the performance of the normalizing-flow variational posterior depends on the smoothing temperature τ across synthetic partial-order datasets of different sizes. Averaged over two representative random seeds, the best closure-level F1 is obtained at τ = 0 .1 for n = 10 and n = 20 , with mean F1 = 0 .982 
+
+in both cases. For larger graphs, the preferred temperature shifts upward: the best mean F1 is 0.897 at 
+
+(n = 50 , τ = 0 .5) and 0.828 at (n = 100 , τ = 0 .7) . This pattern suggests that smaller problems favor sharper relaxations, whereas larger graphs benefit from additional smoothing. 
+
+35 N1                       
+
+> N2 N3
+> N4
+> N5
+> N6
+> N7 N8
+> N9
+> N10
+> Hard MCMC
+> Closure F1= 1.000
+> N1
+> N2 N3
+> N4
+> N5
+> N6
+> N7 N8
+> N9
+> N10
+> Relaxed NUTS
+> Closure F1= 0.982
+> N1
+> N2 N3
+> N4
+> N5
+> N6
+> N7 N8
+> N9
+> N10
+> Stan FR-VI
+> Closure F1= 0.982
+> N1
+> N2 N3
+> N4
+> N5
+> N6
+> N7 N8
+> N9
+> N10
+> NF-VI
+> Closure F1= 0.949
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Posterior P(cover edge)
+
+Figure 9: Representative synthetic Hasse diagrams for n = 10 , ρ = 0 .9. Hard-MCMC is the reference posterior; Relaxed-MCMC and FullRank-VI use the relaxed model with τ = 0 .5.Edge color encodes posterior cover-edge probability. Both relaxed methods recover structures closely aligned with Hard-MCMC , though with more diffuse posterior confidence. 
+
+E.1.3 Ablation: trace coverage and partial-order identifiability. 
+
+The incomparable-pair coverage (IP-Cov) measures the fraction of truly incomparable pairs that are observed in both relative orderings across the training traces. When IP-Cov is below one, some reorderable pairs appear in only a single orientation, and the partial order becomes only partially identifiable from the observations: such pairs are observationally indistinguishable from genuine precedence constraints, regardless of which inference algorithm is applied. Figure 10 quantifies this effect on synthetic instances with n = 30 , ρ = 0 .5, and τ = 0 .5. As IP-Cov rises from 0.7 to 1.0, closure-level recovery improves sharply for every method that integrates over the latent graph. Relaxed NUTS and Hard-MCMC , which both produce posterior samples over decoded partial order, recover the true closure almost perfectly at IP-Cov = 1 .0, while their held-out NLL drops to the level of the oracle hard model. The same trend holds for Stan fullrank and NF-VI, but with a smaller absolute gain. These results indicate that accurate latent graph recovery is fundamentally trace-bound: when the trace set witnesses every incomparability in both orientations, all four inference families converge to high-quality posteriors; below that threshold, the limiting factor is the information content of the traces, not the choice of inference algorithm. 
+
+E.1.4 Relaxation-temperature ablation 
+
+We vary the relaxation temperature τ ∈ { 0.1, 0.3, 0.5, 1.0} on synthetic instances with n = 30 , ρ = 0 .5, and IP-Cov ≈ 1.0, so that the traces contain sufficient information to identify the true graph. Figure 11 shows the expected sharpness–smoothness trade-off. Smaller τ gives better hard-model fidelity and closure recovery: Relaxed NUTS at τ ∈ { 0.1, 0.3} nearly matches the Hard-MCMC reference ( F1 > 0.99 and hard-frontier NLL ≈ 49 .5 versus 49 .3), while using roughly 4–5× less runtime. FullRank-VI also improves as τ decreases, but remains near F1 ≈ 0.9, suggesting a structural-recovery limit from the Gaussian variational family. In contrast, τ = 1 .0 clearly over-smooths the relaxation: hard-frontier NLL increases to roughly 90 and closure recovery degrades. Thus τ ≈ 0.1–0.3 gives the best balance between approximating the hard partial-order target and maintaining tractable continuous inference. 
+
+E.2 Bishops data details 
+
+We use witness lists from the “Royal Acta” database created for The Charters of William II and Henry I 
+
+project by Richard Sharpe and Nicholas Karn [ 34 , 28 ]. The database records dated witness lists from legal documents issued in England and Wales during the eleventh and twelfth centuries. Each list is associated with a date, although the dating is sometimes uncertain; in such cases the data include lower and upper bounds on the plausible date range. We take all lists dated 1134-1138 CE and involving all 45 witnesses who 
+
+36 Figure 10: Trace-coverage ablation on the latent partial order. Synthetic instances with n= 30 ,
+
+ρ=0.5, τ = 0.5, three seeds. Each panel shows mean ± SEM (markers) and individual seeds (small dots) for four inference methods at two coverage levels. Left: closure F1; middle: held-out negative log likelihood per test order under the hard frontier-softmax model (a single, common evaluation likelihood is used for all methods to ensure apples-to-apples comparison); right: wall-clock runtime (log scale). Increasing IP-Cov from 0.7 to 1.0 resolves the partial-identifiability of incomparable pairs and yields near-perfect closure recovery for the posterior samplers (Relaxed NUTS, Legacy MCMC); held-out NLL drops by a factor of roughly three across all methods, while runtime is largely unchanged. 
+
+appeared in 5 or more lists. The partial order has M = 45 elements, there are N = 68 lists and the longest list has 32 items/witnesses. Each individual in the database is associated with a profession or title, such as Queen, Archbishop, and so on; individuals without a recorded title are grouped into the category other . Witness names are written down in order of social status. The witness lists reflect a strong but not necessarily total social hierarchy: some individuals or title groups reliably precede others, while many relations remain uncertain, indirect, or context-dependent. This makes the dataset a natural real-world example of latent partial-order inference rather than ordinary total-order ranking. The dataset is also computationally relevant for our purposes. Prior Bayesian work on partial orders from random linear extensions reports that counting linear extensions is typically feasible only up to about 
+
+20 actors (in an MCMC-setting, where it has to be done thousands or even millions of times, bigger posets are countable as a one-off), whereas larger random partial orders can become especially difficult to analyze exactly [ 28 ]. Our instance contains 45 actors, placing it beyond the regime where hard discrete partial-order inference is routinely comfortable. We therefore use this dataset to assess whether the differentiable relaxation extends Bayesian partial-order modeling to larger and more challenging real ranking problems. Figure 13 illustrates the form of the raw data used in the Bishops experiment. Each document contributes an ordered witness list, such as the one shown here, where higher-status individuals typically appear earlier. Our model does not assume that the full social hierarchy is totally ordered; instead, each observed list is treated as one linear extension of an underlying latent partial order. 
+
+Common settings. The relaxed methods are fit under the same relaxed partial-order likelihood with 
+
+τ = 0 .10 , ρ ∼ Beta (2 , 2) , and γ ∼ Gamma (2 , 1) . Hard-MCMC instead targets the corresponding hard frontier-softmax model. All partial-order methods fix β = 0 .
+
+Plackett–Luce baselines. As external total-order benchmarks, we fit finite-mixture Plackett–Luce models to the 68 Bishops witness lists using the Bayesian PLMIX sampler [ 20 , 30 , 25 ]. We consider G ∈ { 1, 2, 3}
+
+37 0.1 0.3 0.5 1                     
+
+> τ(relaxation)
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Closure  F1 ( ↑ )
+> 0.1 0.3 0.5 1
+> τ(relaxation)
+> 60
+> 80
+> 100
+> 120
+> Held-out NLL / order, hard (  ↓ )
+> 0.1 0.3 0.5 1
+> τ(relaxation)
+> 10 2
+> 10 3
+> 10 4
+> Runtime [s] (  ↓ , log)
+> Relaxation τablation, hard-frontier NLL: n= 30, ρ= 0.5, IP-Cov ≈ 1.0 (mean ±SEM, 3 seeds)
+> NF-VI Stan fullrank Relaxed NUTS Legacy MCMC (tau-free)
+
+Figure 11: Relaxation-temperature ablation. We vary τ on synthetic instances with n = 30 ,
+
+ρ = 0 .5, and IP-Cov ≈ 1.0. Smaller τ gives a sharper approximation to the hard partial-order model and improves closure recovery. Relaxed NUTS with τ ∈ { 0.1, 0.3} nearly matches the Hard-MCMC 
+
+reference in closure F1 and hard-frontier NLL while using substantially less runtime. Conversely, 
+
+τ = 1 .0 over-smooths the relaxation, causing worse NLL and degraded graph recovery. Error bars show SEM over seeds; faint points show individual seeds. 
+
+mixture components, where G = 1 recovers the standard single-component Plackett–Luce model. We use weakly informative priors for the item support parameters and run Gibbs sampling to obtain posterior draws. To make the predictive criterion directly comparable to the LLPO fits, we compute WAIC at the same pointwise resolution: one contribution per witness list rather than one contribution per comparable pair. For posterior draw s, with item-worth vector w(s), the log-likelihood contribution for witness list 
+
+yi = ( yi1, . . . , y iL i ) is 
+
+ℓ(s) 
+
+> i
+
+=
+
+> Li
+
+∑
+
+> t=1
+
+[
+
+log w(s) 
+
+> yit
+
+− log ∑
+
+> k∈Rit
+
+w(s)
+
+> k
+
+]
+
+, Rit = {yit , . . . , y iL i }.
+
+This is the usual Luce chain likelihood conditional on the actors appearing in that witness list. WAIC is then computed from the resulting posterior log-likelihood matrix with 68 columns [38]. All PLMIX runs use 15 ,000 Gibbs iterations, 3,000 burn-in iterations, and 2,000 posterior draws for WAIC estimation. Table 7 reports the results. The best PLMIX baseline is the single-component model, with WAIC 
+
+= 1588 .55 . Adding mixture components does not improve predictive fit on this corpus: G = 2 and G = 3 
+
+have higher WAIC, partly due to larger effective complexity. The best LLPO fit, Relaxed-MCMC , achieves WAIC = 956 .53 , a reduction of about 632 WAIC units relative to the best total-order PLMIX baseline. 
+
+E.3 Cloud agent-trace benchmark details 
+
+Cloud-IaC-6 dataset. We use Cloud-IaC-6 , a cloud-provisioning benchmark from Li et al. [17] . The benchmark contains six Cloud Agent infrastructure-as-code scenarios, ranging from simple instance creation to high-availability cloud deployments. The dataset contains 54 successful execution traces generated by multiple LLM agents, including Qwen-Plus, DeepSeek, and Kimi, to encourage diversity in valid execution orders. Expert-provided partial orders serve as reference structures for evaluation, with cover graphs shown in Figure 16. The implementation and benchmark files are available in the anonymized repository. 1
+
+> 1
+
+https://anonymous.4open.science/r/Cloud-IaC-6-5367/README.md 
+
+38 Figure 12: NF-VI recovers the latent partial order at n = 100 . Best NF-VI run ( ρ = 0 .9,seed 19 , τ = 0 .3, training IP-Cov ≥ 0.97 ). Both panels share the same node positions, computed by Graphviz dot on the ground-truth cover graph. (a) All true closure (transitive-closure) edges (|E| = 3697 ). (b) NF-VI closure decoded from the posterior pairwise-precedence probabilities at threshold 1/3, coloured by edge type: recovered (TP) = 3484 (green); spurious (FP) = 58 (red); 
+
+missed (FN) = 213 (light dashed). Closure-level F1 = 0 .963 (precision 0.984 , recall 0.942 ). NF-VI is the only method that completes inference at this scale (mean wall-clock ≈ 67 s ). 
+
+Agent Trace Recovery To complement the aggregate metrics, Figure 17 shows a representative dual-zone ECS + SLB scenario at the level of the recovered Hasse diagram. In this case, Relaxed-MCMC ,
+
+FullRank-VI , and Flow-VI all recover the reference structure exactly, but their posterior edge confidence differs substantially: Relaxed-MCMC is the most confident, FullRank-VI is slightly less certain, and 
+
+Flow-VI is noticeably more diffuse. This highlights that exact decoded recovery does not imply the same posterior quality. 
+
+Convergence and optimization diagnostics To complement the aggregate cloud agent benchmark results, we provide representative convergence and optimization traces for one scenario, simple_ecs_seed7 .Figure 18 compares the trajectory of the objective or log-posterior quantity recorded by each inference method. These diagnostics are not intended as a formal convergence proof, but as a qualitative illustration of the different optimization and sampling behaviors underlying the runtime–accuracy trade-offs reported in the main text. In particular, they show that the four methods reach stable regimes on very different timescales and with markedly different variability. 
+
+Held-out next-action prediction To complement the structural-recovery results, we also evaluate predictive performance on the Cloud benchmark through a held-out next-action prediction task. For each held-out trace, we reveal a prefix y<t and evaluate the posterior predictive probability assigned to the next action yt, averaging over retained posterior or variational draws. We report the corresponding next-action negative log-likelihood (Step NLL), so lower values indicate better predictive performance. Table 8 reports the per-scenario Step NLL and closure MAE. Under the posterior-predictive evaluator, all three relaxed methods improve next-action prediction relative to Hard-MCMC . Averaged over the 12 Cloud cases, Step NLL is 0.701 for Hard-MCMC , 0.491 for Relaxed-MCMC , 0.513 for FullRank-VI ,and 0.544 for Flow-VI . Thus, the relaxed posterior gives better prefix-conditioned behavioral prediction, even when the hard sampler remains strongest for closure recovery. 
+
+39 Figure 13: Example of an observed witness list from the Bishops / Royal Acta corpus. Each entry is a named witness recorded in the order in which the document presents them. In the model, such a list is treated as an observed linearization of an underlying latent social hierarchy, rather than as evidence for a single total order. 
+
+Why closure fidelity and predictive NLL can disagree The Cloud benchmark reports both 
+
+structural metrics (closure F1 and MAE to the reference closure) and predictive metrics (Trace NLL, Step NLL). These metrics need not rank methods in the same order. Closure metrics evaluate recovery of the latent prerequisite structure, whereas Step NLL evaluates posterior predictive next-action probabilities from observed prefixes under the same frontier-softmax evaluator. The difference arises from the multiplicative geometry of frontier-based prediction. Closure metrics average pairwise errors linearly, so a small number of incorrectly oriented edges may have limited effect on the overall structural score. By contrast, Step NLL is a log score: in the frontier-softmax model, an overconfident wrong edge can strongly suppress the probability of the correct next action through the frontier weight, producing a large log penalty. Thus sharper posterior structure can improve closure recovery while hurting predictive calibration, whereas smoother posterior uncertainty can worsen decoded closure but improve next-action prediction. For this reason, we report both families of metrics. When the goal is latent graph recovery or workflow governance, closure fidelity is the primary criterion. When the goal is sequential prediction or agent-trace continuation, Step NLL and WAIC are more informative. 
+
+Scenario-wise scalar posterior densities on Cloud-IaC-6 To complement the aggregate Cloud-IaC-6 metrics in the main text, Figure 19 shows scenario-wise posterior densities for the scalar parameters 
+
+ρ, β, and γ across the six benchmark tasks. These plots make clear that the relative behavior of the inference methods is not uniform across scenarios. In particular, the Hard-MCMC , Relaxed-MCMC ,
+
+FullRank-VI , and Flow-VI can place posterior mass in noticeably different regions of parameter space even when they recover similar closure structure. This comparison is useful for two reasons. First, it shows how the inferred embedding correlation ρ,frontier-softmax sharpness β, and soft-precedence steepness γ vary with workflow complexity. Second, it helps explain why exact decoded recovery alone does not fully characterize posterior quality: methods that recover the same partial order may still differ substantially in posterior concentration and uncertainty. 
+
+## F Reproducibility 
+
+This appendix summarizes the code paths, datasets, inference settings, evaluation rules, and compute budget used to reproduce the main results. Exact run-level settings are stored in the released artefacts, including 
+
+run_summary.json , fit_summary.json , flow_config.json , posterior draw files, and the suite/case JSON files used by experiments/scripts/run_experiment_suite.py . When a suite-level configuration differs from an executed run summary, the run-level summary is authoritative. 
+
+40 N1                  
+
+> N2 N3
+> N4 N5
+> N6
+> N7
+> N8
+> N9 N10 N11
+> N12
+> N13 N14 N15 N16
+> N17
+> N18 N19
+> N20
+> N21 N22 N23 N24
+> N25
+> N26
+> N27 N28
+> N29
+> N30 N31 N32
+> N33 N34 N35
+> N36
+> N37
+> N38
+> N39 N40
+> N41
+> N42
+> N43
+> N44
+> N45
+
+Hard partial-order MCMC                  
+
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> N8
+> N9 N10 N11
+> N12
+> N13 N14 N15 N16
+> N17
+> N18 N19
+> N20
+> N21 N22 N23 N24
+> N25
+> N26
+> N27 N28
+> N29
+> N30 N31 N32
+> N33 N34 N35
+> N36
+> N37
+> N38
+> N39 N40
+> N41
+> N42
+> N43
+> N44
+> N45
+
+Continuous MCMC                  
+
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> N8
+> N9 N10 N11
+> N12
+> N13 N14 N15 N16
+> N17
+> N18 N19
+> N20
+> N21 N22 N23 N24
+> N25
+> N26
+> N27 N28
+> N29
+> N30 N31 N32
+> N33 N34 N35
+> N36
+> N37
+> N38
+> N39 N40
+> N41
+> N42
+> N43
+> N44
+> N45
+
+Full-rank VI                  
+
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> N8
+> N9 N10 N11
+> N12
+> N13 N14 N15 N16
+> N17
+> N18 N19
+> N20
+> N21 N22 N23 N24
+> N25
+> N26
+> N27 N28
+> N29
+> N30 N31 N32
+> N33 N34 N35
+> N36
+> N37
+> N38
+> N39 N40
+> N41
+> N42
+> N43
+> N44
+> N45
+
+Flow VI 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> posterior Hasse
+> edge prob.
+> Node (role)
+> archbishop
+> diocesan bishop
+> royal & court
+> secular peer
+> secular magnate
+
+Figure 14: Posterior Hasse diagrams for the Bishops corpus under the four inference methods. Edge colour and width encode posterior cover-edge probability. All four recover similar large-scale hierarchy structure, with Relaxed-MCMC attaining the lowest WAIC. 
+
+F.1 Codebase and environment 
+
+The anonymized repository contains the full experimental pipeline. The main entry point is 
+
+experiments/scripts/run_experiment_suite.py ,
+
+which dispatches legacy_mcmc (Hard-MCMC ), relaxed_mcmc (Relaxed-MCMC / Stan NUTS), fullrank 
+
+(FullRank-VI / Stan full-rank ADVI), and flow (Flow-VI ). Suite configurations are stored in experiments/configs/ .Stan models are stored in stan/ , Flow-VI is implemented in bpop_vi_frontier_experiment/normalizing_flow_vi.py ,and the shared likelihood, decoding, and evaluation utilities are in src/utils/ .All posterior-predictive metrics in the paper are computed by the evaluator 
+
+src/utils/posterior_predictive_eval.py ,
+
+which evaluates Trace NLL, Step NLL, and WAIC over retained posterior or variational draws rather than posterior-mean plug-in parameters. The environment is Python 3.9 in the Conda environment specified by environment.yml . We use numpy ,
+
+pandas , scipy , matplotlib , and networkx ; cmdstanpy with CmdStan 2.34 for Stan-based methods; and 
+
+torch for Flow-VI. A typical reproduction command is: 
+
+python experiments/scripts/run_experiment_suite.py \ --config experiments/configs/<suite_name>.json 
+
+F.2 Datasets and fixed splits 
+
+Synthetic data. Synthetic datasets are generated by 
+
+experiments/scripts/generate_synthetic_minimal_ipcov.py .
+
+41 0 10 20 30 40             
+
+> predecessor item
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> successor item
+> 010 20 30 40
+> predecessor item
+> 010 20 30 40
+> predecessor item
+> 010 20 30 40
+> predecessor item
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Posterior probability
+
+Figure 15: Posterior pairwise precedence probabilities P(i ≻ j | D ) for the Bishops corpus under the four inference methods. Each heatmap shows, on a common 0–1 scale, the posterior probability that predecessor item i precedes successor item j. The broadly similar banded patterns across panels indicate that the methods recover aligned closure-level structure. 
+
+We use n ∈ { 5, 10 , 20 , 30 , 50 , 100 }, ρ ∈ { 0.5, 0.9}, seeds {7, 11 , 19 }, latent dimension d = 4 , generation β = 1 .0.The ground-truth closure is the product order induced by Gaussian embeddings with covariance 
+
+Σρ = (1 − ρ)Id + ρ11 ⊤.
+
+Training traces are selected to maximize incomparable-pair coverage under a budget of 2n traces, with at least n traces retained. Test traces are independent hard frontier-softmax draws from the same ground-truth partial order. Each case stores its realized train/test traces and IP-Cov in dataset.json . The low-coverage ablation additionally uses n = 30 , ρ = 0 .5, seeds {7, 11 , 19 }, and target IP-Cov = 0 .7.
+
+External data sources. The Bishops witness-list corpus is derived from the public Charters of William II and Henry I project website: https://actswilliam2henry1.wordpress.com/the-charters/ . The project page states that the charter materials are released under a Creative Commons Attribution–NonCommercial– NoDerivs 4.0 license. We use the processed witness-list data described in Jiang et al. [14] and Nicholls et al. [28]. The Cloud agent-trace benchmark is adapted from the anonymized Cloud-IaC-6 repository: https:// anonymous.4open.science/r/Cloud-IaC-6-5367/README.md . The benchmark consists of six infrastructure-as-code scenarios with fixed train/test seeds; our scripts use the processed traces and ground-truth covers specified in Appendix F.3. 
+
+Bishops witness lists. The Bishops corpus is stored as 
+
+data/bishop/bishop_po_cla_o_lists_only.json ,
+
+containing 68 ordered witness lists over 45 actors. Actor names and title groups are stored in the accompanying mapping files 
+
+bishop_o_to_node_name_mapping.csv and bishop_item_hasse_color_group.csv .
+
+All 68 witness lists are used for posterior fitting and list-level predictive summaries. 
+
+Cloud agent traces. The Cloud-IaC-6 benchmark contains six cloud-provisioning scenarios crossed with seeds {7, 11 }, giving 12 cases. Raw traces, expert traces, and expert cover graphs are stored under data/ .The exact train/test order indices used for Tables 2 and 8 are stored in the experiment configuration files. All methods are fit and evaluated on identical 
+
+F.3 Inference settings 
+
+Hard-MCMC. Hard-MCMC is the legacy discrete MCMC sampler over hard partial-order states. On synthetic data, it uses 2 × 10 5 to 1.5 × 10 6 iterations depending on n, with 50% burn-in and fixed latent 
+
+42 Figure 16: Ground-truth action-precedence graphs (covers). Nodes are cloud API actions; edges denote mandatory precedence constraints. from [17] 
+
+dimension K = 4 . On Cloud, it uses 5 × 10 5 iterations, 50% burn-in, and fixed K = 3 . On Bishops, it uses 
+
+10 6 iterations, 50% burn-in, 5000 retained posterior draws after thinning, and reversible-jump moves over K,with K ∼ Poisson( N// 2) .
+
+Relaxed-MCMC. Relaxed-MCMC samples the relaxed posterior using Stan NUTS on unconstrained coordinates. Synthetic runs use one chain with 500 warmup and 500 sampling iterations by default, with slightly longer runs for larger n. Cloud uses 4 chains, 1500 warmup iterations, 2000 post-warmup draws per chain, adapt_delta =0.98, and maximum tree depth 13. Bishops uses 4 chains, 1000 warmup iterations, 2000 post-warmup draws per chain, adapt_delta =0.96, and maximum tree depth 11. 
+
+FullRank-VI. FullRank-VI uses Stan full-rank ADVI on the same relaxed posterior target as Relaxed-MCMC . Synthetic runs use 500 posterior draws and 8000–12000 optimization iterations depending on n.Cloud uses 2000 posterior draws and 30000 optimization iterations. Bishops uses 2000 posterior draws and 60000 optimization iterations. On Bishops, we run seeds {7, 11 , 19 }.
+
+Flow-VI. Flow-VI parameterises the variational posterior with a neural spline flow on the unconstrained coordinates and shares one optimiser configuration across all benchmarks: 4 NSF coupling layers, learning rate 0.002 with a 25 -step warm-up decaying linearly to 0.2× over 1500 steps, Adam ( β1 = 0 .9, β2 = 0 .999 ,gradient-norm clip 10 ), 4 antithetic Monte Carlo samples per ELBO gradient, 16 samples for ELBO evaluation, early-stopping patience 200 , and 200 retained posterior draws. Synthetic runs use d = 4 , τ ∈ { 0.1, 0.3, 0.5}, 16 
+
+spline bins and hidden dimension 64 . The cloud benchmark uses d = 4 , τ = 0 .5 with a narrower conditioner (8 bins, hidden dimension 32 ). Bishops uses d = 3 , τ = 0 .10 , 8 bins and hidden dimension 32 , with the noise scale β held fixed rather than inferred. Exact settings are stored in each case’s flow_config.json .
+
+Baselines. For Bishops, we fit PLMIX baselines with G ∈ { 1, 2, 3} mixture components using 15000 Gibbs iterations, 3000 burn-in iterations, and 2000 retained posterior draws for list-level WAIC. For the SoftDAG-Frontier diagnostic baseline, we use three Adam restarts, 400 optimization steps, learning rate 
+
+43 N1                                             
+
+> N2 N3
+> N4 N5
+> N6
+> N7
+> Hard partial-order MCMC
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> Continuous MCMC
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> Full-rank VI
+> N1
+> N2 N3
+> N4 N5
+> N6
+> N7
+> Flow VI
+> Posterior edge probability Node label action (row-wise, left to right)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> N1: Add Backend Servers |N2: Authorize Security Group |N3: Create Load Balancer
+> N4: Create Security Group |N5: Create VSwitch |N6: Create Vpc |N7: Run Instances
+
+Figure 17: Qualitative Cloud Agent Trace example: posterior Hasse-diagram summaries for one representative scenario dual-zone-ecs-slb. Edge color indicates posterior edge probability, and node labels correspond to cloud actions listed below the figure. The methods recover closely related skill-dependency structures, but differ in posterior confidence. 
+
+0.05 , K = min (8 , n − 1) for soft reachability, and validation-based selection over λ1 ∈ { 10 −4, 10 −3, 10 −2} and 
+
+λh ∈ { 1, 10 , 100 }.
+
+F.4 Decoding and posterior-predictive evaluation 
+
+Posterior decoding. All structural metrics are computed from posterior pairwise closure probabilities. For method a, let ̂ P (a)
+
+ij be the posterior mean probability that i ≻ j. We decode a closure by thresholding ̂
+
+P (a) at τdecode = 0 .5, setting diagonal entries to zero, removing any threshold-induced cycles, and taking the transitive closure. We use τdecode = 1 /3 for n=100. 
+
+Posterior-predictive metrics. Trace NLL, Step NLL, and WAIC are computed from each method’s retained posterior or variational draws. For Hard-MCMC , the per-draw predictive distribution is the hard frontier-softmax evaluated on the retained binary closure draw. For Relaxed-MCMC , FullRank-VI ,and Flow-VI , it is the relaxed frontier-softmax evaluated on each retained soft-precedence draw. Thus the reported predictive metrics are posterior-predictive quantities, not plug-in evaluations at posterior mean parameters. For held-out traces Dtest ,
+
+Trace -NLL = − 1
+
+|D test |
+
+∑
+
+y∈D test 
+
+log 
+
+[
+
+1
+
+S
+
+S∑
+
+s=1 
+
+p(y | Θ(s))
+
+]
+
+.
+
+For next-action prediction, 
+
+Step -NLL = − 1
+
+∑
+
+y∈D test Ty
+
+∑
+
+y∈D test 
+
+Ty
+
+∑
+
+t=1 
+
+log 
+
+[
+
+1
+
+S
+
+S∑
+
+s=1 
+
+p(yt | y<t , Θ(s))
+
+]
+
+.
+
+Because log Es[p]̸ = Es[ log p], Trace NLL is not generally equal to mean trace length times Step NLL. For WAIC, let 
+
+ℓis = log p(y(i) | Θ(s))
+
+be the pointwise training log-likelihood. We compute 
+
+lppd = ∑
+
+i
+
+log 
+
+[
+
+1
+
+S
+
+S∑
+
+s=1 
+
+exp( ℓis )
+
+]
+
+, pWAIC = ∑
+
+i
+
+Var s(ℓis ),
+
+44 250000 300000 350000 400000 450000 500000                     
+
+> MCMC step
+> −32
+> −30
+> −28
+> −26
+> log  p(θ ∣ D)
+> Hard partial-order MCMC (last 50%)
+> runtime ≈ 980s · 500000 steps
+> 0250 500 750 1000 1250 1500 1750 2000
+> HMC step
+> −60
+> −55
+> −50
+> −45
+> −40
+> log  p(θ ∣ D)
+> Continuous MCMC
+> runtime ≈ 58s · chains = 4 · 2000 steps
+> chain q10–q90
+> chain mean
+> 16000 18000 20000 22000 24000 26000 28000 30000
+> VI step
+> −45.6
+> −45.5
+> −45.4
+> −45.3
+> −45.2
+> −45.1
+> ELBO
+> Full-rank VI (last 50%)
+> runtime ≈ 38s · 300 VI steps
+> 0100 200 300 400 500
+> Optimisation step
+> −140
+> −120
+> −100
+> −80
+> −60
+> ELBO (variational lower bound)
+> ELBO is a lower bound and is not directly comparable to the log-posterior panels.
+> Flow VI
+> runtime ≈ 62s · 200 post. draws
+> eval ELBO (16 MC samples)
+> train ELBO (4 MC samples)
+
+Cloud benchmark convergence diagnostics: simple_ecs, seed 7 Figure 18: Representative convergence and optimization traces for the cloud agent scenario 
+
+simple_ecs_seed7 . The panels show the recorded objective or log-posterior trajectory for Hard-MCMC , Relaxed-MCMC , FullRank-VI , and Flow-VI . Hard-MCMC exhibits long-run stochastic exploration with occasional deeper excursions, Relaxed-MCMC stabilizes around a lower objective level with persistent Monte Carlo variability, FullRank-VI shows a relatively stable variational objective near convergence, and Flow-VI displays rapid early improvement followed by a slower plateau. These traces help explain the differing runtime and accuracy profiles observed in the main cloud agent experiment. 
+
+and 
+
+WAIC = −2(lppd − pWAIC ).
+
+Large pWAIC indicates high per-draw log-likelihood variability and is interpreted as a warning that the posterior approximation is unstable for WAIC. 
+
+Posterior fidelity. On synthetic and Bishops settings where Hard-MCMC is available as a reference, posterior fidelity is measured by 
+
+MAE hard (a) = 1
+
+n(n − 1) 
+
+∑
+
+i̸=j
+
+∣∣∣̂ P (a)
+
+ij −̂ P (hard) 
+
+ij 
+
+∣∣∣ .
+
+For Hard-MCMC , this value is zero by definition. 
+
+F.5 Compute budget 
+
+Experiments were run on a CPU workstation; Flow-VI used a single GPU for normalizing-flow optimization. Exact hardware varied across runs, but all reported runtimes are wall-clock times measured on the executing machine. The dominant cost is still Hard-MCMC on larger synthetic instances; for example, n = 50 , ρ = 0 .9
+
+requires roughly 30 hours for one seed. The continuous methods are substantially cheaper in wall-clock time on most settings. Representative costs are: 
+
+45 Figure 19: Scenario-wise posterior densities of the scalar parameters ρ, β, and γ on the six Cloud-IaC-6 tasks. Each row corresponds to a pair of benchmark scenarios, and each triplet of panels shows posterior densities for one scenario under the compared inference methods. The figure highlights substantial between-method differences in posterior concentration, even in cases where the recovered closure structure is similar. 
+
+Setting Hard-MCMC Relaxed-MCMC Flow-VI 
+
+Synthetic n = 10 , ρ = 0 .5 ∼ 10 min ∼ 6 s ∼ 22 sSynthetic n = 30 , ρ = 0 .9 ∼ 3 h ∼ 33 min ∼ 46 sSynthetic n = 50 , ρ = 0 .9 ∼ 30 h one completed seed ∼ 46 sBishops, per seed ∼ 70 min ∼ 27 min ∼ 9 min Cloud, mean over cases ∼ 24 min ∼ 5 min ∼ 1.7 min The reported experiments, ablations, and diagnostic baselines used approximately ≤ 10 CPU-days, plus GPU time for the normalizing-flow VI runs. 
+
+F.6 Known caveats 
+
+Stan version sensitivity. Stan NUTS and full-rank ADVI were run through CmdStan 2.34. Minor CmdStan version changes can alter exact seed behavior and ELBO trajectories, although the reported closure F1 and posterior-fidelity metrics were stable in spot checks. 
+
+Flow-VI posterior variability. Flow-VI uses fewer retained draws than the MCMC methods and can produce more diffuse posterior samples. 
+
+46 Assets and licenses. All datasets and software assets are cited in the paper. The Bishops / Royal Acta data are drawn from the published academic database associated with The Charters of William II and Henry I . The Cloud-IaC-6 benchmark, synthetic generators, code, and experiment configurations are released through the anonymized repository with the license stated there. Software dependencies follow their respective open-source licenses. 
+
+Human subjects. The paper does not involve crowdsourcing or prospective human-subject experiments. The empirical datasets are synthetic, historical witness lists, and cloud-agent execution traces. 
+
+47 Table 5: Full synthetic grid under the posterior-predictive evaluator. Trace NLL, Step NLL, and WAIC are computed from each method’s retained posterior or variational draws on fixed train/test splits. Lower is better for MAE, NLLs, WAIC, and runtime; higher is better for F1.
+
+Method n ρ Seeds MAE ↓ F1@0 .5 ↑ F1@1 /3 ↑ Trace NLL ↓ Step NLL ↓ WAIC ↓ Time (s) ↓
+
+Hard-MCMC 5 0.5 3 0.000 1.000 1.000 3.338 0.668 35.96 87.58 
+
+Relaxed-MCMC 5 0.5 3 0.082 0.889 0.917 3.903 0.772 41.92 0.60 
+
+FullRank-VI 5 0.5 3 0.094 0.889 0.886 3.952 0.783 45.67 3.93 
+
+Flow-VI 5 0.5 3 0.089 0.889 0.827 3.939 0.768 – 17.21 
+
+Hard-MCMC 5 0.9 3 0.000 1.000 1.000 2.003 0.400 21.33 89.73 
+
+Relaxed-MCMC 5 0.9 3 0.055 1.000 0.952 2.738 0.547 25.90 0.71 
+
+FullRank-VI 5 0.9 3 0.060 0.974 0.952 2.749 0.548 28.91 3.61 
+
+Flow-VI 5 0.9 3 0.065 0.883 0.923 2.513 0.507 – 18.79 
+
+Hard-MCMC 10 0.5 3 0.000 1.000 1.000 9.000 0.897 183.70 587.10 
+
+Relaxed-MCMC 10 0.5 3 0.078 0.944 0.923 10.164 1.015 211.92 6.31 
+
+FullRank-VI 10 0.5 3 0.096 0.927 0.848 10.441 1.040 222.89 21.32 
+
+Flow-VI 10 0.5 3 0.128 0.844 0.763 10.222 1.029 – 21.79 
+
+Hard-MCMC 10 0.9 3 0.000 1.000 1.000 5.464 0.552 112.65 546.65 
+
+Relaxed-MCMC 10 0.9 3 0.106 0.856 0.936 6.265 0.623 133.69 13.43 
+
+FullRank-VI 10 0.9 3 0.049 0.974 0.965 6.242 0.622 142.86 27.42 
+
+Flow-VI 10 0.9 3 0.058 0.974 0.956 6.119 0.595 – 27.82 
+
+Hard-MCMC 20 0.5 3 0.000 0.993 1.000 29.337 1.465 1170.41 3209.21 
+
+Relaxed-MCMC 20 0.5 3 0.036 0.988 0.951 30.052 1.502 1228.63 215.20 
+
+FullRank-VI 20 0.5 3 0.062 0.899 0.892 31.420 1.568 1332.57 104.39 
+
+Flow-VI 20 0.5 3 0.142 0.765 0.727 39.460 1.887 – 46.65 
+
+Hard-MCMC 20 0.9 3 0.000 1.000 1.000 19.632 0.982 784.06 3461.29 
+
+Relaxed-MCMC 20 0.9 3 0.033 0.984 0.963 20.328 1.018 840.82 211.48 
+
+FullRank-VI 20 0.9 3 0.051 0.959 0.928 21.115 1.056 896.88 122.40 
+
+Flow-VI 20 0.9 3 0.042 0.974 0.958 21.633 1.052 – 41.49 
+
+Hard-MCMC 30 0.5 2 0.000 0.976 0.987 47.045 1.567 2825.70 10792.52 
+
+Relaxed-MCMC 30 0.5 2 0.027 0.983 0.983 47.661 1.588 2897.07 2422.53 
+
+FullRank-VI 30 0.5 2 0.070 0.895 0.888 51.038 1.698 3302.83 488.10 
+
+Flow-VI 30 0.5 2 0.050 0.912 0.903 48.903 1.631 – 45.88 
+
+Hard-MCMC 30 0.9 3 0.000 0.998 0.999 32.838 1.095 1984.08 11383.83 
+
+Relaxed-MCMC 30 0.9 3 0.023 0.990 0.975 33.405 1.113 2045.19 1980.36 
+
+FullRank-VI 30 0.9 3 0.042 0.958 0.945 35.726 1.192 2266.04 477.45 
+
+Flow-VI 30 0.9 3 0.017 0.991 0.985 33.218 1.107 – 46.04 
+
+Hard-MCMC 50 0.5 3 0.000 0.917 0.932 96.793 1.936 9683.92 53353.65 
+
+Relaxed-MCMC 50 0.5 2 0.174 0.492 0.489 88.778 1.776 8909.54 30937.44 
+
+FullRank-VI 50 0.5 3 0.056 0.934 0.923 98.634 1.971 10335.71 7251.24 
+
+Flow-VI 50 0.5 3 0.057 0.906 0.898 99.151 1.970 – 45.92 
+
+Hard-MCMC 50 0.9 2 0.000 0.995 0.997 69.440 1.389 6951.46 108577.87 
+
+Relaxed-MCMC 50 0.9 1 0.019 0.995 0.984 68.270 1.366 6809.87 66433.96 
+
+FullRank-VI 50 0.9 3 0.022 0.986 0.976 67.850 1.358 7005.71 5265.21 
+
+Flow-VI 50 0.9 3 0.022 0.983 0.981 67.789 1.345 – 45.86                      
+
+> Note. The evaluator is described in Appendix E. Hard-MCMC evaluates the hard frontier-softmax step model on retained binary closure draws after burn-in; Relaxed-MCMC ,FullRank-VI , and Flow-VI evaluate the relaxed frontier-softmax step model on per-draw soft precedence matrices. Trace NLL uses the posterior-predictive held-out trace likelihood; Step NLL averages per-draw next-step probabilities before taking −log and pooling over held-out trace steps. WAIC uses
+> −2( lppd −pWAIC )on the training split. Closure MAE is the off-diagonal mean absolute deviation of each method’s posterior mean closure from the Hard-MCMC posterior mean closure, so it is zero by definition for Hard-MCMC . WAIC is omitted for Flow-VI because its large pWAIC indicates high per-draw log-likelihood variance.
+
+48 Table 6: Inference settings for the Bishops experiment. The relaxed methods use d = 3 , τ = 0 .10 ,
+
+ρ ∼ Beta (2 , 2) , and γ ∼ Gamma (2 , 1) . All partial-order methods fix β = 0 , so frontier selection is uniform. 
+
+Method Settings 
+
+Hard-MCMC 10 6 iterations; 50% burn-in; 5000 posterior draws after thinning; latent-dimension prior K ∼ Poisson (n/ 2) truncated to [1 , 30] ; reversible-jump moves on K every 500 steps; likelihood variant FRONTIER_SOFTMAX_UNI_UTILITY .
+
+Relaxed-MCMC 
+
+(Stan NUTS) Assume d = 3 ; 4 chains; 2000 post-warmup draws per chain (8000 total); 1000 warmup iterations; δadapt = 0 .96 ; maximum tree depth = 11 .
+
+FullRank-VI Assume d = 3 ; iter =60,000; tol_rel_obj = 5 × 10 −4; 2000 output samples; three random seeds {7, 11 , 19 }; reported result corresponds to the seed with the lowest WAIC (seed 19). 
+
+Flow-VI d = 3 ; neural spline flow (NSF) posterior on unconstrained coordinates; 4 flow layers; 8 bins; hidden size 32; Adam optimizer with learning rate 0.002 ; 1500 optimization steps; 4 Monte Carlo samples per gradient step and 16 samples for ELBO evaluation; 2000 posterior draws used for summaries 
+
+Table 7: Plackett–Luce mixture baselines on the Bishops witness-list corpus. WAIC is computed at the witness-list level using the listwise Luce chain likelihood, matching the pointwise resolution of the LLPO likelihood. Lower WAIC is better. 
+
+Model WAIC elpd pWAIC Time (s) PLMIX, G = 1 1588.55 −794 .28 27.61 6.16 PLMIX, G = 2 1820.51 −910 .26 121.88 8.24 PLMIX, G = 3 1733.55 −866 .77 89.94 11.82 
+
+Table 8: Per-case next-step Step NLL and closure MAE for the 12 Cloud agent-trace cases. Step NLL is posterior-predictive over retained draws; MAE is the off-diagonal mean absolute deviation from the binary true_closure .                                                                                                                                 
+
+> Scenario Seed Hard-MCMC Relaxed-MCMC FullRank-VI Flow-VI
+> Step NLL MAE Step NLL MAE Step NLL MAE Step NLL MAE
+> dual_zone_ecs_slb 70.292 0.000 0.302 0.006 0.309 0.010 0.252 0.069
+> dual_zone_ecs_slb 11 0.264 0.000 0.280 0.022 0.287 0.026 0.307 0.070
+> dual_zone_ecs_slb_rds 73.569 0.002 1.123 0.010 1.115 0.014 0.905 0.128
+> dual_zone_ecs_slb_rds 11 0.557 0.072 0.549 0.051 0.643 0.078 0.895 0.125
+> eip_slb_ecs 70.568 0.001 0.571 0.025 0.578 0.030 0.724 0.144
+> eip_slb_ecs 11 0.574 0.002 0.598 0.026 0.603 0.030 0.641 0.098
+> simple_ecs 70.173 0.000 0.189 0.005 0.195 0.009 0.302 0.048
+> simple_ecs 11 0.173 0.000 0.173 0.020 0.182 0.028 0.223 0.051
+> slb_ecs_rds 70.666 0.003 0.677 0.018 0.688 0.033 0.625 0.063
+> slb_ecs_rds 11 0.504 0.003 0.509 0.013 0.611 0.132 0.678 0.155
+> slb_ecs_redis 70.531 0.029 0.434 0.035 0.445 0.046 0.469 0.129
+> slb_ecs_redis 11 0.541 0.029 0.486 0.024 0.498 0.027 0.508 0.067
+> MEAN –0.701 0.012 0.491 0.021 0.513 0.039 0.544 0.096
+
+49 G Broader impacts. 
+
+This work may improve workflow auditing and uncertainty-aware modeling of dependency structure. Risks arise if inferred partial orders are treated as definitive causal or social hierarchies. We therefore emphasize posterior uncertainty, domain validation, and use as decision support rather than deterministic evidence. 
+
+50

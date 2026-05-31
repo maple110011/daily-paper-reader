@@ -1,0 +1,1863 @@
+Title: Scalable Gaussian process inference via neural feature maps
+
+URL Source: https://arxiv.org/pdf/2605.10285v1
+
+Published Time: Tue, 12 May 2026 02:28:44 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Scalable Gaussian process inference via neural feature maps 
+
+Anthony Stephenson 
+
+School of Mathematics University of Bristol 
+
+ant.stephenson@bristol.ac.uk 
+
+## Abstract 
+
+We present a theoretically grounded Gaussian process framework that leverages neural feature maps to construct expressive kernels. We show that the learned feature map can be interpreted as an optimal low-rank approximation to a Gram matrix derived from an implied RKHS, from which we establish consistency of the GP posterior. We further analyse the spectral properties of the induced kernels and introduce product feature-map kernels to address oversmoothing. This sim-ple yet powerful approach enables fast, scalable, and accurate exact GP inference with minimal upfront work. The flexibility of kernel design supports seamless ap-plication to both regression and classification tasks across diverse data modalities, including tabular inputs and structured domains such as images. On benchmark datasets, this approach surpasses pre-existing methods in terms of accuracy and training and prediction efficiency. 
+
+## 1 Introduction 
+
+Gaussian process regression (GPR) is a popular nonparametric Bayesian method, able to model flex-ible, non-linear models with a high degree of accuracy, whilst retaining well-calibrated uncertainty quantification alongside. These properties make the approach appealing to practitioners working on problems where an understanding of the reliability of predictions is critical, for example when mak-ing decisions that take into account the risk of different actions. In a similar vein, GPs are the most popular form of surrogate model used in Bayesian optimisation, where a GP is used to approximate an expensive-to-evaluate non-linear map between a parameter space and output space. The predominant downside of such models is their scalability; a na¨ ıve implementation of GPR results in inference that runs in a time frame that increases cubicly with the number of training points. For modern large datasets this quickly becomes infeasible, even on similarly modern hardware. Extensive effort has been made in the community to address this issue, resulting in a myriad of solutions, with various pros and cons in different scenarios. Another criticism sometimes levelled at GPR models is the challenge inherent in pre-specifying crucial modelling details, in particular the choice of kernel function. This choice encodes important assumptions about the underlying data generating function, such as its smoothness; for example, samples drawn from a process with the commonly chosen RBF or squared-exponential kernel are analytic functions, whilst the Mat´ ern controls this property through a parameter usually denoted ν.On the other hand, neural networks have proven to be hugely successful on non-tabular data, but generally fall short on tabular data, and present challenges of their own with respect to reliable uncertainty quantification (although substantial effort has also been spent on this problem - see Gawlikowski et al. (2023) for a recent survey of this area). 
+
+> Preprint.
+> arXiv:2605.10285v1 [stat.ML] 11 May 2026
+
+Our method solves these problems simultaneously, in a surprisingly simple manner, by learning a feature map ϕ : Rd → Rp whose inner product constructs a positive semi-definite kernel k : Rd×Rd.
+
+1.1 Related work 
+
+This work is not the first effort to incorporate some of the benefits of modern machine learning, namely neural networks and deep learning, into this problem. The sub-field of Deep Kernel Learning (DKL) (Wilson et al. (2016)) adopts a similar, yet distinct, methodology. DKL tends to use neural networks to learn feature maps, but feeds the resultant trans-formed variables through a more standard kernel. More precisely, suppose we have input vectors 
+
+x, x′ ∈ Rd, in DKL, a feature map ψ(·) is learned and the kernel computed as, for some standard choice of kernel function k, k(ψ(x), ψ (x′)) . Finally, kernel ridge regression (KRR) or GPR is per-formed. This trades off scalability in favour of combining the flexibility of the neural architecture with implicit infinite dimensional end-feature representations from the kernel. Another related avenue of work consists of Deep GPs, where GPs are nested as layers (akin to Deep Neural Network architectures). This approach was introduced in Damianou and Lawrence (2013) and has since been extended, for example to Deep Convolutional GPs in Blomqvist et al. (2018). Whilst an interesting approach, with specific use-cases (for example in cases with missing or uncertain inputs), we are unaware of areas where this approach has become the de-facto choice. The base computational framework of this work was explored in Huang et al. (2015), where the authors use DNNs as feature maps as we do and employ similar computational tricks (for example, the Woodbury identity). They focus their efforts on images and use unsupervised pre-training with Stacked Denoising Auto-Encoders (SDAEs), rather than training MLPs end-to-end. In contrast, we develop the following novel theoretical contributions: (a) we frame MLP feature map learning as optimal low-rank Gram matrix estimation from which we demonstrate statistical consistency; (b) we introduce product feature-map kernels to address oversmoothing and (c) we extend the approach to classification tasks using Dirichlet-based GPC and modern architectures including CNNs. Furthermore, we demonstrate strong performance on UCI tabular benchmarks, a setting where neu-ral networks have historically underperformed relative to other methods (Grinsztajn et al., 2022). 
+
+1.2 Contributions 
+
+• We extend the scalable GP framework introduced in Allison et al. (2023) by implementing exact Gaussian process inference with neural feature maps (FM-GP), achieving state-of-the-art performance on both regression and classification tasks. • Our method matches GPnn in training efficiency and predictive accuracy (MSE) on tab-ular data, while outperforming SVGP. At test time, FM-GP delivers superior predictive performance and faster inference than both GPnn and SVGP. • We provide a theoretical analysis of the FM-GP method, showing that it can be interpreted as learning an optimal low-rank approximation to a kernel Gram matrix derived from an 
+
+implied RKHS within which we can safely assume the data-generating process lives. In turn, this allows us to show that the GP posterior will contract around the true function, f0.
+
+## 2 Background 
+
+The basis for GPR is to assume a model y(x) = f (x) + ξ with a Gaussian process prior assumed on the latent function f , i.e. f (x) ∼ GP (m(x), k (x, ·)) with mean function m (usually taken to be 0) and kernel function k(·, ·). In the simple default case, ξ i.i.d 
+
+∼ N (0 , σ 2 
+
+> ξ
+
+) which allows for exact inference and closed form posterior prediction equations (see, e.g. Williams and Rasmussen (2006)): 
+
+μ∗ = K∗nK−1
+
+> ξ,nn
+
+y (1) 
+
+Σ∗ = K∗∗ − K∗nK−1
+
+> ξ,nn
+
+Kn∗ (2) where μ∗ denotes the mean predictions for n∗ test points and Σ∗ their covariance. K∗n is the matrix constructed by evaluating the kernel k over the n∗ test points and n training points; Kξ,nn := 
+
+Knn + σ2 
+
+> ξ
+
+I with Knn the Gram matrix over the training inputs. y is the vector of regression targets. 2This formulation of exact GPR scales cubicly with the number of training points, motivating the need for approximate methods. For this work, we limit our consideration to a relevant subset of these. Perhaps the most widely accepted state-of-the-art (SoTA) approximation is the (stochastic) variational GP (SVGP), originally introduced in the seminal work Titsias (2009) it was extended to exploit modern GPU hardware and stochastic gradient descent (SGD) in Hensman et al. (2013). These methods are scalable due to their low-rank approximations to the kernel Gram matrix. Locality-based methods offer scalable alternatives; notably, Allison et al. (2023) demonstrates a nearest-neighbour approximation that outperforms similar competitors on UCI benchmarks, which we use as a benchmark here. That work also introduced an efficient computational framework that decouples hyperparameter estimation from prediction, in turn making use of a scalable method of estimating kernel hyperparameters based on a factorisation of the dataset introduced alongside the Bayesian Committee Machine (BCM) (Tresp, 2000). The decoupling methodology is further explored in [removed for anonymous submission] and the efficacy of this approach as applied to, e.g., sparse and variational GPs is analysed therein. Here, we build on the apparent (near) equivalence in performance for variational GPR (see table 3.1 of that work) to justify taking the same approach when running SVGP as a benchmark and when running FM-GP. Included within this framework is a simple procedure for “recalibrating” predictions to ensure individual residuals match the predictive variance of the model. We reproduce Algorithm 2 (with very minor modifications) from Allison et al. (2023) for clarity (section 8.1), but leave discussion on the approach to that work. This recalibration procedure, whilst inexpensive for the GPnn model for which it was introduced, is substantially cheaper when used with either SVGP or FM-GP due to precomputed kernel inverses. Another branch of scalable methods involve structured-kernel approximations such as KISS-GP (Wilson and Nickisch, 2015; Gilboa et al., 2012; Izmailov et al., 2018) and more recent work that extends the concept to multi-output GPs and datasets with distinct input sub-spaces (such as spa-tial and temporal) that allow for exact GP regression even with the assumed Kronecker structure (Lin et al., 2025). Whilst a substantive contribution to the area, these methods do not represent improvements over the likes of SVGP in general single-output inference problems. To run generic Gaussian process inference on classification tasks we adopt a Dirichlet-based ap-proach introduced in this context in Milios et al. (2018). For the interested reader, we provide background on GPC and reproduce relevant details of this particular strategy in section 8.3. 
+
+## 3 Method 
+
+The usual Gaussian process regression model, as outlined in section 1, utilises the kernel trick to modify Bayesian linear regression with non-linear feature maps ϕ : Rd → Rp to a kernelised version that replaces inner products ϕ(x)⊤ϕ(x′) with kernel evaluations k(x, x′). The benefit of this approach is that we can let p → ∞ to allow for highly flexible feature maps, whilst computing the Gram matrix K, and its inverse, remain tractable. The downside, however, is that for large n, the inversion of an n × n matrix typically scales as O(n3) which is soon infeasible. Here, we reverse this procedure to return to the base Bayesian linear regression formulation. Our motivation is borne out of the observation that standard (exact) GPR scales cubicly in the number of training points due to the requirement that we invert the Gram matrix K. Usually, it is assumed that the feature maps used (implicitly) to construct the matrix can be infinite dimensional and so the kernel trick cleverly sidesteps the issue of ever attempting to evaluate such an object. In this work, we instead choose p ≪ n so that we can easily evaluate it. The benefit of this is that we can learn an expressive non-linear feature map that embeds the input data into a (possibly) higher, but finite, dimensional space that is much lower dimensionality than the observations. The usual learning (and prediction) procedure is then exceptionally cheap as now we need only invert a p×p matrix, meaning the headline cost of the method scales as O(n). Additionally, although na¨ ıve implementation would incur O(np ) memory costs, this can be reduced to O(p2), as discussed shortly. Whilst at first glance this may seem like an anathema for GP regression, sparse GP methods implic-itly make the same sacrifice by approximating the full Gram matrix by a low-rank representation. In the most flexible version of sparse GP regression, SVGP, inducing point locations are learned, potentially allowing the number of inducing points (and hence the rank) m to be smaller than in the 3more restrictive fixed Nystr¨ om-type approximation. However, a practitioner is still required to select a kernel and, while convergence rates (Burt et al., 2020; Nieman et al., 2022) show that optimal min-imax rates can be achieved via common choices (such as the Mat´ ern kernel) and through tuning of the lengthscale parameter, this does not guarantee effective performance on finite datasets. In con-trast, by allowing the kernel itself to be learned, we potentially allow the rank of the approximation, 
+
+p, to be pushed lower with minimal hindrance to predictive performance. As we will show below, the GPR prediction equations (1) can be straightforwardly adapted to: 
+
+μ∗ = ψ⊤U Λ−1 
+
+> γ
+
+U ⊤Ψ⊤y (3) 
+
+Σ∗ = σ2 
+
+> f
+
+ψψ ⊤ − σ2 
+
+> f
+
+ψU Λψ Λ−1 
+
+> γ
+
+U ⊤ψ⊤, (4) with μ∗ as before, ψ the n∗ × p (scaled) feature map matrix over the test points, Λγ := Λ ψ + γI the (diagonal) eigenvalue matrix for the (scaled) feature map product over the training points augmented by the scaled noise variance parameter, γ := σ2 
+
+> ξ
+
+/σ 2 
+
+> f
+
+. The covariance over the n∗ test points, Σ∗, can be represented via the same set of intermediate objects as the mean. To improve the computational efficiency of the approach, we can exploit some elementary linear algebra tricks, which we detail below. First, the eigenvalues of the kernel Gram matrix satisfy λi(K−1 
+
+> ξ
+
+) = λi(Kξ )−1 = λi(ΦΦ ⊤ +
+
+σ2 
+
+> ξ
+
+I)−1 = [ λi(Φ ⊤Φ)+ σ2 
+
+> ξ
+
+]−1; thence, the log-determinant (needed to compute the marginal loglike-lihood) can be written as log |Kξ | = Pni=1 log λi(Kξ ) = Ppi=1 log( λi(Φ ⊤Φ)+ σ2 
+
+> ξ
+
+)+( n−p) log σ2 
+
+> ξ
+
+.
+
+This formulation relies on an eigendecomposition of the product Φ⊤Φ which can be computed ef-ficiently in O(p3) calculations. Defining Φ⊤Φ = U ΛU ⊤, we can compute matrix-vector products involving the Gram matrix inverse efficiently using the Woodbury identity: 
+
+K−1 
+
+> ξ
+
+v = σ−2 
+
+> ξ
+
+(σ−2 
+
+> ξ
+
+ΦΦ ⊤ + I)−1v = σ−2 
+
+> ξ
+
+[I − ΦU (Λ + σ2 
+
+> ξ
+
+I)−1U ⊤Φ⊤]v.
+
+Now, defining the products K∗n = ϕΦ⊤ and K∗∗ = ϕϕ ⊤ we can write equations (3) and (4) using 
+
+K∗nK−1 
+
+> ξ
+
+y = σ−2 
+
+> ξ
+
+ϕΦ⊤[I − Φ( σ2 
+
+> ξ
+
+I + Φ ⊤Φ) −1Φ⊤]y = ϕU (Λ + σ2 
+
+> ξ
+
+I)−1U ⊤Φ⊤y,
+
+and 
+
+K∗nK−1 
+
+> ξ
+
+Kn∗ = 1
+
+σ2
+
+> ξ
+
+ϕΦ⊤[I − Φ( σ2 
+
+> ξ
+
+I + Φ ⊤Φ) −1Φ⊤]Φ ϕ⊤ = ϕU Λ(Λ + σ2 
+
+> ξ
+
+I)−1U ⊤ϕ⊤.
+
+We also define a scaled form of the kernel function j : X × X → R such that the kernel satisfies 
+
+k(x, x′) := σ2 
+
+> f
+
+j(x, x′) + σ2 
+
+> ξ
+
+δ(x, x′). Such a decomposition still holds for non-stationary kernels although we cannot assume in that case that j(x, x) = 1 . We correspondingly define a scaled feature map, ψ(·) = 1 
+
+> σf
+
+ϕ(·). By defining a scaled form of the noise variance parameter, γ, we can factor the kernel scale factor σf out of several calculations, which can simplify implementation (especially in the classification formulation). Note that we can enforce a weak form of stationarity on the kernel by rescaling the feature map as ψ(x) → ψ(x)/pψ⊤ψ so that for each x ∈ X ,
+
+j(x, x) = 1 . With these adjustments, the mean prediction at a single test point becomes μ(x∗) = 
+
+ψ(x∗)⊤U Λ−1 
+
+> γ
+
+U ⊤Ψ⊤y.
+
+During the training phase of GPR, we need to compute the Gram matrix inverse K−1 
+
+> ξ,n,n
+
+as part of the evaluation of the marginal loglikelihood at every step. Whilst the tricks described above make this more feasible than for exact GPR, it can be improved further by adopting the philosophy of decoupling training from prediction (as described in Allison et al. (2023)) and estimating parameters on a subset of the training data. The neural kernel we make use of here is far more complex than the standard kernels described in that work, and as such we require larger and more contiguous subsets to compute effective parameters and avoid overfitting. To scale the approach still further, let Φ = (Φ b1 |Φb2 | . . . |ΦbB )⊤ be the batched construction of 
+
+Φ where ·|· is the concatenation operator; i.e. we divide the full n × p matrix into B, nB × p
+
+size matrices. When n is very large, such that we run into memory difficulties, we can compute 
+
+Φ⊤Φ = PBbi Φ⊤ 
+
+> bi
+
+Φbi . Such difficulties can arise for very large n or during computations with high-dimensional input data, such as images with C channels and dimensions H × W , especially when performing classification over many classes. Finally, we make use of lazy evaluation, con-structing abstracted intermediate objects and only evaluating as necessary. We make use of the 
+
+linear operator 1 Python package to facilitate this. 
+
+> 1github.com/cornellius-gp/linear_operator
+
+4Multiplicative feature-map kernels can also be used, albeit with some extra computational expense. Suppose we construct Gram matrices K1 = Φ 1Φ⊤ 
+
+> 1
+
+and K2 = Φ 2Φ⊤ 
+
+> 2
+
+, with p1 and p2 the respective feature output dimensions. Defining K = K1 ◦ K2, where ◦ denotes the Hadamard product, a new feature map matrix Ξ ∈ Rn×p1p2 can be assembled, such that K = ΞΞ ⊤ by choosing the 
+
+[i + ( j − 1) p1]th column of Ξ as ϕ1,i ◦ ϕ2,j , i.e. the elementwise product of the ith and jth 
+
+column vectors of Φ1 and Φ2. Whilst clearly more computationally demanding than the base case, if n ≫ p1p2 this may still be highly scalable when compared to other methods. 
+
+## 4 Supporting Theory 
+
+To further motivate our approach we provide some theoretical results that help explain why this approach is reasonable in practice. Specifically, we show that the (MLP) formulation constructs a consistent estimator of the optimal rank-p approximation to the (“true”) Gram matrix, along with convergence rates under standard assumptions. We go on to show that, whilst the function space represented by the direct MLP p-GP is often unduly smooth, this can potentially be remedied in a simple way. For each result we provide either a brief intuitive argument (relegating the full proof to the appendix) or a short proof. Where illuminating, we provide numerical examples to demonstrate the theoretical points described. 
+
+Notation We write ∥f − g∥22 to mean R 
+
+> X
+
+(f (x) − g(x)) 2PX (dx) when, from context, it is clear that f, g are functions of the input space X and hence the norm is w.r.t. the measure over X . In a similar vein, we suppress the subscript on the RKHS H in general, with the understanding that the kernel is implied through assumptions on the relevant functions. We denote the GP prior with this kernel by P (with posterior Pn) and the approximate posterior under the FM-GP model by Qn.Where relevant, we use the shorthand a ≲ b to mean a ≤ Cb holds for some constant C in the asymptotic sense where a = O(b).Note that in prior work on the theoretical analysis of GPs and SVGP, a H¨ older assumption is made on the true regression function. We follow this convention, including an additional lemma that allows us to additionally define an implied “true” kernel: 
+
+Lemma 4.1 (Implied RKHS) . Take f ∈ Cα(X ) ∩ W α, 2(X ) with α > 0 and let 0 < β ≤ α.Let Hkβ (X ) be the RKHS with kernel kβ norm-equivalent to the Sobolev space W β, 2(X ). Then 
+
+f0 ∈ H kβ and moreover, kβ is bounded. Proof. Clearly, Cα(X ) ∩ W α, 2(X ) ⊂ W α, 2(X ) and by the properties of Sobolev spaces, 
+
+W α, 2(X ) ⊆ W β, 2(X ). Hence, by norm-equivalence, the result follows. Our motivation for this detail is that, by the reproducing property of RKHSs, the true regression function f can be defined in terms of the implied kernel, kβ , allowing us to measure the quality of our approximation via this kernel. Note that kβ is not the kernel one should choose for a GP prior to perform inference with, as sample paths from a GP with kernel kβ are rougher than samples from the RKHS by a factor of d/ 2. An ideal GP prior would utilise a kernel with regularity γ = β + d/ 2.
+
+Assumption 4.2. We assume the data-generating process exhibits the following properties: (a) X ⊂ Rd is compact; (b) yi = f (xi) + ξi with ξi
+
+> iid
+
+∼ Pξ ;(c) E[ξ] = 0 , E[ξ2] = σ2 
+
+> ξ
+
+;(d) f ∈ Cα(X ) ∩ W α, 2(X ) ⊂ H kβ for d/ 2 < β ≤ α.In words: the observations are evaluations of a function from the intersection of α-H¨ older and Sobolev spaces, with additive mean-zero noise with finite second moment. This assumption is stan-dard in the literature, see, e.g., van der Vaart and van Zanten (2011). The additional RKHS inclusion statement follows straightforwardly from the definitions of the relevant function spaces (see theo-rem 4.1). Finally, we assume a minimum regularity d/ 2 to ensure the kernel kβ is trace-class. 5Under this noise distribution, we can equivalently define a density pf with mean f and variance σ2 
+
+> ξ
+
+.
+
+Assumption 4.3. We assume the implied kernel of the data generating process admits an eigenvalue decay such that μj ∼ Cj −η for some C, η > 0 where μj are the eigenvalues of the integral operator 
+
+Tk : L2(X , P x) → L2(X , P x) where Px is the input measure assumed to have bounded density for all x ∈ X .Justification for this assumption can be found by considering the uniform measure on [0 , 1] d for a Mat´ ern-s kernel, for which the eigenvalues can be shown to decay with exponent 2s+dd .
+
+Assumption 4.4. We assume that we can find an MLP with output function estimate ˆf that con-verges to the true function f0 in L2 error at rate εnn→∞ 
+
+−−−−→ 0. There has been substantial work in the community to derive convergence rates for neural networks under a range of conditions in terms of depth, activation function and assumptions on the structure of f0 (Kohler and Krzyzak, 2004; Bauer and Kohler, 2019; Schmidt-Hieber, 2020). We consider this reasonable justification for this minimal assumption. We also note that this assumption deliberately abstracts away the question of trainability, deferring to the extensive DNN approximation theory literature; bridging this gap to training guarantees remains an open problem shared across the field. 
+
+4.1 Optimal low-rank estimation 
+
+Having established the existence of a “true” kernel, kβ , and a corresponding RKHS Hkβ , we reduce our GP inference problem to learning this kernel. Below, we show that, at least in principle, we can learn an optimal low-rank representation of it via our model. First, recall Mercer’s theorem, which states that k(x, x′) = P∞ 
+
+> j=1
+
+μj ϕj (x)ϕj (x′), converges abso-lutely and uniformly on X × X , where μ1 ≥ μ2 ≥ · · · > 0 are the operator eigenvalues associated with the eigenfunctions, ϕj ∈ C(X ), of the integral operator Tkf = R 
+
+> X
+
+k(·, x)f (x)ν(dx) where ν
+
+is the marginal distribution over the input space, i.e. X = support( ν).We define the truncated Mercer feature map: 
+
+ψ : X → Rp, ψ(x) =  √μ1 ϕ1(x), . . . , √μp ϕp(x). (5) Let Kp be the best rank-p approximation to the true Gram matrix K in the Frobenius sense, i.e. 
+
+Kp := UpΛpU ⊤ 
+
+> p
+
+where K = U ΛU ⊤ is the eigendecomposition with eigenvalues in decreasing order ( λ1 ≥ · · · ≥ λn > 0) and Up, Λp the truncated forms of these matrices, where the top p
+
+eigenvalues are retained. Let Lp = UpΛ 12 
+
+> p
+
+∈ Rn×p so that Kp = LpL⊤ 
+
+> p
+
+.Now, denote the multi-output MLP, with L hidden layers, widths W (1) , . . . , W (L+1) , biases 
+
+b(1) , . . . , b (L+1) and activation function σ, as ϕθ : Rd → Rp, where 
+
+ϕθ (x) = W (L+1) σ(W (L)σ(. . . σ (W (1) x + b(1) ) . . . ) + b(L)) + b(L+1) 
+
+is parameterised by θ := {(W (l), b (l))(L+1)  
+
+> l=1
+
+}. Given ϕθ , define ˆL ∈ Rn×p via the row-construction 
+
+ˆLi· = ϕθ (xi)⊤.
+
+We can now state our existence result to motivate the (MLP) feature map construction, based on the standard Universal Approximation Theorem for MLPs (Cybenko, 1989; Leshno et al., 1993): 
+
+Proposition 4.5 (Existence) . For any ε > 0, there exists a multi-output MLP ϕθ : Rd → Rp such that the matrix ˆL ∈ Rn×p with rows ϕθ (xi)⊤ satisfies 
+
+ˆL ˆL⊤ − Kp F
+
+< ε. 
+
+In essence, this shows that, modulo choice of model hyperparameters and training effectiveness, one can (implicitly) learn the top p (eigenvalue-weighted) eigenfunctions of the kernel integral operator to arbitrary accuracy. 
+
+4.2 Consistency 
+
+By combining the low-rank estimation result in the preceding section with theorem 4.1, we can show that as n → ∞ the predictive distribution contracts around the true function, f0, in a suitable sense. 6The idea is that for f0 ∈ H k′ it is known that exact GP regression with (appropriate) kernel k will be consistent (and furthermore will converge at the optimal minimax rate), hence we are left to show that the predictive distribution of MLP-GP converges to that of the GP under k. Note that if k = k′
+
+consistency is still obtained (Seeger et al., 2008). To show such contraction, we bound the Wasserstein-2 ( W2) distance between the approximate and exact posteriors. Using this metric, rather than for example the KL-divergence, allows us to avoid possible technical difficulties showing absolute continuity of the approximate posterior w.r.t. the exact. Additionally, we can exploit its properties to control the predictive distribution, as shown in theorem 4.6, and explicitly demonstrate, via the triangle inequality, that this contraction is sufficient for contraction to the true function (6). 
+
+W2(Q∗, δ f0 ) ≤ W2(Q∗, P ∗) + W2(P ∗, δ f0 ) (6) where W 22 (Q∗, δ f0 ) = EQ∗
+
+n
+
+∥f − f0∥22
+
+o
+
+is the L2 risk under the approximate FM-GP model. 
+
+Lemma 4.6 (Predictive bound) . Take a metric space (Y, d y ), posterior distributions Qn, P n and posterior predictive distributions Q∗, P ∗ defined to satisfy P ∗ = R p(y∗ |f )Pn(df ) and equivalently for Q∗. Assume the following Lipschitz condition holds: W2(p(y∗ | f ), p (y∗ | g)) ≤ Ld f (f, g ) for 
+
+L > 0. Then, 
+
+W2(Q∗, P ∗) ≤ LW 2(Qn, P n). (7) This Lipschitz assumption is reasonable in practice; consider that for a GP, p(y∗ | f ) is the likeli-hood, given by the noise model pξ (which need not be Gaussian in general). Under the common noise assumption with y(x) = f (x) + ξ and y′(x) = g(x) + ξ and dy (y, y ′) = ∥y − y′∥2 =R |y(x) − y(x′)| μ(dx), we have 
+
+W2(p(y∗ | f ), p (y∗ | g)) = inf 
+
+> γ
+
+Z 
+
+|f (x) − g(x)|2 μ(dx)
+
+ 12
+
+.
+
+Lemma 4.7 (Posterior bound) . Under theorem 4.2,theorem 4.3 and additionally that η > 1, the pos-terior distribution of the FM-GP, Qn satisfies the following Wasserstein-2 bound w.r.t the posterior 
+
+Pn:
+
+W2(Qn, P n)2 ≲ ∥y∥22
+
+σ4
+
+> ξ
+
+(( p + 1) −η + ε) + p−(η−1) − n−(η−1) 
+
+η − 1 + p2pε. (8) The bound depends on the arbitrary ε’s used in the low-rank existence result. By invoking theo-rem 4.4 and the additional assumptions that p = pnn→∞ 
+
+−−−−→ ∞ and √pn = o(ε−1 
+
+> n
+
+), (8) will vanish asymptotically. This leads us to the consistency result below. 
+
+Theorem 4.8 (Consistency) . Under the same conditions as theorem 4.7 as n, p → ∞ ,
+
+Ex
+
+n
+
+∥f (x) − f0(x)∥22
+
+o
+
+→ 0.
+
+Proof sketch. By theorem 4.1 we have that f0 ∈ H k′ , hence the posterior predictive distribution obtained by assuming a GP prior with kernel k (of suitable regularity less than k′) will contract around f0 so that EPn
+
+n
+
+∥f − f0∥2o
+
+≤ ϵn with ϵnn→∞ 
+
+−−−−→ 0. Thus, via the triangle inequality (6), theorem 4.6 and theorem 4.7 we see that the posterior predictive distribution contracts in W2
+
+distance around the dirac Delta distribution at f0 and hence the L2 risk vanishes asymptotically. 
+
+4.3 Product kernels 
+
+As noted in section 3, product feature-map kernels can easily be constructed, retaining the structure that facilitates efficient scalable inference. To motivate the use of MLP p1 × MLP p2 kernels in practice, we consider their spectral behaviour. Rahaman et al. (2019) show that the Fourier transform of a single-output ReLU network has spectral decay O(|ω|−∆−1) with ∆ ≤ d. Due to the non-stationary structure of the feature map kernel, we cannot appeal to Bochner’s theorem to derive a one-dimensional spectrum; however, we can expect it to be harmonizable (Rao, 1985) and examine its spectral behaviour on the diagonal ( ω = ω′). 7Details of this are outside the scope of this work, but as an informal argument: F{ g(x, x′)} =
+
+P
+
+> j
+
+R eiω⊤x−iω′x′) ϕj (x)ϕj (x′)dxdx′ at this diagonal reduces to P 
+
+> j
+
+| ˜ϕj (ω)|2 for ˜ϕj = F{ ϕj }.Hence, we expect the overall spectral decay to behave like O(|ω|−2∆ −2).In practice, we expect ∆ < d to hold, meaning the model is not quite as over-smoothed as it might have been. Nonetheless, if we compare the spectral decay to that of the Mat´ ern class of kernels with smoothness parameter α, which decay like (1 + |ω|2)−α−d/ 2 (van der Vaart and van Zanten, 2011), clearly this is, in general, substantially slower. To alleviate this, we can look to kernel composition. Theorem 3 of Bapat and Sunder (1985) states the following majorization result for the Hadamard product of p.s.d matrices K1, K 2:
+
+> k
+
+X
+
+> i=1
+
+λi(K1 ◦ K2)↓ ≤
+
+> k
+
+X
+
+> i=1
+
+λi(K1)↓[K2]ii, ↓ for 1 ≤ k ≤ n − 1, (9) where, in general, the diagonal elements of K2 are arranged in decreasing order. We include ·↓ on the eigenvalues (even though this is how we always define the order) for complete transparency. By the definition of majorization, we have the following corollary: 
+
+Corollary 4.9. For p.s.d. stationary kernel Gram matrices K1, K 2:
+
+X
+
+> j>n −k
+
+λj (K1 ◦ K2) ≥ X
+
+> j>n −k
+
+λj (K1)[ K2]↑ 
+
+> ii
+
+for 1 ≤ k ≤ n − 1.
+
+Proof. We have defined eigenvalues to be non-increasing in order, therefore we can define yi =
+
+λi(K1 ◦ K2) and xi = λi(K1)[ K2]ii . By stationarity of K1, K 2, Pni=1 xi = Pni=1 yi = s. This implies Pki=1 y↑ 
+
+> i
+
+= s−Pn−ki=1 y↓ 
+
+> i
+
+and likewise for xi. Thus, Pki=1 y↑ 
+
+> i
+
+= Pki=1 x↑ 
+
+> i
+
++
+
+> n−k
+
+X
+
+> i=1
+
+x↓ 
+
+> i
+
+−
+
+> n−k
+
+X
+
+> i=1
+
+y↓
+
+> i
+
+| {z }
+
+> ≤0
+
+and the result follows. In combination, these majorization results point to a “squashing” of the eigenvalues in the bulk of the spectrum, as compared to those of the component Gram matrices. Practically speaking, this in turn suggests a reduction in the oversmoothness of individual MLP kernels. To demonstrate this effect, we refer the reader to fig. 3, which shows the eigenvalue decay of MLP p,
+
+MLP p × MLP p and MLP p2 kernels (as well as RBF and Exp for context). In addition, fig. 4 shows the decay of a Nystr¨ om approximation to an Exp kernel and a product kernel comprised of this same Nystr¨ om approximation and an MLP p kernel. Further figures in section 9 depict how the rate of eigenvalue decay depends on neural architecture (for random initialisations). Possibly one of the most important conclusion from the figures is that, while p imposes a limit on the rank of the Gram matrix, a sufficiently wide hidden layer is required to ensure the decay is not too fast. 
+
+## 5 Experiments 
+
+Although calibration is a key motivation for using GPs in regression, we report only MSE here. Since we adopt the predictive framework and recalibration procedure of Allison et al. (2023), the underlying method has limited effect on final calibration or NLL values. In our empirical analyses, we do apply recalibration, which also enables fairer timing comparisons—important because our method is substantially faster at prediction time than its competitors. We evaluate our method against variational GPs and GPnn, in our view the most broadly successful GP approximations, on a standard suite of UCI benchmark datasets, covering both regression and classification tasks. Results are presented graphically, with tabular versions provided in section 10.3. In the (regression) figures, we show results for SVDKL, adapted to tabular data (the original work was designed for images); the results are generally poor and we do not include them in the tabu-lated versions in the appendices, or the classification experiments. However, on their native domain (image data), the results are more positive (section 11). 8Poletele 
+
+> Bike
+> Protein
+> CTSlice
+> Buzz
+> Song
+> House electric
+> Road3d
+> 0.00
+> 0.01
+> 0.10
+> 1.00
+> MSE
+
+(a) Poletele   
+
+> Bike
+> Protein
+> CTSlice
+> Buzz
+> Song
+> House electric
+> Road3d
+> 0
+> 1
+> 10
+> 100
+> 1000
+> 10000
+> Train time / s
+> FM-GP
+> Var
+> GPnn SVDKL
+
+(b) Poletele   
+
+> Bike
+> Protein
+> CTSlice
+> Buzz
+> Song
+> House electric
+> Road3d
+> 0.000
+> 0.000
+> 0.001
+> 0.010
+> 0.100
+> Predict time / s
+> FM-GP
+> Var
+> GPnn SVDKL
+
+(c) Miniboo  
+
+> Eeg
+> Htru2
+> Magic
+> Letter
+> Susy
+> Coverbin
+> 0.0000
+> 0.6618 Error rate
+
+(d) Miniboo   
+
+> Eeg
+> Htru2
+> Magic
+> Letter
+> Susy
+> Coverbin
+> 0.0000
+> 0.4493 ECE
+
+(e) Miniboo    
+
+> Eeg
+> Htru2
+> Magic
+> Letter
+> Susy
+> Coverbin
+> 0
+> 1
+> 10
+> 100
+> 1000
+> Train time / s
+> FM-GP Var GPnn
+
+(f) 
+
+Figure 1: First row: MSE results, training times and prediction times for FM-GP, GPnn, Var and SVDKL on standard UCI regression benchmarks. Second row: classification error rates, ECE results and training times for FM-GP, GPnn and Var on classification UCI benchmarks. Error bars represent 95% confidence intervals over 5 seeds computed by the seaborn package. FM-GP can be seen to outperform GPnn and SVGP across the board with respect to training times for both regression and classification tasks. Meanwhile, FM-GP accuracy surpasses SVGP and fre-quently GPnn as well, most notably on CTslice, where FM-GP’s MSE is an order of magnitude smaller than GPnn (which itself is an order of magnitude less than SVGP). We speculate this relates to implicit manifold learning; see section 12 for preliminary evidence and discussion. For the clas-sification tasks, FM-GP is overall the most performant method in terms of both error rate and ECE, whilst again having faster training and prediction times across the board. Due to memory constraints we were unable to run SVGP classification on the Coverbin and SUSY datasets (with 5 × 10 5 train-ing points and 8 classes and 4 × 10 6 training points respectively). We expect that on SUSY, GPnn was able to exploit the very large data size to achieve the best classification metrics on those data. Further experiments comparing the performance of the product kernel described in section 4.3 and performing ablation studies over the neural architecture of the MLP-GP can be found in section 10.4. 
+
+## 6 Discussion 
+
+We have demonstrated that Gaussian process models enhanced with neural feature maps achieve strong performance, scalability, and adaptability across regression and classification tasks on both tabular and structured domains. Alongside this empirical success, we have provided a theoretical foundation encompassing optimal low-rank Gram matrix estimation, consistency, and spectral anal-ysis of product kernels. Several theoretical questions remain open: our consistency result does not yet yield explicit convergence rates, and the spectral analysis of product kernels does not yet charac-terise their behaviour relative to single feature maps of the same output dimension; both directions would sharpen practical guidance for architecture selection. On the empirical side, the properties of induced kernels may offer principled criteria for tailoring neural architectures to specific function classes, and we see substantial scope for exploring FM-GPs across more diverse datasets and with more sophisticated architectures. Of particular interest is the development of robust extensions for learning low-dimensional manifolds and quantifying variable importance, ideas we have outlined in the appendix. 9References 
+
+Allison, R., Stephenson, A., F, S., and Pyzer-Knapp, E. O. (2023). Leveraging locality and ro-bustness to achieve massively scalable gaussian process regression. In Oh, A., Naumann, T., Globerson, A., Saenko, K., Hardt, M., and Levine, S., editors, Advances in Neural Information Processing Systems, volume 36, pages 18906–18931. Curran Associates, Inc. Bapat, R. and Sunder, V. (1985). On majorization and schur products. Linear Algebra and its Applications, 72:107–117. Bauer, B. and Kohler, M. (2019). On deep learning as a remedy for the curse of dimensionality in nonparametric regression. The Annals of Statistics, 47(4):2261 – 2285. Blomqvist, K., Kaski, S., and Heinonen, M. (2018). Deep convolutional gaussian processes. Burt, D. R., Rasmussen, C. E., and van der Wilk, M. (2020). Convergence of sparse variational inference in gaussian processes regression. Journal of Machine Learning Research, 21(131):1– 63. Calandra, R., Peters, J., Rasmussen, C. E., and Deisenroth, M. P. (2016). Manifold gaussian pro-cesses for regression. Cybenko, G. (1989). Approximation by superpositions of a sigmoidal function. Mathematics of Control, Signals and Systems, 2(4):303–314. Damianou, A. and Lawrence, N. D. (2013). Deep Gaussian processes. In Carvalho, C. M. and Ravikumar, P., editors, Proceedings of the Sixteenth International Conference on Artificial Intelligence and Statistics, volume 31 of Proceedings of Machine Learning Research, pages 207– 215, Scottsdale, Arizona, USA. PMLR. Fortuin, V., Garriga-Alonso, A., Ober, S. W., Wenzel, F., R¨ atsch, G., Turner, R. E., van der Wilk, M., and Aitchison, L. (2022). Bayesian neural network priors revisited. Gardner, J., Pleiss, G., Weinberger, K. Q., Bindel, D., and Wilson, A. G. (2018). Gpytorch: Blackbox matrix-matrix gaussian process inference with gpu acceleration. Advances in neural information processing systems, 31. Gawlikowski, J., Tassi, C. R. N., Ali, M., Lee, J., Humt, M., Feng, J., Kruspe, A., Triebel, R., Jung, P., Roscher, R., Shahzad, M., Yang, W., Bamler, R., and Zhu, X. X. (2023). A survey of uncertainty in deep neural networks. Artificial Intelligence Review, 56(1):1513–1589. Gilboa, E., Saatc ¸i, Y., and Cunningham, J. P. (2012). Scaling Multidimensional Inference for Struc-tured Gaussian Processes. arXiv:1209.4120 [stat]. Grinsztajn, L., Oyallon, E., and Varoquaux, G. (2022). Why do tree-based models still outperform deep learning on tabular data? Guo, C., Pleiss, G., Sun, Y., and Weinberger, K. Q. (2017). On calibration of modern neural net-works. In Precup, D. and Teh, Y. W., editors, Proceedings of the 34th International Conference on Machine Learning, volume 70 of Proceedings of Machine Learning Research, pages 1321–1330. PMLR. Hensman, J., Fusi, N., and Lawrence, N. D. (2013). Gaussian processes for big data. In Proceedings of the Twenty-Ninth Conference on Uncertainty in Artificial Intelligence, UAI’13, page 282–290, Arlington, Virginia, USA. AUAI Press. Hensman, J., Matthews, A., and Ghahramani, Z. (2015). Scalable Variational Gaussian Process Classification. In Lebanon, G. and Vishwanathan, S. V. N., editors, Proceedings of the Eighteenth International Conference on Artificial Intelligence and Statistics, volume 38 of Proceedings of Machine Learning Research, pages 351–360, San Diego, California, USA. PMLR. Huang, W., Zhao, D., Sun, F., Liu, H., and Chang, E. (2015). Scalable gaussian process regression using deep neural networks. In Proceedings of the 24th International Conference on Artificial Intelligence, IJCAI’15, page 3576–3582. AAAI Press. 10 Izmailov, P. A., Novikov, A. V., and Kropotov, D. A. (2018). Scalable gaussian processes with bil-lions of inducing inputs via tensor train decomposition. In International Conference on Artificial Intelligence and Statistics, AISTATS 2018. Kim, H.-C. and Ghahramani, Z. (2006). Bayesian Gaussian Process Classification with the EM-EP Algorithm . IEEE Transactions on Pattern Analysis & Machine Intelligence, 28(12):1948–1959. Kohler, M. and Krzyzak, A. (2004). Adaptive regression estimation with multilayer feedfor-ward neural networks. In International Symposium onInformation Theory, 2004. ISIT 2004. Proceedings., pages 467–. Kumar, V., Singh, V., Srijith, P. K., and Damianou, A. (2018). Deep Gaussian Processes with Convolutional Kernels. arXiv: 1806.01655. Leshno, M., Lin, V. Y., Pinkus, A., and Schocken, S. (1993). Multilayer feedforward networks with a nonpolynomial activation function can approximate any function. Neural Networks, 6(6):861– 867. Lin, J. A., Ament, S., Balandat, M., Eriksson, D., Hern´ andez-Lobato, J. M., and Bakshy, E. (2025). Scalable gaussian processes with latent kronecker structure. In Forty-second International Conference on Machine Learning. Michael Kohler, S. L. (2021). On the rate of convergence of fully connected deep neural network regression estimates. The Annals of Statistics, pages 2231–2249. Milios, D., Camoriano, R., Michiardi, P., Rosasco, L., and Filippone, M. (2018). Dirichlet-based gaussian processes for large-scale calibrated classification. In Bengio, S., Wallach, H., Larochelle, H., Grauman, K., Cesa-Bianchi, N., and Garnett, R., editors, Advances in Neural Information Processing Systems, volume 31. Curran Associates, Inc. Nakada, R. and Imaizumi, M. (2020). Adaptive approximation and generalization of deep neural network with intrinsic dimensionality. Nieman, D., Szabo, B., and van Zanten, H. (2022). Contraction rates for sparse variational approxi-mations in gaussian process regression. Journal of Machine Learning Research, 23(205):1–26. Petersen, K. B. and Pedersen, M. S. (2012). The Matrix Cookbook. pages 1–45. Rahaman, N., Baratin, A., Arpit, D., Draxler, F., Lin, M., Hamprecht, F., Bengio, Y., and Courville, A. (2019). On the spectral bias of neural networks. In Chaudhuri, K. and Salakhutdinov, R., editors, Proceedings of the 36th International Conference on Machine Learning, volume 97 of Proceedings of Machine Learning Research, pages 5301–5310. PMLR. Rao, M. (1985). 10 harmonizable, cram´ er, and karhunen classes of processes. In Time Series in the Time Domain, volume 5 of Handbook of Statistics, pages 279–310. Elsevier. Schmidt-Hieber, J. (2020). Nonparametric regression using deep neural networks with relu activa-tion function. The Annals of Statistics, 48(4). Seeger, M. W., Kakade, S. M., and Foster, D. P. (2008). Information consistency of nonparametric gaussian process methods. IEEE Transactions on Information Theory, 54(5):2376–2382. Titsias, M. (2009). Variational learning of inducing variables in sparse gaussian processes. In van Dyk, D. and Welling, M., editors, Proceedings of the Twelfth International Conference on Artificial Intelligence and Statistics, volume 5 of Proceedings of Machine Learning Research, pages 567–574, Hilton Clearwater Beach Resort, Clearwater Beach, Florida USA. PMLR. Tresp, V. (2000). A Bayesian committee machine. Neural Computation, 12(11):2719–2741. ISBN: 0899766003000. van der Vaart, A. and van Zanten, H. (2011). Information rates of nonparametric gaussian process methods. Journal of Machine Learning Research, 12(60):2095–2119. 11 Van Der Wilk, M., Rasmussen, C. E., and Hensman, J. (2017). Convolutional Gaussian processes. Advances in Neural Information Processing Systems, 2017-Decem(Nips):2850–2859. arXiv: 1709.01894. Wang, K., Pleiss, G., Gardner, J., Tyree, S., Weinberger, K. Q., and Wilson, A. G. (2019). Exact gaussian processes on a million data points. Advances in Neural Information Processing Systems, 32. Williams, C. K. and Rasmussen, C. E. (2006). Gaussian processes for machine learning, volume 2. MIT press Cambridge, MA. Wilson, A. G., Hu, Z., Salakhutdinov, R., and Xing, E. P. (2016). Deep kernel learning. In Gretton, A. and Robert, C. C., editors, Proceedings of the 19th International Conference on Artificial Intelligence and Statistics, volume 51 of Proceedings of Machine Learning Research, pages 370– 378, Cadiz, Spain. PMLR. Wilson, A. G. and Nickisch, H. (2015). Kernel interpolation for scalable structured Gaussian pro-cesses (KISS-GP). 32nd International Conference on Machine Learning, ICML 2015, 3:1775– 1784. arXiv: 1503.01057 ISBN: 9781510810587. 12 7 Proofs 
+
+7.1 Proof of theorem 4.5 
+
+By Mercer’s theorem, each ϕj ∈ C(X ), hence ψ : X → Rp is a continuous vector-valued function on a compact domain. From the UAT, for any ε1 > 0, there exists an MLP fθ : Rd → Rp such that 
+
+sup 
+
+> x∈X
+
+∥fθ (x) − ψ(x)∥2 < ε 1.
+
+In particular, we have for the row-wise error matrix E = ˆL − Lp,
+
+∥E∥F ≤ √n sup 
+
+> x∈X
+
+∥fθ (x) − ψ(x)∥2 < √nε 1.
+
+Expanding ˆL ˆL⊤ − Kp = EL ⊤ 
+
+> p
+
++ LpE⊤ + EE ⊤ we see that 
+
+ˆL ˆL⊤ − Kp F ≤ 2 ∥E∥F ∥Lp∥F + ∥E∥2 
+
+> F
+
+.
+
+Finally, ∥Lp∥2 
+
+> F
+
+= Tr {Kp} ≤ nv so setting ε1 < min 
+
+
+
+1, εn(2 √v+1) 
+
+
+
+supplies the result. 
+
+Lemma 7.1. For a location family with members Pμ1 , P μ2 ,
+
+dW (Pμ1 , P μ2 ) = ∥μ1 − μ2∥2 .
+
+Proof. The Wasserstein-2 distance for two measures P, Q on Rd is given by 
+
+dW (P, Q )2 = inf 
+
+> γ∈Γ( P,Q )
+
+Z
+
+∥x − y∥2 dγ (x, y )
+
+where Γ( P, Q ) is the set of couplings with marginals P and Q. To find an upper bound, it suffices to choose a coupling: consider the deterministic coupling (X, X +δ) where δ = μ2 −μ1 and X ∼ Pμ1 .Under this coupling, R ∥x − y∥2 dγ = E
+
+n
+
+∥X − (X + δ)∥2o
+
+= ∥δ∥2, hence dW (Pμ1 , P μ2 )2 ≤∥δ∥2. Now, a lower bound can be found for any coupling γ, by Jensen’s inequality 
+
+Z
+
+∥x − y∥2 dγ ≥
+
+Z
+
+(x − y)dγ 
+
+> 2
+
+= ∥Eγ {X} − Eγ {Y }∥ 2 = ∥μ1 − μ2∥2 .
+
+7.2 Proof of theorem 4.6 
+
+The definition of W2(Q∗, P ∗) = inf γ Eγ
+
+dy (y∗ 
+
+> 1
+
+, y ∗ 
+
+> 2
+
+)2 12 where the infimum is over all couplings 
+
+Γ( Q∗, P ∗) and dy is an appropriately chosen metric over y. We define the optimal (conditional) coupling between y∗ 
+
+> 1
+
+, y ∗ 
+
+> 2
+
+by γf g where we condition on random variables f, g governed by the pos-terior distributions Pn, Q n and their own (optimal) coupling γ′; i.e. (f, g ) ∼ γ′. In other words, 
+
+(y∗ 
+
+> 1
+
+, y ∗ 
+
+> 2
+
+) ∼ γ′(f, g )γf g (y∗ 
+
+> 1
+
+, y ∗ 
+
+> 2
+
+| f, g ).Since P ∗ = R p(y∗ | f )Pn(df ) = R p(y∗ | f )γ′(df, dg ) and likewise for Q∗, we can write 
+
+W2(Q∗, P ∗) = W2(EPn {p(y∗ | f )} , EQn {p(y∗ | g)})= W2(Eγ′ {p(y∗ | f )} , Eγ′ {p(y∗ | g)}≤ Eγ′ {W2(p(y∗ | f ), p (y∗ | g)) }
+
+which follows from joint-convexity of W2. Hence, 
+
+W2(Q∗, P ∗) ≤ Eγ′ {W2(p(y∗ 
+
+> 1
+
+| f ), p (y∗ 
+
+> 2
+
+| g)) } ≤ Eγ′
+
+L2df (f, g )2 12
+
+by assumption and Jensen’s inequality, and since γ′ is optimal, the infimum and claimed result hold. 13 7.3 Proof of theorem 4.7 
+
+To begin, let us state the relevant Wasserstein-2 distance between Gaussian distributions Qn, P n:
+
+W2(Qn, P n)2 = ∥μQ − μP ∥22 + Σ 12 
+
+> P
+
+− Σ 12
+
+> Q
+> 2
+> F
+
+. (10) Consider the (optimal) rank-p approximation ( Kp) to the full Gram matrix K of distribution P , and assume that for the covariance of distribution Q. Denote Pn, Q n as the full GP posteriors in each case, given by Pn = N (KK −1 
+
+> ξ
+
+y, σ 2 
+
+> ξ
+
+KK −1 
+
+> ξ
+
+) and similarly for Qn. Assume an eigendecomposition 
+
+K = U ΛU ⊤ and Kp = UpΛpU ⊤ 
+
+> p
+
+= U ˜ΛpU ⊤ where ˜Λp = Diag( λp ⊕ 0n−p), the n × n diagonal matrix formed by replacing the eigenvalues λi>p with 0. In this way we can use the full eigenvector matrix U to decompose both the full and low-rank Gram matrices. With this in mind, we have for the first (mean) term: 
+
+KK −1 
+
+> ξ
+
+y − KpK−1 
+
+> p,ξ
+
+y 22
+
+= U (ΛΛ −1 
+
+> ξ
+
+− ˜Λp ˜Λ−1 
+
+> p,ξ
+
+)U ⊤y 22
+
+= X
+
+> i>p
+
+z2
+
+> i
+
+λ2
+
+> i
+
+(λi + σ2 
+
+> ξ
+
+)2
+
+for zi = [ U ⊤y]i.The second (covariance) term can then be computed as: 
+
+(KK −1 
+
+> ξ
+
+) 12 − (KpK−1 
+
+> p,ξ
+
+) 12
+
+> 2
+> F
+
+= U [(ΛΛ −1 
+
+> ξ
+
+) 12 − (˜Λp ˜Λ−1 
+
+> p,ξ
+
+) 12 ]U ⊤ 2
+
+> F
+
+= Tr 
+
+n
+
+[(ΛΛ −1 
+
+> ξ
+
+) 12 − (˜Λp ˜Λ−1 
+
+> p,ξ
+
+) 12 ]2o
+
+= X
+
+> i>p
+
+λi
+
+λi + σ2
+
+> ξ
+
+.
+
+For the realistic case where we use our approximation, Q, to the optimal low-rank matrix, we de-compose the terms into truncation and approximation terms. First, we show that 
+
+KpK−1 
+
+> p,ξ
+
+− QQ −1 
+
+> ξF
+
+≤ εσ2
+
+> ξ
+
+. (11) This follows, since 
+
+A(A + σ2I)−1 = I − σ2(A + σ2I)−1
+
+A(A + σ2I)−1 − B(B + σ2I)−1 = σ2(B + σ2I)−1(A − B)( A + σ2I)−1
+
+and (A + σ2I)−1 
+
+> 2
+
+≤ 1/σ 2 (and likewise for B). Hence, substituting A = Kp, B = Q, noting that ∥ABC ∥F ≤ ∥ A∥2 ∥B∥F ∥C∥2 and using theorem 4.5 provides the result. Using this, we can see that 
+
+(KK −1 
+
+> ξ
+
+− QQ −1 
+
+> ξ
+
+)y 22
+
+≤
+
+
+
+KK −1 
+
+> ξ
+
+− KpK−1 
+
+> p,ξ 2
+
++ KpK−1 
+
+> p,ξ
+
+− QQ −1 
+
+> ξ2
+
+2
+
+∥y∥22
+
+≤ max 
+
+> i>p
+
+λi
+
+λi + σ2
+
+> ξ
+
++ εσ2
+
+> ξ
+
+!2
+
+∥y∥22 .
+
+The second variance term can be written as 
+
+(KK −1 
+
+> ξ
+
+) 12
+
+| {z }
+
+1
+
+− (QQ −1 
+
+> ξ
+
+) 12
+
+| {z }
+
+2
+
+= 1 − (KpK−1 
+
+> p,ξ
+
+) 12
+
+| {z }
+
+3
+
++ 3 − 2 . (12) 14 1 − 2 2 
+
+> F
+
+= Tr 
+
+n 1 − 3 + 3 − 2 ⊤  1 − 3 + 3 − 2 o
+
+= Tr ( 1 − 3 )⊤( 1 − 3 ) + ( 3 − 2 )⊤( 3 − 2 ) + 2( 1 − 3 )⊤( 3 − 2 )
+
+= 1 − 3 2 
+
+> F
+
++ 3 − 2 2 
+
+> F
+
++ 2 Tr ( 1 − 3 )⊤( 3 − 2 )
+
+≤ X
+
+> i>p
+
+λi
+
+λi + σ2
+
+> ξ
+
++
+
+√2pε σ2
+
+> ξ
+
+as (KpK−1 
+
+> p,ξ
+
+) 12 − (QQ −1 
+
+> ξ
+
+) 12
+
+> 2
+> F
+
+≤ √2p KpK−1 
+
+> p,ξ
+
+− QQ −1 
+
+> ξF
+
+, rank( KpK−1 
+
+> p,ξ
+
+− QQ −1 
+
+> ξ
+
+) ≤ 2p and since the last term from the penultimate line satisfies 
+
+Tr ( 1 − 3 )⊤( 3 − 2 )
+
+= Tr 
+
+n
+
+[U [(ΛΛ −1 
+
+> ξ
+
+) 12 − (˜Λp ˜Λ−1 
+
+> p,ξ
+
+) 12 ]U ⊤]⊤[ 3 − 2 ]
+
+o
+
+= Tr 
+
+n
+
+U (Λ −pΛ−1 
+
+> −p,ξ
+
+) 12 U ⊤[( KpK−1 
+
+> p,ξ
+
+) 12 − (QQ −1 
+
+> ξ
+
+) 12 ]
+
+o
+
+= Tr 
+
+n
+
+U (Λ −pΛ−1 
+
+> −p,ξ
+
+) 12 U ⊤U (˜Λp ˜Λ−1 
+
+> p,ξ
+
+) 12 U ⊤o
+
+− Tr 
+
+n
+
+U (Λ −pΛ−1 
+
+> −p,ξ
+
+) 12 U ⊤(QQ −1 
+
+> ξ
+
+) 12
+
+o
+
+= 0 − Tr 
+
+n
+
+U (Λ −pΛ−1 
+
+> −p,ξ
+
+) 12 U ⊤(QQ −1 
+
+> ξ
+
+) 12
+
+o
+
+= − (K−pK−1 
+
+> −p,ξ
+
+) 14 (QQ −1 
+
+> ξ
+
+) 14
+
+> 2
+> F
+
+≤ 0.
+
+where Λ−p = Diag 0p ⊕ λi>p and K−p = U Λ−pU ⊤.Thus, noting that max i>p λi
+
+> λi+σ2
+> ξ
+
+≤ λp+1 /σ 2 
+
+> ξ
+
+we have 
+
+W2(Qn, P n)2 ≤ λp+1 
+
+σ2
+
+> ξ
+
++ εσ2
+
+> ξ
+
+!2
+
+∥y∥22 + σ2
+
+> ξ
+
+X
+
+> i>p
+
+λi
+
+λi + σ2
+
+> ξ
+
++
+
+√2pε σ2
+
+> ξ
+
+ . (13) To make further progress, assume an eigenvalue decay of λi = O(i−η ) for some η > 0 and p s.t. 
+
+λp < σ 2 
+
+> ξ
+
+, then λp
+
+> λp+σ2
+> ξ
+
+= λp
+
+> σ2
+> ξ
+
+(1 + λp/σ 2 
+
+> ξ
+
+)−1 ≤ λp
+
+> σ2
+> ξ
+
+and R x−η dx = 11−η 
+
+> 1
+> xη−1
+
+for η̸ = 1 . Hence, 
+
+X
+
+> i>p
+
+λi
+
+λi + σ2
+
+> ξ
+
+≲ p−(η−1) − n−(η−1) 
+
+(η − 1) σ2
+
+> ξ
+
+and 
+
+W2(Qn, P n)2 ≲ ∥y∥22
+
+σ4
+
+> ξ
+
+(( p + 1) −η + ε) + p−(η−1) − n−(η−1) 
+
+η − 1 + p2pε. (14) 
+
+## 8 Further methodological details 
+
+8.1 Calibration 
+
+For completeness, we reproduce the recalibration algorithm introduced in Allison et al. (2023): 15 Algorithm 1 Calibration of Predictive Distribution (Allison et al., 2023) 
+
+Input: A size c subset C of (x∗, y ∗) pairs from the training data, (external) parameters ˆθ =(ˆ σ2 
+
+> ξ
+
+, ˆσ2 
+
+> f
+
+).1. For each (x∗ 
+
+> i
+
+, y ∗ 
+
+> i
+
+) ∈ C make a prediction with covariance function ˆc(., . ) and (external) parameters ˆθ = (ˆ σ2 
+
+> ξ
+
+, ˆσ2 
+
+> f
+
+), to obtain an estimate of the mean and variance, μ∗ 
+
+> i
+
+, σ ∗ 2 
+
+> i
+
+of the predictive distribution of y∗ 
+
+> i
+
+at x∗ 
+
+> i
+
+.2. Compute α = 1
+
+> c
+
+Pci=1 (y∗   
+
+> i−μ∗
+> i)2
+> σ∗2
+> i
+
+.
+
+Output: Calibrated (external) parameters ˆθ′ = ( α · ˆσ2 
+
+> ξ
+
+, α · ˆσ2 
+
+> f
+
+).
+
+8.2 Additive feature-map kernels 
+
+Due to the efficient construction of feature-map kernels, we can define Gaussian processes with additive kernels of the form K = Φ 1Φ⊤ 
+
+> 1
+
++ Φ 2Φ⊤ 
+
+> 2
+
+where we take Φi ∈ Rn×pi . As usual, a key quantity in determining the computational complexity is the noised Gram matrix inverse, K−1 
+
+> ξ
+
+. In this setup, we can exploit the following identity: 
+
+(A + BC )−1 = A−1 − A−1B(I + CA −1B)−1CA −1
+
+given as the Kailath Variant of the Woodbury Identity in Petersen and Pedersen (2012). If we choose 
+
+A = Φ 1Φ⊤ 
+
+> 1
+
++ σ2 
+
+> ξ
+
+I then A−1 can be computed efficiently, as above, and the remaining terms involve an inversion of a p2 × p2 matrix and matrix products with complexity O(np 22).
+
+8.3 Gaussian process classification 
+
+Whilst Gaussian processes enjoy more popularity in regression tasks, their principled uncertainty quantification motivates extension to classification tasks, where classification calibration (as distinct from regression calibration) is important. GPC has a long history in the literature and various approaches for implementing such an extension abound. Early work utilised the Laplace Approximation (Williams and Rasmussen, 2006), MCMC-based methods and later, in Kim and Ghahramani (2006), the authors interpret the GPC problem graphically and implement an EM-EP algorithm. More recently, the flexibility of variational meth-ods to naturally allow for non-Gaussian likelihoods has led to their use on these problems, for exam-ple in Hensman et al. (2015). A useful alternative method is introduced (in the context of GPs) with Milios et al. (2018), where standard GPR is performed on transformed observations. It is this last work that we lean on to develop our method here, owing to its forthright methodology for modifying existing GPR models. The model assumes that an observation follows the hierarchical model y ∼ Cat( π) with π ∼
+
+Dirichlet( α) where α ∈ RC 
+
+> +
+
+is the vector of concentration parameters for each class. Using that samples from a Dirichlet distribution can be generated using independent Gamma samples in com-bination with a moment-matching approximation of the corresponding Gamma distributions via the log-Normal distribution leads to the transformed surrogate observations ˜yi = log αi − ˜σ2 
+
+> i
+
+/2 where 
+
+˜σ2 
+
+> i
+
+= log(1 /α i + 1) which are assumed to obey the conditional probability p(˜ yi | f ) = N (fi, ˜σ2 
+
+> i
+
+).For a more thorough description we refer the reader back to the source material. For inference, we use the following expressions to make class predictions, where f ∗ := f (x∗) is the latent function modelled by the GP evaluated at x∗ with pointwise mean and variance predictions 
+
+μ∗, σ ∗ 2,
+
+Ef ∗
+
+n
+
+ef ∗ o
+
+= e μ∗+σ∗ 2/2, Ef ∗|X,Y, x∗ {πi} = Ef ∗|X,Y, x∗
+
+(
+
+ef ∗ 
+
+> i
+
+/ X
+
+> i
+
+ef ∗
+
+> i
+
+)
+
+which is the mean of a logit-Normal distribution (which has no closed-form solution) but can be approximated by, e.g., a Taylor expansion . In the simple 2-class case, the expression simplifies to Ef ∗|X,Y, x∗
+
+ef ∗ 
+
+> i
+
+/(1 + e f ∗ 
+
+> i
+
+) . In practice, we simply sample from the posterior distribution to obtain a Monte Carlo approximation of the expectation (as described in Milios et al. (2018)). 16 To recalibrate, we follow the “temperature” adjustment described in Guo et al. (2017) to adjust the probability calculations by making predictions on a hold-out recalibration set (as in the regression case) and optimising the temperature parameter using the multinomial loglikelihood loss. In partic-ular, the terms ef ∗ 
+
+> i
+
+are replaced by ef ∗  
+
+> i/T
+
+with T the temperature parameter to be optimised. We assess calibration on a test set using ECE which approximates the following expectation (Guo et al. (2017)) E ˆP
+
+n
+
+Pr 
+
+n ˆY = Y | ˆP = p
+
+o
+
+− p
+
+o
+
+, where ˆY is a class prediction (of the true label Y )with associated confidence ˆP .The Dirichlet-based classification method involves learning, simultaneously, C regression models using the same prior and kernel function j, but learning separate scaling and noise parameters, 
+
+σ2
+
+> f,c
+
+, σ 2 
+
+> ξ,c
+
+for each class c ∈ [C]. When performing inference, we construct global feature matrices 
+
+Ψ = ψ(X) ∈ Rn×p and inner products Ψ⊤Ψ that are applied for each class. Note that due to the structure of FM-GP (see below), the inference step that samples from the posterior is highly efficient. 
+
+## 9 Numerical Spectral Analysis 
+
+As mentioned in the main text, we consider here how kernels exhibit different rates of eigenvalue decay depending on fundamental structure (RBF, Exp, low-rank, products) and neural architecture (width, depth, output dimension). Figure 2a plots the eigenvalue decay of MLP kernels as the rank increases, which shows that increasing p beyond the hidden width has diminishing effect on eigenvalue decay; fig. 2b on the other hand demonstrates that eigenvalue decay slows as the number of neurons in the hidden layer increases. Combined, these tell us that p imposes a limit on the rank of the Gram matrix, but that limit will only be achieved for sufficiently wide networks. Figure 3a shows that even a low-rank FM kernel can have a slower tail decay than e.g. an RBF kernel, but a much faster decay than an Exp kernel. The plot also demonstrates the impact of product structure: in fig. 3b, for an MLP kernel with p = 1024 and a product MLP kernel of the same rank 
+
+(32 2 = 1024) , the initial product eigenvalue decay is slower, before crossing at approximately the 48th eigenvalue. In fig. 4a the theoretical results of section 4.3 are borne out: the MLP 16 × Exp 64 eigenvalues decay more slowly than Exp 64 despite the fact that MLP 16 eigenvalues independently decay much faster. Figure 4b shows how the input dimension affects eigenvalue decay for RBF, Exp, MLP 128 ,
+
+MLP 128 × MLP 16 kernels. In particular, the relative rate of decay of the product MLP kernel are substantially slower for higher dimensions, which may indicate that they become more useful in such circumstances. 
+
+## 10 Experiment Details 
+
+10.1 Models 
+
+To build our GP models we made use of the Python library GPyTorch (Gardner et al. (2018)) as well as the underlying PyTorch framework on which it is built. For SVGP and FM-GP training we made use of (singular) NVIDIA RTX 2080 GPUs where mem-ory requirements were mild and V100 32GB GPUs when memory use was higher; both run via computing clusters. For the experiments on tabular data, we used an MLP feature map with 2 (fully connected) hidden layers and ReLU activations. Generally, 512 hidden nodes were used per layer, with the exception of SUSY (128) due to memory constraints. For similar reasons, layer normalisation was applied in general, replaced with batch normalisation on those same two large datasets. The feature output di-mension was chosen to be 64, although table 4 provides additional results where this was increased. Since such a neural network architecture is so standard we do not include a diagram. For the image tasks however, we use a convolutional neural network feature map with architecture as shown in fig. 5. 17 131 105 79 53 27 
+
+10 6
+
+10 5
+
+10 4
+
+10 3
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+10 2
+
+10 3
+
+RBF 
+
+Exp 
+
+8
+
+32 
+
+128 
+
+512 (a) 131 105 79 53 27 
+
+10 6
+
+10 5
+
+10 4
+
+10 3
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+10 2
+
+10 3
+
+RBF 
+
+Exp 
+
+64 
+
+128 
+
+256 
+
+512 (b) 
+
+Figure 2: a shows how the eigenvalues decay for MLP Gram matrices with varying output dimension [given in the legend] and fixed hidden layer width of 64. Dashed vertical lines indicate output dimensions (with colours matched to solid lines). b in comparison shows the decay for fixed output dimension 128 (black dashed vertical line) and variable hidden widths. 295 237 178 119 60 
+
+10 6
+
+10 5
+
+10 4
+
+10 3
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+10 2
+
+10 3
+
+RBF 
+
+Exp 
+
+MLP 64 
+
+MLP 8 × MLP 8
+
+MLP 1024 
+
+MLP 32 × MLP 32 
+
+(a) 79 64 48 33 17 
+
+10 4
+
+10 3
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+10 2
+
+10 3 RBF 
+
+Exp 
+
+MLP 64 
+
+MLP 8 × MLP 8
+
+MLP 1024 
+
+MLP 32 × MLP 32 (b) 
+
+Figure 3: a shows how the eigenvalue decay varies for MLP p × MLP p vs MLP p2 for fixed hidden layer width of 512. b shows the same, but over a smaller region on the plot to highlight the compar-ative rates and crossing points. 131 105 79 53 27        
+
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> RBF
+> Exp
+> Exp 64
+> MLP 16
+> MLP 16 × Exp 64
+
+(a) 26 21 16 11 6                
+
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 2
+> 205 165 124 83 42
+> 5
+> 880 705 529 353 177
+> 10
+> RBF Exp MLP 128 MLP 128 × MLP 16
+
+(b) 
+
+Figure 4: a shows eigenvalue decay of RBF, Exp kernels as well as a Nystr¨ om approximation of the Exp kernel, an MLP 16 and a product MLP 16 × Exp 64 . Vertical dashed lines indicate the subscript 
+
+p, i.e. the rank of the Gram matrix. b shows how related behaviour depends on the input space dimension d. Column titles indicate d and the colours follow blue: RBF, orange: Exp, green: 
+
+MLP 128 , red: MLP 128 × MLP 16 .18 Figure 5: Architecture of the “off-the-shelf” convolutional neural network. For tabular data, 200 iterations of Adam were used to train the FM-GP models, whilst this was increased to 1000 for the image data. Four subsets of individual size upto 20,000 training points apiece (limited by the total dataset size) were used. Variational sparse GPs were trained with 400 iterations of Adam with 1000 inducing points for (regression) datasets with n < 10 4, 500 for 10 4 < n < 5 × 10 4, 400 for 5 × 10 4 < n < 10 6 and 100 for n > 10 6. Due to the memory constraints imposed by the Dirichlet method for classification, 200 inducing points were used for classification tasks. GPnn was run as per Allison et al. (2023), with 400 nearest-neighbours, 200 Adam iterations and 10 subsets of training data of size min {300 , n train /10 }.Both methods used the exponential kernel, k(x, x′) = e −∥x−x′∥/l , equivalent to a Mat´ ern-1/2 ker-nel, based on the evidence given in Allison et al. (2023) which demonstrated superior performance on the UCI regression benchmarks under that kernel. 
+
+10.2 Datasets 
+
+We explore a range of datasets sourced from the UCI machine learning repository 2. These datasets are frequently referenced within the GP scholarly literature, as exemplified in Wang et al. (2019), and are easily accessible online. Despite this, we encountered some challenges in mapping datasets used in the literature to those in the repository, and in pre-processing methods used. In general, therefore, we limit our comparisons to methods we were able to run on our own hardware, with the exception of the image data. Where possible, we employed the ucimlrepo Python library for seamless access to the relevant dataset. Otherwise, links (provided below) were used to download the data. We preprocessed the data such that the inputs were “whitened” (using the training subset of data) to approximately restrict their values to have mean zero and unit variance. For regression tasks we additionally normalised the target values in a similar fashion. In the case of the image data used (MNIST and CIFAR10), we used torchvision to acquire the data and standard normalisation of the channels to mean and standard deviation 0.5. When running our experiments, we run 5 repeats using a different random seed each time. For each of these, the datasets are (randomly) split into 1000 test points, 1000 recalibration points and the remaining training points, which are further (randomly) subdivided for hyperparameter estimation. We report our metrics in the form a ± b with a and b the observed mean and standard deviation over the 5 random seeds. We make use of the following datasets, subdivided by task: 
+
+> 2https://archive-beta.ics.uci.edu
+
+19 MSE                                             
+
+> FM-GP GPnn Var Dataset dn
+> Bike 13 15379 0.0469 ± 0.0064 0.298 ± 0.025 0.322 ± 0.022 Buzz 77 581250 0.0357 ± 0.0092 0.0619 ± 0.044 0.0835 ± 0.056 CTSlice 378 51500 0.00237 ± 0.00016 0.0155 ± 0.0023 0.116 ± 0.0093 House electric 82047280 0.00328 ± 0.0002 0.00155 ± 0.00028 0.00361 ± 0.00063 Poletele 19 3875 0.0207 ± 0.003 0.0253 ± 0.002 0.0293 ± 0.0024 Protein 943730 0.377 ± 0.022 0.312 ± 0.021 0.387 ± 0.022 Road3d 2432874 0.163 ± 0.016 0.0438 ± 0.0043 0.221 ± 0.032 Song 90 513345 0.663 ± 0.032 0.601 ± 0.0098 0.693 ± 0.036
+
+Regression 
+
+• Song (https://archive.ics.uci.edu/ml/machine-learning-databases/ 00203/YearPredictionMSD.txt.zip )• Bike ( https://archive.ics.uci.edu/ml/machine-learning-databases/00275/ Bike-Sharing-Dataset.zip )• Buzz (https://archive.ics.uci.edu/ml/machine-learning-databases/ 00248/regression.tar.gz )• CTSlice (https://archive.ics.uci.edu/ml/machine-learning-databases/ 00206/slice_localization_data.zip )• House Electric (HE) (https://archive-beta.ics.uci.edu/dataset/235/ individual+household+electric+power+consumption )• Poletele (https://archive.ics.uci.edu/ml/machine-learning-databases/ parkinsons/telemonitoring/parkinsons_updrs.data )• Protein (https://archive.ics.uci.edu/ml/machine-learning-databases/ 00265/CASP.csv )• Road3d (https://archive.ics.uci.edu/ml/machine-learning-databases/ 00246/3D_spatial_network.txt )
+
+Classification 
+
+• Coverbin ( https://archive.ics.uci.edu/static/public/31/covertype.zip )• EEG ( https://archive.ics.uci.edu/static/public/264/eeg+eye+state.zip )• HTRU2 ( https://archive.ics.uci.edu/static/public/372/htru2.zip )• Letter (https://archive.ics.uci.edu/static/public/59/letter+ recognition.zip )• Magic (https://archive.ics.uci.edu/static/public/159/magic+gamma+ telescope.zip )• Miniboo (https://archive.ics.uci.edu/static/public/199/miniboone+ particle+identification.zip )• SUSY ( https://archive.ics.uci.edu/static/public/279/susy.zip )
+
+10.3 Additional tabular results 
+
+Below are the tabulated forms of the results displayed (in graphical form) in the main text. All results given are mean values over 5 runs (with different seeds to split training and test data) with ±
+
+the standard deviation. Bold text indicates best performance. 20 Table 1: Training Times on UCI (Regression) Benchmarks                                             
+
+> Train time / s
+> FM-GP GPnn Var Dataset dn
+> Bike 13 15379 7.1 ± 0.075 36.5 ± 0.74 622.0 ± 0.2 Buzz 77 581250 23.7 ± 0.019 129.0 ± 0.5 102.0 ± 0.3 CTSlice 378 51500 32.1 ± 0.25 91.9 ± 0.21 962.0 ± 4.6 House electric 82047280 15.8 ± 0.16 36.8 ± 0.62 29.2 ± 1.8 Poletele 19 3875 6.81 ± 3.6 36.0 ± 0.18 180.0 ± 4.2 Protein 943730 11.3 ± 0.014 36.6 ± 0.38 807.0 ± 7.4 Road3d 2432874 18.0 ± 0.53 34.9 ± 0.69 224.0 ± 6.9 Song 90 513345 25.2 ± 0.13 135.0 ± 0.62 105.0 ± 1.5
+
+Table 2: Prediction Times (Per Point) on UCI (Regression) Benchmarks                                              
+
+> Test time / s ×10 −5
+> FM-GP GPnn Var Dataset dn
+> Bike 13 15379 0.694 ± 0.0062 1770.0 ± 14.0 5.96 ± 0.19 Buzz 77 581250 28.6 ± 0.1 10900.0 ± 43.0 45.7 ± 0.27 CTSlice 378 51500 2.08 ± 0.011 6760.0 ± 23.0 18.6 ± 0.12 House electric 82047280 52.9 ± 0.59 1760.0 ± 10.0 20.3 ± 0.05
+> Poletele 19 3875 0.402 ± 0.0075 1660.0 ± 12.0 2.46 ± 0.016 Protein 943730 1.45 ± 0.0026 1770.0 ± 8.7 14.0 ± 0.18 Road3d 2432874 11.9 ± 0.0066 1630.0 ± 12.0 31.4 ± 0.21 Song 90 513345 14.9 ± 0.028 11300.0 ± 39.0 41.4 ± 0.29
+
+10.4 Ablation studies 
+
+To complement the existing results tables demonstrating the effectiveness of FM-GP, we include ablation studies over the output dimension p, the hidden layer width w, and the number of hidden layers H. We also compare the base FM-GP approach against a version implementing the product kernels described in section 4.3. Table 3 shows results from the product kernel formulation with equal output dimensions, hidden dimensions and number of hidden layers (for both feature maps in the product and the single feature map in the standard approach). Product kernels provably reduce oversmoothing section 4.3, but on the benchmarks considered, the base MLP kernel already appears to have sufficient capacity. Product kernels may become necessary for rougher or lower-dimensional problems where oversmoothing is a significant challenge. Table 4 shows how increasing the output dimension of the feature map (i.e. the Gram matrix rank) impacts performance, for fixed number of hidden layers (2) and hidden width (512). The results appear mixed, with some minor performance gains on certain datasets (House electric, Protein, Road3d, Song) at the expense of higher training and prediction times. Note that due to memory constraints we avoided running p > 128 for House electric. In table 5 we varied the hidden dimension, w, with H and p the number of hidden layers and output dimension fixed at 2 and 64 respectively. For these results there is a general trend that larger widths provides superior performance: this is to be expected, as this is the most significant factor in determining the capacity of the network and hence its ability to model functions. Finally, we consider the impact of changing the number of hidden layers in table 6. The results appear to show that 1 or 2 hidden layers produce the best performance, with further layers degrading accuracy. 21 Table 3: Product kernel (MSE) Ablation on UCI Benchmarks 
+
+FM-GP Product 
+
+k MSE k MSE Dataset d p
+
+Bike 13 64 MLP 0.0469 ± 0.0064 MLP 8×MLP 8 0.046 ± 0.005 
+
+128 MLP 0.0516 ± 0.015 MLP 8×MLP 16 0.0457 ± 0.0077 
+
+Buzz 77 64 MLP 0.0357 ± 0.0092 MLP 8×MLP 8 0.0623 ± 0.013 128 MLP 0.0443 ± 0.015 MLP 8×MLP 16 0.0794 ± 0.049 CTSlice 378 64 MLP 0.0024 ± 0.0002 MLP 8×MLP 8 0.0023 ± 0.0005 
+
+128 MLP 0.0022 ± 0.0004 MLP 8×MLP 16 0.0026 ± 0.0005 House electric 8 64 MLP 0.0033 ± 0.0002 MLP 8×MLP 8 0.0097 ± 0.0016 128 MLP 0.0035 ± 0.0003 MLP 8×MLP 16 0.0086 ± 0.0012 Poletele 19 64 MLP 0.0207 ± 0.003 MLP 8×MLP 8 0.0202 ± 0.0028 
+
+128 MLP 0.0214 ± 0.0024 MLP 8×MLP 16 0.0197 ± 0.0017 
+
+Protein 9 64 MLP 0.377 ± 0.022 MLP 8×MLP 8 0.384 ± 0.018 128 MLP 0.373 ± 0.019 MLP 8×MLP 16 0.388 ± 0.022 Road3d 2 64 MLP 0.163 ± 0.016 MLP 8×MLP 8 0.186 ± 0.01 128 MLP 0.156 ± 0.024 MLP 8×MLP 16 0.174 ± 0.011 Song 90 64 MLP 0.663 ± 0.032 MLP 8×MLP 8 0.675 ± 0.034 128 MLP 0.661 ± 0.034 MLP 8×MLP 16 0.667 ± 0.033 
+
+Table 4: FM-GP p (MSE) Ablation on UCI Benchmarks 
+
+MSE Train time / s Test time / s 
+
+Dataset d p n
+
+Bike 13 64 15379 
+
+0.0469 ± 0.0064 7.1 ± 0.075 6.94e-06 ± 6.2e-08 
+
+128 0.0494 ± 0.011 8.84 ± 0.24 9.08e-06 ± 3e-07 256 0.0484 ± 0.0086 52.3 ± 0.95 0.000105 ± 4e-06 Buzz 77 64 581250 
+
+0.0357 ± 0.0092 23.7 ± 0.019 0.000286 ± 1e-06 
+
+128 0.037 ± 0.013 24.4 ± 0.96 0.000309 ± 1.1e-05 CTSlice 378 64 51500 
+
+0.00237 ± 0.00016 32.1 ± 0.25 2.08e-05 ± 1.1e-07 
+
+128 0.00299 ± 0.0018 34.6 ± 0.26 2.16e-05 ± 1.4e-06 256 0.00395 ± 0.00054 111.0 ± 0.89 0.000309 ± 1.1e-05 House electric 8 64 2047280 0.00328 ± 0.0002 15.8 ± 0.16 0.000529 ± 5.9e-06 
+
+128 0.00326 ± 0.00043 20.1 ± 1.2 0.000752 ± 0.0001 Poletele 19 64 3875 
+
+0.0207 ± 0.003 6.81 ± 3.6 4.02e-06 ± 7.5e-08 
+
+128 0.0281 ± 0.0073 6.86 ± 0.41 5.73e-06 ± 1.2e-07 256 0.0221 ± 0.0026 23.9 ± 0.39 3.99e-05 ± 2.4e-06 Protein 964 43730 0.377 ± 0.022 11.3 ± 0.014 1.45e-05 ± 2.6e-08 
+
+128 0.368 ± 0.02 13.0 ± 0.26 1.68e-05 ± 7.3e-07 256 0.389 ± 0.024 108.0 ± 0.76 0.000266 ± 6.6e-06 Road3d 264 432874 0.163 ± 0.016 18.0 ± 0.53 0.000119 ± 6.6e-08 
+
+128 0.156 ± 0.023 19.1 ± 0.01 0.000124 ± 5.6e-08 256 0.142 ± 0.0076 21.9 ± 0.19 0.00015 ± 1.1e-07 512 0.143 ± 0.011 31.1 ± 0.27 0.000209 ± 7.6e-06 Song 90 64 513345 0.663 ± 0.032 25.2 ± 0.13 0.000149 ± 2.8e-07 
+
+128 0.661 ± 0.034 25.8 ± 0.74 0.000155 ± 1.7e-06 256 0.673 ± 0.03 113.0 ± 0.57 0.00301 ± 5.1e-05 
+
+22 Table 5: FM-GP w (MSE) Ablation on UCI Benchmarks                                                                                              
+
+> MSE Train time / s Test time / s
+> Dataset dnwBike 13 15379 128 0.0478 ± 0.0058 28.3 ± 0.24 6.45e-05 ± 6.5e-07 256 0.0506 ± 0.0096 28.6 ± 0.18 6.56e-05 ± 9.3e-07 512 0.0469 ± 0.0064 7.1 ± 0.075 6.94e-06 ± 6.2e-08
+> Buzz 77 581250 128 0.307 ± 0.2 698.0 ± 3.6 0.0258 ± 0.00019 256 0.198 ± 0.086 705.0 ± 4.9 0.0261 ± 0.00022 512 0.0357 ± 0.0092 23.7 ± 0.019 0.000286 ± 1e-06
+> CTSlice 378 51500 128 0.00369 ± 0.00074 67.1 ± 0.63 0.000199 ± 1.8e-06 256 0.00337 ± 0.00052 67.7 ± 0.38 0.000202 ± 1.3e-06 512 0.00237 ± 0.00016 32.1 ± 0.25 2.08e-05 ± 1.1e-07
+> House electric 82047280 128 0.0283 ± 0.0036 767.0 ± 3.3 0.0908 ± 0.00042 256 0.0273 ± 0.0025 786.0 ± 7.5 0.0933 ± 0.00067 512 0.00328 ± 0.0002 15.8 ± 0.16 0.000529 ± 5.9e-06
+> Poletele 19 3875 128 0.0208 ± 0.001 10.9 ± 0.088 2.31e-05 ± 4.7e-07 256 0.0201 ± 0.0015 11.4 ± 0.77 2.31e-05 ± 1.5e-07 512 0.0207 ± 0.003 6.81 ± 3.6 4.02e-06 ± 7.5e-08
+> Protein 943730 128 0.39 ± 0.019 65.0 ± 0.42 0.000167 ± 9.5e-07 256 0.378 ± 0.011 66.4 ± 0.45 0.00017 ± 1e-06 512 0.377 ± 0.022 11.3 ± 0.014 1.45e-05 ± 2.6e-08
+> Road3d 2432874 128 0.228 ± 0.015 104.0 ± 3.8 0.00237 ± 2.1e-05 256 0.213 ± 0.0076 100.0 ± 1.7 0.00225 ± 2.7e-05 512 0.163 ± 0.016 18.0 ± 0.53 0.000119 ± 6.6e-08
+> Song 90 513345 128 0.705 ± 0.036 68.1 ± 0.84 0.00204 ± 4.5e-05 256 0.693 ± 0.039 68.6 ± 0.63 0.00205 ± 5.7e-05 512 0.663 ± 0.032 25.2 ± 0.13 0.000149 ± 2.8e-07
+
+## 11 Non-tabular results 
+
+An additional benefit of the model formulation displayed here is the ability to extend, straightfor-wardly, to non-tabular datasets. Although pre-existing work (such as Van Der Wilk et al. (2017); Kumar et al. (2018); Blomqvist et al. (2018)) attempts to adapt GP inference to non-tabular data such as images, we believe our method to be simpler to use, and to improve, via modern neural-network architecture development. To demonstrate this flexibility, we implement a Dirichlet classification GP on the MNIST and CI-FAR10 datasets, using a feature map reliant on an off-the-shelf CNN architecture (given in the supplementary material). The model is straightforward to implement and fast to run. Rather than reimplement competing methods, we compare to the results quoted in Blomqvist et al. (2018). Unfortunately, only error rates are included in that work. As such, we additionally include some headlines from Fortuin et al. (2022), which implements Bayesian neural networks on both MNIST and CIFAR10. Helpfully, the authors of that work state that 10,000 GPU hours were re-quired to generate figures 4 and 5 (constituting the “main experiments”), implying approximately 138 hours per run, in stark contrast to ours which clock in at around 200s. Reading off reasonable values from the relevant graphs in figures 4 and 5 from that work, we see that the BNNs achieve comparable results for the error rate on MNIST, superior results on CIFAR10 but inferior calibration (ece) on both datasets. 23 Table 6: FM-GP H (MSE) Ablation on UCI Benchmarks 
+
+MSE Train time / s Test time / s 
+
+Dataset d n HBike 13 15379 1 0.0605 ± 0.0059 7.7 ± 0.01 7.03e-06 ± 6.9e-08 2 0.0469 ± 0.0064 7.1 ± 0.075 6.94e-06 ± 6.2e-08 
+
+4 0.0418 ± 0.0066 77.0 ± 0.42 0.000161 ± 2.3e-06 8 0.0447 ± 0.0095 86.6 ± 0.59 0.000187 ± 7.5e-07 Buzz 77 581250 1 0.0575 ± 0.019 20.7 ± 0.15 0.000266 ± 8.4e-07 
+
+2 0.0357 ± 0.0092 23.7 ± 0.019 0.000286 ± 1e-06 4 0.118 ± 0.089 146.0 ± 0.35 0.00442 ± 6.5e-05 8 0.0702 ± 0.018 232.0 ± 2.0 0.00694 ± 5.5e-05 CTSlice 378 51500 1 0.00488 ± 0.00052 31.8 ± 0.18 1.51e-05 ± 1.7e-07 
+
+2 0.00237 ± 0.00016 32.1 ± 0.25 2.08e-05 ± 1.1e-07 4 0.00388 ± 0.00078 185.0 ± 0.79 0.000507 ± 8.3e-06 8 0.00447 ± 0.00053 217.0 ± 5.9 0.000591 ± 8.9e-06 House electric 8 2047280 1 0.0038 ± 0.00037 16.1 ± 0.045 0.000513 ± 2.9e-06 
+
+2 0.00328 ± 0.0002 15.8 ± 0.16 0.000529 ± 5.9e-06 Poletele 19 3875 1 0.0313 ± 0.0034 5.83 ± 0.12 4.34e-06 ± 2.9e-08 2 0.0207 ± 0.003 6.81 ± 3.6 4.02e-06 ± 7.5e-08 
+
+4 0.0174 ± 0.0014 27.6 ± 1.8 5.43e-05 ± 2.1e-06 8 0.02 ± 0.0021 28.9 ± 0.16 6.18e-05 ± 1.3e-06 Protein 9 43730 1 0.386 ± 0.027 10.4 ± 0.023 1.29e-05 ± 2.9e-07 
+
+2 0.377 ± 0.022 11.3 ± 0.014 1.45e-05 ± 2.6e-08 4 0.356 ± 0.014 181.0 ± 0.87 0.000438 ± 1.5e-06 8 0.378 ± 0.035 213.0 ± 5.2 0.000512 ± 7.6e-06 Road3d 2 432874 1 0.161 ± 0.0062 13.4 ± 3.8 7.39e-05 ± 6.4e-07 
+
+2 0.163 ± 0.016 18.0 ± 0.53 0.000119 ± 6.6e-08 4 0.251 ± 0.025 143.0 ± 0.82 0.00322 ± 8.4e-05 8 0.369 ± 0.031 227.0 ± 1.1 0.0051 ± 5e-05 Song 90 513345 1 0.681 ± 0.03 22.6 ± 0.14 0.000114 ± 1.3e-06 
+
+2 0.663 ± 0.032 25.2 ± 0.13 0.000149 ± 2.8e-07 4 0.685 ± 0.032 187.0 ± 0.93 0.00496 ± 5e-05 8 0.757 ± 0.057 232.0 ± 4.1 0.00611 ± 0.00012 
+
+Table 7: Classification (Error Rate) Performance on UCI Benchmarks 
+
+Error Rate 
+
+FM-GP GPnn Var Dataset d n
+
+Coverbin 54 522910 0.131 ± 0.017 0.143 ± 0.0098 —Eeg 14 10980 0.0366 ± 0.0086 0.0418 ± 0.0072 0.0754 ± 0.011 Htru2 8 12898 0.0196 ± 0.0038 0.0193 ± 0.0052 0.0193 ± 0.005 Letter 16 15000 0.027 ± 0.0038 0.0616 ± 0.017 0.144 ± 0.017 Magic 10 14020 0.122 ± 0.016 0.433 ± 0.35 0.104 ± 0.0099 
+
+Miniboo 50 120064 0.0608 ± 0.0069 0.0663 ± 0.0065 0.0643 ± 0.0089 Susy 18 4000000 0.199 ± 0.012 0.195 ± 0.012 —
+
+24 Table 8: Classification (ECE) Performance on UCI Benchmarks 
+
+ECE 
+
+FM-GP GPnn Var Dataset d n
+
+Coverbin 54 522910 0.0607 ± 0.0071 0.103 ± 0.0086 —Eeg 14 10980 0.0453 ± 0.0022 0.0679 ± 0.0067 0.0624 ± 0.008 Htru2 8 12898 0.0436 ± 0.0029 0.0432 ± 0.0031 0.0444 ± 0.0032 Letter 16 15000 0.0479 ± 0.0044 0.3 ± 0.19 0.0846 ± 0.013 Magic 10 14020 0.0346 ± 0.012 0.169 ± 0.15 0.023 ± 0.0046 
+
+Miniboo 50 120064 0.0313 ± 0.0063 0.0383 ± 0.0043 0.0412 ± 0.0078 Susy 18 4000000 0.0602 ± 0.0096 0.0371 ± 0.024 —
+
+Table 9: Training Times on UCI (Classification) Benchmarks 
+
+Train time / s 
+
+FM-GP GPnn Var Dataset d n
+
+Coverbin 54 522910 96.8 ± 6.0 153.0 ± 3.5 —Eeg 14 10980 60.7 ± 1.9 149.0 ± 100.0 76.7 ± 26.0 Htru2 8 12898 59.7 ± 0.081 134.0 ± 85.0 92.4 ± 23.0 Letter 16 15000 146.0 ± 2.8 1050.0 ± 780.0 1230.0 ± 10.0 Magic 10 14020 59.3 ± 0.48 147.0 ± 110.0 117.0 ± 0.17 Miniboo 50 120064 77.6 ± 1.3 227.0 ± 190.0 621.0 ± 190.0 Susy 18 4000000 71.7 ± 2.3 287.0 ± 130.0 —
+
+Error rate ECE Train time/s Test time/s 
+
+FM-GP DCGP † DKL ‡ ConvGP ¶ FM-GP Dataset MNIST 0.0078 0.0056 0.008 0.0117 0.0453 193 0.00037 CIFAR10 0.2890 0.2410 0.230 0.3540 0.0511 160 0.00032 
+
+Table 10: Competing methods on MNIST and CIFAR10. †: Blomqvist et al. (2018), ‡: Wilson et al. (2016), ¶: Van Der Wilk et al. (2017). Omitted standard deviations for the error rate for our method on MNIST and CIFAR10 respectively were 0.00084 and 0.0061. 
+
+## 12 Behaviour 0.0 0.5 1.0 1.5          
+
+> 4
+> 2
+> 0
+> 2
+> RBF
+> 0.0 0.5 1.0 1.5
+> MLP
+> 0.0 0.5 1.0 1.5
+> Exp 144
+> 0.0 0.5 1.0 1.5
+> MLP×MLP
+
+Figure 6: Posterior distributions from an RBF, Exp and FM-GPs conditioned on 2-dimensional observations post hyperparameter training. A Nystr¨ om approximation to the Exp kernel is included with the same rank as the MLP output dimension (orange). Although it is beyond the scope of this article to cover the behaviour of an FM-GP in any depth, we include a limited commentary on the topic to help encourage further work in this area. 25 0.0 0.5 1.0  
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+
+# RBF   
+
+> 0.0 0.5 1.0
+
+# MLP   
+
+> 0.0 0.5 1.0
+
+# Exp   
+
+> 0.0 0.5 1.0
+
+# MLP×MLP Figure 7: Posterior distributions from an RBF and FM-GPs conditioned on 2-dimensional observa-tions post hyperparameter training. Figure 6 demonstrates the behaviour of the predictive distribution of an MLP 144 -GP, product MLP 12 × MLP 12 -GP, RBF and Exp (and Nystr¨ om approximation to an Exp) kernel GPs. A test function is generated (a sample path from a GP with a product kernel composed of a periodic and Mat´ ern-3/2 kernel), noised additively, and inference performed with each model. Clearly, the RBF struggles here, doing a poor job of estimating the true function. The others all do a substantially better job, with the very rough Exp kernel closely matching the true function. Since most real-world problems will involve higher dimensional inputs, we provide a similar ex-perimental example in the (still very restrictive but relevant in e.g. geospatial applications) 2-dimensional case, in fig. 7. In this case, the RBF does not appear to suffer as drastically, but still seems to underperform, judging from the discrepancy between the underlying colourmap (ground truth) and the model contours (dashed). Each of the others seems to do a reasonable job of repre-senting the true function, though perhaps the Exp and product kernels fare best. Since the FM-GP clearly constructs a low-rank Gram matrix, as this is crucial for its scalability, the fact that it outperforms a significantly higher rank SVGP implies that the feature map is trans-forming the input data in a helpful way that makes high-rank Gram matrices unnecessary. We speculate that perhaps the feature map implicitly learns a low-dimensional manifold in a com-parable way to more explicit formulations for GPs (such as Calandra et al. (2016)). To sup-port our position, we run synthetic experiments to see if the learned feature map recovers low-dimensional manifold structure. Figure 8 shows the original latent inputs, noised with N (0 , 0.1) 
+
+random variables, lying near a 1-dimensional circular manifold (in a) and the surface of a torus (b) and the recovered feature map coordinates learned during training of the FM-GP hyperparam-eters. The actual inputs used in the FM-GP model were projected and warped by the follow-ing function, where z ∈ Rp is the true latent variable and x ∈ Rd the high-dimensional ob-served input: g(z) = zP + ε [sin( zPs) cos( zPc) + sin( zPs) + 2 cos( zPc)] for random matri-ces P, P s, P c ∈ Rp×d with all entries sampled i.i.d. from N (0 , 1) . To produce these figures we “cheated” by choosing p = d in the model formulation. However, in a 2-step process it may well be feasible to recover an unknown d. First, train an FM-GP with some arbitrary p, before computing a spectral decomposition of the pullback metric, G = J⊤J (where J = ∇xϕ), of the learned feature map. Define ˆd := max i{i : λi > ˆσ2 
+
+> ξ
+
+}. For the second step, set p = ˆd and perform FM-GP inference. Furthermore, if such implicit manifold learning does take place, then one might reasonably hope that rates of convergence of this model scale with the intrinsic dimension d, rather than the (pos-sibly much larger) ambient dimension. Such behaviour for DNNs is suggested in, e.g., Nakada and Imaizumi (2020). Additionally, rates derived for deep MLPs with ReLU activations derived in Michael Kohler (2021) add some minimal justification to this claim, alongside the expected para-metric convergence rate one expects for Bayesian linear regression on pre-specified basis functions. 26 2 1 0 1 2
+
+> 2
+> 1
+> 0
+> 1
+> 2
+> latent
+
+(a) 3 2 1 0 1 2 3 3  
+
+> 2
+> 1
+> 0
+> 1
+> 2
+> 33
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> latent
+
+(b) 
+
+Figure 8: Latent variable points, before being projected and warped into higher dimensions and the recovered feature coordinates. 27
