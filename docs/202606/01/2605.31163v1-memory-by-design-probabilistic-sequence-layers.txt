@@ -1,0 +1,2196 @@
+Title: Memory by Design: Probabilistic Sequence Layers
+
+URL Source: https://arxiv.org/pdf/2605.31163v1
+
+Published Time: Mon, 01 Jun 2026 01:40:00 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Memory by Design: Probabilistic Sequence Layers 
+
+Matthew Dowling 1,2,4 Hyungju Jeon 1 Cristina Savin 2,3 Il Memming Park 1,41Champalimaud Research, Champalimaud Foundation, Portugal 
+
+> 2
+
+Center for Neural Science, New York University, USA 
+
+> 3
+
+Center for Data Science, New York University, USA 
+
+> 4
+
+RyvivyR Inc., NY, USA 
+
+## Abstract 
+
+We introduce the design-model framework : a way to derive efficient recurrent se-quence maps from explicit assumptions about memory. A design model writes evi-dence into memory by exact Bayesian filtering; a query-dependent readout produces a predictive distribution whose mean is the layer output. In our linear-Gaussian instantiation, the Bayesian Layer propagates both a mean and a covariance: the covariance tracks uncertainty over stored associations, steering writes toward uncer-tain directions, attenuating gains as evidence accumulates, and preserving confident memories. The same framework unifies several sub-quadratic recurrences. Lin-ear attention, GLA, and Mamba-2/SSD are exact filters under one design model, whereas DeltaNet and related Delta-rule models arise as covariance-reset reduc-tions under another. Restoring the covariance yields closed-form predictions for retrieval dynamics, verified empirically, and improves robustness beyond the train-ing regime across controlled collision studies, learned associative recall, and the Zoology MQAR benchmark; distilling Bayesian Layers into a pretrained 340M Gated DeltaNet improves RULER long-context retrieval at matched compute. 
+
+## 1 Introduction 
+
+Sub-quadratic sequence layers are typically specified as update rules: a state is updated by keys, values, gates, or dynamics, then queried to produce predictions. This algebraic view has produced a broad family of efficient recurrent architectures, including linear attention, GLA, Mamba, DeltaNet, and related variants (Katharopoulos et al., 2020; Yang et al., 2023; Gu and Dao, 2023; Schlag et al., 2021; Sun et al., 2023; Qin et al., 2024; Liu et al., 2024a; Yang et al., 2024a; Siems et al., 2025; Peng et al., 2023, 2024; Behrouz et al., 2025; De et al., 2024; Beck et al., 2024). However, specifying the recurrence directly leaves implicit the assumptions that govern memory: what the state represents, when observations are redundant, and how strongly evidence should modify stored information. We make these assumptions explicit through a design model : a tractable auxiliary probabilistic model whose Bayesian filter defines the layer update. It is not a generative model of the observed sequence, but a design object specifying how evidence accumulates in memory. We use linear-Gaussian design models whose filtering equations yield efficient learned updates over keys, values, and dynamics, with a query-dependent readout mapping belief to the layer output. The resulting Bayesian Layer 
+
+propagates a mean state, which stores associations, and a covariance state, which tracks resolved directions. Consequently, writes target uncertain directions, attenuate as evidence accumulates, and preserve confident memories. This perspective also unifies existing architectures. Delta-rule corrections (Schlag et al., 2021; Yang et al., 2024a; Kimi Team, 2025) arise from a covariance reset within the Bayesian Layer design model, while additive recurrences (Katharopoulos et al., 2020; Yang et al., 2023; Dao and Gu, 2024a) are exact under a different auxiliary model in the same framework (Table 1). These models lack covariance  
+
+> Preprint.
+> arXiv:2605.31163v1 [stat.ML] 29 May 2026 design model readout (b) Design model instantiations (a) Mapping
+> ZZ
+> φt
+
+Figure 1: Design-model framework. (a) An input selects a design model; its filter updates the belief over memory, and the readout produces the layer output. (b) Propagating dense covariance gives the Bayesian Layer; covariance reset gives Delta-rule family ; a latent-input model gives additive family .propagation: carrying uncertainty forward so future writes reflect past evidence. We evaluate this mechanism in controlled collision dynamics, learned associative recall under extrapolation (§4.1), the Zoology MQAR benchmark (Arora et al., 2024) (§4.2), and distillation into a pretrained 340M Gated DeltaNet (§4.3). Our contributions include: 1. We introduce the design-model framework for deriving recurrent sequence layers from explicit probabilistic assumptions, cleanly separating write dynamics (Bayesian filtering) from readout (query-dependent prediction). 2. We derive the Bayesian Layer , in which propagated covariance gives rise to automatic gain decay, directional gating, and uncertainty-steered keys, and we show that existing efficient recurrences arise as covariance-reset reductions or as exact specializations of a different auxiliary model within the same framework (Table 1). 3. We show that covariance propagation yields quantitative predictions for retrieval behavior (including closed-form retrieval plateaus) and consistently improves robustness beyond the training regime across three empirical settings. 
+
+## 2 The design-model framework 
+
+Many sub-quadratic sequence layers are introduced as efficient recurrence equations, which clarify computation but obscure the modeling assumptions governing storage, overwriting, and architectural equivalence. We instead derive recurrent layers from auxiliary probabilistic design models that separate three choices usually entangled in the recurrence: the latent memory, the input-parameterized write, and the belief readout that produces the activation. A design model is not a generative model of the input sequence and defines no likelihood for x1: T . For a fixed input prefix, it defines an auxiliary conditional model whose Bayesian filter (Särkkä, 2013) becomes the layer’s memory update, with xt
+
+entering only as a control variable parameterizing the time-t transition, write likelihood, and readout, rather than being generated by the model. This separation distinguishes recurrences that propagate uncertainty about memory from those that collapse or discard it. Formally, a recurrent sequence layer is a causal map 
+
+x1: T 7 → y1: T , yt = Ft(x1: t), (1) which the framework derives from four ingredients: an auxiliary probabilistic model for writing to an internal memory, an initial belief over that memory, a readout model for querying it (Schmidhuber, 1992; Graves et al., 2014), and an output rule that converts the resulting predictive distribution into the deterministic layer output. The recurrent state of the layer is the finite-dimensional parameterization of the filtering belief; the recurrence is Bayesian in a precise architectural sense, as the exact predict–update step of the design model (Anderson and Moore, 1979; Kailath et al., 2000). 
+
+Writing memory. Let St ∈ S denote the internal memory. A design model D specifies latent dynamics and pseudo-observations for St. Given the current input xt, the corresponding Bayesian predict–update step maps the previous belief μt−1 to a new belief μt, and unrolling this filter over the observed prefix x1: t gives the belief over memory available at time t. When μt belongs to a tractable finite-dimensional family, its parameters are exactly the recurrent state propagated by the layer. 2Reading memory. A filtering belief alone does not define a sequence layer, because it only specifies how information is written into memory. To produce outputs, we introduce a readout that, composed with the filtering belief, generates a candidate layer output Zt via 
+
+St ∼ μt, Zt | St, xt ∼ ξt(· | St, xt). (2) 
+
+Zt is not an observation of the design model and is not used to update memory; it exists only to define the layer output. Writing and reading are thus distinct ingredients of the layer, and architectures can be compared by asking whether they differ in the memory maintained, the write rule, the readout, or the output rule. 
+
+Producing the layer output. The deterministic layer output yt is the mean candidate output under the current filtering belief, 
+
+yt = ESt∼μt, Zt∼ξt(·| St,xt)[Zt], (3) equivalently the Bayes estimator of Zt under squared loss, closing the causal map in (1). The framework turns architecture design into probabilistic design. Different choices of the design model, initial belief, readout, and output rule yield different recurrent layers (Table 1). The linear-Gaussian instantiation in §2.1 gives the Bayesian Layer , which propagates both a mean state, storing associations, and a covariance state, tracking how confidently each memory direction has been resolved. §3 shows that existing efficient recurrences arise as reductions of this construction: the Delta-rule family collapses the covariance state, while the additive family follows from a different design model with no covariance state to propagate. 
+
+2.1 The Bayesian Layer design model 
+
+We now choose the design model that gives the Bayesian Layer. The memory is a matrix St ∈ RD×m:directions in the D-dimensional key space index what can be retrieved, and the m columns store the corresponding values. The layer maintains a belief over this memory. Its mean stores the current associations; its covariance tracks which key directions have been resolved and therefore how future inputs should update memory. To simplify notation throughout we write S ∼ N (S | M, P) as shorthand for N vec( M), Im ⊗ P.
+
+Design Constraint 1: a tractable belief family. The filtering belief over memory is Gaussian, 
+
+μt(St) = N (St | Mt, Pt), (4) with mean state Mt ∈ RD×m and covariance state Pt ∈ RD×D. Querying the mean memory in direction q returns M⊤ 
+
+> t
+
+q. For the full belief, the scalar q⊤Ptq is the posterior variance of each coordinate of S⊤ 
+
+> t
+
+q. Thus Pt defines an uncertainty geometry over key space: large variance marks directions that remain weakly resolved, small variance marks directions constrained by past writes. 
+
+Design Constraint 2: writes are exact Bayesian updates. Rather than prescribe the memory update directly, we specify an auxiliary linear-Gaussian model whose filter preserves (4) . At time 
+
+t, the observed input xt selects a transition law for the memory through a transition matrix A(xt)
+
+and process scale ℓ(xt). It also selects an observation law for an auxiliary m-dimensional pseudo-observation through a write key k(xt), a write-noise scale r(xt) and a pseudo-observed value v(xt):
+
+Definition 1 (Bayesian Layer design model) .
+
+πxt (St | St−1) = N St | A(xt)St−1, ℓ 2(xt)I, (5) 
+
+πxt (· | St) = N · | S⊤ 
+
+> t
+
+k(xt), r 2(xt)I. (6) 
+
+The realized pseudo-observation is v(xt).
+
+We abbreviate At := A(xt), ℓt := ℓ(xt), kt := k(xt), vt := v(xt), and rt := r(xt). Conditioned on the input sequence, this model is linear-Gaussian in St regardless of how the learned maps 
+
+A, ℓ, k, v, r depend on xt.Conditioning on the pseudo-observed value vt gives the predict–update recursion: predicting through the transition gives ¯μt = R πxt (St|St−1) μt−1(St−1) dSt−1, and conditioning on vt then yields 
+
+μt ∝ πxt (vt|St) ¯ μt. The write rule is Bayesian conditioning on the pseudo-observation: candidate 3memories whose projection S⊤ 
+
+> t
+
+kt agrees with vt receive higher posterior mass. The write key kt
+
+selects the direction in memory that is constrained by the current input, vt specifies the value written along that direction, and r2 
+
+> t
+
+scales the write: as the observation-noise variance in Definition 1, larger values mean less trust in vt and a smaller update. The propagated covariance retains its Im ⊗ Pt form at every step (Section C), so the belief is fully described by (Mt, Pt). The closed-form recurrence for these parameters is given in §2.2. 
+
+Readout. To read from memory, the current input produces a read query qt := q(xt) ∈ RD . We use the Gaussian readout 
+
+ξt(z | St, xt) = N z | S⊤ 
+
+> t
+
+qt, I, qt := q(xt) ∈ RD . (7) The expected candidate output under μt then evaluates to 
+
+yt = ESt∼μt, Zt∼ξt(·| St,xt)[Zt] = Eμt
+
+S⊤ 
+
+> t
+
+qt
+
+ = M⊤ 
+
+> t
+
+qt. (8) Writing and reading are therefore decoupled: the recurrence for memory does not depend on qt, and the output dimension m is independent of the key dimension D.
+
+2.2 The Bayesian Layer recurrence 
+
+Applying the predict–update recursion above to the matrix-Gaussian belief (4) gives a closed-form recurrence for the belief parameters (Mt, Pt). We initialize with M0 = 0 and P0 = p0I.
+
+Proposition 1 (Bayesian Layer belief-state recursion) . Under the design model (Definition 1) with belief structure (4) , the belief state (Mt, Pt) satisfies 
+
+¯Pt = At Pt−1 A⊤ 
+
+> t
+
++ ℓ2 
+
+> t
+
+I, predicted covariance (9) 
+
+ut = ¯Pt kt, uncertainty-warped key (10) 
+
+βt =  r2 
+
+> t
+
++ k⊤ 
+
+> t
+
+ut
+
+−1, innovation precision (11) 
+
+Mt =  I − βt ut k⊤
+
+> t
+
+| {z }
+
+Ft (Bayesian gate) 
+
+At Mt−1 + βt ut v⊤ 
+
+> t
+
+, mean update (12) 
+
+Pt = ¯Pt − βt ut u⊤ 
+
+> t
+
+. covariance update (13) The proposition is exact Kalman algebra applied to the auxiliary design model, with the Kronecker belief structure in (4) preserved at every step (Anderson and Moore, 1979; Kailath et al., 2000). The closure argument is given in Section C, and a self-contained derivation appears in Section B. In particular, the full posterior covariance of vec( St) factors as Im ⊗ Pt, so the layer only propagates the D × D covariance state Pt.The quantities appearing in the update are not separately parameterized architectural modules. The Bayesian gate Ft, the warped key ut, and the scalar precision βt are determined by the filter once the learned design-model functions A, ℓ, k, v, r have been evaluated at xt. The covariance update keeps 
+
+Pt positive semidefinite: prediction replenishes uncertainty through the term ℓ2 
+
+> t
+
+I, and conditioning applies the rank-one covariance reduction in (13) . In practice, we restrict At to be diagonal. Then the prediction step is row-wise scaling, products involving Pt cost O(D2), and the mean update costs 
+
+O(Dm ). The per-step recurrent cost is therefore O(D2 + Dm ).Together with the readout yt = M⊤ 
+
+> t
+
+qt, the recurrence has the key–value–query form common to efficient recurrent layers (Schmidhuber, 1992; Schlag et al., 2021): kt and vt enter the Bayesian write rule, while qt is used only to read from the resulting memory. Here this structure follows from exact Bayesian filtering under the design model and the Gaussian readout, rather than being imposed directly as an update rule. The next section examines the geometry induced by the covariance state. 
+
+2.3 Anatomy of the update 
+
+The Bayesian Layer uses covariance as write geometry. A write is triggered by the raw key kt, but it is not applied in the raw-key direction. Instead, the predicted covariance maps the key to an effective 4Input (a) (b) (c) Figure 2: Covariance as write geometry. A raw key triggers the write, but covariance decides where it lands: resolved components shrink, residual uncertainty receives the update. (a) The predicted covariance maps kt to the effective write direction ut = ¯Ptkt. (b) Repeated writes contract uncertainty along the written address, reducing future gain there. (c) After B has been resolved, a colliding A write rotates away from the shared component toward the unresolved residual. write direction (Figure 2a) and assigns an uncertainty to each direction: 
+
+ut = ¯Ptkt (write direction) , ¯σ2 
+
+> t
+
+(k) := k⊤ ¯Ptk (directional variance) . (14) The directional variance is the predicted variance of the memory readout S⊤ 
+
+> t
+
+k. Directions with large 
+
+¯σ2 
+
+> t
+
+(k) remain unresolved and receive larger writes; directions with small ¯σ2 
+
+> t
+
+(k) have already been explained and receive smaller writes. This distinction is decisive in a collision. Suppose an address 
+
+kB has been boosted, and a nearby flood address decomposes as 
+
+kA = ρ kB + p1 − ρ2 k⊥, k⊤⊥kB = 0 .
+
+Boosting B contracts uncertainty along kB (Figure 2b), so ¯σ2 
+
+> t
+
+(kB ) becomes small. It does not, however, resolve the orthogonal residual k⊥. Writing ¯σ2 
+
+> B
+
+:= ¯ σ2 
+
+> t
+
+(kB ) and ¯σ2 
+
+> ⊥
+
+:= ¯ σ2 
+
+> t
+
+(k⊥) for the directional variances, during the subsequent flood at A the effective write direction is approximately 
+
+ut = ¯PtkA ≈ ρ ¯σ2 
+
+> B
+
+kB + p1 − ρ2 ¯σ2 
+
+> ⊥
+
+k⊥, ¯σ2 
+
+> B
+
+≪ ¯σ2
+
+> ⊥
+
+. (15) The component of kA shared with the boosted address is suppressed, while the unresolved residual is emphasized (Figure 2c). The key that triggers the write is kA, but the direction that receives the write is closer to k⊥.Raw-key updates cannot express this separation. They continue writing along kA itself, so every flood step contains a component in the already-resolved kB direction and can overwrite the boosted association. Propagated covariance instead protects the resolved component while allowing new information to enter through the residual uncertainty. This geometry gives the controlled collision experiment its three signatures, all as t → ∞ limits under sustained writes. Repeated writes to the same address kA drive its directional variance ¯σ2 
+
+> t
+
+(kA)
+
+to a finite limit (42) . Across nearby addresses, uncertainty along kB grows at rate (1 − ρ2)ℓ2 per step in steady state — only the part of kB perpendicular to kA is unconstrained by the flood, giving the (1 − ρ2) factor: 
+
+¯σ2
+
+> t+1
+
+(kB ) − ¯σ2 
+
+> t
+
+(kB ) −→ (1 − ρ2) ℓ2. (16) At the collision boundary, the flood write rotates away from the boosted component toward the residual direction — already on display in (15) . In §4.1 we isolate these effects by boosting B,flooding A, and querying B (Figure 3). 
+
+## 3 Specializations of the design model 
+
+The construction in §2 identified the Bayesian Layer as the exact filter under one design model. Two specializations of that construction recover well-known efficient recurrences: covariance reset within the design model gives the Delta-rule family , and the exact filter under a write-driven latent-input model gives the additive family (Table 1 and sections A and B). 1
+
+> 1Recurrences outside both families (e.g., RWKV’s higher-order data-dependent gates (Peng et al., 2024), Mamba-1’s vector-state selective SSM (Gu and Dao, 2023)) fall outside this analysis.
+
+5Table 1: Efficient recurrent updates by design model. Top: the design model of Definition 1, where the Bayesian Layer is exact and Delta-rule variants arise from covariance reset (Proposition 2). Bottom: write-driven latent-input model (18) , additive updates are exact. Notation: ¯Mt := AtMt−1,
+
+ˆvt := ¯M⊤ 
+
+> t
+
+kt, ut := ¯Ptkt, βt := ( r2 
+
+> t
+
++ k⊤ 
+
+> t
+
+ut)−1, ηt := λt/(r2 
+
+> t
+
++ λt∥kt∥2), and ωt := λt/(λt + r2 
+
+> t
+
+).
+
+Model Derivation Recurrence 
+
+Design model (Definition 1): St | St−1 ∼ N (AtSt−1, ℓ 2 
+
+> t
+
+I), vt | St ∼ N (S⊤ 
+
+> t
+
+kt, r 2 
+
+> t
+
+I)
+
+Bayesian Layer exact filter Mt = ¯Mt + βtut(vt − ˆvt)⊤
+
+DeltaNet (Schlag et al., 2021; Yang et al., 2024b) reset; At = I Mt = ¯Mt + ηtkt(vt − ˆvt)⊤
+
+Gated DeltaNet (Yang et al., 2024a) reset; At = αtI Mt = ¯Mt + ηtkt(vt − ˆvt)⊤
+
+KDA (Kimi Linear) (Kimi Team, 2025) reset; At = diag( αt) Mt = ¯Mt + ηtkt(vt − ˆvt)⊤
+
+Longhorn (Liu et al., 2024a) per-column reset M(j) 
+
+> t
+
+= M(j) 
+
+> t−1
+
++ ηt,j kt(vt,j − ˆvt,j )
+
+Write-driven latent-input model: ϕt ∼ N (0, λ tI), St = AtSt−1 + ktϕ⊤ 
+
+> t
+
+, vt | ϕt ∼ N (ϕt, r 2 
+
+> t
+
+I)
+
+Linear Attention (Katharopoulos et al., 2020) exact; At = I Mt = Mt−1 + kt(ωtvt)⊤
+
+RetNet (Sun et al., 2023) exact; At = ρhI Mt = ρhMt−1 + kt(ωtvt)⊤
+
+GLA (diag. form) (Yang et al., 2023) exact; At = diag( αt) Mt = diag( αt)Mt−1 + kt(ωtvt)⊤
+
+Mamba-2 / SSD (Dao and Gu, 2024a,b) equiv. form; At = atI M t = atMt−1 + kt(ωtvt)⊤
+
+3.1 Covariance reset ⇒ Delta-rule family Proposition 2 (Isotropic-reset reduction) . Fix a scalar sequence λt > 0 and replace the predicted covariance ¯Pt in the design-model update by λtI at every step. Then ut = λtkt and the Bayesian Layer update reduces to 
+
+Mt = ( I − ηtktk⊤ 
+
+> t
+
+) At Mt−1 + ηtktv⊤ 
+
+> t
+
+, ηt := λt/(r2 
+
+> t
+
++ λt∥kt∥2). (17) Equation (17) has the canonical Delta-rule form: the gate subtracts what the current state predicts along kt before the new value is written. The Delta-rule family can therefore be seen as the Bayesian Layer under isotropic reset. Specializing At along the scalar–diagonal–dense hierarchy recovers the canonical members of this family. Each exactly matches (17) once ¯Pt is reset to λtI at every step: what these architectures discard relative to the full Bayesian Layer is the propagated covariance, not the Delta-rule correction itself. 
+
+3.2 The latent-input design model ⇒ additive family 
+
+The additive family is exact under a different design model, where the pseudo-observation vt gives evidence about a transient write coefficient ϕt, not about the persistent memory projection: 
+
+ϕt ∼ N (0, λ tI), St = AtSt−1 + ktϕ⊤ 
+
+> t
+
+, vt | ϕt ∼ N (ϕt, r 2 
+
+> t
+
+I). (18) Because St is deterministic given ϕt and the past, conditioning ϕt on vt alone gives E[ϕt | vt] = 
+
+ωtvt with ωt = λt/(λt + r2 
+
+> t
+
+), and the update for Mt := E[St | x1: t] becomes purely additive: 
+
+Mt = AtMt−1 + ωtktv⊤ 
+
+> t
+
+. (19) Derivation in Section A. Specializing At along the same scalar–diagonal–dense hierarchy recovers the canonical members of this family, each the exact filter under (18) . The design model is degenerate: 
+
+St is a deterministic function of ϕt and the past, so the filter carries no posterior uncertainty over St
+
+— only over the per-step latent ϕt, which is independent across t. Additive models therefore discard both propagated covariance and the rank-one innovation gate. 
+
+## 4 Experiments 
+
+We test the predictions of §2.3 in three settings: controlled collision recall—deterministic verification and learned extrapolation under the same collision geometry (§4.1); the Multi-Query Associative Recall (MQAR) benchmark (Arora et al., 2024) (§4.2); and distillation into a pretrained 340M Gated DeltaNet (§4.3). 6(a) Pairwise retrieval (b) Directional uncertainty (c) Flood extrapolation (d) Overlap shift 
+
+lllllllllllllllFigure 3: Controlled collision recall. Two overlapping addresses kA, kB (overlap ρ); B is boosted, then A is flooded, and kB is queried. (a) Pairwise retrieval at kB over time ( ρ=0 .92 ). The dotted line at 0.731=(1+ e−1)−1 is the boost asymptote (the pairwise softmax when the target outscores the distractor by 1). The Bayesian Layer holds this plateau through the flood; Linear Attention overwrites toward zero; DeltaNet-style and Cov-reset (coincident under unit-norm keys) settle at a lower plateau. Triangles ( ▼) on the chance line mark each baseline’s first sub-chance step. (b) 
+
+Directional uncertainties σ2 
+
+> t
+
+(kA) (orange) and σ2 
+
+> t
+
+(kB ) (teal). The flood drives σ2 
+
+> t
+
+(kB ) to grow linearly at the same (1 −ρ2)ℓ2 rate as the predicted variance (Equation (16)); dashed traces ( – – – )mark the diagonal-covariance ablation. (c, d) Learned recall on the same geometry: flood length is swept to nf =256 at ρ=0 .80 (c, 32 × the training range nf ≤8), and overlap is swept to ρ=0 .95 
+
+at nf =64 (d, beyond training ρ∈[0 .60 , 0.80] ). Only the Bayesian Layer holds across both axes; DeltaNet-style and Cov-reset plateau in (c) and cross to negative margin in (d). 
+
+4.1 Controlled collision recall 
+
+The covariance geometry of §2.3 predicts that key collisions are destructive only when updates ignore directional uncertainty. Raw-key updates do exactly this: repeated writes overwrite nearby associations along the colliding direction, whereas uncertainty-aware updates preserve them by adapting gain and direction. We test this with two addresses A, B of overlap ¯k⊤ 
+
+> A
+
+¯kB = ρ: after writing distinct values and boosting B, we flood with writes to A and query at B. Three predictions follow (Equations (15), (16) and (42)): cross-direction uncertainty grows at (1 − ρ2)ℓ2 per step in steady state; write gain decays to a finite limit; and the effective write direction rotates toward residual uncertainty. Reset-style and constant-gain updates lack these mechanisms and should fail in distinct ways. 
+
+Setup. The overlap is fixed by ¯kA = e1 and ¯kB = ρe1 + p1 − ρ2e2, with one-hot values and unit-norm keys. Each trial seeds all identities, boosts B with nb writes, then floods A with nf writes, querying ¯kB after every step. In the deterministic regime, models share keys, values, schedule, and matched write gain; only the propagation rule for Pt changes (Figure 3a,b). In the learned regime, the same geometry appears inside sequences with K=8 target–distractor pairs (Figure 3c,d): values are resampled each sequence, and addresses are supplied directly as keys and queries, so learned projections cannot remove the imposed overlap. 
+
+Models. Five families from Table 1: Linear Attention (no gate), GLA-style (diagonal gate), DeltaNet-style (rank-one gate, raw key), the Bayesian Layer (rank-one gate with propagated Pt), and a matched covariance-reset ablation that uses the Bayesian Layer’s gate but resets ¯Pt = ℓ2 
+
+> t
+
+I at each step. The “-style” suffix is deliberate: each baseline reproduces only the recurrent update of the named architecture, without the short convolutions, output gating, or other orthogonal components of full implementations such as Gated DeltaNet, so the comparison isolates the memory update as the only variable. DeltaNet-style, the Bayesian Layer, and the covariance-reset ablation each carry a single per-head scalar gate, so they are matched in capacity; the covariance-reset ablation isolates whether propagating Pt—not the gate form—is causally responsible. 
+
+Mechanism (a, b). With no parameters learned, reset-style and constant-gain updates erase the boosted association once the flood begins (a), each failing in the manner predicted by what it lacks: DeltaNet-style applies the same overwrite at every flood step (no rotation); Linear Attention has no decay, driving retrieval steadily to zero. The Bayesian Layer preserves recall because covariance becomes anisotropic across the boost (b), so flood writes rotate off the colliding key rather than 7repeating along it. The deterministic curves match the predicted rates quantitatively (Equations (16) and (42); Section E). In this unit-norm regime the covariance-reset ablation is algebraically identical to DeltaNet-style; the two separate only once Pt becomes anisotropic. 
+
+Extrapolation under learning (c, d). The mechanism leaves a behavioral signature that survives end-to-end training. Models are trained on short floods ( nf ≤ 8) at moderate overlap ( ρ ∈ [0 .60 , 0.80] ); we report the retrieval margin 
+
+∆ := pB − pA, y(B) := M⊤ 
+
+> t
+
+qB , (pA, p B ) = softmax( y(B) 
+
+> A
+
+, y (B) 
+
+> B
+
+), (20) a pairwise softmax over only the target ( B) and distractor ( A) readouts at the query—not a softmax over the full value vocabulary, so ∆ ∈ [−1, 1] measures whether the memory prefers the boosted association to the colliding one. Each test axis stresses one of the closed-form predictions above. Flood length is swept to nf =256 at fixed ρ=0 .80 (c, 32 × the training maximum); this tests gain decay (42) , and the Bayesian Layer remains stable while Linear Attention and GLA-style degrade. Overlap is swept to ρ=0 .95 at fixed nf =64 (d), itself 8 × the training-flood maximum; write rotation is therefore tested under sustained-flood conditions (15) , and DeltaNet-style and the covariance-reset ablation cross below zero margin while the Bayesian Layer continues to favor the target. The covariance-reset ablation tracks DeltaNet-style across both axes (Proposition 2), so the advantage comes from propagating covariance history, not from gate form or capacity. The two remaining closed-form predictions — the steady-state write-gain decay and the cross-direction crowding rate 
+
+(1 −ρ2)ℓ2 — are verified in Figures 6 and 7, with proofs and the random-key task spec in Sections E and E.5.4. 
+
+4.2 The Zoology MQAR benchmark 
+
+§4.1 evaluates the overwrite mechanism in settings where the address geometry is explicit. Here we ask whether the same mechanism emerges in MQAR (Arora et al., 2024), where representations must be learned from discrete tokens. We modify MQAR to sample keys and values from the same vocabulary, removing the simple role shortcut. We then test the Bayesian Layer on this task and two stress variants: Update-MQAR , which rewrites some keys with new values, and Block-MQAR , which presents key–value pairs in a block, testing whether the model can bind associations when the value token does not immediately follow the key token. RetNet 64 128 256 512          
+
+> 0
+> 25
+> 50
+> 75
+> 100
+> 24816 246816
+> Number of KV pairs Number of updates Model dimension Accuracy (%)
+> (c) BlockMQAR
+> N=128, B=2
+> (b) UpdateMQAR
+> N=128, D=16
+> (a) MQAR
+> N=512, D=64 Bayesian Hyena GLA
+> GDN
+> GDN-conv Mamba2 RWKV Attention Mamba2-conv
+
+Figure 4: MQAR with shared key–value vocabulary. (a) 
+
+Bayesian Layer matches the best baselines on base MQAR. (b) 
+
+On Update-MQAR, BL holds at ≈88% while GDN/Mamba-2 fall to ≈60% . (c) On Block-MQAR, conv-free BL and GDN bridge the key–value gap. 
+
+Results. On base MQAR, the Bayesian Layer approaches near-perfect recall at larger widths and is competitive with the strongest baselines (Figure 4a). Results ex-cept those for the Bayesian Layer are taken from Poli et al. (2024); Yang et al. (2024b). On both Update-MQAR and Block-MQAR, the Bayesian Layer retains high ac-curacy, indicating that it preserves associations across overwrites and across gaps in the input stream (Fig-ure 4b, c). Block-MQAR requires bridging both the key –value gap and the 
+
+value –query gap; unlike models that rely on local mixing to bridge the first, the Bayesian Layer bridges both without local mixing. 
+
+4.3 Distillation and long-context retrieval 
+
+We test whether a small number of Bayesian Layers (BLs) can improve long-context retrieval without inducing a generic language-modeling trade-off, in the line of recent distillation-based conversions of pretrained models to alternative recurrent architectures (Wang et al., 2024; Lan et al., 80.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 Depth decile 2k 4k 8k 16k Context -7 -3 -1 +3 +2 +2 +7 +2 +4 +8 +4 +1 +2 +3 +9 +5 +2 +3 +1 +1 +1 -1 -1 +1 +2 +13 +11 +1 -1 +1 +7 
+
+Aggregate delta (a) early late 
+
+(b) 
+
+> multiquery
+
+Per-task deltas           
+
+> multivalue single-2 0.0 0.5 0.9 Depth decile 2k 4k 8k 16k Context  multikey-1 single-3 single-1
+> −15−10−5 0510 15
+> ΔNIAH accuracy (points)
+
+Figure 5: Bayesian Layer improves long-context retrieval. (a) Mean RULER NIAH accuracy gain of BL over GDN-zero by (context length, depth decile); green cells favor BL, pink cells favor GDN-zero. Depth 0.0 is earliest in context, 0.9 is latest. (b) Same delta broken out by NIAH subtask on a [−15 , +15] -point scale. Gains concentrate on multi-target retrieval ( multivalue , multiquery ); the early-2k regression in (a) is driven by single_2 . Gray-bordered cells have n < 30 samples; matched-compute control (BL vs. GDN-FT) is in Appendix Figure 8. 2025; Lenz et al., 2025). Starting from a 340M Gated DeltaNet (GDN), we replace four layers at indices {5, 11 , 17 , 23 } with BLs and distill from the frozen GDN in two phases: per-layer NMSE on 100M tokens/layer in parallel, then joint logit-KL and variance-normalized boundary-MSE on 300M tokens (400M total, one training seed). The full two-phase protocol, loss definitions, and hyperparameters are in Section G. On RULER NIAH (Hsieh et al., 2024), BL gains +1.3 / +2.9 / +3.2 / +1.0 over GDN-zero at 2k / 4k / 8k / 16k (Table 4), at the cost of a 2.5–2.7% perplexity increase on Wikitext103, PG-19, and SlimPajama-heldout (Table 5; flat in length, no crossover) and a 7.5-point regression on niah_single_2 at training length. The trade-off is task-specific: the perplexity cost is length-uniform, not a length-extrapolation failure. A matched-compute control — GDN continued for the same 400M tokens with the same four layers unfrozen — stays within 0.3% of GDN-zero perplexity on all three corpora and reproduces none of the long-context gains: mean NIAH 48.5 / 31.6 / 16.1 / 8.4 vs. GDN-zero 49.5 / 31.1 / 16.8 / 7.9 vs. BL 50.8 / 34.0 / 20.0 / 8.8 (full breakdowns in Tables 4 and 5). The BL − GDN-FT positional pattern matches BL − GDN-zero (Figure 8). The improvement is attributable to the inserted Bayesian architecture, not to extra optimization. The gains are structured rather than uniform across positions (Figure 5a). At 4k, BL improves over GDN at most depths, peaking at +8.9 in the 0.4–0.5 bucket — the lost-in-the-middle regime (Liu et al., 2024b). At 8k, the advantage shifts to recent evidence, reaching +13.0 and +11.0 in the final two deciles, where both models otherwise degrade. The 2k regression is confined to early positions (peak -7.4 at 0.0–0.1) before reversing to +8.3 at the latest decile. The same depth-conditioned signature appears across all six RULER tasks (Figure 5b), strongest on multi-target retrieval — BLs selectively reshape retrieval rather than merely shift aggregate accuracy. 
+
+## 5 Discussion 
+
+Relation to concurrent probabilistic sequence layers. Several recent and concurrent works also cast efficient sequence layers as probabilistic memory or test-time inference. Palimpsa (Bonnet et al., 2026) treats in-context learning as continual learning, using a diagonal importance state to recover gated linear attention variants and Mamba-2 as posterior approximations. Kalman Linear Attention (Shaj et al., 2026) uses an information-form diagonal linear–Gaussian filter whose Möbius precision updates can be composed by associative scans. MesaNet (von Oswald et al., 2025) maintains dense regression sufficient statistics, but solves a static reweighted in-context regression by conjugate gradient at each readout, rather than filtering an evolving recurrent state. The Bayesian Layer combines the complementary strengths of these lines: it performs recursive filtering like Palimpsa and KLA, but with a dense key-space covariance; and it maintains dense statistics like MesaNet, but propagates them through structured dynamics and process noise. Off-diagonal uncertainty therefore controls memory writes, suppresses redundant updates, and protects confident associations, while readout remains a direct projection of the posterior mean. 9Limitations. The linear-Gaussian design model is one entry point in a larger space: non-linear dynamics, structured observation models, and exponential-family designs whose belief itself leaves the Gaussian family — categorical, count-valued, or otherwise — would each yield a different layer under the same construction, and we have not explored those instances here. Empirically, we characterize the Bayesian Layer at the scales reported in our experiments, leaving its behavior at substantially larger model and context budgets open. Computationally, each Bayesian head carries a grouped covariance state with G dense D × D blocks alongside its mean memory, of total recurrent size O(Dm + GD 2) and per-token cost O(GD 2). Finally, the readout consumes only the posterior mean: the propagated covariance shapes the write rule but is not exposed to downstream uncertainty-aware losses or calibration, both of which we leave to future work. 
+
+Conclusion. We introduced the design-model framework, in which a tractable auxiliary probabilistic model determines the write rule of a recurrent sequence layer via exact Bayesian filtering, while a separate readout converts the belief state into predictions. Under a linear-Gaussian design model, this yields the Bayesian Layer: a recurrence that propagates both a mean state and a covariance state, so that write direction, gain, and gating are shaped by the accumulated uncertainty over stored evidence. The same framework provides a unifying lens on existing architectures — Delta-rule models arise as covariance-reset reductions, while additive recurrences (linear attention, GLA, Mamba-2 / SSD) are exact under a different auxiliary model within the same construction (Table 1). Empirically, restoring covariance propagation consistently improves robustness under collision pressure, extrapolation beyond the training regime, and the Zoology MQAR benchmark, and yields gains on long-context RULER retrieval when distilled into a pretrained 340M Gated DeltaNet. We view the design-model framework less as a single architecture and more as a design principle: specify the probabilistic assumptions governing memory, and let inference determine the update rule. 
+
+## Acknowledgments 
+
+M.D., H.J., and I.M.P. were supported by NIH RF1-DA056404 and by the Portuguese Recovery and Resilience Plan (PRR) through project 62 (Center for Responsible AI), and by Portuguese national funds through FCT (Fundação para a Ciência e a Tecnologia) in the context of project UIDB/04443/2020. M.D. and C.S. were supported by NIH NINDS awards R01NS127122 and 1RF1NS127122-01. 
+
+Competing interests. I.M.P. and M.D. are co-founders of RyvivyR Inc. RyvivyR had no role in the design, analysis, or writing of this manuscript. 
+
+## References 
+
+Brian D. O. Anderson and John B. Moore. Optimal Filtering . Prentice-Hall, Englewood Cliffs, N.J., 1979. ISBN 978-0-13-638122-8. Simran Arora, Sabri Eyuboglu, Aman Timalsina, Isys Johnson, Michael Poli, James Zou, Atri Rudra, and Christopher Ré. Zoology: Measuring and improving recall in efficient language models. arXiv preprint arXiv:2312.04927 , 2024. Maximilian Beck, Korbinian Pöppel, Markus Spanring, Andreas Ber, Emanuele Hu, Maor Ivgi, Gregor Lennartz, Kevin Schlegel, and Hochreiter Sepp. xLSTM: Extended long short-term memory. arXiv preprint arXiv:2405.04517 , 2024. Ali Behrouz, Zeman Li, Praneeth Kacham, Majid Daliri, Yuan Deng, Peilin Zhong, Meisam Raza-viyayn, and Vahab Mirrokni. Atlas: Learning to optimally memorize the context at test time. arXiv preprint arXiv:2505.23735 , 2025. Djohan Bonnet, Jamie Lohoff, Jan Finkbeiner, Elidona Skhikerujah, and Emre Neftci. Learning to remember, learn, and forget in attention-based models. arXiv preprint arXiv:2602.09075 , 2026. Tri Dao and Albert Gu. Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality. In International Conference on Machine Learning , 2024a. 10 Tri Dao and Albert Gu. Mamba-2: The structured state space duality. arXiv preprint arXiv:2405.21060 , 2024b. Soham De, Samuel L. Smith, Anushan Fernando, Aleksandar Botev, George Cristian-Muraru, Albert Gu, Russ Harber, Tayfun Hazan, et al. Griffin: Mixing gated linear recurrences with local attention for efficient language models. arXiv preprint arXiv:2402.19427 , 2024. Jusen Du, Weigao Sun, Disen Lan, Jiaxi Hu, and Yu Cheng. MoM: Linear sequence modeling with mixture-of-memories. arXiv preprint arXiv:2502.13685 , 2025. Alex Graves, Greg Wayne, and Ivo Danihelka. Neural turing machines. arXiv [cs.NE] , October 2014. URL http://arxiv.org/abs/1410.5401 .Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. arXiv preprint arXiv:2312.00752 , 2023. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. RULER: What’s the real context size of your long-context language models? arXiv preprint arXiv:2404.06654 , 2024. Thomas Kailath, Ali H Sayed, and Babak Hassibi. Linear estimation . Prentice Hall, 2000. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. Transformers are RNNs: Fast autoregressive transformers with linear attention. In International Conference on Machine Learning , pages 5156–5165, 2020. URL https://proceedings.mlr.press/v119/ katharopoulos20a.html .Kimi Team. Kimi linear: An expressive, efficient attention architecture. arXiv preprint arXiv:2510.26692 , 2025. Disen Lan, Weigao Sun, Jiaxi Hu, Jusen Du, and Yu Cheng. Liger: Linearizing large language models to gated recurrent structures. In International Conference on Machine Learning (ICML) , 2025. Barak Lenz, Opher Lieber, Alan Arazi, Amir Bergman, Avshalom Manevich, Barak Peleg, Ben Aviram, Chen Almagor, Clara Fridman, Dan Padnos, Daniel Gissin, Daniel Jannai, Dor Muhlgay, Dor Zimberg, Edden M. Gerber, Elad Dolev, Eran Krakovsky, Erez Safahi, Erez Schwartz, Gal Cohen, et al. Jamba: Hybrid transformer-Mamba language models. In International Conference on Learning Representations (ICLR) , 2025. Bo Liu, Rui Wang, Lemeng Wu, Yihao Feng, Peter Stone, and Qiang Liu. Longhorn: State space models are amortized online learners. arXiv preprint arXiv:2407.14207 , 2024a. Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024b. Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models. arXiv preprint arXiv:1609.07843 , 2016. Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, et al. RWKV: Reinvent-ing RNNs for the transformer era. arXiv preprint arXiv:2305.13048 , 2023. Bo Peng, Daniel Goldstein, Quentin Anthony, Alon Albalak, Eric Alcaide, Stella Biderman, et al. Eagle and finch: RWKV with matrix-valued states and dynamic recurrence. arXiv preprint arXiv:2404.05892 , 2024. Michael Poli, Stefano Massaroli, Eric Nguyen, Daniel Y Fu, Tri Dao, Stephen Baccus, Yoshua Bengio, Stefano Ermon, and Christopher Ré. Hyena hierarchy: Towards larger convolutional language models. In International Conference on Machine Learning , pages 28043–28078. PMLR, 2023. Michael Poli, Armin W Thomas, Eric Nguyen, Pragaash Ponnusamy, Björn Deiseroth, Kristian Kersting, Taiji Suzuki, Brian Hie, Stefano Ermon, Christopher Ré, et al. Mechanistic design and scaling of hybrid architectures. arXiv preprint arXiv:2403.17844 , 2024. 11 Zhen Qin, Songlin Li, Weixuan Sun, Xuyang Zhong, Dongxu Yang, Bowen Peng, Hao Zhong, et al. HGRN2: Gated linear RNNs with state expansion. arXiv preprint arXiv:2404.07904 , 2024. Jack W. Rae, Anna Potapenko, Siddhant M. Jayakumar, Chloe Hillier, and Timothy P. Lillicrap. Compressive transformers for long-range sequence modelling. arXiv preprint arXiv:1911.05507 ,2019. Simo Särkkä. Bayesian filtering and smoothing . Cambridge University Press, 2013. ISBN 9781107619289. URL http://www.worldcat.org/isbn/9781107619289 .Imanol Schlag, Kazuki Irie, and Jürgen Schmidhuber. Linear transformers are secretly fast weight programmers. arXiv preprint arXiv:2102.11174 , 2021. Jürgen Schmidhuber. Learning to control fast-weight memories: An alternative to dynamic recurrent networks. Neural Computation , 4(1):131–139, 1992. Vaisakh Shaj, Cameron Barker, Aidan Scannell, Andras Szecsenyi, Elliot J. Crowley, and Amos Storkey. Kalman linear attention: Parallel bayesian filtering for efficient language modelling and state tracking. arXiv preprint arXiv:2602.10743 , 2026. Julien Siems, Timur Carstensen, Arber Zela, Frank Hutter, Massimiliano Pontil, and Riccardo Grazzi. Deltaproduct: Increasing the expressivity of deltanet through products of householders. arXiv preprint arXiv:2502.10297 , 2025. Daria Soboleva, Faisal Al-Khateeb, Robert Myers, Jacob R. Steeves, Joel Hestness, and Nolan Dey. SlimPajama: A 627B token cleaned and deduplicated version of RedPajama. https://www.cerebras.net/blog/ slimpajama-a-627b-token-cleaned-and-deduplicated-version-of-redpajama ,2023. Cerebras Systems blog. Yutao Sun, Li Dong, Shaohan Huang, Shuming Ma, Yuqing Xia, Jilong Xue, Jianyong Wang, and Furu Wei. Retentive network: A successor to transformer for large language models. arXiv preprint arXiv:2307.08621 , 2023. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems , volume 30, 2017. Johannes von Oswald, Nino Scherrer, Seijin Kobayashi, Luca Versari, Songlin Yang, Maximil-ian Schlegel, Kaitlin Maile, Yanick Schimpf, Oliver Sieberling, Alexander Meulemans, Rif A. Saurous, Guillaume Lajoie, Charlotte Frenkel, Razvan Pascanu, Blaise Agüera y Arcas, and João Sacramento. MesaNet: Sequence modeling by locally optimal test-time training. arXiv preprint arXiv:2506.05233 , 2025. Junxiong Wang, Daniele Paliotta, Avner May, Alexander M. Rush, and Tri Dao. The Mamba in the Llama: Distilling and accelerating hybrid models. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Songlin Yang, Bailin Wang, Yikang Shen, Rameswar Panda, and Yoon Kim. Gated linear attention transformers with hardware-efficient training. arXiv preprint arXiv:2312.06635 , 2023. Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule. arXiv preprint arXiv:2412.06464 , 2024a. Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. Parallelizing linear transformers with the delta rule over sequence length. Advances in neural information processing systems , 37: 115491–115522, 2024b. 
+
+## A Write-Driven Latent-Input Design Model 
+
+The bottom block of Table 1 rests on a different design model in which vt observes the current write coefficient rather than the memory state. 12 Model. Let St ∈ RD×m be the accumulated memory and ϕt ∈ Rm a latent write coefficient drawn independently at each step. Given At = A(xt), kt = k(xt), prior variance λt = λ(xt), and observation-noise scale r2 
+
+> t
+
+= r2(xt), the latent-input model is 
+
+ϕt ∼ N (0, λ tI), (21) 
+
+St = AtSt−1 + ktϕ⊤ 
+
+> t
+
+, (22) 
+
+vt | ϕt ∼ N  ϕt, r 2 
+
+> t
+
+I. (23) In the Bayesian Layer’s design model (Definition 1), vt observes the memory state St and the exact filter must propagate uncertainty over that state. Here, vt observes the write coefficient ϕt, so the filter needs only estimate ϕt from vt at each step. 
+
+Exact filtered mean update. Conditioning (23) on the Gaussian prior (21) gives 
+
+E[ϕt | vt] = ωtvt, ωt := λt
+
+λt + r2
+
+> t
+
+.
+
+To derive the mean update, let Gt := σ(x1: t) be the observed history. Since At, kt, and vt are deterministic functions of the current observation, they are Gt-measurable. Define the filtered memory mean Mt := E[St | G t]. Taking the conditional expectation of (22) gives 
+
+Mt = E[AtSt−1 + ktϕ⊤ 
+
+> t
+
+| G t]= AtE[St−1 | G t] + ktE[ϕt | G t]⊤. (24) Because ϕt is independent of St−1, and vt depends on the past only through ϕt:
+
+E[St−1 | G t] = E[St−1 | G t−1] = Mt−1, E[ϕt | G t] = E[ϕt | vt] = ωtvt.
+
+Substituting into (24) yields 
+
+Mt = AtMt−1 + ωtktv⊤ 
+
+> t
+
+. (25) Defining the reparameterized write vector ˜vt := ωtvt gives the unit-write form Mt = AtMt−1 +
+
+kt ˜v⊤ 
+
+> t
+
+, which is the form most additive architectures are written in. The standard unit-gain linear-attention update is recovered either in the noiseless limit r2 
+
+> t
+
+→ 0, when vt directly reveals ϕt, or by absorbing ωt into the value map. The readout is the same as for the Bayesian Layer: yt = M⊤ 
+
+> t
+
+qt. Specializing At recovers the additive members of Table 1: linear attention (Katharopoulos et al., 2020) ( At = I), RetNet (Sun et al., 2023) ( At = ρhI), the diagonal form of GLA (Yang et al., 2023) ( At = diag( αt)), and the SSD / Mamba-2 core (Dao and Gu, 2024a,b) ( At = atI). 
+
+## B Error-Correction Form and Connection to the Kalman Filter 
+
+The mean update (12) admits an equivalent error-correction form that makes the Kalman filter connection explicit. Define the predicted mean ¯Mt = At Mt−1 and the predicted observation 
+
+ˆvt = ¯M⊤ 
+
+> t
+
+kt. Expanding (12): 
+
+Mt = ( I − βt ut k⊤ 
+
+> t
+
+) At Mt−1 + βt ut v⊤
+
+> t
+
+= ¯Mt + βt ut
+
+ vt − ˆvt
+
+⊤ = At Mt−1 + βt ut
+
+ vt − ˆvt
+
+⊤. (26) This is the standard Kalman measurement update applied column-wise to Mt, with rank-one Kalman gain Kt = βt ut = βt ¯Pt kt (shaped by propagated uncertainty), rank-one observation matrix 
+
+Ct = k⊤ 
+
+> t
+
+, and innovation et = vt − ˆvt. The covariance recursion (13) matches the corresponding standard form Pt = ¯Pt − Kt Ct ¯Pt, using k⊤ 
+
+> t
+
+¯Pt = u⊤ 
+
+> t
+
+(since ¯Pt is symmetric). The Bayesian Layer is thus a learned, matrix-valued Kalman filter in which the observation vt =
+
+v(xt), observation direction kt = k(xt), and dynamics At = A(xt) are all input-dependent functions learned from data. What is fixed by the design model is the predict–update structure and the dependence of the gain on the propagated covariance; what is learned is the content that flows through that structure at each step. 13 Distinction from xLSTM’s matrix-valued state. xLSTM’s mLSTM also maintains a matrix-valued recurrent state, but its “covariance update rule” is the gated associative-memory recursion 
+
+Ct = ftCt−1 + itvtk⊤ 
+
+> t
+
+together with the key normalizer nt = ftnt−1 + itkt; retrieval then queries 
+
+Ct directly via Ctqt, normalized by n⊤ 
+
+> t
+
+qt (Beck et al., 2024). Here “covariance” is in the classical outer-product / fast-weight sense, not a posterior covariance: Ct stores values, need not be symmetric or positive semidefinite, and is itself the content state read at the next step. The Bayesian Layer’s second-order state is instead the posterior covariance Pt, obeying the Riccati/Kalman recursion 
+
+¯Pt = AtPt−1A⊤ 
+
+> t
+
++ ℓ2I, Pt = ¯Pt − βtutu⊤ 
+
+> t
+
+. It stores no values and never enters readout directly; it only shapes the next write through the warped address ut = ¯Ptkt, the gain, and the gate. The distinction is therefore not merely that both models carry matrix-valued recurrent states, but that xLSTM uses gated associative content memory whereas the Bayesian Layer propagates filtered uncertainty. 
+
+## C Kronecker Closure Under the Design Model 
+
+We verify that the design model (Definition 1) preserves the Kronecker belief structure Im ⊗ Pt at every predict–update step. 
+
+Prediction. Suppose μt−1 has covariance Im ⊗ Pt−1. In vectorized form, the dynamics matrix is 
+
+˜At = Im ⊗ At and the process noise covariance is ℓ2 
+
+> t
+
+IDm = Im ⊗ ℓ2 
+
+> t
+
+ID . The predicted covariance is 
+
+˜At(Im ⊗ Pt−1) ˜A⊤ 
+
+> t
+
++ Im ⊗ ℓ2 
+
+> t
+
+ID = Im ⊗ (AtPt−1A⊤ 
+
+> t
+
++ ℓ2 
+
+> t
+
+ID ) = Im ⊗ ¯Pt, (27) which retains the Kronecker form. 
+
+Update. The observation model vt | St ∼ N (S⊤ 
+
+> t
+
+kt, r 2 
+
+> t
+
+Im) has observation matrix Ct = Im ⊗ k⊤
+
+> t
+
+acting on vec( St) and observation noise R = r2 
+
+> t
+
+Im. The Kalman covariance update in Dm -dimensional space is 
+
+Im ⊗ Pt = Im ⊗ ¯Pt − (Im ⊗ ¯Pt)( Im ⊗ kt)
+
+×  r2 
+
+> t
+
+Im + ( Im ⊗ k⊤ 
+
+> t
+
+)( Im ⊗ ¯Pt)( Im ⊗ kt)−1(Im ⊗ k⊤ 
+
+> t
+
+)( Im ⊗ ¯Pt)= Im ⊗ ¯Pt − (Im ⊗ ¯Ptkt) Im(r2 
+
+> t
+
++ k⊤ 
+
+> t
+
+¯Ptkt)−1(Im ⊗ k⊤ 
+
+> t
+
+¯Pt)= Im ⊗   ¯Pt − βt ut u⊤
+
+> t
+
+ = Im ⊗ Pt, (28) where ut = ¯Ptkt and βt = ( r2 
+
+> t
+
++ k⊤ 
+
+> t
+
+ut)−1. The Kronecker structure is preserved, so all m columns share the column-covariance Pt at every step. This justifies the D × D covariance recursion in Proposition 1 rather than the full Dm × Dm recursion. 
+
+## D Filtering implementation 
+
+Specialised recursion. Take scalar observation noise Rt = r2 
+
+> t
+
+I and diagonal At. The recursion of Proposition 1 specialises to 
+
+¯Pt = AtPt−1A⊤ 
+
+> t
+
++ ℓ2 
+
+> t
+
+I, (29) 
+
+Pt = ¯Pt − βtutu⊤ 
+
+> t
+
+, (30) with ut = ¯Ptkt and βt = ( r2 
+
+> t
+
++ k⊤ 
+
+> t
+
+ut)−1; the mean update of Proposition 1 is unchanged. Diagonal 
+
+At makes the prediction step a row-wise scaling and the update step a rank-one downdate of ¯Pt. We parameterise ℓ2 
+
+> t
+
+and r2 
+
+> t
+
+as softplus( ·) + ϵ to enforce strict positivity. 
+
+Decoupling: the mean update is structurally DeltaNet. The covariance recursion (29) – (30) depends only on (Pt−1, kt), independent of Mt−1 and vt. Once the gain trajectory Kt = βtut is known, the mean recurrence is purely affine: 
+
+Mt = ( I − Ktk⊤ 
+
+> t
+
+) At Mt−1 + Ktv⊤ 
+
+> t
+
+. (31) The transition (I − Ktk⊤ 
+
+> t
+
+)At is a rank-one perturbation of the diagonal dynamics — exactly the DeltaNet recurrence (Schlag et al., 2021), with the covariance-derived gain Kt replacing DeltaNet’s learned input-dependent gate. Given the gain trajectory, the mean update is therefore a chunkwise linear-attention recurrence, and the chunkwise machinery of Yang et al. (2024b,a) applies directly. 14 Chunkwise scan. We partition the sequence into chunks of length L and process chunk boundaries sequentially: each chunk inherits exit state (P, M) from the previous chunk, advances the filter through its L steps, and emits its own exit state. Within a chunk we apply the decoupling locally — a covariance pass over the chunk’s τ steps produces the per-τ gains (uτ , β τ ) from the chunk-entry covariance alone, after which the affine mean update (31) is computed in parallel via the WY-factored chunkwise readout of Yang et al. (2024b). Within-chunk contributions are expressed through forward transforms Φτ ←entry and Φexit ←τ ; because At is contractive ( ∥At∥ ≤ 1), every chunk-level transform has spectral radius bounded by 1, keeping accumulators bounded at long context. Total work is 
+
+O(T GD 2) — single-pass arithmetic — with within-chunk computation parallelised on the GPU. We implement the within-chunk covariance pass as a custom Triton kernel paired with a matching custom backward; intra-chunk and chunk-boundary arithmetic are carried in fp32. 
+
+Diagonal real and complex eigenvalues. At is parameterised as a block-diagonal matrix of damped real 2 × 2 rotations, equivalent to complex diagonal eigenvalues ρteiθ t on interleaved real–imaginary pairs. Because the readout queries only the real component of each pair, we inject process noise only on the real rows: the process-noise covariance is ℓ2 
+
+> t
+
+D with D = diag(1 , 0, 1, 0, . . . , 1, 0) . Isotropic noise on the full 2D state would inflate the imaginary rows — which the update never observes — producing a divergent covariance over long sequences with no observable benefit. The analyses of Section 2.3 apply verbatim on the observable real-row subspace. 
+
+Per-column and grouped observation noise. The base design model uses scalar r2, so all m
+
+columns of St share one belief covariance and gain. Replacing R with diag( r21 , . . . , r 2
+
+> m
+
+) breaks this symmetry: each column i gets its own covariance and gain. Maintaining m independent covariances is prohibitive when m is large; in practice we use a grouped variant with G groups and block-diagonal 
+
+R = diag[ r21 I, . . . , r 2
+
+> G
+
+I], learning input-dependent rg (xt) per group. G = 1 recovers the base case, 
+
+G = m recovers per-column gating; we use G ≪ m in all experiments. 
+
+State and compute. Per active sequence the implementation maintains a single mean M ∈ RD×m
+
+and one D × D covariance per group as running state ( O(Dm + GD 2) total); per-token states are not persisted. The chunkwise scan keeps only a bounded window of chunks live at once, controlling activation memory. The SlimPajama distillation experiment runs the Bayesian Layer with nheads = 4 
+
+and dhead = 256 , matching the GDN-340M head decomposition. 
+
+## E Controlled Collision Recall 
+
+This section gives the formal statements and proofs for the collision dynamics summarised in Section 2.3, followed by the full specifications of the deterministic and learned controlled-collision experiments of Section 4.1. 
+
+E.1 Cross-Key Contraction and Repeated-Flood Fixed Points Proposition 3 (Cross-key contraction–replenishment balance) . Consider the Bayesian Layer with 
+
+At = I and scalar observation noise r. Let kA, kB be unit-norm keys, and suppose that step t writes along kA. Define ¯σ2 
+
+> A
+
+:= k⊤ 
+
+> A
+
+¯PtkA, ¯σ2 
+
+> B
+
+:= k⊤ 
+
+> B
+
+¯PtkB , and the covariance-weighted correlation 
+
+ρ ¯Pt (kA, kB ) := 
+
+
+
+k⊤ 
+
+> B
+
+¯PtkA
+
+p¯σ2 
+
+> A
+
+¯σ2
+
+> B
+
+, ¯σ2 
+
+> A
+
+¯σ2 
+
+> B
+
+> 0,
+
+0, ¯σ2 
+
+> A
+
+¯σ2 
+
+> B
+
+= 0 .
+
+Then the net change in directional uncertainty along kB is 
+
+∆B := k⊤ 
+
+> B
+
+Pt kB − k⊤ 
+
+> B
+
+Pt−1 kB
+
+= ℓ2 −
+
+ k⊤ 
+
+> B
+
+¯Pt kA
+
+2
+
+r2 + ¯ σ2
+
+> A
+
+= ℓ2 − ¯σ2 
+
+> B
+
+ρ ¯Pt (kA, kB )2 ¯σ2
+
+> A
+
+r2 + ¯ σ2
+
+> A
+
+. (32) 
+
+Consequently, 
+
+0 ≤ ¯σ2 
+
+> B
+
+ρ ¯Pt (kA, kB )2 ¯σ2
+
+> A
+
+r2 + ¯ σ2
+
+> A
+
+≤ ¯σ2
+
+> B
+
+¯σ2
+
+> A
+
+r2 + ¯ σ2
+
+> A
+
+≤ ¯σ2 
+
+> B
+
+. (33) 15 Proof. The prediction step gives ¯Pt = Pt−1 +ℓ2I, so k⊤ 
+
+> B
+
+¯Pt kB = k⊤ 
+
+> B
+
+Pt−1 kB +ℓ2. The update (13) with ut = ¯PtkA and βt = ( r2 + k⊤ 
+
+> A
+
+ut)−1 gives k⊤ 
+
+> B
+
+Pt kB = k⊤ 
+
+> B
+
+¯Pt kB − βt(k⊤ 
+
+> B
+
+ut)2. Combining these two identities yields the first equality in (32) , and the second is a rearrangement using the definition of ρ ¯Pt (kA, kB ). Because ¯Pt is PSD, Cauchy–Schwarz in the seminorm induced by ¯Pt
+
+gives |ρ ¯Pt (kA, kB )| ≤ 1, proving (33). 
+
+Corollary 4 (Repeated-kA flood fixed point) . If, from some time onward, every step writes the same unit-norm key kA, then for ℓ2 > 0 the predicted variance along kA converges to the unique positive root ¯σ2 
+
+> A, ∞
+
+of x2 − ℓ2x − r2ℓ2 = 0 . Moreover, for any unit-norm key kB with ρ := k⊤ 
+
+> A
+
+kB ,
+
+lim t→∞ ∆(t) 
+
+> B
+
+= (1 − ρ2)ℓ2. In particular, every distinct key pair ( |ρ| < 1) has a strictly positive steady-state increase along kB .Proof. For repeated writes of the same key kA, decompose 
+
+¯PtkA = ¯ σ2 
+
+> A,t
+
+kA + ct, ¯σ2 
+
+> A,t
+
+:= k⊤ 
+
+> A
+
+¯PtkA, ct ⊥ kA.
+
+Here 
+
+ct := ( I − kAk⊤ 
+
+> A
+
+) ¯PtkA
+
+collects the cross-covariances between kA and the orthogonal subspace, since q⊤ct = q⊤ ¯PtkA for every q ⊥ kA. Using (13), 
+
+PtkA = ¯PtkA − ¯PtkA k⊤ 
+
+> A
+
+¯PtkA
+
+r2 + k⊤ 
+
+> A
+
+¯PtkA
+
+= r2
+
+r2 + ¯ σ2
+
+> A,t
+
+ ¯σ2 
+
+> A,t
+
+kA + ct
+
+.
+
+The next prediction adds ℓ2I, so only the kA component receives the extra ℓ2. Therefore 
+
+ct+1 = r2
+
+r2 + ¯ σ2
+
+> A,t
+
+ct, (34) and 
+
+¯σ2 
+
+> A,t +1
+
+= r2 ¯σ2
+
+> A,t
+
+r2 + ¯ σ2
+
+> A,t
+
++ ℓ2. (35) The scalar map f (x) = r2x/ (r2 + x) + ℓ2 satisfies f (x) − x = ℓ2 − x2/(r2 + x), which is strictly decreasing on x ≥ 0 and has the unique positive root 
+
+x2 − ℓ2x − r2ℓ2 = 0 . (36) Hence (35) converges to ¯σ2
+
+> A, ∞
+
+. Subtracting ℓ2 gives 
+
+σ2
+
+> A, ∞
+
+ σ2 
+
+> A, ∞
+
++ ℓ2 = r2ℓ2, (37) with σ2 
+
+> A, ∞
+
+:= ¯ σ2 
+
+> A, ∞
+
+− ℓ2.Because ¯σ2 
+
+> A,t
+
+≥ ℓ2 for all sufficiently large t, (34) contracts ct by at most r2/(r2 + ℓ2) < 1, so 
+
+ct → 0. Thus for any unit-norm key kB with ρ = k⊤ 
+
+> A
+
+kB ,
+
+k⊤ 
+
+> B
+
+¯PtkA = ρ ¯σ2 
+
+> A,t
+
++ k⊤ 
+
+> B
+
+ct −→ ρ ¯σ2
+
+> A, ∞
+
+.
+
+At the fixed point, 
+
+¯σ2 
+
+> A, ∞
+
+− r2 ¯σ2
+
+> A, ∞
+
+r2 + ¯ σ2
+
+> A, ∞
+
+= (¯ σ2
+
+> A, ∞
+
+)2
+
+r2 + ¯ σ2
+
+> A, ∞
+
+= ℓ2,
+
+so the contraction term in (32) converges to ρ2ℓ2. Therefore 
+
+lim  
+
+> t→∞
+
+∆(t) 
+
+> B
+
+= ℓ2 − ρ2ℓ2 = (1 − ρ2)ℓ2. (38) This is strictly positive whenever |ρ| < 1.
+
+E.2 Scalar-Gain Asymptotics for the Two-Key Collision 
+
+The cross-key analysis of Proposition 3 and corollary 4 yields closed-form predictions for the scalar-gain schedule observed in Figure 3d. 16 Basis decomposition of σ2 
+
+> t
+
+(kB ) in the deterministic-collision geometry. With the experimental keys kA = e1 and kB = ρ e1 + p1 − ρ2 e2 of Section 4.1, σ2 
+
+> t
+
+(kB ) = k⊤ 
+
+> B
+
+PtkB expands as 
+
+σ2 
+
+> t
+
+(kB ) = ρ2 σ2 
+
+> t
+
+(e1) + 2 ρp1 − ρ2 c(12)  
+
+> t
+
++ (1 − ρ2) σ2 
+
+> t
+
+(e2), c(12)  
+
+> t
+
+:= e⊤ 
+
+> 1
+
+Pte2. (39) A long A-flood drives σ2 
+
+> t
+
+(e1) → σ2 
+
+> A, ∞
+
+= ¯ σ2 
+
+> A, ∞
+
+− ℓ2 and c(12)  
+
+> t
+
+→ 0, leaving the orthogonal e2 term as the sole source of late-time growth in σ2 
+
+> t
+
+(kB ) (Figure 3c). 
+
+Boost-phase boundary gain. During a long B-boost, the covariance asymptotically diagonalizes in the basis {kB , e⊥} with kA = ρkB + p1 − ρ2 e⊥, ¯σ2 
+
+> B
+
+→ ¯σ2
+
+> B, ∞
+
+, and ¯σ2 
+
+> ⊥
+
+growing by ℓ2 per step. The scalar gain of the next A-write is 
+
+gA|B := βAk⊤ 
+
+> A
+
+uA = ρ2 ¯σ2 
+
+> B, ∞
+
++ (1 − ρ2)¯ σ2
+
+> ⊥
+
+r2 + ρ2 ¯σ2 
+
+> B, ∞
+
++ (1 − ρ2)¯ σ2
+
+> ⊥
+
+, (40) because 
+
+k⊤ 
+
+> A
+
+uA = ρ2 ¯σ2 
+
+> B, ∞
+
++ (1 − ρ2)¯ σ2
+
+> ⊥
+
+.
+
+Its infinite-boost limit is 
+
+gA|B −→ 1 as ¯σ2 
+
+> ⊥
+
+→ ∞ . (41) Thus the pre-flood A-write can approach unit scalar innovation weight when the unresolved compo-nent of kA outside the repeatedly observed B direction dominates the predicted variance. 
+
+Flood-phase floor and steady-state gate. During a sustained A-flood, the A-write scalar gain decays to 
+
+gss  
+
+> A
+
+= ¯σ2
+
+> A, ∞
+
+r2 + ¯ σ2
+
+> A, ∞
+
+, ¯σ2 
+
+> A, ∞
+
+= ℓ2 + √ℓ4 + 4 r2ℓ2
+
+2 , (42) because repeated A-writes align ¯PtkA with kA. Here gss  
+
+> A
+
+is the steady-state scalar gain on the innovation in the error-correction form (26) . Retrieval still converges: the residual (vt − ˆvt) shrinks toward zero even when the gain converges to a positive floor. At this fixed point the warped key collapses onto the raw key ( ut → ¯σ2
+
+> A, ∞
+
+kA, since the cross-covariance with orthogonal directions has decayed to zero), and the Bayesian gate becomes Fss =
+
+I − gss kAk⊤ 
+
+> A
+
+— structurally the DeltaNet gate with γ = gss . In the limiting regimes: • ℓ2 ≪ r2: gss ≈ √ℓ2/r . Small state noise yields low gain — the filter trusts its accumulated evidence. • ℓ2 ≫ r2: gss ≈ 1 − r2/(2 ℓ2). Large state noise yields near-full replacement at each step, recovering constant-gain dynamics. The ratio ℓ2/r 2 thus controls the filter’s effective memory horizon: small ℓ2/r 2 produces long memory and strong self-limiting behavior, while large ℓ2/r 2 shortens memory toward the history-free updates of the constant-gain models in Table 1. 
+
+Numerical verification. For the parameters of Figure 3 ( ρ = 0 .92 , r2 = ℓ2 = 0 .05 ), these formulas give the flood-side fixed point gss  
+
+> A
+
+≈ 0.62 and the infinite-boost limit gA|B → 1; for the plotted 40-step boost, the observed flood-onset value is gA|B ≈ 0.91 . These match the onset peak and late-time level in panel d. 
+
+Angular rotation of the warped key. The same basis decomposition determines the direction of the next A-write, not just its scalar gain. In the (kB , e⊥) basis with ¯Pt ≈ ¯σ2 
+
+> B, ∞
+
+kB k⊤ 
+
+> B
+
++ ¯ σ2 
+
+> ⊥
+
+e⊥e⊤⊥,the warped key 
+
+ut = ¯PtkA = ρ ¯σ2 
+
+> B, ∞
+
+kB + p1 − ρ2 ¯σ2 
+
+> ⊥
+
+e⊥ (43) makes angle θt with kA given by 
+
+cos θt = k⊤ 
+
+> A
+
+ut
+
+∥ut∥ = ρ2 ¯σ2 
+
+> B, ∞
+
++ (1 − ρ2)¯ σ2
+
+> ⊥
+
+q
+
+ρ2(¯ σ2
+
+> B, ∞
+
+)2 + (1 − ρ2)(¯ σ2
+
+> ⊥
+
+)2
+
+. (44) 17 In the long-boost limit ¯σ2
+
+> ⊥
+
+/¯σ2 
+
+> B, ∞
+
+→ ∞ , both numerator and denominator are dominated by the ¯σ2
+
+> ⊥
+
+term, giving 
+
+cos θ∞ = p1 − ρ2, θ∞ = arcsin ρ. (45) The next A-write thus enters with its correction direction rotated toward the unresolved residual e⊥,asymptotically orthogonal to kA in the ρ → 1 limit. No constant-gain or covariance-reset recurrence reproduces this rotation: in those families ut ∝ kt identically, so θt ≡ 0.
+
+E.3 Exact Panel-(a) Limits for the Collision Experiment 
+
+This subsection converts the mean recursions into exact predictions for panel (a) of Figure 3. Through-out, we use the actual deterministic pre-flood state produced by the seed and boost phases of Figure 3; no idealized pure-boost limit is taken. Let t0 denote the last step of the B-boost, and for n ≥ 0 define the query readouts 
+
+an := M⊤
+
+> t0+n
+
+kA, bn := M⊤
+
+> t0+n
+
+kB ,
+
+so a0 and b0 are the exact deterministic pre-flood readouts. The quantity plotted in panel (a) is 
+
+pAB n := exp( bn(B)) exp( bn(A)) + exp( bn(B)) . (46) 
+
+Same-key readout contraction. For repeated writes along a fixed unit-norm key k with At = I, the mean update (12) can be written in innovation form Mt = ¯Mt + βtut(vt − ˆvt)⊤ with ˆvt := ¯M⊤ 
+
+> t
+
+kt;projecting onto k gives M⊤ 
+
+> t
+
+k − v = (1 − gt)  ¯M⊤ 
+
+> t
+
+k − v, which iterates to the scalar contraction 
+
+M⊤ 
+
+> t
+
+k − v =
+
+ tY
+
+> s=1
+
+(1 − gs)
+
+ M⊤ 
+
+> 0
+
+k − v. (47) The readout converges to v whenever P 
+
+> s
+
+gs = ∞.
+
+Boost plateau. During the B-boost, (47) applies with k = kB and v = vB . For both the Bayesian Layer and the covariance-reset / DeltaNet-style approximation, the gain sequence satisfies P 
+
+> t
+
+gt = ∞, so M⊤ 
+
+> t
+
+kB → vB = eB . Therefore 
+
+ M⊤ 
+
+> t
+
+kB
+
+ 
+
+> B
+
+−  M⊤ 
+
+> t
+
+kB
+
+ 
+
+> A
+
+→ 1, pAB t → (1 + e−1)−1 ≈ 0.731 .
+
+DeltaNet-style flood plateau from the exact pre-flood state. During the A-flood, the covariance-reset / DeltaNet-style update is 
+
+Mt0+n = ( I − γkAk⊤ 
+
+> A
+
+)Mt0+n−1 + γkAv⊤ 
+
+> A
+
+.
+
+Projecting onto kA and kB gives, for n ≥ 1,
+
+an = (1 − γ) an−1 + γ vA, (48) 
+
+bn = bn−1 + γρ (vA − an−1), ρ := k⊤ 
+
+> A
+
+kB . (49) Hence 
+
+an = vA + (1 − γ)n(a0 − vA), (50) 
+
+bn = b0 − ρ 1 − (1 − γ)n(a0 − vA), (51) so the exact flood-side plateau from the actual pre-flood state is 
+
+b∞ = b0 − ρ(a0 − vA). (52) For the deterministic comparison of Figure 3, the seed and boost phases produce 
+
+a0(A) ≈ 0.13145 , a0(B) ≈ 0.88467 , b0(A) = 0 , b0(B) = 1 ,
+
+hence 
+
+b∞(A) ≈ 0.79907 , b∞(B) ≈ 0.18610 .
+
+Therefore the exact DeltaNet-style panel-(a) plateau is 
+
+b∞(B) − b∞(A) ≈ − 0.61296 , pAB  
+
+> ∞
+
+≈ 0.35138 .
+
+18 Bayesian flood plateau from the exact pre-flood state. During the A-flood, the Bayesian mean update gives 
+
+Mt0+n = ( I − βnunk⊤ 
+
+> A
+
+)Mt0+n−1 + βnunv⊤ 
+
+> A
+
+,
+
+with un = ¯Pt0+nkA. Define the two scalar gain coefficients 
+
+ηAn := βnk⊤ 
+
+> A
+
+un, ηBn := βnk⊤ 
+
+> B
+
+un.
+
+Projecting the mean update onto kA and kB yields, for n ≥ 1,
+
+an = (1 − ηAn ) an−1 + ηAn vA, (53) 
+
+bn = bn−1 + ηBn (vA − an−1). (54) Iterating gives the exact deterministic series 
+
+an − vA =
+
+ nY
+
+> j=1
+
+(1 − ηAj )
+
+
+
+(a0 − vA), (55) 
+
+bn = b0 +
+
+> n
+
+X
+
+> s=1
+
+ηBs
+
+s−1Y
+
+> j=1
+
+(1 − ηAj )
+
+
+
+(vA − a0). (56) Since P 
+
+> n
+
+ηAn = ∞ in the repeated-A regime, an → vA, and the flood-side plateau is the convergent limit 
+
+b∞ = b0 +
+
+> ∞
+
+X
+
+> s=1
+
+ηBs
+
+s−1Y
+
+> j=1
+
+(1 − ηAj )
+
+
+
+(vA − a0). (57) Evaluating (57) from the exact deterministic pre-flood state of Figure 3, 
+
+a0(A) ≈ 0.90019 , a0(B) ≈ 0.10271 , b0(A) = 0 , b0(B) = 1 ,
+
+gives 
+
+b∞(A) ≈ 0.01978 , b∞(B) ≈ 0.97964 ,
+
+and therefore 
+
+b∞(B) − b∞(A) ≈ 0.95986 , pAB  
+
+> ∞
+
+≈ 0.72309 .
+
+Linear Attention. Under repeated A-writes, Linear Attention adds the rank-one increment γkAv⊤
+
+> A
+
+at every step, so M⊤ 
+
+> t
+
+kB acquires an A-logit contribution that grows linearly in the number of flood steps while the B-logit does not. Thus bn(A) → ∞ , bn(B) − bn(A) → −∞ , and pAB n → 0.
+
+E.4 Deterministic experiment: full specification E.4.1 Hyperparameters 
+
+Parameter Value 
+
+Address dimension D 16 Number of identities m 6Seed repetitions nseed 2Boost writes (identity B) 40 Flood writes (identity A) 60 Total sequence length T 112 Prior covariance P0 3.0 I
+
+State-noise variance ℓ2 0.05 Observation-noise variance r2 0.05 Dynamics At I
+
+Overlap (high) ρ 0.92 Overlap (low, control) ρ 0.45 
+
+Sequence layout. Token ranges are 1–12 (seed, nseed = 2 passes through A, B, C, D, E, F ), 13–52 (boost on B), 53–112 (flood on A). Keys for the four non-collision identities are ¯kC = e3, ¯kD =
+
+e4, ¯kE = e5, ¯kF = e6; ¯kA, ¯kB follow Section 4.1. Values are one-hot, vi = ei ∈ R6.19 Update rules. Both models use the scalar observation-noise variant ( R = r2I, Section D) of the Bayesian Layer update from Proposition 1, with At = I and the hyperparameters above ( M0 = 0). The covariance-reset ablation clamps ¯Pt = ℓ2I at every step, giving constant gain γ = ℓ2/(r2 +ℓ2) = 0.5 on unit-norm keys. 
+
+E.4.2 Gain-matched fixed-prior control 
+
+We sweep ¯Pt = c I over c ∈ { 0.01 , 0.05 , 0.10 , 0.50 , 1.0, 3.0}, varying the constant gain γ(c) = 
+
+c/ (r2 + c) from 0.17 to 0.98 .                          
+
+> cγ(c)Margin at t= 112 Zero-crossing step 0.01 0.17 −0.45 56 0.05 0.50 −0.44 54 0.10 0.67 −0.44 53 0.50 0.91 −0.43 53 1.00 0.95 −0.43 53 3.00 0.98 −0.43 53
+> Bayesian Layer varies +0.20 never
+
+No fixed c recovers the Bayesian Layer’s behavior. A constant gain cannot simultaneously allow fast learning during the boost and slow overwriting during the flood. 
+
+E.4.3 Overlap sweep                     
+
+> ρMargin (Bayesian Layer) Margin (Reset) 0.30 +0 .46 +0 .40
+> 0.45 +0 .46 +0 .32
+> 0.60 +0 .46 +0 .20
+> 0.75 +0 .46 +0 .01
+> 0.85 +0 .46 −0.16
+> 0.90 +0 .45 −0.26
+> 0.92 +0 .45 −0.30
+> 0.95 +0 .43 −0.36
+> 0.98 +0 .34 −0.42
+
+E.4.4 Key numerical values                       
+
+> Quantity Bayesian Layer Reset
+> A-write gain at seed ( t≤12 )∼1.00.50
+> A-write gain at flood start ( t= 53 )∼2.00.50
+> A-write gain at flood end ( t= 112 )∼0.60.50
+> B-margin at end of boost ( t= 52 )+0 .46 +0 .46
+> B-margin at end of flood ( t= 112 )+0 .20 (>0)−0.44 (<0)
+
+All quantities are deterministic and exactly reproducible from the hyperparameters above. 
+
+E.5 Learned-recall experiment: full specification E.5.1 Sequence construction 
+
+Each training example is a single associative-recall sequence with controlled address collision. The experiment is designed to isolate overwrite under known key geometry, so write events explicitly provide both an address and a value, and query events provide only an address. 20 20 40 60 
+
+write step 
+
+0.6 
+
+0.8 
+
+1.0 
+
+
+
+(c) Scalar write gain 
+
+0.5 0.6 0.7 0.8 0.9 1.0 
+
+key overlap 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> final retrieval
+>  = .
+> chance
+
+(d) Generalization across 
+
+Bayesian Layer diag. ablation DeltaNet-style Linear Attention Figure 6: Deterministic write-dynamics diagnostics. (left) Scalar write gain gt = βtk⊤ 
+
+> t
+
+ut over time for the deterministic experiment of Section 4.1 (a, b), verifying the closed-form gain envelope of Equation (42): a spike at the boost →flood transition followed by decay to the Riccati floor gss ≈ 0.62 .
+
+(right) Deterministic overlap sweep—final retrieval at ¯kB as a function of ρ at fixed write schedule. The Bayesian Layer holds across the full collision range; reset and constant-gain models collapse as 
+
+ρ → 1. Numerical values match the table in Section E.4.3. 
+
+Pairs, addresses, and collision geometry. We use K = 8 target–distractor pairs and D = 16 
+
+address dimensions. For pair i,
+
+¯kBi = e2i−1, ¯kAi = ρi e2i−1 +
+
+q
+
+1 − ρ2 
+
+> i
+
+e2i.
+
+Thus each pair occupies its own two-dimensional subspace and satisfies ¯k⊤
+
+> Ai
+
+¯kBi = ρi, while different pairs are orthogonal by construction. 
+
+Per-sequence value assignment. A fresh permutation π : {1, . . . , 2K} → { 1, . . . , 2K} assigns one-hot answer labels: 
+
+vBi = eπ(2 i−1) , vAi = eπ(2 i).
+
+Because this permutation is re-sampled independently for every sequence, the model cannot solve the task by memorizing a global address-to-label mapping. 
+
+Token format. A write token for identity j is 
+
+[WRITE , ¯kj , vj ] ∈ R1+ D+2 K .
+
+A query token for target Bi is 
+
+[QUERY , ¯kBi , 0] ∈ R1+ D+2 K .
+
+Thus the full token dimension is 1 + D + 2 K = 33 . Loss is applied only at query positions. 
+
+Sequence phases. Each sequence contains four phases: 1. Seed (2K tokens): one write per identity, in random order, re-sampled independently for every sequence. 2. Boost (K · nboost tokens): target writes grouped by identity, with each target written nboost 
+
+times contiguously in the fixed order Bnboost  
+
+> 1
+
+, . . . , B nboost  
+
+> K
+
+.3. Flood (K · nflood tokens): distractor writes grouped by identity, with each distractor written 
+
+nflood times contiguously in the fixed order Anflood  
+
+> 1
+
+, . . . , A nflood  
+
+> K
+
+.4. Query (K tokens): one query per target, in random order. 21 Train / test configuration. Unless otherwise stated, we fix K = 8 and nboost = 4 . Training uses nflood ∈ { 1, 2, 4, 8} and ρi ∼ Uniform(0 .60 , 0.80) . The flood-length extrapolation test uses 
+
+nflood ∈ { 16 , 32 , 64 }. The overlap-shift test uses ρi ∼ Uniform(0 .85 , 0.95) .
+
+E.5.2 Shared backbone and recurrent mixer interface 
+
+All five models share the same backbone, embedding size, optimizer, training budget, and output head, differing only in the recurrent mixer. The backbone is 2 pre-norm RMSNorm layers with 
+
+dmodel = 64 , 4 heads of width dk = D = 16 , and a SwiGLU MLP of hidden dimension 128 per layer; each layer is a residual mixer followed by a residual MLP. No positional embeddings are used: the task carries its own address and type structure. The crucial design choice is to separate the learned residual stream from a fixed address pathway. Each raw token xt = [ type t, ¯kt, vt] ∈ R33 is mapped to the residual stream by a learned linear embedding Win : R33 → R64 , but ¯kt is also passed unchanged to every layer and head and used directly as both key and query: k(ℓ,h ) 
+
+> t
+
+= q(ℓ,h ) 
+
+> t
+
+= ¯kt. Thus the overlap ρi is the actual overlap seen by the update, not a property of the raw token before a learned remapping. Values are computed from the normalized hidden state, v(ℓ,h ) 
+
+> t
+
+= W (ℓ,h ) 
+
+> V
+
+RMSNorm( h(ℓ−1)  
+
+> t
+
+), W (ℓ,h ) 
+
+> V
+
+∈ R16 ×64 ; gating and dynamics parameters (when present) are produced from the same normalized state. Each head maintains M(ℓ,h ) 
+
+> t
+
+∈ R16 ×16 , plus P(ℓ,h ) 
+
+> t
+
+∈ R16 ×16 for the Bayesian Layer; at query tokens each head reads o(ℓ,h ) 
+
+> t
+
+= ( M(ℓ,h ) 
+
+> t
+
+)⊤ ¯kt, and head outputs are concatenated, projected, and mapped to logits over the 2K answer labels. 
+
+E.5.3 Compared models and update rules 
+
+Table 2: Compared models in Experiment 2. In all rows βt denotes a scalar write strength, but its functional form differs: for DeltaNet-style, βt = σ(w⊤ 
+
+> b
+
+˜ht + bb) ∈ (0 , 1) is a learned sigmoid; for the covariance-reset and Bayesian Layer, βt = ( r2 + ¯k⊤ 
+
+> t
+
+ut)−1 is the inverse innovation variance from the filtering equations.                                         
+
+> Model Gate Write address PtInterpretation
+> Linear Attention none ¯kt—additive write GLA-style diag( αt)¯kt—diagonal gate, raw address DeltaNet-style I−βt¯kt¯k⊤
+> t¯ktreset rank-one gate, raw address Covariance-reset I−βtut¯k⊤
+> tut=ℓ2¯ktreset rank-one gate, fixed isotropic covariance
+> Bayesian Layer I−βtut¯k⊤
+> tut= ¯Pt¯ktpropagated full update with propagated covariance and learned ℓ2
+> t
+
+All models use the same explicit address stream ¯kt for both writing and querying; they differ only in how memory is updated. The update equations are summarized in Table 2; below we specify only the model-specific learned parameters. Throughout, ˜ht = RMSNorm( ht).
+
+Gates. GLA-style uses a learned diagonal gate αt = σ(Wg ˜ht + bg ) ∈ (0 , 1) 16 . DeltaNet-style uses a learned scalar βt = σ(w⊤ 
+
+> b
+
+˜ht + bb) ∈ (0 , 1) ; its update is algebraically equivalent to the error-correction form of Schlag et al. (2021), writing the retrieval error vt − M⊤ 
+
+> t−1
+
+¯kt rather than the raw value. 
+
+Covariance-reset. Same mean update as the Bayesian Layer but with the predicted covariance clamped to ¯Pt = ℓ2I at every step. No covariance state is propagated. 
+
+Bayesian Layer. Scalar observation noise ( R = r2I, G = 1 ; Section D) and At = I, matching all other models in the comparison. For the learned Experiment 2 comparison we use the input-dependent process-noise extension from Section 2: each head predicts a positive scalar ℓ2 
+
+> t
+
+= ℓ2(˜ht), while r2
+
+and p0 are held fixed. The covariance is reset to p0I at the start of each new sequence. 22 E.5.4 Random-key evaluation 
+
+To test whether the collision mechanism generalizes beyond engineered pair structure, we run a second evaluation with random addresses. 
+
+Setup. Raw addresses are sampled from N (0, I) in R64 and normalized to unit norm. Values are one-hot labels from {1, . . . , 64 }, re-sampled independently for every sequence. Each sequence contains n write tokens followed by q = 8 query tokens. There is no boost phase, no flood phase, and no engineered target–distractor pairing. The q = 8 query tokens are addresses drawn uniformly at random (without replacement) from the n written keys; accuracy is the fraction of these queries for which the correct value label is returned. 
+
+Token format. Same type-flag structure as the engineered-collision condition, with raw addresses 
+
+¯kt ∈ R64 and one-hot value labels in R64 . As before, the address pathway bypasses Win and feeds the shared projection R directly. 
+
+Shared address projection. Because the recurrent heads use 16-dimensional addresses, we project the raw 64-dimensional address to mixer space with a single shared frozen random projection matrix 
+
+R ∈ R16 ×64 with orthonormal rows, and renormalize: 
+
+˜kt = R¯kt
+
+∥R¯kt∥ .
+
+All models then use ˜kt as their write and query address. This preserves the principle of a shared externally specified address stream while matching the head dimension of the learned model. All reported collision statistics in this condition are measured after projection, i.e. in the actual address space seen by the recurrent update. 
+
+Train / test. With D = 16 (the mixer head dimension), the occupancy ratio is n/D . Training uses 
+
+n ∈ { 16 , 32 , 48 , 64 } (n/D ≤ 4). Test uses n ∈ { 96 , 128 , 192 , 256 } (n/D ∈ { 6, 8, 12 , 16 }, entirely outside the training range). Optimizer, batch size, and training steps match the engineered-collision condition; models are trained separately from scratch on the random-key task. 
+
+Memory capacity and the role of n/D . The bilinear readout ˆvi = M⊤ki shared by all five models imposes a capacity ceiling independent of the update rule. 
+
+Remark 1 (Capacity bound for bilinear readout) . Let M ∈ RD×m and consider perfect recall of 
+
+n associations {(ki, vi)}ni=1 under ˆvi = M⊤ki. This requires K⊤M = V⊤ with K ∈ RD×n and 
+
+V ∈ Rn×m, a linear system in D unknowns per column. When n ≤ D and rank( K) = n the system is underdetermined and exactly solvable for every V; when n > D it is overdetermined and almost surely unsolvable for independently sampled V.
+
+At D = 16 , then, the random-key axis does not test whether perfect recall is achievable at n/D > 1 —it is not — but whether propagating Pt slows the degradation curve relative to history-free alternatives. 
+
+E.5.5 Training and metrics Optimization. We use cross-entropy loss at query positions only. Optimization uses AdamW with learning rate 3 × 10 −4, β1 = 0 .9, β2 = 0 .999 , weight decay 10 −4, and gradient clipping at norm 1.0.Batch size is 256, and models are trained for 2,500 steps. For the Bayesian Layer in Experiment 2, 
+
+r2 = 0 .05 and P0 = 3 I are fixed, while the process-noise scale is learned as an input-dependent scalar ℓ2 
+
+> t
+
+(˜ht); the covariance-reset ablation uses the corresponding fixed isotropic choice ¯Pt = ℓ2I
+
+with ℓ2 = 0 .05 . All reported results are averaged over 3 random seeds; error bars show ±1 standard deviation. 
+
+Metrics. Engineered-collision condition: with readouts y(qBi ) at the target-Bi query, target query accuracy is 1
+
+> K
+
+P 
+
+> i
+
+1[arg max j y(qBi )j = π(2 i−1)] and target probability margin is the average 
+
+p(π(2 i−1) | qBi ) − p(π(2 i) | qBi ), with p(j | q) = softmax( y(q)) j ; chance is 1/(2 K) = 6 .25% .Random-key condition: query accuracy averages 1[arg max ℓ y(˜kqj )ℓ = cqj ] over the eight queries; chance is 1/64 ≈ 1.6% , so absolute accuracies across the two conditions are not directly comparable. The probability margin is not defined in the random-key case (no paired distractor). 23 5 10 15 
+
+Key-space density ( / )
+
+0
+
+1
+
+2
+
+3
+
+4
+
+> Cross-entropy loss
+
+(c) Random-key crowding 
+
+5 10 15 
+
+Key-space density ( / )
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Target query accuracy
+
+(d) Random-key accuracy 
+
+LinAttn 
+
+GLA 
+
+DeltaNet 
+
+Cov-reset 
+
+Diag. 
+
+Bayesian Figure 7: Random-key crowding. Cross-entropy at queries vs. key-space density n/D under the random-key task above (no engineered target–distractor pairs). This stresses the cross-direction prediction (1 − ρ2)ℓ2 of Equation (16): a write at one address replenishes other addresses’ uncertainty at this rate, which becomes a crowding cost as n/D grows. The Bayesian Layer retains the lowest loss across all densities, while history-free variants degrade more quickly. All models eventually saturate above the capacity bound of Remark 1 ( n/D > 1), but the propagated-covariance update slows the degradation curve. Table 3: Model configurations 
+
+Model dstate dmodel State Eqn (per layer) State Size 
+
+dmodel = 128 , batch size = 256 
+
+Bayesian Layer 128 dstate = 32 nhead × d2 
+
+> state
+
++ nhead × d2 
+
+> state
+
+8192 
+
+Gated DeltaNet 128 dstate = 32 ; ev = 2 nhead × ev × d2 
+
+> state
+
+8192 
+
+Mamba-2 128 dstate = 32 ; e = 2 ; nhead × e × dstate × dstate 8192 
+
+RWKV-7 128 dstate = 32 nhead × d2 
+
+> state
+
++ nhead × d2 
+
+> state
+
+8192 
+
+## F Zoology MQAR Benchmark 
+
+This section gives the complete specification of the Zoology MQAR evaluation in Section 4.2. 
+
+Experiment details. Unless stated otherwise, the MQAR runs use the following settings: 
+
+Optimizer and schedule . We use AdamW with weight decay 0.1, use 1024 warmup steps, and then apply a cosine schedule. 
+
+Model . We compare against five baselines: Attention (Vaswani et al., 2017), Gated DeltaNet (Yang et al., 2024a), Mamba-2 (Dao and Gu, 2024b), RWKV-7 (Peng et al., 2024), and Hyena (Poli et al., 2023). All models use two sequence-mixer layers, an external linear categorical readout, and width 
+
+dmodel = 128 . For head-based mixers, we choose the number of heads so that the effective head dimension is 32 ; Mamba-2 uses the same SSD head dimension. Model state size is matched across models at 8192 parameters per layer, including all recurrent state and gating parameters. The exact head and state settings for each model are listed in Table 3. To isolate the effects of gating and local convolutional context, we also run Gated DeltaNet with and without its short convolution and Mamba-2 with its default convolution or with dconv = 1 .24 Data . We train and evaluate each model on 100,000 points per configuration. MQAR datapoints are generated from vocabulary size V = 8192 and power-law exponent a = 0 .01 . Original MQAR samples keys for the two roles from disjoint halves of the vocabulary, {k} ∈ { 0, · · · , V 
+
+> 2
+
+} and 
+
+{q} ∈ { V 
+
+> 2
+
+, · · · , V }. We use a modified MQAR generator that samples both roles from the same vocabulary and applies a random permutation to the key and query vocabularies independently for every sequence, eliminating the key–value role shortcut. To probe the model’s associative-memory behavior more directly, we consider three variants of MQAR. • Update-MQAR : a subset of keys is written more than once with different values: 
+
+A, 4, B, 5, A, 4′, A, 4∗,
+
+> context
+
+0, 0, A, 0, B
+
+> query
+
+,
+
+The correct answers are 4∗ and 5, so the model must return the newest value for updated keys and keep unchanged keys intact. This tests whether the model can overwrite associations without corrupting non-updated keys or values. Models were trained on a dataset with mixed sequence lengths N ∈ { 64 , 128 }, numbers of key-value pairs D ∈ { 4, 16 }, and update fractions 
+
+U ∈ { D, D/ 2, D/ 4, D/ 8}
+
+• Block-MQAR : key and value tokens are presented in a block manner rather than as adjacent key–value pairs: 
+
+A, B, 4, 5, C, D, 7, 2,
+
+> context
+
+0, 0, A, 0, B
+
+> query
+
+,
+
+The correct answers are 4 and 5, so the model must learn to maintain associations across inter-leaved queries. This tests whether the model can avoid opening memory on query tokens and keep associations intact across queries. This tests whether the model can form key–value associations when the value is delayed relative to the key, rather than relying only on local adjacency. Models were trained independently on each fixed block size B = 2 on a dataset with sequence length 
+
+N = 128 and mixed numbers of key-value pairs D ∈ { B, 2B, 3B, 4B}.
+
+## G Distillation and Long-Context Retrieval 
+
+Our two-phase distillation protocol — per-layer hidden-state matching (Phase A) followed by joint logit-KL with an auxiliary hidden-state regularizer (Phase B) — adapts the per-block matching strategies used in recent Transformer-to-recurrent linearizations (Wang et al., 2024; Lan et al., 2025) to the within-family setting of replacing a subset of layers in a pretrained recurrent backbone. All variants start from the released 340M-class Gated DeltaNet checkpoint 
+
+linear-moe-hub/Gated-Deltanet-340M . All distillation runs use SlimPajama at sequence length 2048, AdamW with weight decay 0, gradient clipping 1.0, and bfloat16 mixed precision. Phase A trains each replaced layer ℓ ∈ I , with I = {5, 11 , 17 , 23 }, in parallel via 
+
+L(ℓ) 
+
+> A
+
+= yBL  
+
+> ℓ
+
+− yGDN 
+
+> ℓ
+> 22
+
+Var  yGDN 
+
+> ℓ
+
+ + 10 −6 + 0 .05  1 − cos  yBL  
+
+> ℓ
+
+, y GDN 
+
+> ℓ
+
+ , (58) where y• 
+
+> ℓ
+
+denotes the layer-ℓ attention-block output for the student and frozen teacher under matched inputs. We use 100,007,936 tokens per layer (1,526 optimizer steps at 65,536 tokens/step, peak LR 
+
+5 × 10 −4, warmup 25, cosine-with-min-LR to 0.1× peak). Phase B then jointly distills the assembled hybrid via 
+
+LB = λKL KL( pGDN ∥ pBL ) + λb
+
+|I| 
+
+X
+
+> ℓ∈I
+
+yBL  
+
+> ℓ
+
+− yGDN 
+
+> ℓ
+> 22
+
+Var  yGDN 
+
+> ℓ
+
+ + 10 −6 , (59) with (λKL , λ b) = (0 .8, 0.2) for the first 150,077,440 tokens and (0 .9, 0.1) for the next 150,208,512 tokens, using a 10-step linear ramp at the stage transition. Trainable parameters at each BL layer are the fresh BL recurrence ( Aradius , Aangle , WA, and the noise weights and scalars), the inherited Q/K/V/O projections, and the output gate ( g_proj , o_norm ); the same four layers’ MLP gate_proj 
+
+and down_proj weights are unfrozen at a 0.1× LR multiplier. Phase B uses peak LR 3 × 10 −4,warmup 50, cosine-min 0.1× peak, and 8-GPU DDP with local microbatch 8 in Stage 1 and 16 in 25 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 
+
+> Needle depth decile
+> 2k
+> 4k
+> 8k
+> 16k
+> Context
+
+A Aggregate delta B multiquery            
+
+> Per-task deltas
+> multivalue single-2
+> 0.0 0.5 0.9
+> Depth decile
+> 2k
+> 4k
+> 8k
+> 16k
+> Context
+> multikey-1 single-3 single-1
+> −15 −10 −5 0510 15
+> Δ NIAH accuracy (points)
+
+Figure 8: Appendix Fig. A1. Position-stratified BL − GDN-FT RULER accuracy deltas for the matched-compute control. The panels mirror Figure 5B,C.                                                                                                         
+
+> context model niah_single_1 niah_single_2 niah_single_3 niah_multikey_1 niah_multivalue niah_multiquery mean 2048 GDN-zero 100.00 96.50 30.50 28.00 19.25 22.88 49.52 2048 GDN-FT 100.00 92.00 27.00 25.00 23.50 23.25 48.46 2048 BL 100.00 89.00 42.00 27.50 22.88 23.50 50.81
+> 4096 GDN-zero 98.00 35.50 2.00 27.50 7.00 16.50 31.08 4096 GDN-FT 98.00 35.50 1.50 24.50 9.88 20.12 31.58 4096 BL 97.00 51.00 1.50 23.50 8.62 22.50 34.02
+> 8192 GDN-zero 71.00 13.00 1.50 7.50 1.88 6.00 16.81 8192 GDN-FT 60.50 14.50 2.00 8.50 2.75 8.12 16.06 8192 BL 67.00 18.50 3.00 13.00 6.25 12.25 20.00
+> 16384 GDN-zero 31.50 4.00 1.50 5.00 1.50 3.62 7.85 16384 GDN-FT 31.00 4.00 2.50 5.50 2.75 4.38 8.36 16384 BL 30.00 7.00 1.50 5.50 3.12 5.75 8.81
+
+Table 4: Appendix Table A1. Per-task RULER retrieval scores for the Phase-A/Phase-B distillation experiment and matched-compute control. CWE is excluded. Stage 2. The matched-compute control GDN-FT replaces Equation (59) with next-token cross-entropy on the same SlimPajama corpus, 
+
+LGDN -FT (θ) = −Ex∼D 
+
+"
+
+1
+
+T − 1 
+
+> T−1
+
+X
+
+> t=1
+
+log pθ (xt+1 | x1: t)
+
+#
+
+, (60) for the same 400M tokens with the same trainable mask and LR schedule. We verify the released GDN baseline against its SlimPajama-heldout 1M-token sentinel CE of 2.535 prior to distillation and evaluation. 
+
+Existing assets and licenses. The experiments use public research assets only. Zoology/MQAR (Arora et al., 2024) and RULER (Hsieh et al., 2024) are released under Apache-2.0 licenses. The 
+
+linear-moe-hub/Gated-Deltanet-340M checkpoint (Du et al., 2025; Yang et al., 2024a) is released on Hugging Face under Apache-2.0. SlimPajama (Soboleva et al., 2023) is an open dataset release whose documentation lists source-specific terms for its constituent subsets. WikiText-103 (Merity et al., 2016) is distributed under CC-BY-SA-3.0/GFDL terms, and PG-19 (Rae et al., 2019) is released from an Apache-2.0 repository with source texts drawn from Project Gutenberg. We cite the original creators and do not redistribute the underlying assets in this paper. Appendix Table A1 and Appendix Table A2 report the per-cell numbers behind the main-text means. Per-task NIAH gains of BL over GDN-zero concentrate on multi-target retrieval: niah_multivalue improves by +3.6, +1.6, +4.4, and +1.6 points at 2k/4k/8k/16k, and niah_multiquery improves by 26 dataset context GDN-zero ppl GDN-zero CE GDN-zero tokens GDN-FT ppl GDN-FT CE GDN-FT tokens BL ppl BL CE BL tokens wikitext-103 2048 15.94 2.769 315238 15.97 2.771 315238 16.34 2.794 315238 wikitext-103 4096 15.06 2.712 315315 15.08 2.713 315315 15.46 2.739 315315 wikitext-103 8192 14.57 2.679 311258 14.59 2.680 311258 14.97 2.706 311258 wikitext-103 16384 14.44 2.670 311277 14.47 2.672 311277 14.83 2.697 311277 slimpajama-heldout 2048 12.61 2.535 1000983 12.62 2.536 1000983 12.91 2.558 1000983 slimpajama-heldout 4096 12.32 2.511 1003275 12.33 2.512 1003275 12.61 2.534 1003275 slimpajama-heldout 8192 12.15 2.497 1007493 12.16 2.498 1007493 12.43 2.520 1007493 slimpajama-heldout 16384 12.06 2.490 1015746 12.07 2.491 1015746 12.34 2.513 1015746                                                                  
+
+> dataset context GDN-zero ppl GDN-zero CE GDN-zero tokens GDN-zero windows GDN-FT ppl GDN-FT CE GDN-FT tokens GDN-FT windows BL ppl BL CE BL tokens BL windows PG-19 validation 2048 20.30 3.010 2996808 1464 20.36 3.013 2996808 1464 20.83 3.037 2996808 1464 PG-19 validation 4096 19.64 2.977 2997540 732 19.70 2.980 2997540 732 20.16 3.004 2997540 732 PG-19 validation 8192 19.29 2.960 2997906 366 19.35 2.963 2997906 366 19.81 2.986 2997906 366 PG-19 validation 16384 19.14 2.952 2998089 183 19.19 2.955 2998089 183 19.65 2.978 2998089 183
+
+Table 5: Appendix Table A2. Per-corpus context-length perplexity for Wikitext-103, SlimPajama-heldout, and PG-19 validation. +0.6, +6.0, +6.3, and +2.1. The niah_single_2 task also improves at long context (+15.5, +5.5, and +3.0 at 4k/8k/16k). Across Wikitext103, PG-19 validation (first 50 books, about 3M tokens, non-overlapping windows), and SlimPajama-heldout (1M-token shard, non-overlapping windows), the BL − GDN-zero perplexity gap is flat across context length at 2.5–2.7%, and GDN-FT closely tracks GDN-zero on all three corpora at all four lengths ( ∆ ≤ +0 .3% on PG-19 and ∆ ≤ +0 .07% on the other two). All perplexity evaluations use the released GDN tokenizer, identical chunk boundaries across the three models, and cross-entropy averaged over L − 1 predicted tokens per non-overlapping window of length L.Appendix Fig. A1 reports the BL − GDN-FT versions of Figure 5B,C. The three position patterns— the mid-depth peak at 4k, the late-decile rise at 8k, and the localized 2k cost—all survive the matched-compute control with comparable magnitudes, confirming that the depth-conditioned shape is a property of the BL substitution rather than of additional training compute. Per-decile sample counts across the 240 task/length/decile cells range from n = 8 to n = 180 ; 208 cells have nBL < 30 ,with the smallest counts in the 0.0–0.5 deciles at 16k where both models are at retrieval floor. Cells with n < 30 are bordered in light gray in Figure 5B,C and Appendix Fig. A1. 27
