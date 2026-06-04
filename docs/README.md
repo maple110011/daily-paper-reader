@@ -6,24 +6,37 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-03
-- 运行时间：2026-06-03 22:14:09 UTC
+- 最新运行日期：2026-06-04
+- 运行时间：2026-06-04 21:51:49 UTC
 - 运行状态：成功
-- 本次总论文数：1
-- 精读区：0
-- 速读区：1
+- 本次总论文数：5
+- 精读区：2
+- 速读区：3
 
 ### 今日简报（AI）
-今日速读1篇联邦学习个性化偏好论文，发现Gumbel-Softmax先验用于变分对齐是亮点。该方向核心在于通过变分推断与离散先验提升个性化推荐有效性。建议后续关注联邦学习与偏好建模结合的实际部署案例。
-- 详情：[/202606/03/README](/202606/03/README)
+今日5篇推荐，聚焦贝叶斯变分推断、多维缩放及不确定性量化。
+最值得精读：坐标上升变分推断的Wasserstein收缩理论，以及具有一致性保证的快速近似贝叶斯多维缩放。
+建议读者优先关注这两篇8分论文，深入理解贝叶斯推断的收缩特性和近似方法的一致性保障。
+- 详情：[/202606/04/README](/202606/04/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [Wasserstein Contraction of Coordinate Ascent Variational Inference](/202606/04/2605.30253v2-wasserstein-contraction-of-coordinate-ascent-variational-inference)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：坐标上升变分推理分析，应用于贝叶斯模型
+2. [Fast approximate Bayesian multidimensional scaling with consistency guarantees](/202606/04/2605.30687v1-fast-approximate-bayesian-multidimensional-scaling-with-consistency-guarantees)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：快速近似贝叶斯多维尺度分析并提供后验不确定性
 
 ### 速读区论文标签
-1. [Federated Variational Preference Alignment with Gumbel-Softmax Prior for Personalized User Preferences](/202606/03/2605.30873v1-federated-variational-preference-alignment-with-gumbel-softmax-prior-for-personalized-user-preferences)  
+1. [Joint Model and Data Sparsification via the Marginal Likelihood](/202606/04/2605.29908v1-joint-model-and-data-sparsification-via-the-marginal-likelihood)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：联邦变分偏好对齐与Gumbel-Softmax先验
+   evidence：使用边际似然优化实现贝叶斯稀疏学习，同时稀疏化模型和数据
+2. [Posterior and Likelihood Sensitivity in Bayesian Distributionally Robust Optimization](/202606/04/2605.31306v1-posterior-and-likelihood-sensitivity-in-bayesian-distributionally-robust-optimization)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：研究贝叶斯模型的后验和似然敏感性，与不确定性量化相关
+3. [Instance-Level Post Hoc Uncertainty Quantification in Object Detection](/202606/04/2606.04656v1-instance-level-post-hoc-uncertainty-quantification-in-object-detection)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：使用拉普拉斯近似进行事后不确定性量化，应用于物体检测
 
 
 <div class="dpr-home-promo-card">
