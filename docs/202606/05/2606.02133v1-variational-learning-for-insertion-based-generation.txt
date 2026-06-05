@@ -1,0 +1,969 @@
+Title: Variational Learning for Insertion-based Generation
+
+URL Source: https://arxiv.org/pdf/2606.02133v1
+
+Published Time: Tue, 02 Jun 2026 02:37:29 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Variational Learning for Insertion-based Generation 
+
+Yangtian Zhang * † 1 Zhe Wang * 2 3 Arthur Gretton 2 3 Rex Ying 1 David van Dijk 1
+
+Michalis K. Titsias 2 Jiaxin Shi † 4 
+
+## Abstract 
+
+Non-monotonic sequence generation methods, such as masked diffusion models, provide a flexible alternative to left-to-right autoregressive modeling by allowing tokens to be generated in non-fixed and prescribed orders. Despite their practical advantages, most existing non-monotonic models are order-agnostic and rely on a fixed-length grid, limiting their ability to support variable-length generation and adaptive insertion order. In this work, we introduce a prob-abilistic framework for learning insertion order in variable-length insertion models. We formal-ize a bijective correspondence between insertion trajectories and permutations, which enables an exact reparameterization of the data likelihood as a sum over permutations. Building on this result, we propose the Insertion Process (IP) ,a stochastic generative model that jointly learns 
+
+where to insert, what to insert, and when to ter-minate, trained via permutation-based variational inference. Unlike prior fixed-canvas approaches, IP natively supports variable-length generation and learns data-driven preferences over insertion orders. Experiments on goal-conditioned plan-ning and molecular string generation demonstrate that learning insertion order improves both model-ing quality and generalization in domains without a canonical left-to-right structure. 
+
+## 1. Introduction 
+
+Autoregressive sequence models typically generate tokens in a fixed left-to-right order (Bahdanau et al., 2014; Vaswani 
+
+> *
+
+Equal contribution, randomized ordering. †Work done at Google DeepMind 1Yale University 2Google DeepMind 
+
+> 3
+
+University College London 4Meta Superintelligence Labs. Cor-respondence to: Yangtian Zhang <yangtian.zhang@yale.edu >,Zhe Wang <zhewang@google.com >, Michalis K. Titsias <mtit-sias@google.com >, Jiaxin Shi <ishijiaxin@gmail.com >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). start subgoals end                                  
+
+> S→g1→g2→T
+> Goal -conditioned planning via insertion
+> S→g1→(8, 8) →g2→T
+> (8, 8)
+> S→→g1→→g2→→T
+> Initial Anchors:
+> Choose gap:
+> S→→g1→→g2→→T
+> Insert:
+
+Figure 1. Goal-conditioned planning via insertion. Given initial anchors from start S to subgoals g1, g 2 and target T , the planner selects a gap and inserts a waypoint, producing a refined path. 
+
+et al., 2017). While effective, this factorization is not in-herent to the data and can be misaligned with real-world generation problems (e.g., biological sequence design, pro-gram synthesis, and structured planning), where parts of the output may depend on future context. Enforcing a single left-to-right order in these settings can therefore be unnatu-ral and inefficient. A prominent alternative is non-monotonic sequence genera-tion such as masked diffusion models (Shi et al., 2024; Sa-hoo et al., 2024; Ou et al., 2024), where a model constructs an output through randomly selecting and updating subsets of masked positions on a fixed-length grid . These methods enable parallel generation, infilling, and have shown strong performance across tasks. However, they still suffer from two limitations: (i) Static canvas. Masked discrete diffu-sion models typically operate on a prescribed, fixed-length set of masked positions, requiring an external length specifi-cation and making variable-length generation indirect. (ii) Order agnosticism. Their training objectives commonly marginalize over (or implicitly assume) many possible up-1
+
+> arXiv:2606.02133v1 [cs.LG] 1 Jun 2026 Insertion Process
+
+date schedules, encouraging the network to be consistent with a combinatorial family of conditional distributions. In effect, the model is asked to approximate conditionals cor-responding to a factorial number of generation orders, even though only a small subset of orders may align with the underlying structure of the data (Ni et al., 2026). Recent work has begun to address these limitations, but largely in isolation. Insertion-based models remove the static canvas by generating variable-length sequences via token insertions at arbitrary positions (Stern et al., 2019; Gu et al., 2019a; Patel et al., 2025; Kim et al., 2025). Sep-arately, learning-order methods introduce explicit distribu-tions over permutations to learn data-dependent unmask-ing orders (Wang et al., 2025b). Yet existing learning-order approaches are typically developed in fixed-canvas masked/blank-filling settings, where global token positions serve as latent variables, and they do not directly extend to variable-length insertion. Combining these two direc-tions is non-trivial: in insertion, insertion locations are not fixed coordinates but evolve with the partial sequence, so the generation order and the intermediate states are tightly coupled. In this paper, we present a probabilistic framework for learn-ing insertion order with varying sequence lengths, which allows for an unbiased estimate of the Evidence Lower Bound on the exact data likelihood. Our key observation is that, for a fixed target sequence, every valid insertion trajectory corresponds bijectively to a permutation of target indices; moreover, the intermediate states and relative in-sertion locations are deterministic functions of permutation prefixes. This change of variables converts marginalization over trajectory-dependent insertion actions into an exact sum over permutations, enabling variational training with a latent order variable. We instantiate this framework in the Insertion Process (IP) and show that learning data-dependent orders improves both modeling quality and gen-eralization on planning benchmarks and molecular SMILES generation. 
+
+## 2. Variational Learning for Insertion Processes 
+
+In this section, we introduce IP (Insertion Process) , a prob-abilistic insertion model that jointly learns (i) a data-driven preference over insertion decisions ( where to insert ), (ii) a token distribution ( what to insert ), and (iii) a stopping rule (when to terminate ) (Sec. 2.1). We train IP by maximizing an evidence lower bound (ELBO) on the data log-likelihood, treating the generation order as a latent variable and learning an amortized variational posterior over orders. Direct variational inference over insertion order is nontrivial due to two issues: (i) trajectory-dependent parameteriza-tion : insertion actions are specified as relative slot indices in the current partial sequence, making it difficult to define and approximate a stable posterior over order directly in the space of relative actions. (ii) non-differentiable discrete opti-mization : the latent order is discrete, making the variational objective non-differentiable. To address these issues, we first exploit a bijection between relative insertion trajectories and global permutations of the target sequence (Sec. 2.2), which provides a fixed la-tent space and a permutation-marginalized likelihood for variational inference. We then optimize the resulting non-differentiable variational posterior using a Plackett–Luce family: permutations are sampled via the Gumbel–Top-k
+
+trick and the variational parameters are trained with RE-INFORCE using a leave-one-out baseline (Sec. 2.3). On the generative side, we adopt a slot-conditional decoder that scores candidate insertion slots and predicts token con-tent conditioned on the chosen slot, while handling variable length via an explicit termination decision (Sec. 2.4). 
+
+2.1. Process Formulation 
+
+To generate a sequence of variable length from a vocabulary 
+
+V , we provide two variants of the Insertion Processes: these differ only in the ways they learn to terminate generation, which can be policy- or classifier-based. For simplicity of presentation, we use policy-based termination throughout the main text to present our core theoretical contributions, and provide details of the classifier-based termination vari-ant in Section C. 
+
+Insertion Process with Policy-based Termination. 
+
+Let y0 = () which is the initial state. At each gen-eration step i = 1 , 2, . . . , the IP first samples the position of the insertion slot zi (1) , and then de-cides the value xi to insert (2) 
+
+zi ∼ pϕ(z | yi−1), z ∈ { TERM , 1, . . . , i }, (1) 
+
+xi ∼ pϕ(x | yi−1, z i), (2) and define 
+
+yi =
+
+(
+
+yi−1, zi = TERM ,
+
+insert( yi−1, z i, x i).
+
+The process terminates when zi = TERM and out-puts yi−1.Each zi is the insertion latent variable. It follows a policy distribution pϕ(zi|yi−1) defined over i + 1 possible out-comes: the i available insertion slots in yi−1 and a special termination action TERM . This allows the model to dynam-ically decide whether to continue expanding the sequence or to stop generation based on the current state. If a valid 2Insertion Process 1. Input Partial                     
+
+> Sequence
+> [BOS]
+> (a)
+> 2.2 Insertion Slot
+> Prediction
+> CNC=O
+> Full Attention Transformer
+> [BOS] [EOS]
+> CNC=O[EOS]
+> CNC=O=[BOS] [EOS]
+> Candidate Insertion Slots
+> 4. Updated
+> Sequence
+> 3. Token Prediction
+> Existing Tokens
+> (b)
+> 2.1 Stop Prediction
+> CNC=O=
+> …
+> Gumbel -Top -K Sampling
+> (Plackett -Luce Distribution)
+> 1->3 ->2 ->…2->6 ->3 ->…6->4 ->1 ->…
+> 2. Evaluate ELBO
+> Term
+> RLOO Gradient Estimator
+> 1. Order Sampling
+> 3. Stochastic ELBO
+> ……
+> Gradient via RLOO
+
+Figure 2. (a) Generative Decoder Architecture. At generation step i, the Transformer processes the partial sequence yi−1 (augmented with boundary tokens) to produce contextual embeddings h. The embedding hEOS predicts the termination probability (Step 2.1). The remaining embeddings hk represent candidate insertion slots (dotted boxes), parameterizing the location distribution p(zi|yi−1) (Step 2.2). Conditioned on a selected slot (e.g., zi = 4 ), the content head predicts the next token xi (Step 3). (b) Policy-gradient optimization with Monte Carlo–estimated insertion orders qθ (σ<i | yL). The expectation over qθ (σ<i | yL) in Eq. 12 is approximated using Gumbel–Top-K sampling, and the resulting non-differentiable distribution is optimized via a RLOO gradient estimator. 
+
+slot is selected, pϕ(xi|yi−1, z i) acts as a classifier over the vocabulary V to determine the token content. The function 
+
+insert( yi−1, z i, x i) denotes the operation that inserts xi into the chosen location, as illustrated in Figure 2. For training, we would like to maximize the data log-likelihood log pϕ(yL). However, computing log pϕ(yL)
+
+requires marginalizing over the latent insertion trajec-tory (i.e., the sequence of slot decisions), which is gen-erally intractable. We therefore optimize a variational lower bound (ELBO) by introducing a variational distribution over the latent variables. Since the relative slot indices zi are trajectory-dependent, we instead work with an equivalent 
+
+global representation based on permutations of the target indices. The next subsection formalizes this reparameter-ization and shows how it leads to a convenient likelihood factorization for the ELBO. 
+
+2.2. Reparametrization for Likelihood Computation 
+
+Let yL = ( yL, 1, . . . , y L,L ) be an observed sequence of length L. Under IP, producing yL corresponds to generating a trajectory of intermediate states and insertion actions that deterministically assemble yL. A direct likelihood expres-sion marginalizes over the trajectory variables, whose joint distribution factorizes as 
+
+p({yi, x i, z i}Li=1 ) = 
+
+> L
+
+Y
+
+> i=1
+
+p(yi, x i|yi−1, z i)p(zi|yi−1). (3) Each transition further decomposes as 
+
+p(yi, x i|yi−1, z i) = p(yi|yi−1, z i, x i) p(xi|yi−1, z i), (4) where the state update is deterministic: 
+
+p(yi|yi−1, z i, x i) = δ(yi = insert( yi−1, z i, x i)) , (5) and δ(·) denotes a Kronecker-delta point mass. However, working directly in the trajectory space is inconve-nient for variational inference because the insertion actions 
+
+zi are relative to the current partial sequence: the meaning of “slot k” at step i depends on which tokens have already been inserted and how they are arranged. Consequently, the sequence of relative actions does not live in a fixed coordi-nate system shared across trajectories that yield the same 
+
+yL. This makes it difficult to specify and learn a tractable variational approximation qθ (z1: L|yL) with a stable param-eterization. We therefore change variables to a global permutation σ ∈
+
+SL, where σi is the index of the element in yL that is filled at insertion step i. Intuitively, σ records the order in which final positions are populated. Under this representation, the relative slot index becomes a deterministic function of the permutation prefix. 
+
+Lemma 2.1 (Permutation–trajectory bijection) . Fix yL. For any valid insertion trajectory that produces yL, there exists a unique permutation σ ∈ SL such that the token inserted at step i equals the final token at position σi, i.e. xi = yL,σ i .Moreover, the relative insertion slot at step i is determined by the prefix σ≤i as 
+
+zi = f (σ≤i) := 1 + |{ j ∈ σ<i : j < σ i }| , (6) 
+
+i.e. zi is the rank of σi among the sorted indices in σ≤i. 1
+
+> 1
+
+In practice, zi can be computed via argsort . Let s =
+
+3Insertion Process 
+
+For completeness and to fix notation in our setting, we provide a proof of Lemma 2.1 in Sec. A; related insertion encodings and more formal treatments appear in the com-binatorics literature (e.g., Albert et al. 2005). A useful consequence is that f (σ≤i) depends only on the prefix σ≤i
+
+(and not on σ>i ), which we later exploit to reduce variance in ELBO optimization. Given σ, the trajectory is fully determined: 
+
+yi = yL,σ ≤i , xi = yL,σ i , zi = f (σ≤i),
+
+where yL,σ ≤i denotes the subsequence of yL indexed by 
+
+σ≤i and then ordered by their original index. To illustrate the mapping between insertion variables and permutations, consider the case where we always insert at the end of the data sequence, i.e., zi = i. The corresponding permutation is the identity σ = (1 , 2, . . . , L ). In contrast, if each zi = 1 (so we insert always in front of the sequence), the permutation becomes the reverse σ = ( L, L − 1, . . . , 1) .Fig. 3 gives a further example which illustrates the evolution of the IP trajectory. This reparameterization yields a permutation-marginalized likelihood. 
+
+Theorem 2.2 (Permutation-marginalized likelihood) . For any length-L sequence yL,
+
+p(yL) = X
+
+> σ∈SL
+
+p(yL, σ ). (7) 
+
+Moreover, p(yL, σ ) factorizes as 
+
+> L
+
+Y
+
+> i=1
+
+pϕ(yL,σ i | yL,σ <i , f (σ≤i)) pϕ(f (σ≤i) | yL,σ <i ) , (8) 
+
+where yL,σ <i denotes the subsequence of y containing only the tokens at indices σ<i , preserving their original order. 
+
+The proof is provided in Appendix A.2. Eq. (7) makes explicit that the same observed yL can be generated by L!
+
+distinct insertion orders, and replaces the trajectory-specific latent representation (y, x, z ) with a fixed latent space over permutations. 
+
+2.3. Training with Variational Inference 
+
+Given an observed yL, a complete generative process also requires the model to stop after producing the L tokens. We therefore train with the augmented observation {yL, AUX },specifically for policy-based termination AUX := zL+1 =
+
+TERM , which augments the policy with an extra dimension 
+
+sort( σ≤i) be the sorted prefix (ascending). Then zi is the 1-based position of σi in s, i.e., zi = 1 + where( s = σi). Equivalently, if r = argsort( σ≤i) gives the indices that sort the prefix, then 
+
+zi = 1 + where( r = i), since σi is the last element of the prefix. Partial Sequence 
+
+> Permutation
+
+Figure 3. Example of mapping from permutations to insertion orders in the IP model. The final sequence is y3 = ( a, b, c ) and the permutation is σ = (3 , 1, 2) . Then σ1 = 3 ⇒ z1 = 1 , insert 
+
+x1 = c into the empty sequence, y1 = ( c); σ2 = 1 ⇒ z2 = 1 ,insert x2 = a, y2 = ( a, c ); σ3 = 2 ⇒ z3 = 2 , insert x3 = b,
+
+y3 = ( a, b, c ).
+
+to indicate termination, and for classifier-based termination 
+
+AUX := xL+1 = EOS , which simply augments the vocab-ulary with one extra EOS token. The full loss can then be formulated as: 
+
+log pϕ(yL, AUX ) = log pϕ(AUX | yL) + log pϕ(yL). (9) For both variants, the termination term log pϕ(AUX | yL) is tractable under our decoder and can be optimized directly. We detail the design of the two losses in Section B and Sec-tion C. The sequence likelihood log pϕ(yL) is intractable due to the sum over L! permutations in Eq. (7) , and we optimize a variational lower bound. 
+
+Permutation ELBO. By Lemma 2.1, every valid inser-tion trajectory that constructs yL corresponds bijectively to a permutation σ ∈ SL specifying the order in which final positions are filled. We therefore treat σ as the latent variable representing the (otherwise trajectory-dependent) insertion order, and introduce an amortized variational pos-terior qθ (σ | yL) to maximize the variational lower bound of log pϕ(yL) (Theorem 2.2): 
+
+log pϕ(yL) ≥ L ELBO (yL) := X
+
+> σ∈SL
+
+qθ (σ | yL) log pϕ(yL, σ )
+
+qθ (σ | yL) .
+
+(10) We parameterize qθ (σ | yL) as a Plackett–Luce (PL) model, 
+
+qθ (σ | yL) = 
+
+> L
+
+Y
+
+> i=1
+
+qθ (σi | σ<i , y L), (11) which provides a tractable, prefix-conditioned family for orders and enables efficient sampling (e.g., via Gumbel– Top-k). Using Theorem 2.2 and (11) , the ELBO can be written as 
+
+> L
+
+X
+
+> i=1
+
+Eqθ (σ<i |yL)
+
+h
+
+Eqθ (σi|σ<i ,y L)
+
+log pϕ(yL,σ i |f (σ≤i), y L,σ <i )+ log pϕ(f (σ≤i)|yL,σ <i ) − log qθ (σi|σ<i , y L)i
+
+. (12) 4Insertion Process 
+
+Algorithm 1 Training IP with permutation VI and RLOO  
+
+> 1:
+
+Given: dataset D, generative decoder pϕ, inference model qθ , #samples M 
+
+> 2:
+
+while training do  
+
+> 3:
+
+Sample yL ∼ D  
+
+> 4:
+
+Sample M permutations {σm}Mm=1 ∼ qθ (· | yL)
+
+through the Gumbel–Top-k trick.  
+
+> 5:
+
+Sample i ∼ Unif {1, . . . , L +1 } 
+
+> 6:
+
+for m = 1 , . . . , M do  
+
+> 7:
+
+Form the prefix σm<i and partial sequence yL,σ m<i  
+
+> 8:
+
+Compute F m using the exact Eq(σi|σm<i ,y L)[·] (14)  
+
+> 9:
+
+end for  
+
+> 10:
+
+Form the M -sample RLOO objective (19) or (24) and update (ϕ, θ ) 
+
+> 11:
+
+end while Variance-reduced ELBO estimation and optimization. 
+
+Eq. (12) involves expectations over a discrete latent or-der, so na ¨ıvely sampling full permutations yields a high-variance estimator, and the resulting samples are non-differentiable w.r.t. the variational parameters θ. We ex-ploit the permutation–trajectory structure to reduce variance: since the induced slot index f (σ≤i) depends only on the prefix σ≤i (Lemma 2.1), the inner expectation over the next index σi conditioned on a fixed prefix σ<i can be evaluated exactly. Concretely, for fixed σ<i we define 
+
+F (σ<i ; i, y L) := Eqθ (σi|σ<i ,y L)[ · ] , (13) where [·] denotes the bracketed log-ratio term in Eq. (12) ,and compute it in closed form as 
+
+F (σ<i ; i, y L) = X
+
+> j / ∈σ<i
+
+qθ (j | σ<i , y L) [ · ]σi=j . (14) The remaining outer expectation over prefixes Eqθ (σ<i |yL)
+
+is still intractable and non-differentiable, so we estimate it by Monte Carlo using samples from the PL poste-rior (implemented via Gumbel–Top-k), and optimize θ
+
+with REINFORCE Leave-One-Out (RLOO, Kool et al., 2019a). For efficiency, we subsample a single time step 
+
+i ∼ Unif {1, . . . , L +1 } to form an unbiased stochastic esti-mator of the sum over i (Algorithm 1; Appendix B). 
+
+2.4. Network Architectures 
+
+We parameterize the Insertion Process using an encoder-decoder architecture. The generative model (decoder) pϕ
+
+predicts the next insertion slot z and the corresponding token 
+
+x, while the inference network (encoder) qθ approximates the posterior over the permutation σ.
+
+Generative Decoder. To generate a sequence, the decoder must predict both where to insert a token and what token to insert. For policy-based termination IP, during training, given a partial sequence at step i: yi−1 = (t1, . . . , t i−1),we construct the augmented input sequence yaug  
+
+> i−1
+
+=(BOS , t 1, . . . , t i−1, EOS ). A Transformer decoder pro-cesses this input to produce contextualized embeddings 
+
+h0, h1 . . . , hi. We define the representation of the k-th insertion slot as the embedding of the token immediately preceding it, hk−1. Specifically, h0 (the embedding of BOS) represents the first slot, and hj represents the slot immedi-ately following token tj . We use hEOS ≜ hi to represent the termination of the generation process, as illustrated in Fig. 2. For classifier-based termination, the EOS token is not ap-pended to the input sequence, as termination is determined by the classifier’s prediction of EOS. The joint distribution at step i is factorized as 
+
+pϕ(xi, z i|yi−1) = pϕ(xi|zi, y i−1)pϕ(zi|yi−1). First, a lo-cation head computes the probability of selecting slot k2
+
+via a softmax over the embeddings h0: i:
+
+pϕ(zi = k|yi−1) = exp( w⊤ 
+
+> z
+
+hk−1)
+
+Pij=0 exp( w⊤ 
+
+> z
+
+hj ) . (15) Conditioned on the selected slot zi = k, a content head 
+
+predicts the token distribution using that slot’s embedding: 
+
+pϕ(xi = ·| zi = k, y i−1) = Softmax (Wxhk−1). (16) Note that, to allow for flexible length generation during sampling, the generative decoder is conditioned only on the partial sequence yi, not on yL nor L.
+
+Inference Encoder (Plackett-Luce Model). The encoder 
+
+qθ parameterizes a distribution over the global permutation 
+
+σ of the observed sequence yL. We model qθ (σ|yL) as a Plackett-Luce model, where the probability of the permuta-tion is calculated as follows. A bidirectional Transformer encoder processes the full se-quence yL to output a score gθ,j for each global index 
+
+j ∈ { 1, . . . , L }. Ideally, we would sample σ sequentially such that q(σi|σ<i , y L) ∝ exp( gθ,σ i ). To enable efficient sampling without sequential recurrence during training, we utilize the Gumbel-Top-k trick (Kool et al., 2019b). We sample i.i.d. Gumbel noise ϵj ∼ Gumbel (0 , 1) for each token and compute perturbed scores: 
+
+˜gj = gθ,j + ϵj . (17) The sampled permutation σ is obtained by sorting the in-dices in descending order of ˜gj . This effectively draws a sample from the Plackett-Luce distribution defined by scores gθ . Finally, qθ (σ | yL) is obtained through taking 
+
+softmax over the perturbed scores. Crucially, under this      
+
+> 2Selecting k=i+ 1 means termination.
+
+5Insertion Process 
+
+parameterization, the relative insertion position zi is not sampled directly by the encoder but is derived determin-istically from the sampled global permutation σ via the mapping zi = f (σ≤i).We provide additional detail of our training and experiment setup in Section D. 
+
+## 3. Related Work 
+
+Non-monotonic generation. Non-monotonic generation is widely studied in discrete diffusion and any-order autore-gressive modeling (Uria et al., 2014). Discrete diffusion models such as masked diffusions (Austin et al., 2021; Shi et al., 2024; Sahoo et al., 2024; Campbell et al., 2022; Gat et al., 2024; Lou et al., 2023) define a forward masking process over discrete states and train a reverse denoiser to unmask them. These models commonly operate on a fixed canvas and can impose conditional-independence ap-proximations that affect coherence. LO-ARM (Wang et al., 2025b) goes further by learning a state-dependent unmask-ing policy with a variational objective, demonstrating strong results on domains such as graphs where canonical ordering is ambiguous; however, it is also formulated over fixed-size sequences, and does not directly model variable-length generation through an explicit insertion-and-termination mechanism. 
+
+Insertion-based generative models. Insertion-based gen-eration constructs outputs by repeatedly selecting an inser-tion slot and inserting a token, rather than appending tokens strictly left-to-right. Early insertion decoders show that permitting arbitrary insertion orders improves flexibility: Gu et al. (2019a) enables non-monotonic decoding and can recover a generation order at inference time by adaptively searching over insertion trajectories (e.g., beam search). Other work treats the generation order as latent. Li et al. (2021) uses variational inference to infer non-monotonic orderings as global permutations, but relies on permutation-structured relaxations from combinatorial optimization (e.g., Sinkhorn-style constructions) and Bethe permanent approx-imation, which can introduce nontrivial computational over-head and approximation bias. A complementary thread develops order-agnostic insertion models, emphasizing flexible schedules and efficient decod-ing rather than explicitly learning an instance-specific order posterior. The Insertion Transformer (Stern et al., 2019) supports arbitrary insertion orders (including balanced-tree schedules) and can reduce decoding iterations. KER-MIT (Chan et al., 2019) frames insertion as a unified mech-anism for modeling joint distributions and multiple condi-tional factorizations within a single network. Other work expands the edit space beyond insertion: the Levenshtein Transformer (Gu et al., 2019b) and Edit-flow (Havasi et al., 2025) incorporate both insertion and deletion to enable iter-ative refinement. More recently, Insertion Language Mod-els (Patel et al., 2025) revisit single-token arbitrary-position insertions, highlighting advantages in constraint-heavy gen-eration and variable-length infilling. Our work complements these by introducing a likelihood-based insertion process with explicit termination and an ELBO that learns context-dependent generation order from data. A related family couples non-monotonic expansion with blanks or masks. Blank Language Models (Shen et al., 2020) generate by introducing blanks and filling them, effec-tively choosing where to expand next. DreamOn (Wu et al., 2025) and FlexMDM (Kim et al., 2025) enable any-order generation within a masked-diffusion framework by allow-ing mask insertion followed by unmasking. Compared to blank/mask expansion where generation proceeds through intermediate placeholder states, our formulation directly models token insertions as the primitive stochastic actions in a single insertion trajectory. Moreover, FlexMDM shares the limitation of order-agnostic methods, lacking a policy to prioritize fitting instance-specific generation orders. 
+
+## 4. Experiments and Analysis 
+
+Our experiments are designed to answer the following ques-tions: • Whether insertion-based generation outperforms stan-dard autoregressive models on generating sequences that are not natural left-to-right. • Whether learning an instance-specific insertion policy improves upon order-agnostic methods. • Whether these advantages translate to better goal-conditioned planning and improved performance in flexible-length conditional generation tasks. To study these questions, we consider two representative domains. We first evaluate on planning tasks , where so-lutions must satisfy global constraints or coordinate mul-tiple subgoals whose natural construction order may vary across instances. We then evaluate on molecular string generation , where sequences are induced by graph traversal procedures and admit multiple valid linearizations, making left-to-right generation orders largely arbitrary. To evaluate the IP on the above two benchmarks, we in-troduce the following baselines: 1) Fixed-Order Autore-gressive Models (FO-ARMs), 2) Any-Order ARMs (AO-ARMs) (Uria et al., 2014), 3) Masked Diffusion Models (MDMs) and 4) Learning-Order ARMs (LO-ARMs) (Wang et al., 2025b), based on the following rationale. First, FO-ARMs can be viewed as insertion processes with fixed in-sertion ordering, which always insert at the end of a partial 6Insertion Process Start Point Subgoals End Point 
+
+Figure 4. A perfect maze. 
+
+Table 1. Performance on Maze Planning benchmarks (mean). The best result is bolded and the second-best is underlined. BRAIDED IMPERFECT PERFECT                                                                 
+
+> Method EASY MED HARD EASY MED HARD EASY MED HARD
+> Monotonic (left-to-right) baselines
+> FO-ARM 96.2 94.2 93.0 92.5 88.2 76.9 96.2 58.3 27.2
+> Non-monotonic baselines
+> MDM 51.9 59.0 60.7 56.1 51.7 50.0 12.2 0.2 0.0 AO-ARM 54.2 61.8 65.4 60.3 55.2 51.3 11.7 1.1 0.0 LO-ARM 67.7 61.3 56.4 79.8 60.1 51.6 13.8 32.0 25.2 FlexMDM 86.9 86.7 89.5 78.5 83.1 84.2 0.1 0.0 0.0
+> IP (Ours) 100.0 100.0 99.9 100.0 98.4 95.3 99.4 98.1 97.9
+
+Table 2. Performance on Star Graph Planning Benchmark. Accu-racy is reported in %. Lower is better for distance metrics.                              
+
+> Model Seq. Acc. Tok. Acc. Ham. Dist. ↓Lev. Dist. ↓
+> Monotonic (left-to-right) baselines
+> FO-ARM 24.0 40.6 9.58 9.44
+> Non-monotonic baselines
+> MDM 25.0 66.1 6.03 5.53 AO-ARM 26.5 69.3 5.46 5.12 LO-ARM 30.1 72.5 4.91 4.16 FlexMDM 0.0 14.6 14.30 14.29
+> IP (Ours) 83.0 85.7 3.57 2.44
+
+sequence, i.e., generating from left-to-right. Through com-paring the IP against FO-ARMs, we want to see whether IP can learn meaningful insertion orderings while maintaining competitive performance. Second, AO-ARMs, LO-ARMs, and MDMs generate new samples in given canvases of fixed sizes or lengths. Through comparing these two types of generative models, we want to show that IP can also yield better generation performance via flexible-length generation without prescribing canvas sizes. 
+
+4.1. Planning Tasks 
+
+We evaluate insertion-based generation on two synthetic planning benchmarks where solutions must satisfy global constraints and there is no single natural left-to-right con-struction order. In both benchmarks, each instance is rep-resented as a single 1D token sequence, and the learning problem is to generate a variable-length trajectory segment conditioned on a task-specific prefix. The first benchmark is maze planning (Kim et al., 2025). Each example is a grid-maze path flattened into a token sequence by mapping each visited cell to a discrete token (a flattened cell index), making it a standard sequence model-ing problem. Conditional generation is defined by providing an ordered subset of visited states as subgoals (full construc-tion and conditioning in Appendix D.1); the model must generate a path that visits these subgoals in order. We con-sider P ERFECT , I MPERFECT , and B RAIDED maze families with increasing structural flexibility, and easy/medium/hard tiers by increasing grid size, obstacle density, and the num-ber of targets/subgoals. The second benchmark is star-graph planning (Patel et al., 2025). The input prefix consists of a randomly ordered list of directed edges (node pairs), followed by the source node, the goal node, and a special graph-BOS token; the target trajectory is the directed edge sequence forming the path from source to goal (details in Appendix D.2). We report sequence accuracy and token accuracy, along with edit-based distances (Hamming and Levenshtein) to quantify partial deviations from the gold path. As shown in Table 1, IP achieves the strongest performance across all three maze families and remains robust as dif-ficulty increases. The advantage is most evident on P ER - 
+
+> FECT
+
+mazes (especially H ARD ), where the solution space is most constrained and fixed-order baselines degrade. On star graphs (Table 2), IP substantially improves both sequence-level and token-level accuracy and reduces edit distances to the target path. Overall, these results suggest that learning 
+
+where to insert during generation is particularly beneficial when planning decisions depend on long-range constraints or instance-specific construction orders. 
+
+4.2. Molecular String Generation 
+
+SMILES strings (Weininger, 1988) are linearizations of molecular graphs: while a left-to-right SMILES can of-ten be interpreted as a depth-first traversal, the traversal choices (and the placement of branch/ring annotations) are not unique, and correct strings must satisfy global pair-ing constraints—parentheses for branches and digit tokens for ring closures. These long-range dependencies make SMILES a natural testbed for non-monotonic generation, where a model can decide global structure early and then refine local content. We evaluate unconditional SMILES generation on Gua-caMol (Brown et al., 2019), reporting both per-sample qual-7Insertion Process 1: Start of generation Step 000 | Sequence:                                                                      
+
+> 2: Building molecule structure
+> 3: Only inserting atoms
+> 4:Termination
+> Step 018 |Sequence: =12=3=(443=)2=N111
+> Step 019 |Sequence: =12=3=(443=O)2=N111
+> Step 020 |Sequence: =12=3=(4c43=O)2=N111
+> Step 025 |Sequence: O=12=3=(4ccc43=O)O2=N11C1
+> Step 030 |Sequence: O=12=3=C(c4ccccc43=O)O2=N11CC1
+> Step 036 |Sequence: O=C1C2=C3=C(Cc4ccccc43=O)OC2=N1C1CC1
+> Step 037 |Sequence: O=C1C2=CC3=C(Cc4ccccc43=O)OC2=N1C1CC1
+> Step 043 |Sequence: O=C1C2=CC3=C(CCc4ccccc4C3=O)OC2=CN1C1CCCCC1
+> Step 001 |Sequence: 1
+> Step 003 |Sequence: (11
+> Step 006 |Sequence: 1()111
+> Step 007 |Sequence: 12()111
+> Step 009 |Sequence: 123()2111
+> Step 012 |Sequence: 123(443)2111
+> Step 016 |Sequence: 12=3=(443=)2=111
+> Step 017 |Sequence: =12=3=(443=)2=111 Step 044 |Sequence: O=C1C2=CC3=C(CCc4ccccc4C3=O)OC2=CN1C1CCCCC1
+
+Figure 5. An example of generating a SMILES sample via the Insertion Process. The learned generation process is phased into four stages: 1) At Stage 1 (Step 0), the model starts with an empty string. 2) From Step 1 to 17 in Stage 2, the model first lays out the molecule’s skeleton by generating only matching parentheses and digit pairs (ring-closure markers). 3) In Stage 3, the model then inserts atom symbols into this scaffold to form the full SMILES string. 4) Finally, at Step 44, the model signals termination, and the generated molecule stays the same as that in Step 43. 
+
+Table 3. Unconditional molecule generation performance on the GuacaMol SMILES benchmark. We evaluated on the following metrics: Validity, Uniqueness, Novelty, FCD and KL divergence. 
+
+V.U. means both valid and unique, and V.U.N. means samples are valid, unique and novel. The metrics are calculated on samples generated by each method. Bold and underlined numbers indi-cate the best and second-best results, respectively. †Results taken from Brown et al. (2019). 
+
+Model V. ↑ V.U. ↑ V.U.N. ↑ KL div ↑ FCD ↑
+
+Training set 100.0 100.0 0.0 99.9 92.8 LSTM † 95.9 95.9 87.5 99.1 91.3 
+
+VAE † 87.0 86.9 84.7 98.2 86.3 AAE † 82.2 82.2 82.1 88.6 52.9 FO-ARM (Transformer) 98.5 98.3 80.4 99.4 90.3 AO-ARM 83.1 83.1 80.7 93.1 69.3 LO-ARM 89.7 89.4 81.6 96.1 83.7 AO-IP 88.2 88.2 87.7 95.3 79.1 IP (policy-based term.) 97.2 97.0 94.9 97.1 88.2 IP (classifier-based term.) 97.4 97.3 95.6 97.2 89.2 
+
+ity (Validity, Uniqueness, Novelty) and distributional simi-larity to the test set (KL divergence and Fr ´echet ChemNet Distance; definitions in Sec. D.4). All sequence baselines use comparable Transformer backbones. We reimplement the FO-ARM and tune it to match the distributional per-formance reported for Transformer FO-ARM models on GuacaMol (Wang et al., 2025a). For IP, we additionally compare against a variant with a fixed random insertion policy (Any-Order IP, or AO-IP) to assess the importance of learning the insertion policy. 
+
+Interpretable SMILES grammar from learned insertion schedules. Despite having no hand-crafted SMILES rules as prior knowledge, IP learns a consistent, interpretable gen-eration order (Fig. 5). Specifically, starting with an empty string, the typical learned process is: 1) Build the molecular structure (rings and connections) by first generating digit tokens for ring enclosures and cuts and proposing substruc-tures via pairs of matching parentheses. 2) Insert atoms. 3) Signal termination. Across 100,000 unconditional samples, 99.7% follow this pattern, suggesting that the model has internalized a stable notion of “SMILES well-formedness”. 
+
+Table 4. Evaluation on the four conditional generation tasks. For each task, we generate 1024 samples and evaluate the samples on 
+
+Validity and Uniqueness. Task V. ↑ V.U. ↑
+
+IP AO-IP IP AO-IP Frag. decoration 99.8 40.9 10.4 5.1 Linker design 99.5 50.6 13.1 8.2 Linker + partial decoration 99.9 42.8 24.0 20.6 Linker + full decoration 99.9 41.3 34.2 31.1 
+
+Unconditional generation results and a flexibility–fidelity trade-off. FO-ARM/LSTM appends tokens strictly at the end of a sequence, whereas IP permits insertions at dynam-ically expanding slots whose number grows linearly with the generation steps. Table 3 highlights a clear trade-off between distribution matching and chemical space explo-ration . FO-ARM and LSTM achieve the best distributional scores (KL and FCD). IP, however, trails FO-ARM/LSTM slightly on distributional metrics yet achieves the highest novelty ( ∼ 20% higher than FO-ARM). Furthermore, com-paring IP to its random-order ablation (AO-IP) underscores the necessity of learning the insertion order. While AO-IP maintains high novelty, its validity drops to 88.2%. This indicates that random insertions frequently violate chemi-cal syntax, whereas IP successfully internalizes the struc-tural rules needed to produce valid molecules. Finally, we observe that the classifier-based termination variant of IP consistently outperforms the policy-based variant in this task. Crucially, the combination of high validity and novelty sug-gests that IP is not merely memorizing training molecules; rather, it explores the same underlying chemical distribution while generating structurally diverse samples. Such behav-ior is particularly desirable for molecule discovery, where expanding the set of plausible candidates is often more valu-able than tightly matching the empirical distribution. 
+
+Slot-constrained conditional generation: decoration and linker design. Finally, we demonstrate the IP’s flexible-8Insertion Process 
+
+length generation via molecule decoration and linker design. Specifically, we initialize the process with a partial SMILES fragment and restrict which insertion slots are allowed, while leaving the number of insertions unconstrained— generation terminates whenever the model predicts TERM .This is difficult to realize with a left-to-right FO-ARM, especially for constraints that require inserting inside (or 
+
+between ) conditioned fragments (e.g., linker design). We consider four constraint patterns (Table 4): (1) Frag-ment completion + decoration: condition on an incom-plete benzene fragment 1ccccc1 and allow insertions at both ends. (2) Linker design: condition on two separated fragments c1ccccc12ccccc2 and allow insertions only in the middle slot between them. (3) Linker + partial deco-ration: allow insertions in the middle of the two fragments and at one end. (4) Linker + full decoration: allow in-sertions in the middle and at both ends. Note that in each task, one fragment is incomplete, e.g., 2ccccc2 in Task (2), rendering the concatenated SMILES invalid. Using the GuacaMol model pre-trained for unconditional generation, we sample 1024 candidates per task and re-port Validity/Uniqueness. Across all tasks, validity remains near 100%, indicating the model can reliably complete con-strained fragments and terminate upon completion. When we allow a larger conditional solution space through relax-ing the constraints on insertion slots, uniqueness increases substantially. The comparison with AO-IP shows that learn-ing the insertion policy also improves conditional genera-tion performance. We include qualitative samples in Sec. F (Tasks 1–4). 
+
+## 5. Conclusion 
+
+We have presented an unbiased variational inference method for training a transformer-based insertion generative model. Despite the non-parametric nature of the insertion pro-cess, we derived an analytic reparametrization of the log-likelihood that permits the use of effective permutation-based variational inference. Results on two different do-mains, planning and molecule string generation, demon-strated that our method can be effective in practice. One direction for future work is to apply our method to other gen-erative modeling domains, with no canonical left-to-right orderings, such as protein design. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here. 
+
+## References 
+
+Albert, M. H., Linton, S., and Ru ˇskuc, N. The insertion encoding of permutations. The Electronic Journal of Combinatorics , 12(1):R47, 2005. Austin, J., Johnson, D. D., Ho, J., Tarlow, D., and Van Den Berg, R. Structured denoising diffusion models in discrete state-spaces. Advances in Neural Information Processing Systems , 34:17981–17993, 2021. Bahdanau, D., Cho, K., and Bengio, Y. Neural machine translation by jointly learning to align and translate. arXiv preprint arXiv:1409.0473 , 2014. Brown, N., Fiscato, M., Segler, M. H., and Vaucher, A. C. Guacamol: Benchmarking models for de novo molecular design. Journal of Chemical Information and Modeling ,59(3):1096–1108, 2019. doi: 10.1021/acs.jcim.8b00839. PMID: 30887799. Campbell, A., Benton, J., De Bortoli, V., Rainforth, T., Deli-giannidis, G., and Doucet, A. A continuous time frame-work for discrete denoising models. Advances in Neural Information Processing Systems , 35:28266–28279, 2022. Chan, W., Kitaev, N., Guu, K., Stern, M., and Uszkoreit, J. Kermit: Generative insertion-based modeling for se-quences, 2019. Gat, I., Remez, T., Shaul, N., Kreuk, F., Chen, R. T., Syn-naeve, G., Adi, Y., and Lipman, Y. Discrete flow match-ing. Advances in Neural Information Processing Systems ,37:133345–133385, 2024. Gu, J., Liu, Q., and Cho, K. Insertion-based decoding with automatically inferred generation order. Transactions of the Association for Computational Linguistics , 7:661– 676, 2019a. Gu, J., Wang, C., and Zhao, J. Levenshtein transformer, 2019b. Havasi, M., Karrer, B., Gat, I., and Chen, R. T. Q. Edit flows: Flow matching with edit operations, 2025. Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., and Hochreiter, S. Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in Neural Information Processing Systems , 30, 2017. Kim, J., Cheuk-Kit, L., Domingo-Enrich, C., Du, Y., Kakade, S., Ngotiaoco, T., Chen, S., and Albergo, M. Any-order flexible length masked diffusion, 2025. Kool, W., van Hoof, H., and Welling, M. Buy 4 reinforce samples, get a baseline for free! 2019a. 9Insertion Process 
+
+Kool, W., Van Hoof, H., and Welling, M. Stochastic beams and where to find them: The gumbel-top-k trick for sam-pling sequences without replacement. In International conference on machine learning , pp. 3499–3508. PMLR, 2019b. Li, X., Trabucco, B., Park, D. H., Luo, M., Shen, S., Darrell, T., and Gao, Y. Discovering non-monotonic autoregres-sive orderings with variational inference, 2021. Lou, A., Meng, C., and Ermon, S. Discrete diffusion model-ing by estimating the ratios of the data distribution. arXiv preprint arXiv:2310.16834 , 2023. Ni, Z., Wang, S., Yue, Y., Yu, T., Zhao, W., Hua, Y., Chen, T., Song, J., Yu, C., Zheng, B., et al. The flexibility trap: Why arbitrary order limits reasoning potential in diffu-sion language models. arXiv preprint arXiv:2601.15165 ,2026. Ou, J., Nie, S., Xue, K., Zhu, F., Sun, J., Li, Z., and Li, C. Your absorbing discrete diffusion secretly models the conditional distributions of clean data. arXiv preprint arXiv:2406.03736 , 2024. Patel, D., Sahoo, A., Amballa, A., Naseem, T., Rudner, T. G. J., and McCallum, A. Insertion language models: Sequence generation with arbitrary-position insertions, 2025. Preuer, K., Renz, P., Unterthiner, T., Hochreiter, S., and Klambauer, G. Fr ´echet chemnet distance: A metric for generative models for molecules in drug discovery. Jour-nal of Chemical Information and Modeling , 58(9):1736– 1741, 2018. Qin, Y., Madeira, M., Thanou, D., and Frossard, P. De-fog: Discrete flow matching for graph generation. arXiv preprint arXiv:2410.04263 , 2024. Sahoo, S., Arriola, M., Schiff, Y., Gokaslan, A., Marroquin, E., Chiu, J., Rush, A., and Kuleshov, V. Simple and effective masked diffusion language models. Advances in Neural Information Processing Systems , 37:130136– 130184, 2024. Shen, T., Quach, V., Barzilay, R., and Jaakkola, T. Blank language models, 2020. Shi, J., Han, K., Wang, Z., Doucet, A., and Titsias, M. Sim-plified and generalized masked diffusion for discrete data. 
+
+Advances in Neural Information Processing Systems , 37: 103131–103167, 2024. Siraudin, A., Malliaros, F. D., and Morris, C. Cometh: A continuous-time discrete-state graph diffusion model. 
+
+arXiv preprint arXiv:2406.06449 , 2024. Stern, M., Chan, W., Kiros, J., and Uszkoreit, J. Inser-tion transformer: Flexible sequence generation via inser-tion operations. In Chaudhuri, K. and Salakhutdinov, R. (eds.), International Conference on Machine Learning ,volume 97 of Proceedings of Machine Learning Research ,pp. 5976–5985. PMLR, 09–15 Jun 2019. Su, J., Lu, Y., Pan, S., Murtadha, A., Wen, B., and Liu, Y. Roformer: Enhanced transformer with rotary position embedding, 2023. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023. Uria, B., Murray, I., and Larochelle, H. A deep and tractable density estimator. In International Conference on Ma-chine Learning , pp. 467–475. PMLR, 2014. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I. Atten-tion is all you need. Advances in Neural Information Processing Systems , 30, 2017. Wang, Y., Guo, M., Chen, X., and Ai, D. Screening of multi deep learning-based de novo molecular generation models and their application for specific target molecular generation. Sci. Rep. , 15(1):4419, February 2025a. Wang, Z., Shi, J., Heess, N., Gretton, A., and Titsias, M. K. Learning-order autoregressive models with application to molecular graph generation. In International Conference on Machine Learning , 2025b. Weininger, D. Smiles, a chemical language and information system. 1. introduction to methodology and encoding rules. Journal of Chemical Information and Computer Sciences , 28(1):31–36, 1988. Wu, Z., Zheng, L., Xie, Z., Ye, J., Gao, J., Feng, Y., Li, Z., W., V., Zhou, G., and Kong, L. Dreamon: Diffusion lan-guage models for code infilling beyond fixed-size canvas, 2025. URL https://hkunlp.github.io/blog/ 2025/dreamon .10 Insertion Process 
+
+## A. Proofs 
+
+A.1. Lemma 2.1 
+
+The equivalence between permutation and insertion order is a well-studied problem (Albert et al., 2005). Here, we provide a proof of Lemma 2.1 to make the work self-contained. Let us denote z = ( z1, . . . , z L) the insertion sequence and x = ( x1, . . . , x L) the corresponding token sequence. We first construct the inverse function σ = f −1(z) that gives a unique permutation σ = ( σ1, . . . , σ L) given z, such that xi = yL,σ i .Then we show that this function is invertible so that z = f (σ).Based on the IP iteration, each xi is inserted at the i-step in location zi where zi specifies the exact global location of xi in the current string yi. Then as the string grows this global location of xi changes according to the recursion Initialization: σ(i) 
+
+> i
+
+= zi
+
+Iteration: σ(j) 
+
+> i
+
+= σ(j−1)  
+
+> i
+
++ I(zj ≤ σ(j−1)  
+
+> i
+
+), j = i + 1 , . . . , L 
+
+where the indicator function I(zj ≤ σ(j−1)  
+
+> i
+
+) increments the global locations of xi whenever each new token xj (with j > i )is inserted on the left of xi. At the final iteration σi := σ(L) 
+
+> i
+
+is precisely the global location of xi in yL, i.e., xi = yL,σ i .In summary we can denote the above recursive mappings as σi = f −1(z≥i), i = 1 , . . . , L , or in a vectorized form as 
+
+σ = f −1(z). Then, for this constructed σ we can easily see that in the opposite direction the mappings are 
+
+zi = index (sort (σ≤i) = σi) = f (σ≤i), i = 1 , . . . , L, 
+
+or z = f (σ) in short. Thus, we have constructed the mappings in both directions which completes the proof. 
+
+A.2. Theorem 2.2 
+
+We start from p(yL) as computed by IP: 
+
+p(yL) = X 
+
+> {yi,x i,z i}L−1
+> i=1 ,(xL,z L)
+
+p({yi, x i, z i}Li=1 ) = X
+
+> z
+
+X 
+
+> {yi,x i,}L−1
+> i=1 ,x L
+
+p({yi, x i, z i}Li=1 )
+
+Using Lemma 2.1 we change variables based on zi = f (σ≤i) and write the above as 
+
+p(yL) = X
+
+> σ
+
+X 
+
+> {yi,x i,}L−1
+> i=1 ,x L
+
+p({yi, x f (σ≤i), f (σ≤i)}Li=1 ).
+
+which requires summing over the permutations σ. Now due to the delta masses δ(yi = insert (yi−1, f (σ≤i), x i)) (each equals one if xi is correctly inserted in yi−1 at slot f (σ≤i) and zero otherwise) that appear in the joint p({yi, x i, f (σ≤i)}Li=1 )
+
+the inner sum P  
+
+> {yi,x i,}L−1
+> i=1 ,x L
+
+simplifies as 
+
+X 
+
+> {yi,x i,}L−1
+> i=1 ,x L
+
+p({yi, x i, f (σ≤i)}Li=1 ) = 
+
+> L
+
+Y
+
+> i=1
+
+p(yL,σ i |yL,σ <i , f (σ≤i)) p(f (σ≤i)|yL,σ <i ) = p(yL, σ )
+
+since only a single term in the sum, i.e., the term with the insertion path {yi = yL,σ ≤i , x i = yL,σ i , z i = f (σ≤i)}Li=1 , can be non-zero. Therefore, we conclude that 
+
+p(yL) = X
+
+> σ
+
+p(yL, σ ),
+
+which completes the proof. 
+
+## B. Optimization of the Training Objective with Policy-based Termination 
+
+For model training the Maximum Likelihood approximate objective per data sequence yL is 
+
+log p(zL+1 = TERM |yL) + 
+
+> L
+
+X
+
+> i=1
+
+Eq(σ<i |yL)
+
+
+
+Eq(σi|σ<i ,y L)
+
+
+
+log p (yL,σ i |f (σ≤i), y L,σ <i ) p (f (σ≤i)|yL,σ <i )
+
+q(σi|σ<i , y L)
+
+ 
+
+(18) 11 Insertion Process 
+
+or 
+
+> L+1
+
+X
+
+> i=1
+
+(
+
+1( i = L + 1) log p(TERM |yL) + 1( i ≤ L)Eq(σ<i |yL)
+
+"
+
+Eq(σi|σ<i ,y L) log p  yL,σ i |f (σ≤i), y L,σ <i 
+
+ p  f (σ≤i)|yL,σ <i 
+
+
+
+q(σi|σ<i , y L)
+
+#) 
+
+Then, in practice for computationally efficient optimization we randomly sample one term i in the sum, and also σ<i ∼
+
+q(σ<i |yL). This gives the stochastic unbiased objective 
+
+(L + 1) 
+
+
+
+1( i = L + 1) log p(TERM |yL) + 1( i ≤ L)Eq(σi|σ<i ,y L)
+
+
+
+log p (yL,σ i |f (σ≤i), y L,σ <i ) p (f (σ≤i)|yL,σ <i )
+
+q(σi|σ<i , y L)
+
+ 
+
+To perform unbiased gradient-based maximization and deal with the expectation over q(σ<i |yL) we apply REINFORCE Leave-One-Out (Kool et al., 2019a). Specifically, we use two independent permutation samples σ1, σ 2 ∼ q(·| yL) (i.e. 
+
+M = 2 )and implement the objective 
+
+L + 1 2
+
+  log q(σ1
+
+> <i
+
+|yL) − log q(σ2
+
+> <i
+
+|yL) stopgrad [F 1 − F 2] + F 1 + F 2 , (19) where for j = 1 , 2
+
+F j = 1( i = L + 1) log p(TERM |yL) + 1( i ≤ L)Eq(σji |σj<i ,y L)
+
+log 
+
+p
+
+
+
+yL,σ ji
+
+|f (σj
+
+> ≤i
+
+), y L,σ j<i 
+
+
+
+p
+
+
+
+f (σj
+
+> ≤i
+
+)|yL,σ j<i 
+
+
+
+q(σji |σj<i , y L)
+
+
+
+With the help of stopgrad [F 1 − F 2] this allows automatic differentiation to return the unbiased gradient. To monitor convergence we compute the two-sample stochastic objective 
+
+L = L + 1 2
+
+ F 1 + F 2 . (20) For a minibatch these stochastic objectives are further averaged over the minibatch, where each data sequence yLn has its own length Ln.
+
+## C. Insertion Process with Classifier-based Termination 
+
+We define the Insertion Process with classifier-based termination as follows: 
+
+Insertion Process with Classifier-based Termination Let y0 = () which is the initial state. At each generation step 
+
+i = 1 , 2, . . . , the IP first samples the insertion slot and then samples its value 
+
+zi ∼ p(z | yi−1), i ∈ { 1, . . . },xi ∼ p(x | yi−1, z i),
+
+and define 
+
+yi = insert( yi−1, z i, x i).
+
+The process terminates when xi = EOS and outputs yi.Specifically, during training, each yL is augmented with an extra End-of-Sequence ( EOS ) token to {yL, x L+1 = EOS },and therefore the effective sequence length becomes L + 1 . Note that, with the classifier-based termination, we use the same network p(x | yi−1, z i) to sample xi even when generating EOS: there is no need for a separate network to predict termination, as in the case of policy-based IP. This simplification yields a better model and sample efficiency as we have seen in Table 3, under the training protocol described below (Section C.1). Similar to Equation (18), the training loss for the classifier-based (CB) IP is written as 
+
+LCB = LCB Termination + LCB ELBO 
+
+= log p(xL+1 = EOS |yL) +
+
+> L
+
+X
+
+> i=1
+
+Eq(σ<i |yL)
+
+
+
+Eq(σi|σ<i ,y L)
+
+
+
+log p (yL,σ i |f (σ≤i), y L,σ <i ) p (f (σ≤i)|yL,σ <i )
+
+q(σi|σ<i , y L)
+
+ 
+
+(21) 12 Insertion Process 
+
+One problem with both Equation (18) and Equation (21) is that one needs to switch between two losses during training, i.e., 1) when sampling t ∼ Uniform [1 . . . L ], we optimize LELBO , and 2) when t = L + 1 , we optimize LCB Termination , which may cause computational inefficiency. Moreover, Equation (21) implicitly assumes that EOS is always inserted at L + 1 , i.e., 
+
+p(zL+1 |yL) = δ(L + 1) . To address these two issues, we introduce an augmented ELBO below. 
+
+C.1. Simplified Training Loss via Augmented ELBO 
+
+First, we observe that log p(xL+1 = EOS |yL) can be viewed as a standard EOS prediction in FO-ARMs. In the context of modeling with Insertion Process, it simply requires the classifier to output EOS when it sees the complete sample yL, and 
+
+EOS is always predicted after yL = ( x1 . . . x L).In fact, we can enforce the EOS token to be always sampled last through constraining the EOS logit outputted from the variational order policy network to a sufficiently small number ϵ. For instance, if yL+1 = (1 , 2, 3, 4, EOS ), and assume that the variational policy logits corresponding to the first 4 tokens are g = [10 , 20 , 30 , 40] , then the augmented logits become 
+
+ˆg = [10 , 20 , 30 , ϵ ]. In this way, with the Gumbel–Top-k trick for sampling the variational order distribution qθ , the EOS 
+
+dimension will always be sampled at last, e.g., at step t = L + 1 , while the estimate of the ELBO is still unbiased when 
+
+t ∈ [1 . . . L ]. In practice, we set ϵ = −1e7 as constant during training. Next, we show that we can include LCB Termination within LCB ELBO via this augmentation trick introduced above. To see this, we only consider the case of t = L + 1 , in which only EOS is left to be generated, and all other tokens have been generated in the previous L steps, the logits of which are set to -inf correspondingly. For instance, in the example above ˆg = [ -inf , -inf , -inf , -inf , ϵ ]. Therefore, we can see that q(σL+1 | σ<L +1 , y L) = Softmax (ˆ g)L+1 = 1 , and 
+
+q(σ<L +1 |yL+1 ) ≈ 1, which will be 1 numerically during training. Actually LCB Termination can be augmented to LCB  
+
+> ELBO
+
+at i = L + 1 with the augmented ˆg introduced above. 
+
+LCB ,L +1  
+
+> ELBO
+
+| = Eq(σ<L +1 |yL+1 )
+
+"
+
+Eq(σL+1 |σ<L +1 ,y L+1 )
+
+"
+
+log p  yL+1 ,σ L+1 |f (σ≤L+1 ), y L+1 ,σ <L +1 
+
+ p  f (σ≤L+1 )|yL+1 ,σ <L +1 
+
+
+
+q(σL+1 |σ<L +1 , y L+1 )
+
+## 
+
+= Eq(σL+1 |σ<L +1 ,y L+1 )
+
+log p  yL,σ L+1 = EOS  − KL q(σL+1 |σ<L +1 , y L+1 )∥p  f (σ≤L+1 )|yL+1 ,σ <L +1 
+
+ 
+
+= log p  yL+1 ,σ L+1 = EOS  − KL q(σL+1 |σ<L +1 , y L+1 )∥p  f (σ≤L+1 )|yL+1 ,σ <L +1 
+
+ 
+
+= LCB Termination − KL δ(L + 1) ∥p  zL+1 = L + 1 |yL+1 ,σ <L +1 
+
+ (22) In the last line we use the fact that, zL+1 = f (σ≤L+1 ) = L + 1 , as with the augmentation trick, the EOS dimension will always be inserted last with the permutation orderings σ. As a result, the loss with the augmented ELBO becomes 
+
+˜LCB =
+
+> L+1
+
+X
+
+> i=1
+
+Eq(σ<i |yL)
+
+
+
+Eq(σi|σ<i ,y L)
+
+
+
+log p (yL,σ i |f (σ≤i), y L,σ <i ) p (f (σ≤i)|yL,σ <i )
+
+q(σi|σ<i , y L)
+
+ 
+
+= LCB Termination + LCB ELBO − KL δ(L + 1) ∥p  zL+1 = L + 1 |yL+1 ,σ <L +1 
+
+ 
+
+= LCB − KL δ(L + 1) ∥p  zL+1 = L + 1 |yL+1 ,σ <L +1 
+
+ (23) For the KL term, the insertion policy is optimized against a Kronecker-delta point mass at t = L + 1 , which is a low-cost optimization. In practice, it decays to less than 0.001 within 20 k training steps. As a result, ˜LCB ≈ L CB as defined in Equation (21). Now we can see that with ˜LCB , no switch between ˜LCB Termination and ˜LCB ELBO is needed, unlike the case of policy-based termination, which requires an explicit EOS head. Finally, similar to the case of the loss with policy-based termination, we implement the objective 
+
+L + 1 2
+
+  log q(σ1
+
+> <i
+
+|yL+1 ) − log q(σ2
+
+> <i
+
+|yL+1 ) stopgrad [F 1 − F 2] + F 1 + F 2 , (24) 13 Insertion Process 
+
+where for j = 1 , 2
+
+F j = Eq(σji |σj<i ,y L+1 )
+
+log 
+
+p
+
+
+
+yL+1 ,σ ji
+
+|f (σj
+
+> ≤i
+
+), y L+1 ,σ j<i 
+
+
+
+p
+
+
+
+f (σj
+
+> ≤i
+
+)|yL+1 ,σ j<i 
+
+
+
+q(σji |σj<i , y L+1 )
+
+
+
+## D. Experiment setup 
+
+D.1. Maze Planning Dataset 
+
+Following Kim et al. (2025), we evaluate our model on a synthetic maze-planning dataset designed to test long-horizon, discrete-structure generation under partial conditioning. Each example is a grid-maze trajectory flattened into a 1D token sequence so that standard sequence models can be trained and used for inference on the same representation. For conditional generation, a subset of states along the trajectory are treated as ordered subgoals; for non-insertion baselines, we prepend these subgoal tokens to the input sequence. Below we describe how mazes, paths, and train/validation/test splits are constructed. 
+
+Maze graph construction. We represent each maze as an unweighted grid graph over free cells. A maze of size m is generated on a (2 m+1) × (2 m+1) grid using recursive division; cells with value 0 are traversable and cells with value 1 are walls. Each traversable cell becomes a node, with 4-neighbor (N,S,E,W) edges between adjacent free cells. Tokens are flattened cell indices t = r · W + c (vocabulary size H · W ), with separate special tokens for mask , bos , eos , and pad .We generate paths in two ways. Subgoals-first samples k distinct free cells as ordered subgoals; consecutive subgoals are connected by BFS shortest-path segments, which are concatenated (removing duplicate junction nodes) to form the final path. 
+
+Path-first samples start–goal pairs, computes a BFS shortest path, and then creates up to a fixed number of alternative simple paths by replacing a segment with a longer detour that avoids the original segment (and the rest of the path). This construction follows the setting used by FlexMDM, and we use it for the imperfect and braided maze variants. For each path, subgoals are selected by taking the endpoints plus k−2 uniformly sampled interior points along the path. Samples exceeding a maximum sequence length are discarded. Data splits are 80/10/10 (train/validation/test). 
+
+Maze variants and parameters. All mazes are produced by recursive division on a (2 m+1) × (2 m+1) grid; open cells form a 4-neighborhood graph. • Perfect mazes. The base recursive-division generator produces tree-like mazes with no cycles. • Imperfect mazes. Starting from a perfect maze, we identify wall cells that lie between two open cells (either N–S or E–W). These are candidate “doors” whose removal creates a local cycle. We open a random fraction f of candidates, with f ∈ [0 , 1] and count ⌊f |C|⌋ . This increases loopiness without fully destroying the global structure; we set f = 0 .3.• Braided mazes. Starting from a perfect maze, we identify dead ends (open cells with exactly one open neighbor). For a random fraction b of these, we open a nearby wall to connect to an existing passage (two steps away), thereby eliminating the dead end and introducing a cycle. We clamp b ∈ [0 , 1] and open ⌊b|D|⌋ walls; we use b = 1 .0 to remove as many dead ends as possible. Unless stated otherwise, we use the default generator settings: maze size m=20 (grid 41 × 41 ), max path length 400. 
+
+D.2. Star Graph Planning Dataset 
+
+We build the star -graph planning task adapted from Patel et al. (2025) but with different configuration. Each instance is a directed star -shaped graph with a single junction node shared across all arms. The model is given the graph structure as a randomly ordered list of directed edges (node pairs), followed by the source node, the goal node, and a special graph -BOS token. The model must then generate the directed path edges from source to goal. We condition on the entire prefix (edge list + source + goal + graph-BOS) and predict the path edge sequence. 14 Insertion Process 
+
+Dataset configuration used. In all experiments we use the hard star - graph configuration: degree 5 with arm lengths sampled uniformly in [6 , 12] (nodes per arm), and a node vocabulary of size 56 . The junction’s position along each arm is randomized, yielding both incoming and outgoing edges with respect to the junction. The ground - truth path is the directed chain along one designated arm between its endpoints (source and goal). 
+
+Evaluation metrics. We report both exact-match and token-level correctness, as well as edit-based distances that quantify how far a predicted path deviates from the ground truth. Specifically, sequence accuracy (Seq. Acc.) measures the fraction of instances where the entire generated edge sequence exactly matches the gold path. Token accuracy (Tok. Acc.) computes the proportion of correctly predicted tokens under a position-wise comparison between the predicted and gold sequences (after aligning by position), reflecting partial correctness when only some edges are correct. To better capture discrepancies when the prediction has insertions/deletions or local mis-ordering, we additionally report the Hamming distance (Ham.) on the aligned sequences (lower is better), and the Levenshtein edit distance (Lev.), i.e., the minimum number of insertions, deletions, and substitutions required to transform the prediction into the gold sequence (lower is better). Together, these metrics characterize both exact planning success and the extent/type of failure modes. 
+
+D.3. Training Hyperparameters for Planning Benchmark 
+
+We train on two planning datasets for 100 epochs with batch size 64 and no gradient accumulation. Optimization uses AdamW with learning rate 1 × 10 −4 and a cosine decay schedule with 1,000 warm -up steps. We use exponential moving average of parameters with decay 0.999 (updated every step, starting at step 200). The Transformer backbone has 12 layers, 8 attention heads, hidden size 128, dropout 0.1, and SwiGLU MLPs; we enable RoPE positional embeddings (Su et al., 2023) with base 10,000. The policy network uses 6 layers, 4 heads, hidden size 64, dropout 0.1, and RLOO loss with M = 2 .Unless otherwise noted, all baselines use the same architecture. We implement MDM following AO-ARM, but replace the sampler with Euler integration using a number of sampling steps equal to the maximum sequence length. 
+
+D.4. The GuacaMol Metrics 
+
+• (Preuer et al., 2018) introduced Fr ´echet ChemNet Distance (FCD) as a measure of how close distributions of generated samples are to the distribution of molecules in a reference set. The FCD is determined from the hidden representation of molecules in a neural network called ChemNet trained for capturing important chemical and biological features, similarly to the Fr ´echet Inception Distance (FID) (Heusel et al., 2017) in image generation. Note that, FCD is sample-size-dependent, and for all FCD evaluations against the GuacaMol benchmark, the standard in the literature is only using 10000 samples for both the generated and ground truth samples. Moreover, usually better generation performance yields smaller FCD, but the GuacaMol benchmark normalizes FCD, given by S = exp( −0.2 · FCD ).• KL divergence. For this task, a set of physicochemical descriptors calculated with the RDK IT for both the sampled and the reference set, and then the distributions of these descriptors is computed via kernel density estimation for continuous descriptors, or as a histogram for discrete descriptors. Finally, the KL divergence DKL ,i of each descriptor i
+
+is aggregated through S = 1
+
+> k
+
+Pki exp( −DKL ,i ).
+
+D.5. Training Hyperparameters for GuacaMol 
+
+All baselines, except the graph-based methods DeFog (Qin et al., 2024) and Cometh (Siraudin et al., 2024), use a Transformer architecture. Our implementation is adapted from the llama2.c project (Touvron et al., 2023). 3 For FO-ARM and for the generative models pθ in both LO-ARM and IP, we use Transformers based generative decoder with 18 attention layers. The variational inference encoder in LO-ARM and IP use a Transformer with 3 attention layers. Hyperparameters are reported in Table 5, and all experiments are run to convergence. 
+
+> 3https://github.com/karpathy/llama2.c
+
+15 Insertion Process 
+
+Table 5. Hyperparameter setup. 
+
+Hyperparameter ChEMBL/GuacaMol Optimizer AdamW Scheduler Cosine Annealing Learning Rate for pϕ 5 · 10 −4
+
+Learning Rate for qθ 5 · 10 −6
+
+Weight Decay 1 · 10 −12 
+
+EMA 0.9999 
+
+## E. Visualization of Planning Trajectory 
+
+Figure 6. Visualization of Insertion Trajectory on Synthetic Maze Planning Dataset 
+
+16 Insertion Process 
+
+## F. Gallery of Conditional Generations 
+
+Figure 7. Generated molecules in fragment completion and decoration (Task 1). Generated atoms are highlighted in red. 
+
+Figure 8. Generated molecules in linker design (Task 2). Generated atoms are highlighted in red. 
+
+17 Insertion Process 
+
+Figure 9. Generated molecules in linker design and partial fragment decoration (Task 3). Generated atoms are highlighted in red. 
+
+Figure 10. Generated molecules in linker design and full fragment decoration (Task 4). Generated atoms are highlighted in red. 
+
+18
