@@ -6,27 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-07
-- 运行时间：2026-06-07 20:02:18 UTC
+- 最新运行日期：2026-06-08
+- 运行时间：2026-06-08 20:57:07 UTC
 - 运行状态：成功
-- 本次总论文数：2
-- 精读区：2
-- 速读区：0
+- 本次总论文数：4
+- 精读区：1
+- 速读区：3
 
 ### 今日简报（AI）
-今日精读2篇高评分论文，聚焦深度学习中的不确定性量化新方法。值得关注的是神经过程与傅里叶变换/Volterra级数的结合，以及利用经验神经正切核突破极端天气预报的可扩展性瓶颈。建议读者重点关注NTK在气象等实际高维问题中的泛化潜力。
-- 详情：[/202606/07/README](/202606/07/README)
+今日覆盖4篇AI论文，精读1篇聚焦医疗筛查的贝叶斯推理引擎。最值得关注的是16.3 fJ/样本的无校准随机数生成技术，以及皮肤病变筛查中的风险感知应用。建议研究医疗AI的工程师优先关注低功耗推理芯片与不确定性建模的结合。
+- 详情：[/202606/08/README](/202606/08/README)
 
 ### 精读区论文标签
-1. [Revisiting Neural Processes via Fourier Transform and Volterra Series](/202606/07/2606.01172v1-revisiting-neural-processes-via-fourier-transform-and-volterra-series)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：神经过程是用于不确定性量化的贝叶斯深度学习模型
-2. [Scalable Uncertainty Quantification for Extreme Weather Forecasting via Empirical Neural Tangent Kernels](/202606/07/2606.02886v2-scalable-uncertainty-quantification-for-extreme-weather-forecasting-via-empirical-neural-tangent-kernels)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：基于神经切线核的不确定性量化方法用于深度学习天气模型
+1. [A 65 nm Multi-Modal Bayesian Inference Engine with 16.3 fJ/Sample Calibration-Free GRNG for Risk-Aware At-Home Skin Lesion Screening](/202606/08/2606.07439v1-a-65-nm-multi-modal-bayesian-inference-engine-with-163-fjsample-calibration-free-grng-for-risk-aware-at-home-skin-lesion-screening)  
+   标签：评分：9.0/10、query:bayes-dl
+   evidence：硬件贝叶斯神经网络用于皮肤病变筛查及不确定性建模
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [Architecture-Adaptive Uncertainty Fusion for Deepfake Detection](/202606/08/2606.06666v1-architecture-adaptive-uncertainty-fusion-for-deepfake-detection)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：使用认知不确定性和偶然不确定性来源的不确定性量化融合框架
+2. [Structure-Preserving Correction Learning for Sparse Bayesian Inference in Brain Source Imaging](/202606/08/2606.07196v1-structure-preserving-correction-learning-for-sparse-bayesian-inference-in-brain-source-imaging)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：将经典贝叶斯求解器展开为可训练神经网络，实现保持结构的校正学习
+3. [Generalized TV--$\ell_p$ Structured Priors for Bayesian $T_1$ Mapping](/202606/08/2606.05381v1-generalized-tv--ellp-structured-priors-for-bayesian-t1-mapping)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：提出带结构化先验的贝叶斯回归用于T1映射中的不确定性量化
 
 
 <div class="dpr-home-promo-card">
