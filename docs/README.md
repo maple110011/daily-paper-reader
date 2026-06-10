@@ -6,43 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-09
-- 运行时间：2026-06-09 21:50:16 UTC
+- 最新运行日期：2026-06-10
+- 运行时间：2026-06-10 21:14:11 UTC
 - 运行状态：成功
-- 本次总论文数：7
-- 精读区：3
-- 速读区：4
+- 本次总论文数：2
+- 精读区：2
+- 速读区：0
 
 ### 今日简报（AI）
-今日聚焦变分推断默认优化器的大规模实证调优与深度高斯过程的非线性阈值，精读两篇高分论文。  
-最值得关注的是变分推断中优化器选择的系统性指南，以及深度GP存在尖锐的性能衰减边界，远超传统认知。  
-建议优先精读这两篇，后续可结合速读中的变分PPO与瓶颈自编码器，深化对贝叶斯推断和表征学习的理解。
-- 详情：[/202606/09/README](/202606/09/README)
+今天精读了两篇满分贝叶斯推断论文，分别聚焦逆PDE问题求解和无人机搜救的硬件加速。
+最值得关注：流式生成模型实现高效贝叶斯回归与逆问题求解，以及185 TOPS/W/mm²超低功耗贝叶斯推理芯片。
+下一步建议关注贝叶斯方法从算法到硬件的实用化趋势，尤其对资源受限场景的部署价值。
+- 详情：[/202606/10/README](/202606/10/README)
 
 ### 精读区论文标签
-1. [Large-scale empirical tuning and comparison of default optimizers for variational inference](/202606/09/2606.07841v1-large-scale-empirical-tuning-and-comparison-of-default-optimizers-for-variational-inference)  
+1. [Flow-based generative models for amortized Bayesian inference in regression and inverse PDE problems](/202606/10/2606.10370v1-flow-based-generative-models-for-amortized-bayesian-inference-in-regression-and-inverse-pde-problems)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：大规模比较黑箱变分推理优化器
-2. [How Deep Are Deep GPs, Really? A Sharp Threshold and a Non-Gaussian Limit for Compositional GPs](/202606/09/2606.08218v1-how-deep-are-deep-gps-really-a-sharp-threshold-and-a-non-gaussian-limit-for-compositional-gps)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：深度高斯过程作为贝叶斯深度学习模型
-3. [Predictive Coding with Bayesian Priors via Proximal Gradients](/202606/09/2606.08374v1-predictive-coding-with-bayesian-priors-via-proximal-gradients)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：预测编码网络中使用贝叶斯先验的邻近梯度MAP
+   evidence：基于流的摊销贝叶斯推断用于PDE问题
+2. [A 185 TOPS/W/mm2 Bayesian Inference Engine with 640 aJ Write-Free FeFET GRNG for Uncertainty-Aware Aerial Search and Rescue](/202606/10/2606.10822v1-a-185-topswmm2-bayesian-inference-engine-with-640-aj-write-free-fefet-grng-for-uncertainty-aware-aerial-search-and-rescue)  
+   标签：评分：9.0/10、query:bayes-dl
+   evidence：基于FeFET的贝叶斯推理引擎硬件实现，面向不确定性感知的空中搜索救援
 
 ### 速读区论文标签
-1. [Bayes-Sufficient Representations in Supervised Learning](/202606/09/2606.04045v1-bayes-sufficient-representations-in-supervised-learning)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：贝叶斯充分性概念用于表示学习
-2. [Beyond Linear and Overcomplete Regimes: A Mean-Field Analysis of Bottleneck Autoencoders](/202606/09/2606.07120v1-beyond-linear-and-overcomplete-regimes-a-mean-field-analysis-of-bottleneck-autoencoders)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：自编码器的平均场分析与变分推断相关
-3. [Variational Proximal Policy Optimization](/202606/09/2606.08032v1-variational-proximal-policy-optimization)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：将粒子变分推断框架应用于策略优化，涉及变分推断方法
-4. [Discovering and decoding latent mean-field structure with variational autoencoders](/202606/09/2606.08694v1-discovering-and-decoding-latent-mean-field-structure-with-variational-autoencoders)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：变分自编码器容量界揭示平均场结构
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
