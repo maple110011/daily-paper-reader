@@ -1,0 +1,976 @@
+Title: SAGE: Answer-Conditioned Uncertainty Targets for Verbal Uncertainty Alignment
+
+URL Source: https://arxiv.org/pdf/2606.11512v1
+
+Published Time: Thu, 11 Jun 2026 00:19:14 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# SAGE: Answer-Conditioned Uncertainty Targets for Verbal Uncertainty Alignment 
+
+Kaiwen Shi * Zheyuan Zhang * Yanfang Ye †
+
+University of Notre Dame 
+
+{kshi3,yye7}@nd.edu 
+
+Abstract 
+
+Large language models increasingly express un-certainty through natural-language statements, yet these expressions often fail to reflect the model’s sampled behavior. We study verbal uncertainty alignment as a distributional cali-bration problem: the appropriate uncertainty target for a prompt should be estimated from repeated model outputs rather than from an isolated response. However, group rollouts alone are insufficient, since the resulting target must provide a useful training signal. Exist-ing targets only partially satisfy this require-ment. Therefore, we propose SAGE (Semantic-
+
+Answer Guided Entropy), a group-level un-certainty target that constructs an answer-conditioned uncertainty geometry over sampled responses. SAGE preserves categorical, nu-meric, and symbolic answer distinctions while maintaining a smooth and scale-preserving cal-ibration signal. We further apply this target through Group-Uncertainty Preference Op-timization (GUPO), an uncertainty-channel training framework that supervises verbal un-certainty expressions rather than the full re-sponse. Experiments across factual, mathemat-ical, and multiple-choice reasoning tasks show improved uncertainty ranking, lower calibra-tion error, and reduced overconfidence. Our code is available here. 
+
+1 Introduction 
+
+Recent progress in large language models (LLMs) (Ye et al., 2025; Chen et al., 2025b,a) has achieved remarkable success and expanded their use in open-ended generation tasks (Meng et al., 2024; Belkhouribchia and Pen, 2025). However, this success is accompanied by serious reliability chal-lenges: model outputs can appear fluent and plausi-ble even when the underlying answer is uncertain or unsupported (Farquhar et al., 2024). In real-world scenarios, hidden uncertainty may lead to 
+
+> *Equal contribution.
+> †Corresponding author.
+
+hallucinations with severe consequences. These failures are not simply matters of imperfect text generation; they can mislead users, amplify unsafe decisions, and, in extreme cases, cause physical harm (Savage et al., 2024; Omar et al., 2025). To mitigate such risks, researchers have explored different ways to represent model uncertainty. Inter-nal signals, such as token probabilities (Gupta et al., 2024) or hidden states (Azaria and Mitchell, 2023), are informative but require model access and are difficult to interpret. Sampling-based signals reveal behavioral instability across repeated generations (Kuhn et al., 2023; Nikitin et al., 2024a), but they are costly. Meanwhile, asking an LLM to verbalize its own uncertainty provides a direct and practical signal (Xiong et al., 2023a; Lin et al., 2022). A statement such as “I am uncertain” or “I am 80% confident” is immediately visible in the model out-put, available even in black-box settings, and easy for users or downstream applications to interpret. However, this convenience is useful only if the ex-pressed uncertainty matches the reliability of the model’s actual behavior, i.e., if the verbal uncer-tainty is calibrated (Kapoor et al., 2024). Without calibration, verbal uncertainty becomes unreliable and can turn model errors into misplaced trust. A key challenge is constructing the target used to align verbal uncertainty. Since uncertainty should reflect the model’s behavioral uncertainty rather than the surface form of a single answer, the cen-tral question is what target the model should learn (Geng et al., 2023). Existing targets capture differ-ent aspects of uncertainty, but each leaves an im-portant gap. Maximum answer frequency (MAF) is answer-relevant but ignores semantic distance (Cole et al., 2023). Semantic Entropy (SE) handles paraphrases through meaning-equivalence clusters, but hard clustering makes the signal coarse and dis-continuous (Kuhn et al., 2023). Kernel language entropy (KLE) is smoother, but generic embedding geometry can blur task-critical answer distinctions, 1  
+
+> arXiv:2606.11512v1 [cs.CL] 9 Jun 2026 Figure 1: Our motivation and key idea. Existing group-level targets each miss a key requirement for verbal uncer-tainty calibration: MAF is answer-faithful but coarse, SE captures semantic equivalence but produces discontinuous rewards, and KLE is smooth but can underestimate task-critical answer disagreement in generic embedding space. SAGE addresses these limitations by injecting answer-aware structure into the response geometry while preserving smooth kernel-based entropy. This expands task-critical differences within compressed semantic neighborhoods and yields a smoother, more answer-faithful, and scale-preserving uncertainty target, providing a stronger reward signal for verbal uncertainty alignment.
+
+such as option labels, numeric values, or symbolic expressions (Nikitin et al., 2024a). Thus, target quality becomes an optimization bottleneck: with-out a reliable uncertainty target, the reward signal can collapse into noise or shortcuts, leav-ing the optimizer unable to distinguish calibrated uncertainty from superficial response patterns. To address this target gap, we propose SAGE 
+
+(Semantic-Answer Guided Entropy), a new group-level self-uncertainty target that reformulates verbal uncertainty alignment through answer-conditioned uncertainty geometry. The key idea is that an uncertainty target should not be determined solely by generic semantic variation; it should also reflect whether sampled generations remain compatible under the task-specific answer struc-ture. This allows SAGE to preserve smooth reward variation while correcting a common failure mode of generic semantic metrics, where incompatible option labels, distinct numerical values, or non-equivalent symbolic expressions are treated as near-equivalent. By imposing this answer-conditioned structure, SAGE turns repeated generations into a structured uncertainty signal rather than an unorga-nized set of samples. Building on this target, we further introduce Group-Uncertainty Preference Optimization (GUPO), which uses SAGE as the supervision signal to align verbal uncertainty with sampled model behavior. Experiments on factual QA, mathematical reasoning, and multiple-choice understanding show that our framework improves uncertainty ranking, reduces calibration error, and mitigates overconfidence across distinct answer for-mats. Our contributions are as follows: • We show that verbal uncertainty alignment is a distributional calibration problem, and identify a reward-signal bottleneck that limits existing group-level uncertainty targets. • We introduce SAGE , a semantic-answer guided entropy target, together with GUPO ,an uncertainty-channel preference framework that optimizes verbal uncertainty expressions instead of full responses. • We validate the approach across factual, math-2ematical, and multiple-choice reasoning tasks, where our framework consistently outper-forms existing baselines in uncertainty rank-ing, calibration error, and overconfidence re-duction. 
+
+2 Problem formulation 
+
+2.1 Distributional Blindness 
+
+Existing work attempts to address uncertainty cali-bration through response-level methods, such as su-pervised fine-tuning (Jang et al., 2025) and pairwise preference optimization (Zhang et al., 2025b,a). However, a single response can reveal what the model sampled, but it cannot reveal whether the underlying probability mass is concentrated on that answer or dispersed across plausible alterna-tives, thus creating a structural mismatch for self-uncertainty calibration. To be specific, supervised fine-tuning teaches the model to reproduce a target uncertainty expression by maximizing the likelihood of the supervised out-put tokens (Lin et al., 2022; Chaudhry et al., 2024; Jang et al., 2025), instead of directly learning how uncertainty should change with the dispersion of the model’s own response distribution. Similarly, pairwise preference optimization establishes only a local gradient by updating the policy to maximize the log-likelihood margin between two static re-sponses (Li et al., 2026; Zhang et al., 2025b), which lack sufficient information to determine whether the policy is sampling from a stable or highly en-tropic region. As a result, response-level training can adjust the form or scale of verbal uncertainty, but it does not naturally align uncertainty with the model’s sampled response distribution. 
+
+2.2 Group-Uncertainty Preference Optimization 
+
+After constructing a group-level uncertainty tar-get t(Gx), we apply the calibration signal to the verbal uncertainty expression rather than to the full response. For a response yi = ( zi, v i), the answer-bearing content zi provides context, while the uncertainty expression vi is the object of cali-bration. Let ˆu(vi) ∈ [0 , 1] denote the uncertainty value expressed by vi. We define 
+
+ri = −ℓ ˆu(vi), t (Gx),
+
+where larger values indicate that the expressed un-certainty is closer to the group-level uncertainty target. 
+
+> Figure 2: Illustration of the distributional gap in verbal uncertainty calibration. (a) A single response cannot re-veal whether it comes from a stable or unstable response distribution. (b) Distributional calibration uses repeated samples: stable groups justify lower uncertainty, while dispersed groups require higher uncertainty.
+
+We use these scores to form a group-relative pref-erence distribution over uncertainty expressions: 
+
+pcal  
+
+> i
+
+= exp( ri/T )
+
+PKj=1 exp( rj /T ) ,
+
+where T controls preference sharpness. GUPO applies this preference to the uncertainty channel, 
+
+vi | (x, z i),
+
+rather than treating the entire response as the op-timization target. Conceptually, this corresponds to 
+
+LGUPO = −Ex,G x
+
+" KX
+
+> i=1
+
+stopgrad( pcal  
+
+> i
+
+)
+
+· log πθ(vi | x, z i)
+
+#
+
+.
+
+In practice, this can be implemented by apply-ing the calibration loss only to the uncertainty-expression span. The main focus of this work is the construction of t(Gx), which we study next. 
+
+3 Methodology 
+
+3.1 Why Existing Group Targets Give Weak Rewards 
+
+Group rollouts expose the response distribution, but they do not automatically produce a useful un-certainty target. In group-based optimization, the 30.0          
+
+> 0.5
+> 1.0
+> uncertainty
+> Max Answer Frequency
+> 0.0
+> 0.5
+> 1.0 SAGE
+> GSM8K MATH500 MMLU-Pro
+> 0.0
+> 0.5
+> 1.0
+> uncertainty
+> Kernel Language Entropy
+> GSM8K MATH500 MMLU-Pro
+> 0.0
+> 0.5
+> 1.0 Semantic Entropy
+> 0200 400 600 800 1000
+> training step
+> −1.0
+> −0.8
+> −0.6
+> −0.4
+> −0.2
+> 0.0
+> 0.2
+> 0.4
+> reward
+> GUPO reward curves
+> Reward target
+> SAGE target
+> SE target
+> KLE target
+
+Figure 3: Uncertainty distributions produced by different group-level targets on the same 20 sampled responses from the evaluation set. Semantic Entropy (SE) and Kernel Language Entropy (KLE) can both underestimate answer-level uncertainty: SE collapses variation through hard semantic clusters, while KLE smooths over task-critical answer disagreement in embedding space. This motivates a target that is smooth, answer-aware, and scale-preserving. 
+
+model only receives a useful signal if the group-level target changes in ways that reflect meaningful uncertainty differences, while a poor target can make repeated sampling ineffective. If the target is too coarse, too discontinuous, or misaligned with answer-level disagreement, then the optimizer re-ceives little guidance about how verbal uncertainty should change. 
+
+Weak Group Rewards. Figure 1 illustrates why existing group-level targets provide weak reward signals for verbal uncertainty calibration. Given a response group Gx = {yi}Ki=1 and extracted an-swers {ai}Ki=1 , the simplest stability target is maxi-mum answer frequency: 
+
+sMAF (Gx) = max 
+
+> a
+
+1
+
+K
+
+> K
+
+X
+
+> i=1
+
+I[ai = a].
+
+Since Maximum Answer Frequency (Cole et al., 2023) measures answer stability, its corresponding uncertainty target can be written as tMAF (Gx) = 1 − sMAF (Gx). MAF is answer-faithful: if most samples produce the same final answer, the model should generally express lower uncertainty. How-ever, as shown in Fig. 1(1), MAF only counts exact answer agreement. It maps semantically different response groups to the same score whenever their majority counts are identical: 
+
+Gx̸ = G′
+
+> x
+
+, sMAF (Gx) = sMAF (G′
+
+> x
+
+).
+
+Thus, MAF preserves final-answer agreement but discards semantic distance, reasoning variation, and secondary answer alternatives. Semantic Entropy (SE) (Kuhn et al., 2023) im-proves on exact counting by clustering responses into meaning-equivalence classes. Let ci denote the semantic cluster of response yi and p(c) be the empirical cluster frequency: 
+
+tSE (Gx) = − X
+
+> c
+
+p(c) log p(c).
+
+This handles paraphrases and aliases better than raw answer frequency. Yet, as shown in Fig. 1(2), SE depends on hard cluster membership. A small movement within the same cluster gives no reward change, 
+
+ci = c′ 
+
+> i
+
+⇒ ∆tSE = 0 ,
+
+while crossing a cluster boundary can cause a dis-crete jump. Therefore, SE produces coarse and discontinuous rewards: many meaningful changes in similarity or reasoning variation are invisible unless they alter the cluster assignment. Kernel Language Entropy (KLE) (Nikitin et al., 2024a) replaces hard clusters with continuous simi-larities: 
+
+tKLE (Gx) = HvN (K), Kij = k(yi, y j ),
+
+where K is a semantic similarity kernel over gener-ated responses. This gives a smoother uncertainty signal than SE. However, as shown in Fig. 1(3), its smoothness comes from generic embedding geom-etry rather than the task-specific answer geometry. As a result, KLE may assign high similarity to out-puts that are linguistically close but answer-wise incompatible: 
+
+k(yi, y j ) high ̸ ⇒ ai ≡ aj .
+
+4This is problematic for structured answer spaces such as multiple-choice labels, numerical answers, or symbolic expressions, where small surface dif-ferences can encode decisive answer disagreement. Together, these limitations show that a useful uncertainty target must be both answer-sensitive and reward-smooth. Otherwise, the reward either collapses into coarse counts, discontinuous cluster changes, or misleading embedding similarity, leav-ing the optimizer with weak credit assignment for verbal uncertainty calibration. 
+
+Empirical Observation. Figure 3 reveals areward-signal bottleneck. Under the same repeated-sampling groups, Maximum Answer Frequency preserves a broad stability range, whereas SE and KLE are compressed toward low uncertainty, thereby underestimating disagreement among sam-pled answers. This compression arises because generic seman-tic similarity may miss task-specific answer dis-agreement. For example, options A, B, C, and D can be close in embedding space despite being mu-tually exclusive; nearby numeric answers such as 52, 53, and 54 may appear similar although only one is correct; and symbolic answers such as x + 1 
+
+and x + 2 can be linguistically close while mathe-matically distinct. Consequently, SE and KLE as-sign weakly separated uncertainty targets to groups that require different uncertainty levels. Their re-ward curves therefore improve only marginally and quickly plateau, suggesting limited guidance for adjusting verbal uncertainty. In contrast, SAGE preserves answer-level distinctions while maintain-ing a smooth signal, yielding a more informative reward trajectory. 
+
+3.2 SAGE: Semantic-Answer Guided Entropy 
+
+We propose Semantic-Answer Guided Entropy 
+
+(SAGE) to construct such a target. SAGE keeps the continuous kernel view of linguistic entropy, but modifies the response geometry using task-specific answer equivalence. For each response yi = ( zi, v i), let e(zi) denote a continuous representation of the answer-bearing content. We define the linguistic kernel as 
+
+Kling (yi, y j ) = exp − ∥e(zi) − e(zj )∥2
+
+2σ2ling 
+
+!
+
+,
+
+which measures smooth semantic similarity be-tween responses. Let ai be the extracted final answer from zi.We first define a task-specific binary answer-equivalence kernel 
+
+Kbin ans (ai, a j ) ∈ { 0, 1},
+
+where equivalent answers receive value 1. Since a hard kernel may over-separate cross-answer pairs, we use a soft floor: 
+
+Ksoft ans (ai, a j ) = c+(1 −c)Kbin ans (ai, a j ), c ∈ [0 , 1] .
+
+Here, c = 0 gives hard answer separation, while 
+
+c = 1 removes answer geometry and recovers lin-guistic KLE. The final answer-aware kernel is 
+
+KA(yi, y j ) = Kling (yi, y j )α 
+
+Ksoft ans (ai, a j )
+
+β
+
+,
+
+where α and β control linguistic and answer-aware similarity. Diagonal entries are set to 1.We normalize KA into a density matrix: 
+
+PA = KA
+
+tr( KA) .
+
+SAGE is the normalized von Neumann entropy: 
+
+HSAGE (Gx) = − 1log K tr ( PA log PA) .
+
+Lower entropy indicates concentrated responses under linguistic and answer-aware similarity, while higher entropy indicates dispersion across mean-ings, reasoning paths, or final answers. We use this entropy as the group-level self-uncertainty target: 
+
+t(Gx) = HSAGE (Gx).
+
+3.3 Task-Specific Answer Equivalence 
+
+The answer-equivalence kernel adapts SAGE across answer spaces by preserving task-critical distinctions that generic embeddings may obscure. 
+
+Categorical answers. For multiple-choice tasks, option labels define equivalence: 
+
+Kbin ans (ai, a j ) = I[ai = aj ].
+
+This prevents mutually exclusive options from be-ing merged by embedding similarity. 
+
+Numeric answers. For numeric reasoning, final values are normalized before comparison: 
+
+Kbin ans (ai, a j ) = I NormNum( ai)= NormNum( aj ).
+
+5Benchmark Method Calibration High-Confidence Accuracy Brier ↓ ECE ↓ Spear. ↑ @80 ↑ @60 ↑ @50 ↑
+
+MMLU-Pro Direct Verbalized 0.126 0.246 0.069 0.303 0.312 0.325 Direct Verbalized + DCA 0.113 0.222 0.124 0.356 0.412 0.445 CoT 0.409 0.590 0.299 0.291 0.296 0.340 CoT + DCA 0.094 0.179 0.100 0.319 0.342 0.355 CSFT 0.045 0.120 0.195 0.347 0.388 0.380 LoVeC-DPO 0.051 0.144 0.261 0.403 0.438 0.460 GUPO + Semantic Entropy 0.214 0.316 0.090 0.188 0.183 0.180 GUPO + Kernel Language Entropy 0.068 0.205 -0.010 0.163 0.167 0.180 
+
+GUPO + SAGE 0.037 0.113 0.572 0.412 0.512 0.570 
+
+∆ vs. Best Baseline −0.008 −0.007 +0.273 +0.009 +0.074 +0.110 MATH-500 Direct Verbalized 0.359 0.546 0.246 0.563 0.617 0.660 Direct Verbalized + DCA 0.388 0.578 0.171 0.550 0.617 0.580 CoT 0.396 0.582 0.175 0.588 0.617 0.600 CoT + DCA 0.287 0.479 0.074 0.588 0.567 0.580 CSFT 0.064 0.143 0.500 0.625 0.700 0.740 
+
+LoVeC-DPO 0.121 0.220 0.352 0.600 0.633 0.660 GUPO + Semantic Entropy 0.190 0.282 0.426 0.575 0.650 0.720 GUPO + Kernel Language Entropy 0.0205 0.0348 0.451 0.588 0.700 0.720 
+
+GUPO + SAGE 0.0202 0.0238 0.463 0.613 0.717 0.740 
+
+∆ vs. Best Baseline −0.044 −0.119 −0.037 −0.012 +0.017 +0.000 TriviaQA Direct Verbalized 0.394 0.551 0.132 0.388 0.433 0.440 Direct Verbalized + DCA 0.235 0.402 0.507 0.450 0.517 0.570 CoT 0.341 0.504 0.307 0.419 0.467 0.500 CoT + DCA 0.209 0.368 0.523 0.469 0.508 0.560 CSFT 0.119 0.177 0.241 0.494 0.517 0.540 LoVeC-DPO 0.107 0.118 0.015 0.481 0.467 0.480 GUPO + Semantic Entropy 0.153 0.247 0.404 0.480 0.530 0.540 GUPO + Kernel Language Entropy 0.123 0.227 0.268 0.490 0.480 0.520 
+
+GUPO + SAGE 0.055 0.031 0.617 0.506 0.583 0.650 
+
+∆ vs. Best Baseline −0.052 −0.087 +0.094 +0.012 +0.066 +0.080 
+
+Table 1: Calibration results across three benchmarks. Lower values are better for Brier score and ECE, while higher values are better for Spearman correlation and high-confidence subset accuracy. In our uncertainty framing, high-confidence subset accuracy corresponds to evaluating whether lower-uncertainty predictions are more reliable. 
+
+∆ is computed against the best non-GUPO baseline for each metric. 
+
+This groups equivalent numeric forms while sepa-rating distinct values. 
+
+Symbolic answers. For symbolic mathematics, final expressions are normalized and checked for equivalence: 
+
+Kbin ans (ai, a j ) = I[Verify( ai, a j ) = 1] .
+
+This preserves mathematical equivalence beyond surface form. 
+
+Free-form answers. For open-ended factual QA, equivalence can be defined by normalized aliases or bidirectional entailment, grouping paraphrases while separating incompatible facts. 
+
+4 Experiments 
+
+4.1 Experimental Setup Benchmarks. We evaluate on TriviaQA (Joshi et al., 2017), MATH-500 (Hendrycks et al., 2021), and MMLU-Pro (Wang et al., 2024). These bench-marks cover three representative answer struc-tures: free-form factual answers, numeric or sym-bolic mathematical answers, and discrete multiple-choice options. 
+
+Compared methods. We compare GUPO with representative verbal uncertainty estimation and alignment baselines: Direct Verbalized prompt-ing (Xiong et al., 2023a), CoT prompting (Cole et al., 2023), Direct Confidence Alignment (DCA) 6(Zhang et al., 2025b), CSFT (Jang et al., 2025), and LoVeC-DPO (Zhang et al., 2025a). GUPO uses SAGE as the group-level self-uncertainty tar-get. Confidence-based outputs are converted into uncertainty scores for comparison. Further details on the baselines are provided in Appendix B.3. 
+
+Metrics. We evaluate calibration quality and un-certainty ranking. Brier score and Expected Cali-bration Error (ECE) measure whether the model’s expressed uncertainty is calibrated to empirical reli-ability. Spearman correlation evaluates whether the uncertainty scores correctly rank examples by relia-bility. We also report @80, @60, and @50, follow-ing the standard high-confidence subset accuracy protocol. In our uncertainty framing, these met-rics evaluate whether predictions assigned lower uncertainty are more likely to be correct. Higher values are better for Spearman, @80, @60, and @50, while lower values are better for Brier score and ECE. Further details on the conversion between uncertainty and confidence-based metrics are pro-vided in Appendix B.2. 
+
+4.2 Main Results 
+
+We evaluate verbal uncertainty using both calibra-tion and decision-oriented metrics. Brier score and ECE measure whether uncertainty has the correct numerical scale, but our main focus is ranking and selective reliability. Spearman correlation mea-sures whether lower uncertainty corresponds to higher correctness, while @80, @60, and @50 evaluate whether low-uncertainty predictions form more accurate subsets. These metrics directly test whether verbal uncertainty can guide downstream decisions such as trusting, verifying, or abstaining. This distinction is important because a model may appear numerically calibrated while still failing to identify which individual predictions are reliable. In practical deployments, uncertainty is useful only if it supports such instance-level decisions. There-fore, improvements in ranking and selective ac-curacy provide stronger evidence that uncertainty expressions are behaviorally meaningful. Table 1 reports results on MMLU-Pro, MATH-500, and TriviaQA. Overall, GUPO + SAGE 
+
+achieves the strongest profile. It obtains the best re-sult on every metric for MMLU-Pro, the best Brier score and ECE on MATH-500 while remaining competitive on ranking metrics, and the clearest gains on TriviaQA across calibration, Spearman correlation, and high-confidence accuracy. These @80 @60 @50 
+
+> Confidence threshold
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Accuracy on high-confidence subset  SAGE
+> Max Answer Frequency
+> Semantic Entropy
+> KLE
+> +22.4 pp
+> +29.5 pp
+> +33.0 pp
+
+Figure 4: Ablation over group-level uncertainty tar-gets on MMLU-Pro. SAGE achieves the best low-uncertainty subset accuracy across all thresholds, im-proving over the strongest baseline by +22 .4, +29 .5,and +33 .0 percentage points. These results show that SAGE better identifies reliable low-uncertainty predic-tions. 0.4              
+
+> 0.6
+> 0.8
+> Brier ↓ ECE ↓ Accuracy @80 ↑
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+> Cross-cluster floor c
+> 0.0
+> 0.1
+> 0.2
+> Metric value
+
+Figure 5: Ablation over the SAGE cross-cluster floor c
+
+on MATH-500. Increasing c improves calibration and low-uncertainty accuracy over the hard variant, while very large c moves the target closer to standard KLE. The results show that soft cross-cluster weighting pro-vides a more effective training signal for SAGE. 
+
+results show that GUPO + SAGE improves both the scale and, more importantly, the ordering of verbal uncertainty: predictions assigned lower uncertainty are more likely to be correct. 
+
+4.3 Ablation Study Uncertainty target. We first compare four tar-gets for constructing the calibration preference dis-tribution, while keeping the GUPO training frame-work fixed: Max answer frequency , which uses the most frequent extracted answer and converts answer stability into an uncertainty target; Seman-tic Entropy , which computes uncertainty over meaning clusters; KLE , which estimates entropy in a continuous semantic embedding space; and 
+
+SAGE , which constructs an answer-conditioned uncertainty geometry for response groups. This ab-lation isolates the central question of our method: 7Model Setting Brier ↓ ECE ↓ Spear. ↑ @80 ↑ @60 ↑ @50 ↑ ∆μ ↓                                                                  
+
+> Qwen2.5-1.5B-Instruct Prompt 0.359 0.546 0.246 0.562 0.617 0.660 0.526
+> GUPO+SAGE 0.020 0.024 0.463 0.613 0.717 0.740 0.021
+> ∆vs. Prompt −0.339 −0.522 +0.217 +0.051 +0.100 +0.080 −0.505 Qwen2.5-3B-Instruct Prompt 0.401 0.619 -0.036 0.613 0.633 0.620 0.619
+> GUPO+SAGE 0.019 0.063 0.440 0.625 0.700 0.680 0.062
+> ∆vs. Prompt −0.382 −0.556 +0.476 +0.012 +0.067 +0.060 −0.557 Qwen2.5-7B-Instruct Prompt 0.389 0.602 0.381 0.588 0.583 0.660 0.602
+> GUPO+SAGE 0.024 0.035 0.485 0.562 0.650 0.700 0.035
+> ∆vs. Prompt −0.365 −0.567 +0.104 −0.026 +0.067 +0.040 −0.567
+
+Table 2: Calibration and uncertainty-alignment results across model sizes. Prompt denotes direct uncertainty elicitation without training, while GUPO+SAGE denotes uncertainty-channel training with the proposed semantic-answer guided group-level target. The mean-gap metric measures the absolute difference between the mean expressed uncertainty and the mean group-level uncertainty target. High-confidence subset accuracy is computed after converting expressed uncertainty into confidence; in our uncertainty framing, it evaluates whether lower-uncertainty predictions are more reliable. The delta rows report changes relative to Prompt; negative values are better for Brier score, ECE, and the mean-gap metric, while positive values are better for Spearman correlation and high-confidence subset accuracy. 
+
+whether a calibration target can simultaneously pre-serve answer-level disagreement, provide smooth reward variation, and avoid target-scale collapse. Frequency-based targets are answer-faithful but coarse; Semantic Entropy captures meaning equiv-alence but remains limited by hard cluster assign-ments; and KLE provides smoothness but can blur task-critical answer distinctions. In contrast, 
+
+SAGE is designed to satisfy all three require-ments simultaneously : answer faithfulness, re-ward smoothness, and scale preservation, making it a more effective target for converting group-level uncertainty into supervision for calibrated verbal uncertainty. 
+
+Effect of the cross-cluster floor. Figure 5 ablates the soft cross-cluster floor c in SAGE. When c = 0 ,the answer kernel becomes hard, preserving answer distinctions but potentially compressing the target scale. Increasing c retains some linguistic similar-ity across different answer clusters, producing a smoother and more usable training signal. Very large c, however, moves the target toward standard KLE and weakens the answer-aware correction. Overall, SAGE benefits from soft, scale-preserving answer separation rather than hard clustering or purely linguistic similarity. 
+
+Transferability Across Model Scales. Table 2 evaluates GUPO across Qwen2.5-1.5B-Instruct, Qwen2.5-3B-Instruct, and Qwen2.5-7B-Instruct. Compared with direct prompting, GUPO+SAGE consistently reduces Brier score and ECE, and gen-erally improves Spearman correlation. These re-sults show that the proposed uncertainty-alignment framework transfers across model scales rather than relying on a single backbone. Detailed ablation results and additional analyses are reported in Appendix C. 
+
+5 Conclusion 
+
+We study verbal uncertainty alignment through behavioral uncertainty. Instead of treating uncer-tainty as a property of a single response, we de-fine it by the stability of sampled outputs under the same prompt, framing calibration as a distri-butional problem. To derive a group-level target, we introduce SAGE, which combines continuous linguistic similarity with soft answer-equivalence structure. SAGE yields a smooth, answer-aware, scale-preserving uncertainty signal across factual, mathematical, and multiple-choice tasks. We fur-ther propose GUPO, which applies this signal to the verbal uncertainty channel rather than optimiz-ing the full response. Experiments on TriviaQA, MATH-500, and MMLU-Pro show that GUPO im-proves alignment between expressed uncertainty and sampled model behavior, reducing overconfi-dence across task formats. These results demon-strate that group-level behavioral uncertainty can be distilled into single-response uncertainty expres-sions when both the target and optimization chan-nel are properly designed. 8Limitations 
+
+This work aligns verbal uncertainty with behavioral self-uncertainty rather than external correctness. The two are related but not identical: a model may be stable but wrong, or unstable while occasionally correct. Therefore, our method should be viewed as complementary to correctness-based calibration, retrieval-based verification, and external validation rather than as a replacement for them. SAGE relies on answer extraction and task-specific equivalence rules to estimate group-level uncertainty. We use different normalization or equivalence procedures for factual, numeric, sym-bolic, and multiple-choice answers, but these pro-cedures may still introduce noise, especially for open-ended tasks with ambiguous answer bound-aries. In practice, this means that the quality of the uncertainty target depends partly on the reliability of the answer-equivalence module. Finally, applying calibrated verbal uncertainty in high-stakes domains requires particular care. Better uncertainty expressions can help users recognize potentially unreliable outputs, but model predic-tions may still be affected by factual errors, incom-plete evidence, hidden biases, or failures in the underlying reasoning process. A low-uncertainty response may still be incorrect, especially when the task involves domain-specific evidence or con-straints. This is especially relevant in areas such as medicine, food safety, finance, and legal decision-making, where errors may have substantial real-world consequences. In these settings, model uncer-tainty can serve as a useful reference for risk aware-ness and verification, but final decisions should still be made by human experts and grounded in do-main evidence, external validation, and appropriate institutional safeguards. 
+
+References 
+
+Amos Azaria and Tom M. Mitchell. 2023. The inter-nal state of an llm knows when its lying. ArXiv ,abs/2304.13734. Han Bao, Zheyuan Zhang, Pengcheng Jing, Zhengqing Yuan, Kaiwen Shi, and Yanfang Ye. 2026. Drift-bench: Diagnosing cooperative breakdowns in llm agents under input faults via multi-turn interaction. 
+
+arXiv preprint arXiv:2602.02455 .Jamal Belkhouribchia and Joeri J. Pen. 2025. Large lan-guage models in clinical nutrition: an overview of its applications, capabilities, limitations, and potential future prospects. Frontiers in Nutrition , 12. Arslan Chaudhry, Sridhar Thiagarajan, and Dilan Görür. 2024. Finetuning language models to emit linguistic expressions of uncertainty. ArXiv , abs/2409.12180. Chaoran Chen, Zhiping Zhang, Bingcan Guo, Shang Ma, Ibrahim Khalilov, Simret Gebreegziabher, Yan-fang Ye, Ziang Xiao, Yaxing Yao, Tianshi Li, and 1 others. 2025a. The obvious invisible threat: Llm-powered gui agents’ vulnerability to fine-print injec-tions. In Soups . The Twenty-First Symposium on Usable Privacy and Security (SOUPS). Chaoran Chen, Daodao Zhou, Yanfang Ye, Toby Jia-jun Li, and Yaxing Yao. 2025b. Clear: Towards contex-tual llm-empowered privacy policy analysis and risk generation for large language model applications. In 
+
+Proceedings of the 30th International Conference on Intelligent User Interfaces , pages 277–297. Jeremy R. Cole, Michael J.Q. Zhang, Daniel Gillick, Ju-lian Martin Eisenschlos, Bhuwan Dhingra, and Jacob Eisenstein. 2023. Selectively answering ambiguous questions. ArXiv , abs/2305.14613. Ekaterina Fadeeva, Aleksandr Rubashevskii, Artem Shelmanov, Sergey Petrakov, Haonan Li, Hamdy Mubarak, Evgenii Tsymbalov, Gleb Kuzmin, Alexan-der Panchenko, Timothy Baldwin, and 1 others. 2024. Fact-checking the output of large language models via token-level uncertainty quantification. In Find-ings of the Association for Computational Linguistics: ACL 2024 , pages 9367–9385. Ekaterina Fadeeva, Roman Vashurin, Akim Tsvigun, Artem Vazhentsev, Sergey Petrakov, Kirill Fedyanin, Daniil Vasilev, Elizaveta Goncharova, Alexander Panchenko, Maxim Panov, and 1 others. 2023. Lm-polygraph: Uncertainty estimation for language mod-els. In Proceedings of the 2023 Conference on Em-pirical Methods in Natural Language Processing: System Demonstrations , pages 446–461. Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal. 2024. Detecting hallucinations in large language models using semantic entropy. Nature ,630:625 – 630. Jiahui Geng, Fengyu Cai, Yuxia Wang, Heinz Koeppl, Preslav Nakov, and Iryna Gurevych. 2023. A survey 
+
+9of confidence estimation and calibration in large lan-guage models. In North American Chapter of the Association for Computational Linguistics .Neha Gupta, Harikrishna Narasimhan, Wittawat Jitkrit-tum, Ankit Singh Rawat, Aditya Krishna Menon, and Sanjiv Kumar. 2024. Language model cas-cades: Token-level uncertainty and beyond. ArXiv ,abs/2404.10136. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Xiaodong Song, and Jacob Steinhardt. 2021. Measuring math-ematical problem solving with the math dataset. 
+
+ArXiv , abs/2103.03874. Yuelin Hu, Zhengxue Cheng, Wei Liu, and Li Song. 2026. Entropy-gated selective policy optimiza-tion: Token-level gradient allocation for hybrid training of large language models. arXiv preprint arXiv:2602.03309 .Jiatan Huang, Zheyuan Zhang, Tianyi Ma, Mingchen Li, Yaning Zheng, Yanfang Ye, and Chuxu Zhang. 2026a. Glen-bench: A graph-language based benchmark for nutritional health. arXiv preprint arXiv:2601.18106 .Jiatan Huang, Zheyuan Zhang, Kaiwen Shi, Yanfang Ye, and Chuxu Zhang. 2026b. Evolverouter: Co-evolving routing and prompt for multi-agent question answering. arXiv preprint arXiv:2604.05149 .Chaeyun Jang, Moonseok Choi, Yegon Kim, Hyungi Lee, and Juho Lee. 2025. Verbalized confidence trig-gers self-verification: Emergent behavior without ex-plicit reasoning supervision. ArXiv , abs/2506.03723. Mingjian Jiang, Yangjun Ruan, Prasanna Sattigeri, Salim Roukos, and Tatsunori B. Hashimoto. 2024. Graph-based uncertainty metrics for long-form lan-guage model outputs. ArXiv , abs/2410.20783. Mandar Joshi, Eunsol Choi, Daniel S. Weld, and Luke Zettlemoyer. 2017. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehen-sion. ArXiv , abs/1705.03551. Sanyam Kapoor, Nate Gruver, Manley Roberts, Kather-ine M. Collins, Arka Pal, Umang Bhatt, Adrian Weller, Samuel Dooley, Micah Goldblum, and An-drew Gordon Wilson. 2024. Large language models must be taught to know what they don’t know. ArXiv ,abs/2406.08391. Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. 2023. Semantic uncertainty: Linguistic invariances for un-certainty estimation in natural language generation. 
+
+ArXiv , abs/2302.09664. Chen Li, Xiaolin Hu, Songzhu Zheng, Jiawei Zhou, and Chaoran Chen. 2026. Orce: Order-aware alignment of verbalized confidence in large language models. Peiyu Li, Xiaobao Huang, Ting Hua, and Nitesh V Chawla. 2025a. Crochetbench: Can vision-language models move from describing to doing in crochet domain? arXiv .Peiyu Li, Xiaobao Huang, Yijun Tian, and Nitesh V Chawla. 2024. Cheffusion: Multimodal foundation model integrating recipe and food image generation. In CIKM .Peiyu Li, Xiuxiu Tang, Si Chen, Ying Cheng, Ronald Metoyer, Ting Hua, and Nitesh V Chawla. 2025b. Adaptive testing for llm evaluation: A psychometric alternative to static benchmarks. arXiv .Stephanie C. Lin, Jacob Hilton, and Owain Evans. 2022. Teaching models to express their uncertainty in words. Trans. Mach. Learn. Res. , 2022. Tianyi Ma, Yiyue Qian, Zheyuan Zhang, Zehong Wang, Xiaoye Qian, Feifan Bai, Yifan Ding, Xuwei Luo, Shinan Zhang, Keerthiram Murugesan, and 1 others. 2026. Autodata: A multi-agent system for open web data collection. Advances in Neural Information Processing Systems , 38:173416–173448. Potsawee Manakul, Adian Liusie, and Mark John Fran-cis Gales. 2023. Selfcheckgpt: Zero-resource black-box hallucination detection for generative large lan-guage models. ArXiv , abs/2303.08896. Xiangbin Meng, Xiangyu Yan, Kuo Zhang, Da Liu, Xi-aosheng Cui, Yaodong Yang, Muhan Zhang, Chunxia Cao, Jingjia Wang, Xuliang Wang, Jun Gao, Yuan-gengshuo Wang, Jiaming Ji, Zifeng Qiu, Muzi Li, Cheng Qian, Tianze Guo, Shuang Ma, Zeying Wang, and 6 others. 2024. The application of large language models in medicine: A scoping review. iScience , 27. Alexander Nikitin, Jannik Kossen, Yarin Gal, and Pekka Marttinen. 2024a. Kernel language entropy: Fine-grained uncertainty quantification for llms from se-mantic similarities. ArXiv , abs/2405.20003. Alexander Nikitin, Jannik Kossen, Yarin Gal, and Pekka Marttinen. 2024b. Kernel language entropy: Fine-grained uncertainty quantification for llms from se-mantic similarities. Advances in Neural Information Processing Systems , 37:8901–8929. Mahmud Omar, Vera Sorin, Jeremy D. Collins, David L. Reich, Robert Freeman, Nicholas Gavin, Alexan-der W. Charney, Lisa Stump, Nicola Luigi Bragazzi, Girish N. Nadkarni, and Eyal Klang. 2025. Multi-model assurance analysis showing large language models are highly vulnerable to adversarial halluci-nation attacks during clinical decision support. Com-munications Medicine , 5. Thomas Savage, John Wang, Robert J. Gallo, Ab-dessalem Boukil, Vishwesh Patel, Seyed Amir Ah-mad Safavi-Naini, Ali Soroush, and Jonathan H Chen. 2024. Large language model uncertainty proxies: dis-crimination and calibration for medical diagnosis and treatment. Journal of the American Medical Infor-matics Association : JAMIA .Kaiwen Shi, Zheyuan Zhang, Zhengqing Yuan, Keerthi-ram Murugesan, Vincent Galassi, Chuxu Zhang, and Yanfang Ye. 2026. Ng-router: Graph-supervised 
+
+10 multi-agent collaboration for nutrition question an-swering. In Proceedings of the 19th Conference of the European Chapter of the Association for Compu-tational Linguistics (Volume 1: Long Papers) , pages 7508–7527. Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weim-ing Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max W.F. Ku, Kai Wang, Alex Zhuang, Rongqi "Richard" Fan, Xiang Yue, and Wenhu Chen. 2024. Mmlu-pro: A more robust and challeng-ing multi-task language understanding benchmark. 
+
+ArXiv , abs/2406.01574. Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. 2023a. Can llms express their uncertainty? an empirical eval-uation of confidence elicitation in llms. ArXiv ,abs/2306.13063. Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. 2023b. Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms. arXiv preprint arXiv:2306.13063 .Siheng Xiong, Oguzhan Gungordu, Blair Johnson, James C Kerce, and Faramarz Fekri. 2026. Scaling search-augmented llm reasoning via adaptive infor-mation control. arXiv preprint arXiv:2602.01672 .Siheng Xiong, Ali Payani, and Faramarz Fekri. 2025a. Enhancing language model reasoning with structured multi-level modeling. In The Fourteenth Interna-tional Conference on Learning Representations .Siheng Xiong, Ali Payani, Yu’an Yang, and Faramarz Fekri. 2025b. Deliberate reasoning in language models as structure-aware planning with an accu-rate world model. In Proceedings of the 63rd An-nual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 31900– 31931. Qwen An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Guanting Dong, Hao-ran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxin Yang, Jingren Zhou, Jun-yang Lin, and 25 others. 2024. Qwen2.5 technical report. ArXiv , abs/2412.15115. Yanfang Ye, Zheyuan Zhang, Tianyi Ma, Zehong Wang, Yiyang Li, Shifu Hou, Weixiang Sun, Kaiwen Shi, Yijun Ma, Wei Song, and 1 others. 2025. Llms4all: A review of large language models across academic disciplines. arXiv preprint arXiv:2509.19580 .Caiqi Zhang, Fangyu Liu, Marco Basaldella, and Nigel Collier. 2024. Luq: Long-text uncertainty quantifica-tion for llms. ArXiv , abs/2403.20279. Caiqi Zhang, Xiaochen Zhu, Chengzu Li, Nigel Col-lier, and Andreas Vlachos. 2025a. Reinforcement learning for better verbalized confidence in long-form generation. ArXiv , abs/2505.23912. Glenn Zhang, Treasure Mayowa, Jason Fan, Yicheng Fu, Aaron Sandoval, Sean O’Brien, and Kevin Zhu. 2025b. Direct confidence alignment: Aligning ver-balized confidence with internal confidence in large language models. ArXiv , abs/2512.11998. Zheyuan Zhang, Lin Ge, Hongjiang Li, Weicheng Zhu, Chuxu Zhang, and Yanfang Ye. 2026a. Mapro: Re-casting multi-agent prompt optimization as maxi-mum a posteriori inference. In Findings of the Asso-ciation for Computational Linguistics: EACL 2026 ,pages 4458–4480. Zheyuan Zhang, Kaiwen Shi, Han Bao, Zehong Wang, Tianyi Ma, and Yanfang Ye. 2026b. Why seman-tic entropy fails: Geometry-aware and calibrated uncertainty for policy optimization. arXiv preprint arXiv:2605.21801 .Zheyuan Zhang, Kaiwen Shi, Zhengqing Yuan, Ze-hong Wang, Tianyi Ma, Keerthiram Murugesan, Vin-cent Galassi, Chuxu Zhang, and Yanfang Ye. 2025c. Agentrouter: A knowledge-graph-guided llm router for collaborative multi-agent question answering. 
+
+arXiv preprint arXiv:2510.05445 .
+
+11 A Related Work 
+
+LLMs have advanced rapidly in recent years (Ye et al., 2025; Xiong et al., 2025b,a, 2026; Li et al., 2024, 2025b,a; Ma et al., 2026). Building on this progress, LLM-driven agents have gained prominence for their ability to plan, interact, and solve complex tasks with limited human oversight (Zhang et al., 2026a, 2025c; Shi et al., 2026; Huang et al., 2026b,a; Bao et al., 2026). A central practical challenge accompanying these successes is halluci-nation: models confidently producing incorrect or fabricated facts. This leads to the growing research of reliably quantifying and leveraging model uncer-tainty to faithfully represents model capabilities to recognize and mitigate hallucinations in trustwor-thy AI. A primary line of work estimates uncertainty di-rectly from model predictions, where token-level entropy is used as a proxy for confidence. These methods interpret uncertainty as dispersion over next-token distributions and have been widely used in early studies (Fadeeva et al., 2023, 2024). More recent approaches incorporate such signals into training, for example by using entropy to modu-late gradient magnitude while preserving update direction (Hu et al., 2026). While effective for capturing local prediction uncertainty, these ap-proaches remain fundamentally limited: token-level entropy reflects lexical ambiguity, but does not capture higher-level semantic structure across complete responses. As a result, it is often insuffi-cient for reasoning-intensive tasks where correct-ness depends on global coherence rather than local token uncertainty. To address this limitation, a growing body of work shifts to response-level uncertainty , estimat-ing confidence from agreement across multiple gen-erated samples. Early approaches quantify agree-ment through exact-match frequency or consistency scores (Xiong et al., 2023b), while later work ex-tends this idea to semantic and factual consistency using external evaluators or LLM-based judgments (Manakul et al., 2023; Zhang et al., 2024; Jiang et al., 2024). Entropy-based formulations provide a more principled probabilistic interpretation by modeling distributions over semantic outcomes, in-cluding clustering-based semantic entropy (Kuhn et al., 2023), its discrete variant (Farquhar et al., 2024), and similarity-based extensions such as ker-nel entropy (Nikitin et al., 2024b) and methods beyond entropy (Zhang et al., 2026b). 
+
+B Training Details 
+
+Overview. All models are trained in two stages. First, we perform format supervised fine-tuning to make the model reliably produce task-specific answer and uncertainty formats. Second, starting from the format-SFT checkpoint, we train verbal uncertainty using group-level uncertainty targets. This second stage includes supervised calibration baselines and our uncertainty-channel preference training. All target variants share the same sam-pled response groups, data split, and evaluation protocol. 
+
+Hardware and software 
+
+The main experiments use 
+
+Qwen/Qwen2.5-1.5B-Instruct and are run on the PSC Bridges-2 cluster using the GPU-shared partition with a single NVIDIA V100-32GB GPU. For model-scale transfer experiments, Qwen2.5-3B-Instruct 
+
+and Qwen2.5-7B-Instruct are trained on NVIDIA H100 GPUs. Training is implemented with TRL and Hugging Face 
+
+transformers . Offline sampling and online rollouts use vLLM. Training and vLLM inference use fp16. For NLI-based semantic equivalence components, we use fp32 when required for attention compatibility. All experiments use seed 42 unless otherwise specified. 
+
+B.1 Training Model Selection 
+
+We use Qwen2.5-1.5B-Instruct (Yang et al., 2024) as the primary training model. This choice is moti-vated by both methodological and practical consid-erations. Methodologically, verbal uncertainty cali-bration should be evaluated on a model that still ex-hibits visible uncertainty and non-trivial instability under repeated sampling; overly strong models may saturate on some benchmarks and make calibra-tion improvements harder to diagnose. Practically, the 1.5B model enables efficient group rollout col-lection and preference optimization, which is im-portant because GUPO requires multiple sampled responses for each prompt to estimate the SAGE target. Therefore, Qwen2.5-1.5B-Instruct provides a suitable testbed for studying whether SAGE can produce informative group-level supervision for uncertainty alignment. To verify that the observed gains are not specific to a single model scale, we further evaluate the 12 same training framework on Qwen2.5-3B-Instruct 
+
+and Qwen2.5-7B-Instruct . As shown in Table 2, GUPO+SAGE consistently improves calibration across model sizes. In particular, it substantially re-duces Brier score, ECE, and the mean uncertainty-target gap ∆μ, while improving Spearman correla-tion and high-confidence subset accuracy in most settings. These results suggest that the benefit of SAGE is not tied to the 1.5B model alone, but trans-fers across different model capacities. 
+
+B.2 Metric Details 
+
+Our model produces verbal uncertainty scores, while some standard calibration metrics are conven-tionally defined over confidence scores. For com-patibility with prior work, we convert expressed un-certainty into the corresponding confidence score before computing Brier score, ECE, and threshold-based accuracy. Thus, high-confidence subset ac-curacy also has a direct uncertainty interpretation: examples above a confidence threshold are equiv-alently examples below the corresponding uncer-tainty threshold. Specifically, @80, @60, and @50 report the ac-curacy of examples whose converted confidence score exceeds each threshold. In the uncertainty view, these metrics measure whether examples as-signed lower uncertainty are more reliable. There-fore, higher @80, @60, and @50 indicate that the model’s low-uncertainty predictions are more likely to be correct. 
+
+B.3 Baseline Details 
+
+We compare GUPO with representative baselines that cover prompting-based uncertainty elicitation, post-hoc calibration, supervised calibration train-ing, and preference-based verbal uncertainty align-ment. 
+
+Direct Verbalized. Direct Verbalized prompting asks the model to produce an answer together with an explicit verbal uncertainty statement. This base-line evaluates the model’s native ability to express uncertainty without additional calibration training. 
+
+Chain-of-Thought Prompting. The CoT base-line asks the model to generate intermediate rea-soning before producing the final answer and un-certainty expression. This tests whether adding reasoning improves the reliability of verbal uncer-tainty by making the answer process more explicit. 
+
+Direct Confidence Alignment. Direct Confi-dence Alignment (DCA) is a post-hoc calibration baseline that adjusts verbal confidence scores after generation. Since DCA operates on confidence val-ues, we convert its calibrated confidence scores into uncertainty scores when comparing uncertainty alignment. 
+
+CSFT. CSFT uses supervised fine-tuning to train the model to produce calibrated verbal uncertainty expressions. Unlike GUPO, which uses group-level uncertainty targets and applies supervision to the uncertainty channel, CSFT follows a supervised response-level training objective. 
+
+LoVeC-DPO. LoVeC-DPO is a preference-based verbal calibration baseline. It improves verbal con-fidence expression through preference optimiza-tion, and we convert its confidence outputs into uncertainty scores for comparison. We include it to compare GUPO with an existing preference-based alignment approach. 
+
+GUPO with Alternative Targets. In addition to external baselines, we also evaluate GUPO with dif-ferent group-level targets, including Semantic En-tropy and Kernel Language Entropy. These variants use the same GUPO training framework as SAGE, but differ in how the group-level uncertainty target is constructed. This comparison isolates the contri-bution of SAGE from the optimization framework itself. 
+
+Dataset splits. We evaluate on three benchmarks with different answer structures. MATH-500 tests mathematical reasoning with numeric or symbolic final answers. TriviaQA tests factual question answering with short free-form textual answers. MMLU-Pro tests multiple-choice reasoning with discrete option labels. We use fixed train and valida-tion splits for all calibration experiments. MATH-500 contains 500 prompts, split into 400 train-ing prompts and 100 validation prompts. Trivi-aQA uses 2,000 prompts, split into 1,600 train-ing prompts and 400 validation prompts. MMLU-Pro uses 4,000 prompts, split into 3,200 training prompts and 800 validation prompts. The same split is used across target variants and training meth-ods. 13 Offline response sampling for target con-struction 
+
+For each prompt x, we sample a group 
+
+Gx = {y1, . . . , y K }, yi ∼ πθ0 (· | x),
+
+where θ0 is the base model and K =20 . All offline sampling uses vLLM with temperature 0.7 and top-p = 0.9. For MATH-500, the model produces chain-of-thought reasoning and a final \boxed {·} 
+
+answer, with max_new_tokens = 512 
+
+and max_model_len = 1536 . For Trivi-aQA, the model produces a short answer in an explicit Answer: /Uncertainty: for-mat, with max_new_tokens = 64 and 
+
+max_model_len = 512 . For MMLU-Pro, the model produces chain-of-thought rea-soning and ends with Answer: <letter> ,with max_new_tokens = 320 and 
+
+max_model_len = 2560 .
+
+Answer extraction and equivalence. For each sampled response yi, we extract the answer-bearing content zi, the final answer ai, and, when present, the verbal uncertainty expression vi. For MATH-500, we extract the final boxed answer and apply numeric or symbolic equivalence checking when possible. For TriviaQA, we normalize short an-swers by lowercasing, removing punctuation and articles, and using alias or semantic equivalence when available. For MMLU-Pro, we extract the final option label. These extracted answers are used for maximum answer frequency, semantic cluster-ing, and the answer-equivalence kernel in SAGE. 
+
+Group-level target construction. Each target variant maps the response group Gx to a scalar uncertainty target 
+
+t(Gx) ∈ [0 , 1] ,
+
+where larger values indicate greater uncertainty in the sampled response group. Maximum answer frequency is first computed as 
+
+sMAF (Gx) = max 
+
+> a
+
+1
+
+K
+
+> K
+
+X
+
+> i=1
+
+I[ai = a].
+
+Since maximum answer frequency measures an-swer stability, its uncertainty version is given by 
+
+tMAF (Gx) = 1 − sMAF (Gx).
+
+Semantic Entropy clusters responses into meaning-equivalence classes and computes uncertainty over the empirical cluster distribution. KLE estimates response dispersion in a continuous embedding space. SAGE combines linguistic similarity with answer-equivalence geometry. Specifically, SAGE uses 
+
+Ksoft  
+
+> ij
+
+= c + (1 − c)Kbin  
+
+> ij
+
+,KA 
+
+> ij
+
+=
+
+
+
+Kling 
+
+> ij
+
+α 
+
+Ksoft 
+
+> ij
+
+β
+
+.
+
+Here Kbin  
+
+> ij
+
+= 1 when ai and aj are equivalent un-der the task-specific answer rule, and 0 otherwise. The cross-cluster floor c ∈ [0 , 1] controls how much similarity is retained between non-equivalent answer clusters. Unless otherwise specified, we use c = 0.8 in the main experiments and set 
+
+α = β = 1 . The normalized entropy is used as the group-level uncertainty target: 
+
+t(Gx) = HSAGE (Gx).
+
+Stage 1. Format supervised fine-tuning. The first training stage teaches the model to follow the output format required for answer and uncer-tainty extraction. This stage is not intended to calibrate uncertainty. Instead, it standardizes re-sponse structure across tasks. For MATH-500, the model learns to output reasoning followed by a boxed answer. For TriviaQA, it learns the explicit 
+
+Answer: /Uncertainty: format. For MMLU-Pro, it learns to end with a final option label. All cali-bration experiments start from the corresponding format-SFT checkpoint, so that comparisons across targets and training methods are not confounded by formatting failures. 
+
+Stage 2. Calibration training. Starting from the format-SFT checkpoint, we train verbal uncer-tainty using group-level uncertainty targets. For supervised calibration baselines, the target t(Gx)
+
+is converted into a target uncertainty expression and optimized with supervised fine-tuning. For preference-based training, we use GUPO, which applies calibration supervision to the verbal uncer-tainty expression rather than to the full response. All target variants use the same offline response groups, and differ only in how t(Gx) is computed. For each response yi = ( zi, v i), let u(vi) ∈
+
+[0 , 1] denote the extracted verbal uncertainty. Given 
+
+t(Gx), we define the calibration score 
+
+ri = −ℓ u(vi), t (Gx),ℓ u(vi), t (Gx) = ( u(vi) − t(Gx)) 2 .
+
+14 The scores are normalized within the response group: 
+
+pcal  
+
+> i
+
+= exp( ri/T )
+
+PKj=1 exp( rj /T ) .
+
+The resulting preference signal is applied to the un-certainty channel vi conditioned on the prompt and answer-bearing content zi. Conceptually, GUPO optimizes 
+
+LGUPO = −Ex,G x
+
+" KX
+
+> i=1
+
+stopgrad( pcal  
+
+> i
+
+)
+
+· log πθ(vi | x, z i)
+
+#
+
+.
+
+In implementation, the calibration loss can be masked to the uncertainty-expression span. 
+
+GUPO training hyperparameters 
+
+GUPO uses TRL with GUPO-style group preference training and vLLM rollouts. Un-less otherwise specified, we use learning rate 1 × 10 −6, cosine scheduling, default lin-ear warmup, and 0.3 epochs. The per-device batch size is 2, with gradient accumulation 8, giving an effective batch size of 16 prompts. Online training uses 8 rollouts per prompt. We use max_new_tokens = 512 , maximum prompt length 384, KL coefficient 0.1, roll-out temperature 1.0, and seed 42. All GUPO runs start from the format-SFT checkpoint. 
+
+Evaluation protocol. At evaluation time, the trained model generates one response with verbal uncertainty for each validation prompt. We extract the final answer and numerical uncertainty. We re-port Brier score, Expected Calibration Error, Spear-man correlation, and threshold-based accuracy at @80, @60, and @50. Threshold-based accuracy is computed after converting uncertainty into con-fidence, following the standard high-confidence subset accuracy protocol. Since all methods are evaluated on the same underlying sampled answer pool, raw answer accuracy is not the main com-parison. The evaluation instead measures whether verbal uncertainty better ranks reliable examples and better matches the group-level uncertainty tar-get. 
+
+C Additional Experiments 
+
+C.1 Ablation over Group-Level Targets 
+
+We further compare different group-level uncer-tainty targets under the same GUPO training frame-work. All variants use the same base model, sam-pled response groups, training protocol, and evalua-tion pipeline. The only difference is how the group-level target t(Gx) is computed. This ablation is designed to isolate the effect of target construction from the effect of the optimizer. In other words, all variants receive group rollouts and are trained with the same group-based optimization procedure, but the reward signal is induced by different uncer-tainty targets. We compare four targets. Max Answer Fre-quency uses the share of the most frequent ex-tracted answer in the group and converts answer stability into uncertainty. It is directly tied to an-swer agreement, but it compresses the group into a discrete count and cannot represent graded seman-tic or reasoning-level differences. Semantic En-tropy clusters responses into meaning-equivalence classes and computes uncertainty over these clus-ters. It improves over exact answer counting by merging semantically equivalent generations, but its hard cluster assignments can produce discontin-uous and low-resolution targets. Hard SAGE uses an answer-aware kernel with c = 0 , which strictly separates different answer clusters. This maximizes answer separation, but can over-compress cross-answer similarity and collapse the target scale. 
+
+SAGE uses a soft cross-cluster floor with c = 0 .8,preserving answer-level distinctions while retain-ing enough cross-cluster similarity to maintain a usable reward scale. Table 3 reports the results. The comparison re-veals several important patterns. First, all non-SAGE targets show a mismatch between one desirable property and another. Se-mantic Entropy achieves moderate Spearman cor-relation and threshold accuracy, but its calibration errors remain high, with Brier score 0.190 and ECE 
+
+0.282 . This indicates that semantic clustering can provide some ranking signal, but the resulting un-certainty values are poorly calibrated in absolute scale. Max Answer Frequency performs better than Semantic Entropy on Spearman correlation and high-confidence subset accuracy, reaching the best Spearman score among the non-SAGE vari-ants. This is expected because answer frequency is closely tied to final-answer agreement. However, 15 Benchmark Target Calibration High-Confidence Accuracy Brier ↓ ECE ↓ Spear. ↑ @80 ↑ @60 ↑ @50 ↑                                                                        
+
+> MMLU-Pro Maximum Answer Frequency 0.184 0.301 0.210 0.188 0.217 0.240 Semantic Entropy 0.214 0.316 0.090 0.188 0.183 0.180 Kernel Language Entropy 0.068 0.205 -0.010 0.163 0.167 0.180
+> SAGE 0.037 0.113 0.572 0.412 0.512 0.570
+> MATH-500 Maximum Answer Frequency 0.155 0.252 0.515 0.588 0.683 0.700 Semantic Entropy 0.190 0.282 0.426 0.575 0.650 0.720 Kernel Language Entropy 0.0205 0.0348 0.451 0.588 0.700 0.720
+> SAGE 0.0202 0.0238 0.463 0.613 0.717 0.740
+> TriviaQA Maximum Answer Frequency 0.158 0.252 0.296 0.502 0.521 0.540 Semantic Entropy 0.153 0.247 0.404 0.480 0.530 0.540 Kernel Language Entropy 0.123 0.227 0.268 0.490 0.480 0.520
+> SAGE 0.055 0.031 0.617 0.506 0.583 0.650
+
+Table 3: Ablation over group-level uncertainty targets under the same GUPO training framework. SAGE provides the strongest overall calibration signal across benchmarks, especially on calibration error, uncertainty ranking, and low-uncertainty subset accuracy.                                                                                                                       
+
+> cTarget Distribution Verbal Unc. Calibration High-Confidence Accuracy Mean Std Mean uvBrier ↓ECE ↓Spear. ↑@80 ↑@60 ↑@50 ↑
+> 0.0 0.1934 0.2393 0.000 0.0826 0.1779 –0.562 0.567 0.600 0.1 0.1982 0.2364 0.013 0.0789 0.1712 0.138 0.575 0.583 0.600 0.2 0.2102 0.2295 0.022 0.0775 0.1764 0.333 0.625 0.667 0.660 0.3 0.2275 0.2202 0.065 0.0640 0.1517 0.304 0.625 0.667 0.640 0.4 0.2492 0.2091 0.100 0.0531 0.1363 0.411 0.588 0.683 0.700 0.5 0.2751 0.1970 0.164 0.0371 0.1035 0.524 0.600 0.683 0.700 0.6 0.3049 0.1845 0.197 0.0350 0.0969 0.430 0.588 0.717 0.740
+> 0.7 0.3388 0.1724 0.306 0.0234 0.0326 0.429 0.588 0.700 0.740
+> 0.8 0.3770 0.1620 0.347 0.0202 0.0238 0.463 0.613 0.717 0.740
+> 0.9 0.4201 0.1549 0.427 0.0188 0.0149 0.466 0.637 0.683 0.680 1.0 0.4700 0.1544 0.497 0.0205 0.0348 0.451 0.588 0.700 0.720
+
+Table 4: Sensitivity of SAGE to the soft cross-cluster floor c on MATH-500. Here c = 0 corresponds to hard answer separation, while c = 1 reduces the target to the pure linguistic kernel. The highlighted row denotes the default setting used in our main experiments. 
+
+its Brier score and ECE remain substantially worse than SAGE, showing that answer frequency alone is too coarse to provide well-calibrated uncertainty values. Second, the hard answer-aware variant confirms that answer awareness alone is not sufficient. Hard SAGE with c = 0 has much lower Brier and ECE than Semantic Entropy and Max Answer Fre-quency, but this improvement is misleading be-cause the verbal uncertainty channel nearly col-lapses, with mean uncertainty only 0.005 . The near-zero mean uncertainty also explains why Spearman correlation is weak. A hard block-diagonal answer kernel separates different answer clusters too ag-gressively, causing the target distribution to lose a usable scale for training. This supports our claim that the target must be answer-aware, but it must also be scale-preserving. Third, SAGE with a soft cross-cluster floor pro-vides the best overall trade-off. It achieves the low-est Brier score 0.019 and ECE 0.022 , while also obtaining the best high-confidence subset accuracy across @50, @60, and @80. Its Spearman cor-relation 0.513 is comparable to Max Answer Fre-quency, but with far better calibration error. This is important because Spearman mainly measures ranking, while Brier and ECE measure whether the numerical uncertainty values are calibrated. SAGE therefore does not merely rank examples better; it also places uncertainty values on a more appropri-ate scale. Overall, this ablation supports the central claim 16 of our method. Group rollouts are useful only when the target extracted from the group provides a strong training signal. Max Answer Frequency is answer-faithful but too coarse. Semantic En-tropy is more semantic but limited by hard cluster-ing. Hard SAGE is answer-aware but collapses the uncertainty scale. Soft SAGE combines the use-ful properties of these targets: it preserves answer distinctions, remains smooth through the linguis-tic kernel, and avoids collapse through the cross-cluster floor. The resulting target gives GUPO a substantially more informative calibration signal. 
+
+C.2 Sensitivity to the Cross-Cluster Floor 
+
+SAGE uses a soft cross-cluster floor c to control how much similarity is retained between responses with different extracted answers. When c = 0 ,the answer kernel becomes a hard block-diagonal kernel, which strongly separates different answer clusters but may collapse the target scale. When 
+
+c = 1, the answer kernel becomes uninforma-tive and SAGE reduces to the pure linguistic ker-nel. Intermediate values allow SAGE to preserve answer-level distinctions while retaining enough cross-cluster similarity to provide a usable training signal. Table 4 reports the full sensitivity study on MATH-500. As c increases, the target mean increases from 0.1934 to 0.4700 , while the tar-get standard deviation decreases from 0.2393 to 
+
+0.1544 . This indicates that the soft floor gradually relaxes hard answer separation and moves the tar-get toward the smoother linguistic-kernel regime. The hard setting c = 0 collapses the verbal uncer-tainty channel, producing mean uv = 0 .000 and no valid Spearman correlation. Soft floors sub-stantially improve Brier score and ECE, with the strongest calibration performance around c = 0 .8
+
+to c = 0 .9. These results support the design choice that answer-aware geometry should be introduced softly rather than as hard answer separation. 
+
+D Mathematical Analysis of Target Identifiability and Reward Signal 
+
+D.1 Why Response-Level Supervision is Insufficient 
+
+Let x be a prompt and let the model induce a re-sponse distribution 
+
+pθ(y | x).
+
+Each response yi contains answer-bearing content 
+
+zi, an extracted answer 
+
+ai = A(zi),
+
+and a verbal uncertainty value ui ∈ [0 , 1] . The goal of verbal uncertainty alignment is to make ui reflect the model’s uncertainty over possible responses to the same prompt. Thus, the ideal uncertainty target is not a function of a single sampled response, but a functional of the response distribution: 
+
+t⋆(x) = T (pθ(· | x)) .
+
+Equivalently, with a sampled group 
+
+Gx = {y1, . . . , y K }, yi ∼ pθ(· | x),
+
+we estimate 
+
+t(Gx) ≈ t⋆(x).
+
+Under-identification of a single response. Aresponse-level method observes only one sample 
+
+y for each prompt. We show that this is insuffi-cient because the same observed response can be generated from different underlying response dis-tributions with different uncertainty. Consider two answer distributions over 
+
+{A, B, C, D }:
+
+p1(a | x) = (0 .90 , 0.04 , 0.03 , 0.03) ,p2(a | x) = (0 .30 , 0.25 , 0.25 , 0.20) .
+
+Suppose the sampled response in both cases gives answer A. From the perspective of a response-level objective, the observed instance is identical: 
+
+(x, y, A ).
+
+However, the correct uncertainty target should be very different. For example, under an entropy-based uncertainty target, the distribution p1 should receive lower uncertainty than p2, because its prob-ability mass is more concentrated on one answer. Thus the same observed answer A should receive low uncertainty under p1 but much higher uncer-tainty under p2.This means any pointwise target of the form 
+
+r(x, y, u )
+
+cannot identify the correct distributional uncer-tainty, because 
+
+r(x, y, u ; p1) = r(x, y, u ; p2)
+
+whenever the method only observes the same 
+
+(x, y, u ). The missing information is the distribu-tion of alternative plausible outputs. 17 Consequence for SFT and DPO. SFT mini-mizes a response-level loss: 
+
+LSFT = − log pθ(y, u ⋆ | x).
+
+This objective can imitate a provided uncertainty string u⋆, but it does not reveal whether y came from a stable distribution or an unstable one. Similarly, DPO-style methods compare two re-sponses: 
+
+LDPO = − log σ β
+
+h
+
+log πθ(y+ | x)
+
+πref (y+ | x)
+
+− log πθ(y− | x)
+
+πref (y− | x)
+
+i!
+
+.
+
+The preference pair (y+, y −) can indicate which response is preferred, but it does not determine the full uncertainty distribution over possible genera-tions. Many distributions can produce the same pair: 
+
+(y+, y −) ⊂ supp( pθ(· | x)) ,
+
+while having different uncertainty targets 
+
+T (pθ(· | x)) .
+
+Therefore, response-level supervision is under-identified for verbal uncertainty calibration. It can learn local uncertainty patterns, but it cannot de-termine whether the uncertainty should reflect a concentrated or dispersed response distribution. 
+
+D.2 Why Existing Group-Level Targets Give Weak Rewards 
+
+Group rollouts address the distributional challenge by exposing multiple samples: 
+
+Gx = {y1, . . . , y K }.
+
+However, the target computed from Gx must also be useful for optimization. Suppose the training reward is 
+
+R(u, G x) = − (u − t(Gx)) 2 ,
+
+where t(Gx) is the group-level uncertainty target. If t(Gx) is coarse, discontinuous, or misaligned with answer disagreement, then the reward pro-vides weak or misleading supervision. 
+
+Maximum answer frequency is coarse. The maximum answer frequency stability score is 
+
+sMAF (Gx) = max 
+
+> a
+
+1
+
+K
+
+> K
+
+X
+
+> i=1
+
+I[ai = a].
+
+Its uncertainty version is 
+
+tMAF (Gx) = 1 − sMAF (Gx).
+
+Let 
+
+na =
+
+> K
+
+X
+
+> i=1
+
+I[ai = a].
+
+Then 
+
+sMAF (Gx) = 1
+
+K max  
+
+> a
+
+na.
+
+Thus MAF depends only on the largest answer count and discards the rest of the group structure. For example, with K = 10 ,
+
+G1 = (6 A, 4B), G2 = (6 A, 1B, 1C, 1D, 1E).
+
+Both groups receive the same stability score: 
+
+sMAF (G1) = sMAF (G2) = 0 .6.
+
+But G2 contains more diverse secondary alterna-tives. Hence the target collapses distinct uncer-tainty structures into the same reward value when it only uses the largest answer count. Moreover, MAF can take only K possible stabil-ity values: 
+
+sMAF (Gx) ∈
+
+ 1
+
+K , 2
+
+K , . . . , 1
+
+
+
+.
+
+Therefore the reward landscape is discrete. If two groups have the same majority count, then for any uncertainty value u,
+
+R(u, G 1) = R(u, G 2),
+
+even if their semantic variation or secondary an-swer disagreement is different. MAF is answer-faithful, but it is too coarse to provide fine-grained calibration supervision. 
+
+Semantic Entropy is discontinuous. Seman-tic Entropy clusters responses into meaning-equivalence classes. Let 
+
+C(yi) ∈ { 1, . . . , M }
+
+be the semantic cluster assignment, and let 
+
+pm = 1
+
+K
+
+> K
+
+X
+
+> i=1
+
+I[C(yi) = m].
+
+18 Then 
+
+HSE (Gx) = −
+
+> M
+
+X
+
+> m=1
+
+pm log pm.
+
+The target depends only on hard cluster counts. Therefore, if a response changes slightly but re-mains in the same cluster, 
+
+C(yi) = C(y′
+
+> i
+
+) ⇒ HSE (Gx) = HSE (G′
+
+> x
+
+).
+
+This means the reward is flat within each cluster: 
+
+∆HSE = 0 .
+
+However, if a small change moves one response across a cluster boundary, then the empirical cluster distribution changes discontinuously. Suppose one response moves from cluster u to cluster v. Then 
+
+p′ 
+
+> u
+
+= pu − 1
+
+K , p′ 
+
+> v
+
+= pv + 1
+
+K .
+
+The entropy change is 
+
+∆HSE = −
+
+
+
+pu − 1
+
+K
+
+
+
+log 
+
+
+
+pu − 1
+
+K
+
+
+
+−
+
+
+
+pv + 1
+
+K
+
+
+
+log 
+
+
+
+pv + 1
+
+K
+
+
+
++ pu log pu + pv log pv.
+
+This jump occurs because the cluster assignment changes, not because the response distribution has changed smoothly. Therefore SE produces a piecewise-constant reward: within cluster: ∆HSE = 0 ,
+
+across boundary: ∆HSE ̸ = 0 .
+
+As a result, SE improves over exact answer count-ing for paraphrases, but its hard clustering gives weak credit assignment for fine-grained uncertainty calibration. 
+
+KLE is smooth but not answer-faithful. KLE replaces hard clusters with a continuous kernel. Let 
+
+Kij = k(e(yi), e (yj )) , Kij ∈ [0 , 1] ,
+
+and normalize 
+
+P = K
+
+tr( K) .
+
+The normalized von Neumann entropy is 
+
+HKLE (Gx) = − 1log K tr( P log P ).
+
+This target is smooth because small changes in em-beddings produce small changes in pairwise simi-larities. However, smoothness alone is insufficient. KLE assumes that embedding similarity reflects answer compatibility: 
+
+Kij high ⇒ ai ≡ aj .
+
+This assumption fails in structured answer spaces. For example, multiple-choice labels A, B, C, and 
+
+D may be close in embedding space even though they are mutually exclusive answers: 
+
+A̸ ≡ B̸ ≡ C̸ ≡ D. 
+
+We can see the failure mathematically. Suppose a response group contains K mutually incompati-ble answers, but generic embeddings assign high similarity to all pairs: 
+
+Kii = 1 , Kij = r (i̸ = j), r ≈ 1.
+
+Then 
+
+K = (1 − r)I + r11 ⊤.
+
+The eigenvalues of K are 
+
+λ1 = 1 + ( K − 1) r, λ2 = · · · = λK = 1 − r. 
+
+Since tr( K) = K, the eigenvalues of P are 
+
+μ1 = 1 + ( K − 1) rK ,μ2 = · · · = μK = 1 − rK .
+
+As r → 1,
+
+μ1 → 1, μ2, . . . , μ K → 0.
+
+Therefore, 
+
+HKLE (Gx) = − 1log K
+
+> K
+
+X
+
+> i=1
+
+μi log μi → 0.
+
+So KLE predicts low uncertainty even when all final answers are incompatible. This shows that KLE is smooth, but its generic geometry can un-derestimate task-critical answer disagreement. 
+
+D.3 Summary 
+
+The above analysis shows that a useful group-level uncertainty target must satisfy three requirements: 1. Answer-faithfulness : the target should reflect task-critical answer agreement and disagree-ment. 19 2. Reward smoothness : the target should change continuously with meaningful varia-tions in the response group. 3. Scale preservation : the target should pre-serve a usable uncertainty range rather than collapsing to near-zero or near-one values. MAF is answer-faithful but coarse. SE han-dles paraphrases but produces flat and discontin-uous rewards because of hard clustering. KLE is smooth but can collapse incompatible answers when generic embeddings place them close to-gether. Therefore, repeated sampling is not suf-ficient by itself: the target must transform sampled responses into an answer-aware and optimization-friendly reward signal. 
+
+E Qualitative Case Study 
+
+Case Study: When Semantic Similarity Hides Answer Disagreement 
+
+Prompt. A multiple-choice question asks the model to select one option from {A, B, C, D }.
+
+Repeated samples from the model. 
+
+Gx = {(A, 0.18) , (A, 0.21) , (B, 0.24) ,
+
+(C, 0.26) , (A, 0.19) , (B, 0.23) }.
+
+Observed answer distribution. 
+
+p(A) = 36 , p(B) = 26 ,p(C) = 16 , p(D) = 0 .
+
+Interpretation. The model frequently ex-presses low uncertainty, but its sampled an-swers are not stable. The group contains mutu-ally exclusive choices, so the appropriate uncer-tainty target should be higher than the expressed values suggest.       
+
+> Target Behavior on this group Limitation / Effect
+> MAF sMAF = 3 /6= 0 .50
+> answer-faithful but coarse KLE high similarity among option labels may underestimate disagreement SAGE separates A, B, C
+> as incompatible answer-aware target
+
+This example illustrates why generic semantic similarity can be misleading for uncertainty calibra-tion. In a multiple-choice task, option labels such as A, B, and C are linguistically similar because they are short symbolic labels with nearly identical surface form. A generic embedding-based target may therefore assign high pairwise similarity to responses ending in different option labels. This can make the response group appear more coherent than it actually is, producing an overly low uncer-tainty target. However, from the task perspective, A, B, and 
+
+C are not nearby semantic variants. They are mu-tually exclusive decisions. A model that alternates among these choices should express higher uncer-tainty, even if the generated explanations have simi-lar wording. SAGE corrects this mismatch by eval-uating response groups under answer-aware equiv-alence. Responses with the same extracted option remain close, while responses with different option labels are separated in the answer-conditioned ge-ometry. As a result, the group receives a higher and more appropriate uncertainty target, which gives GUPO a clearer supervision signal for reducing overconfident verbal expressions. 
+
+F Use of AI Assistants 
+
+The authors used AI assistants only for language polishing and minor editing of the manuscript text. AI assistants were not used to generate research ideas, design the method, conduct experiments, pro-duce results, or write technical claims. All content, including the proposed method, experimental de-sign, analysis, and final manuscript, was reviewed, verified, and approved by the authors. 20
