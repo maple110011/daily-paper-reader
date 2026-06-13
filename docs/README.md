@@ -6,31 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-12
-- 运行时间：2026-06-12 20:53:57 UTC
+- 最新运行日期：2026-06-13
+- 运行时间：2026-06-13 20:49:38 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：2
-- 速读区：1
+- 本次总论文数：5
+- 精读区：0
+- 速读区：5
 
 ### 今日简报（AI）
-今日精读2篇、速读1篇，聚焦模型可信度与不确定性量化。  
-最值得关注的是二阶分类中的认识校准方法（9.0分）和基于上下文学习的快速熵搜索（8.0分），均直接提升模型置信度可靠性。  
-若关注模型可靠性，建议优先精读前两篇，并尝试将认识校准思路应用于自己的分类任务。
-- 详情：[/202606/12/README](/202606/12/README)
+1) 今日阅读了5篇论文，速读3篇，涉及VAE潜空间拓扑构造、标签偏移下贝叶斯校准及高斯场复杂度分析。  
+2) 最值得关注《Constructing VAE Latent Spaces with Prescribed Topology》和《Conformal Bayes under Label Shift》，分别提出了拓扑可控的潜空间构造方法和标签偏移下的后验校准机制。  
+3) 建议优先研读这两篇的数学推导，并将拓扑约束与校准策略结合尝试用于生成模型和域适应场景。
+- 详情：[/202606/13/README](/202606/13/README)
 
 ### 精读区论文标签
-1. [Can we trust our models? Epistemic calibration in second-order classification](/202606/12/2606.10777v1-can-we-trust-our-models-epistemic-calibration-in-second-order-classification)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：提出二阶分类中的认知不确定性校准，直接针对不确定性量化
-2. [$α$-PFN: Fast Entropy Search via In-Context Learning](/202606/12/2606.07134v1--pfn-fast-entropy-search-via-in-context-learning)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：使用先验数据拟合网络近似熵搜索，属于近似推断技术
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [SAGE: Answer-Conditioned Uncertainty Targets for Verbal Uncertainty Alignment](/202606/12/2606.11512v1-sage-answer-conditioned-uncertainty-targets-for-verbal-uncertainty-alignment)  
+1. [Constructing VAE Latent Spaces with Prescribed Topology](/202606/13/2606.07058v1-constructing-vae-latent-spaces-with-prescribed-topology)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：利用基于熵的目标量化LLM的不确定性，与贝叶斯深度学习的不确定性量化相关
+   evidence：使用因子化分布解决VAE潜在空间拓扑不匹配
+2. [Conformal Bayes under Label Shift: Post-Hoc Calibration vs. In-Training Adaptation](/202606/13/2606.11865v1-conformal-bayes-under-label-shift-post-hoc-calibration-vs-in-training-adaptation)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：在标签偏移下使用贝叶斯后验预测与共形校准结合
+3. [Pointwise Complexity for Gaussian Fields: Upper Envelopes, Algorithmic Lower Bounds, and Separation](/202606/13/2606.07931v1-pointwise-complexity-for-gaussian-fields-upper-envelopes-algorithmic-lower-bounds-and-separation)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：高斯过程与深度神经网络的复杂度界
+4. [Sample Where You Struggle: Sharpening Base Model Reasoning via Entropy-Guided Power Sampling](/202606/13/2606.09926v1-sample-where-you-struggle-sharpening-base-model-reasoning-via-entropy-guided-power-sampling)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：MCMC采样用于近似推理，熵引导提议
+5. [Fisher-Guided Progressive Parameter Selection for Adaptive Fine-Tuning](/202606/13/2606.10196v1-fisher-guided-progressive-parameter-selection-for-adaptive-fine-tuning)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：从PAC-Bayesian角度分析微调，关联贝叶斯神经网络训练理论
 
 
 <div class="dpr-home-promo-card">
