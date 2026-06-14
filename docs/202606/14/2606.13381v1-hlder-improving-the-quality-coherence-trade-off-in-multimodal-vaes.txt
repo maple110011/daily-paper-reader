@@ -1,0 +1,2083 @@
+Title: Hölder++: Improving the Quality-Coherence Trade-off in Multimodal VAEs
+
+URL Source: https://arxiv.org/pdf/2606.13381v1
+
+Published Time: Fri, 12 Jun 2026 01:01:07 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Huyen Vo 1 2 Mar´ ıa Mart´ ınez-Garc´ ıa 1 Isabel Valera 1 2 
+
+## Abstract 
+
+Existing approaches for multimodal variational autoencoders (VAEs) face a trade-off between generative quality and coherence—i.e., they strug-gle to generate realistic and diverse samples that, at the same time, are semantically consistent across modalities. A recent work shows that us-ing a simple approximation to H ¨older pooling as an aggregation method improves coherence over the SOTA MMVAE+, despite assuming a single shared representation across all modalities. Yet, it slightly compromises sample diversity. In-spired by this insight, we propose H ¨older++, a novel multimodal VAE that improves the gen-erative quality-coherence trade-off through: (i) the first implementation of H ¨older pooling with-out any approximation for multimodal VAEs; (ii) an extended architecture that models distinct shared and private (i.e., modality-specific) rep-resentations (H ¨older+); and (iii) hierarchical in-ference that further enhances the disentanglement between the shared and private representations (H ¨older++). Our experiments corroborate that H ¨older++ consistently improves the generative quality-coherence trade-off, yields more struc-tured latent spaces, and learns shared represen-tations that are informative for downstream tasks. 
+
+## 1. Introduction 
+
+Multimodal variational autoencoders ( VAE s) are commonly designed and evaluated along two, often competing, criteria: 
+
+generative quality , reflecting realism and sample diversity; and generative coherence , capturing semantic consistency across modalities. A key modeling design choice influenc-ing the generative quality-coherence trade-off is the ag-gregation mechanism, which combines the representations 
+
+> 1
+
+Department of Computer Science, Saarland University, DE 
+
+> 2
+
+MPI-SWS, Saarland Informatics Campus, DE. Correspondence to: Huyen Vo <vothuckhanhhuyenvn@gmail.com >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+produced by unimodal encoders into a shared representa-tion across all modalities. The predominant approaches in the literature are Product-of-Experts ( PoE ) (Wu & Good-man, 2018) and Mixture-of-Experts ( MoE ) (Shi et al., 2019), which unfortunately suffer, respectively, from low coher-ence or reduced sample diversity (Daunhawer et al., 2022). To address these limitations, Palumbo et al. (2023) intro-duced a new training objective that explicitly learns distinct shared and private (modality-specific) latent representations while avoiding shortcuts , resulting in MMVAE+. This was the first approach to achieve strong performance on both criteria, demonstrating that structuring the latent space is indeed crucial for improving the quality-coherence trade-off. A different line of work has focused on improving generative coherence by enforcing explicit disentanglement between private and shared subspaces through auxiliary loss terms, often grounded in information bottleneck or mutual information principles (Zhang et al., 2026; Gao et al., 2026; Lee & Pavlovic, 2020; Daunhawer et al., 2020). Orthogonal to these works, Vo & Valera (2026) recently showed that the quality-coherence trade-off can also be improved through the choice of the aggregation method. In particular, they demonstrated that PoE and MoE can be viewed as special cases of H ¨older pooling, a probabilistic opinion pooling framework that minimizes the α-divergence between the aggregated and individual densities. Focusing on the symmetric case α = 0 .5, they proposed a simple moment-matching approximation, Hellinger aggregation, which leads to an improved balance between generative quality and coherence. Notably, this approach achieves higher coherence than MMVAE+ despite relying on a single shared representation, at a slight deterioration of diversity. 
+
+Contributions. Motivated by these insights, we propose 
+
+H ¨older++ , a novel multimodal VAE that improves the state-of-the-art ( SOTA ) generative quality-coherence trade-off through symmetric H ¨older pooling (i.e., α = 0 .5) and two key architectural choices . Specifically, our contributions are threefold: (i) we provide the first implementation of sym-metric H ¨older pooling ( α = 0 .5) as the aggregation mech-anism for multimodal VAE s, without relying on approxi-mations; (ii) we extend this framework with distinct shared and private latent subspaces, yielding the H ¨older+ model; and (iii) we introduce top-down hierarchical inference to 1
+
+> arXiv:2606.13381v1 [cs.LG] 11 Jun 2026 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs
+
+enforce disentanglement between shared and private repre-sentations by design, resulting in H ¨older++. Experiments on four benchmark datasets (PolyMNIST, MNIST-SVHN, CUBICC, and CelebAMask-HQ) show that H ¨older++ con-sistently improves the quality-coherence trade-off, learns more structured and disentangled latent spaces, and infers shared representations informative for downstream tasks. 
+
+## 2. Background 
+
+2.1. Multimodal VAEs 
+
+Given data X consisting of M modalities, X := 
+
+{x1, x2, . . . , xM }, multimodal VAE s define a generative model with a shared latent variable z. Under the assump-tion that modalities are conditionally independent given z,the joint generative distribution factorizes as p(X, z) = 
+
+p(z) QMj=1 pθj (xj |z), where p(z) denotes the prior over the shared latent space and pθj (xj |z) is a modality-specific likelihood parameterized by a neural decoder with parame-ters θj . Multimodal VAE s are often trained by maximizing the Evidence Lower Bound (ELBO), given by ELBO = EqΦ(z|X)[log pθ (X|z)] − KL (qΦ(z|X)∥p(z)) ,
+
+where the distribution qΦ(z|X) denotes a variational pos-terior with learnable parameters Φ. In this framework, the PoE (Wu & Goodman, 2018) and MoE (Shi et al., 2019) are standard approaches to obtain joint posterior approximations that scale with the number of modalities. The PoE approximates the joint posterior as qΦ(z|X) = 
+
+c QMj=1 qϕj (z|xj ), where c is a normalization constant that ensures a valid probability distribution, whereas the MoE models it as an equally weighted mixture, given by 
+
+qΦ(z|X) = 1
+
+> M
+
+PMj=1 qϕj (z|xj ). In both cases, the joint posterior is constructed from modality-specific neural en-coders with parameters ϕj , where j ∈ { 1, 2, . . . , M }.Recent works have proposed novel aggregation methods for approximating qΦ(z|X) in this setting, including CoDE-VAE (Mancisidor et al., 2025), which leverages a consensus of dependent experts; WBVAE (Qiu et al., 2025), which adopts the 2-Wasserstein barycenter; and HELVAE (Vo & Valera, 2026), which introduces Hellinger aggregation, a Laplace approximation to H¨ older pooling with α = 0 .5.
+
+2.2. H¨ older pooling 
+
+Probabilistic opinion pooling provides a principled ap-proach for aggregating multiple probability density func-tions {qj (z)}Mj=1 ∈ P M into a single consensus (pooled) distribution as a weighted aggregation of individual den-sities, where the non-negative weights {λj }Mj=1 satisfy 
+
+PMj=1 λj = 1 . The pooling function is obtained by mini-mizing a weighted average of a chosen discrepancy mea-sure between the aggregated and individual densities. Con-sidering the family of α-divergences, this corresponds to 
+
+q(z) = arg min φ∈P 
+
+PMj=1 λj Dα(qj ∥φ), which yields an 
+
+α-parameterized family of H ¨older pooling functions (Garg et al., 2004; Koliander et al., 2022). Recent work has studied PoE and MoE as special cases of H ¨older pool-ing (Vo & Valera, 2026) and, based on this insight, pro-posed a novel aggregation method considering the symmet-ric case of the α-divergence family, which corresponds to 
+
+α = 0 .5 (Hernandez-Lobato et al., 2016). Since learnable weights can degrade quality and coherence by allowing a few modalities to dominate (Vo & Valera, 2026), we follow PoE and MoE and use uniform pooling weights. The result-ing aggregated distribution is therefore given as follows: 
+
+q(z) = c
+
+
+
+> M
+
+X
+
+> j=1
+
+qj (z) + 2 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+q
+
+qi(z)qj (z)
+
+ , (1) where c = 1 / R PMj=1 
+
+pqj (z)
+
+2
+
+dz. Moreover, Vo & Valera (2026) derived a Laplace approximation to the sym-metric H ¨older pooling posterior via moment matching. The resulting method, referred to as Hellinger aggregation, sig-nificantly improves SOTA performance and achieves a better quality-coherence trade-off in multimodal VAE s that rely on a single latent space shared across all modalities. 
+
+2.3. Introducing shared and modality-specific subspaces 
+
+While earlier works explored shared and modality-specific latent subspaces in multimodal VAEs (Wang et al., 2016; Bouchacourt et al., 2018; Tsai et al., 2019), MM-VAE+ (Palumbo et al., 2023) was the first to achieve strong performance in both generative quality and generative co-herence, and it remains a leading SOTA approach. In this framework, modality xm is modeled with both a private 
+
+(a.k.a. modality-specific) latent wm, and a shared latent representation z modeling the shared information across all modalities. The generative model assumes independence between the shared and private representations, factoriz-ing as pΘ(X, z, W ) = p(z) QMj=1 pθj (xj |z, wj )p(wj ),where W := {w1, w2, ..., wM }, and the variational poste-rior is assumed to factorize accordingly as qΦ(z, W |X) = 
+
+qΦz (z|X) QMj=1 qϕj (wj |xj ), where qΦz (z|X) is approxi-mated using MoE as aggregation method. Wang et al. (2016), however, showed that such an approach can lead to shortcuts , where the modality-specific subspaces capture all the information, thus neglecting the shared rep-resentation. To avoid this behavior, Palumbo et al. (2023) introduced a modified objective (see Eq. (8) , Appendix A.1) that distinguishes between self- and cross-reconstruction. For each modality, the log-likelihood log p(xn|z, wn) (and thus, the reconstruction loss) is computed using a shared rep-resentation z sampled from one of the unimodal encoders, i.e., z ∼ qϕzj (z|xj ), together with the corresponding pri-2H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+vate latent wn sampled as: 
+
+wn ∼
+
+(
+
+qϕwn (wn | xn), n = j (self-term) ,rn(wn), n̸ = j (cross-term) , (2) where {rn(wn)}Mn=1 are (non-informative) auxiliary prior distributions on the private representations. This design forces the decoder to rely on the shared latent variable z
+
+when reconstructing unobserved modalities, thus prevent-ing shortcuts . Moreover, CMVAE (Palumbo et al., 2024) extends this approach with a mixture prior over latent z to further enforce structure in the shared latent space. To improve generative coherence, several recent works en-hance disentanglement between shared and private represen-tations via auxiliary losses (Zhang et al., 2026; Gao et al., 2026; Lee & Pavlovic, 2020; Daunhawer et al., 2020). For instance, DCMEM (Gao et al., 2026) relies on a contrastive mutual-information loss, but is limited to bimodal settings. DMVAE (Lee & Pavlovic, 2020) applies total-correlation regularization over the concatenated [z, w] to enforce inde-pendence across latent dimensions. Both require nontrivial hyperparameter tuning. In contrast, we propose a varia-tional factorization that is directly applicable to any number of modalities and encourages disentanglement by design. 
+
+## 3. H¨ older++ VAE 
+
+In this section, we present the core components of our method. We first introduce exact symmetric H ¨older pooling (α = 0 .5) as aggregation in multimodal VAE s (Section 3.1). We then incorporate a shared-private latent structure, yield-ing H ¨older+ (Section 3.2). Finally, we introduce hierarchical inference to improve disentanglement between shared and private representations, yielding H¨ older++ (Section 3.3). 
+
+3.1. Exact (symmetric) H¨ older pooling as aggregation 
+
+In multimodal VAE s with a single latent space shared across modalities, the Hellinger VAE ( HELVAE ) (Vo & Valera, 2026) has been shown empirically to improve the quality-coherence trade-off by using Hellinger aggregation, a Laplace approximation of H ¨older pooling with α = 0 .5.In this paper, we provide the first exact implementation of symmetric H ¨older pooling ( α = 0 .5) for multimodal VAE s.The resulting pooled posterior admits a mixture representa-tion consisting of unimodal and pairwise components, thus explicitly capturing the multimodal nature of the task. More in detail, when applied to the joint posterior approx-imation, the H ¨older pooling operator in Eq. (1) can be ex-pressed as a mixture of Gaussians, comprising both uni-modal and pairwise components, i.e.: 
+
+q(z|X) = 
+
+> M
+
+X
+
+> j=1
+
+πj qϕzj (z|xj )+ 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij q(1 /2)  
+
+> ij
+
+(z|xi, xj ),
+
+where πj and πij denote the mixture weights of, respectively, the unimodal qϕzj (z|xj ) and the pairwise q(1 /2)  
+
+> ij
+
+(z|xi, xj )
+
+components. For brevity, we omit the explicit dependence on the variational parameters and use the subscript ij for the pairwise components. We remark that the above formulation generalizes MMVAE (Shi et al., 2019), which uses MoE ,by including additional pairwise components. Below, we provide the details on how each of these terms is computed; Appendix A.1 contains the full derivations. The unimodal mixture components {qϕzj (z|xj )}Mj=1 are as-sumed to be Gaussian probability densities with diagonal covariance in RD , {N (μj , diag( σ2 
+
+> j
+
+)) }Mj=1 , with z ∈ RD
+
+being the latent representation (i.e., the latent variable), 
+
+μj = ( μj, 1, μ j, 2, . . . , μ j,D )⊤ ∈ RD the mean vector, and 
+
+σ2 
+
+> j
+
+= ( σ2
+
+> j, 1
+
+, σ 2
+
+> j, 2
+
+, . . . , σ 2 
+
+> j,D
+
+)⊤ ∈ RD the variance vector. Each pairwise mixture component q(1 /2)  
+
+> ij
+
+(z|xi, xj ) is ob-tained by normalizing the geometric mean of the corre-sponding unimodal posteriors qϕzi (z|xi) and qϕzj (z|xj ).This results in a Gaussian distribution of the form 
+
+q(1 /2)  
+
+> ij
+
+(z|xi, xj ) = N (z; μij , σ2 
+
+> ij
+
+). The parameters for each modality pair (i, j ) with 1 ≤ i < j ≤ M and for each latent dimension d ∈ { 1, 2, . . . , D } are given by: 
+
+μij,d = μi,d σ2 
+
+> j,d
+
++ μj,d σ2
+
+> i,d
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+, σ2 
+
+> ij,d
+
+= 2σ2
+
+> i,d
+
+σ2
+
+> j,d
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+.
+
+Finally, the mixture weights can be computed as πj = c and 
+
+πij = 2 cS ij , where c denotes the normalization constant of the aggregated distribution in Eq. (1) and can be computed in closed form as 
+
+c =
+
+M + 2 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+Sij 
+
+
+
+> −1
+
+;
+
+being Sij the Bhattacharyya coefficient between the uni-modal posteriors qϕzi and qϕzj , i.e., 
+
+Sij =
+
+> D
+
+Y
+
+> d=1
+
+s 2σi,d σj,d 
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+exp − (μi,d − μj,d )2
+
+4( σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+)
+
+!
+
+.
+
+Remark. H ¨older VAE suffers from two limitations relative to HELVAE , both stemming from its mixture subsampling scheme. First, it substantially increases computational com-plexity by requiring sampling from a mixture with M 2 com-ponents (see Table 8 in Appendix C.1 for a computational comparison). Second, we expect the H ¨older VAE to suffer from limited generative quality, like other mixture-based multimodal VAE s, such as MMVAE (Shi et al., 2019) and MoPoE (Sutter et al., 2021), that rely on mixture subsam-pling of a single shared representation (Daunhawer et al., 2022) (see results in Section 4.1). Fortunately, as shown in 3H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+MMVAE+ (Palumbo et al., 2023), this effect can be miti-gated by splitting the latent representation into shared and private subspaces. Thus, motivating our H ¨older+ extension. 
+
+3.2. H¨ older+: Learning shared and private subspaces 
+
+Models that rely on a single latent space shared across modalities often empirically suffer from limited sample diversity, a phenomenon observed in novel methods such as HELVAE (Vo & Valera, 2026) or CoDEVAE (Mancisidor et al., 2025), despite the improvements in generative coher-ence. We address this limitation by factorizing the latent space into shared and modality-specific subspaces. To pre-vent shortcuts , where private latent representations capture shared semantic information, we adopt the scheme pro-posed in MMVAE+ and rely on auxiliary non-informative distributions to sample private features in the cross-modal reconstruction terms (Palumbo et al., 2023). As highlighted in the previous section, the latter design choice forces the de-coder to rely only on the shared latent z when reconstructing unobserved modalities, thus preventing shortcuts. Specifically, when z is sampled from a unimodal compo-nent j, i.e., z ∼ qϕj (z|xj ), we compute the conditional log-likelihood terms log p(xn|z, wn) for all modalities 
+
+n ∈ { 1, 2, . . . , M }, where each wn is sampled following Eq. (2) . Analogously, when z is sampled from a pairwise component (i, j ), i.e., z ∼ q(1 /2)  
+
+> ij
+
+(z|xi, xj ), we evaluate the same reconstruction terms with wn sampled as 
+
+wn ∼
+
+(
+
+qϕwn (wn|xn), n ∈ { i, j },rn(wn), n / ∈ { i, j }, (3) where {rn(wn)}Mn=1 are auxiliary, non-informative priors for the private (i.e., modality-specific) latent representations. We refer to the resulting model as H ¨older+ , with the full objective presented in Appendix A.1, Eq. (9) . We remark that H ¨older+ optimizes a valid ELBO and is therefore a proper multimodal VAE, as proven in Appendix A.2. 
+
+Remark. We stress that, while HELVAE shows advantages over H ¨older in a single shared representation setting, that is not the case when considering distinct shared-private subspaces. This is due to the fact that Hellinger aggregation does sample the shared representation z after aggregating all the modalities, thus failing to distinguish from self- and cross-reconstruction (and sampling) (see Eqs. (2) and (3) ), which is essential to avoid shortcuts. Consequently, we expect H ¨older+ to yield improved quality-coherence trade-offs relative to HELVAE , analogously to the improvement of MMVAE+ over MMVAE (see experiments in Section 4.1). 
+
+3.3. H¨ older++: Disentangling private-shared subspaces 
+
+Existing methods promote shared-private disentanglement by introducing auxiliary loss terms based on information-bottleneck or mutual-information principles (Zhang et al., 2026; Gao et al., 2026; Lee & Pavlovic, 2020; Daunhawer et al., 2020). In contrast, we propose a variational factoriza-tion that encourages disentanglement by design .Multimodal VAE s often approximate the posterior distri-bution by assuming that shared and private representa-tions are conditionally independent given the data, i.e., 
+
+qΦ(z, W |X) = qϕz (z|X) qϕW (W |X). However, the true posterior generally does not factorize with respect to either the shared or the private representations, even if inde-pendence is assumed in the prior. The variational factoriza-tion should therefore be understood as a deliberate modeling assumption introduced to obtain a tractable approximation of the true posterior. To improve this approximation, we adopt hierarchical inference by parameterizing the varia-tional posterior as 
+
+qΦ(z, W |X) = qΦz (z|X)
+
+> M
+
+Y
+
+> j=1
+
+qϕwj (wj |xj , z),
+
+i.e., we first infer the shared latent representation z (the 
+
+top level of the hierarchy), which captures semantics shared across all modalities, and then infer each modality-specific latent wj (the bottom level ) conditioned on both the modal-ity input xj and the shared latent z. This design choice reflects the intuition that, in multimodal VAE s, generative coherence across modalities can only be achieved with an informative shared representation. Assuming that the shared and private representations act as information bottlenecks, adopting a top-down factorization of the approximate poste-rior introduces an effective inductive bias that prevents wj
+
+from capturing all the information in data (Sønderby et al., 2016; Vahdat & Kautz, 2020; Havtorn et al., 2021). Instead, 
+
+{wj }Mj=1 models residual modality-specific information in 
+
+xj that is not already captured by z, thereby avoiding unde-sirable shortcuts in practice. By applying hierarchical inference to H ¨older+, we obtain 
+
+H ¨older++ . Figure 1 shows the H ¨older++ graphical model for the unimodal and pairwise components (panels (a) and (b)) and the corresponding training objective (panel (c)), highlighting the modifications relative to H¨ older+. 
+
+Remark. Our approach is fundamentally different from the Hierarchical Multimodal VAE (HMVAE) (Wolff et al., 2022), which uses a top-down hierarchy for both inference and generation. In HMVAE, each modality-specific latent is conditioned on the shared latent, and only the private repre-sentations are passed to the unimodal decoders, potentially limiting the coherence across modalities if the modality-specific representations are expressive enough to capture all the information in the data. In our implementation of H ¨older++, we instead assume that the private and shared representations are independent a priori , and use hierarchi-cal inference to enhance disentanglement during inference. 4H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs xj     
+
+> wj
+> z
+> wn
+> xnθnθj
+> ϕwj
+> ϕzj
+> N
+> n∈ { 1, . . . , M }n̸=jj∈ { 1, . . . , M }
+
+(a) Unimodal components in the H¨ older++ objective xj
+
+wj
+
+z
+
+wnwi
+
+xi xn θnθi           
+
+> ϕwi
+> {ϕzi,ϕzj}
+> θj
+> ϕwj
+> N
+> n∈ { 1, . . . , M }n / ∈{ i,j }
+> i∈ { 1, . . . , M },j∈ { 1, . . . , M }j>i
+
+(b) Pairwise components in the H¨ older++ objective 
+
+LH¨ older++ (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj E qϕzj (z|xj )    
+
+> qϕwj(wj|xj,z)
+> {˜wn∼rn(wn)}n̸=j
+
+log 
+
+ pθj (xj |z, wj )p(z)p(wj )
+
+qϕz (z|X)qϕwj (wj |xj , z)
+
+Y
+
+> n̸=j
+
+pθn (xn|z, ˜wn)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij E q(1 /2)        
+
+> ij (z|xi,xj)
+> qϕwi(wi|xi,z)
+> qϕwj(wj|xj,z)
+> {˜wn∼rn(wn)}n / ∈{ i,j }
+
+log 
+
+ pθi (xi|z, wi)pθj (xj |z, wj )p(z)p(wi)p(wj )
+
+qϕz (z|X)qϕwi (wi|xi, z)qϕwj (wj |xj , z)
+
+Y
+
+> n / ∈{ i,j }
+
+pθn (xn|z, ˜wn)
+
+ .
+
+(c) H¨ older++ objective 
+
+Figure 1. A graphical-model view of the unimodal and pairwise components used by H ¨older++ (top) and the resulting training objective (bottom). Gray circles denote observed variables, white circles denote latent variables, and non-circled symbols denote model parameters. Solid arrows indicate the generative process, while dashed arrows indicate amortized posterior inference. The objective is a weighted sum of unimodal and pairwise ELBO-style terms, where highlighted terms indicate the modifications introduced by hierarchical inference relative to the baseline architecture. We apply the shortcut-avoiding scheme in Eqs. (2) and (3) to the hierarchical modality-specific posteriors, i.e., {qϕwj (wj |xj , z)}Mj=1 , with j ∈ { 1, 2, . . . , M }. For clarity, the graphical model explicitly shows that, in the pairwise component (i, j ), the posterior over z is parameterized by the unimodal encoders ϕzi and ϕzj .
+
+Yet, extensions to account for a top-down (from shared to private) generative model of H ¨older++ are straightforward and could be of interest particularly in some applications, e.g., where the shared content affects the modality-specific style (Von K¨ ugelgen et al., 2021; Daunhawer et al., 2023). 
+
+## 4. Experimental results 
+
+Datasets. We evaluate our approach on four standard benchmark datasets: PolyMNIST (Sutter et al., 2021), MNIST-SVHN (Shi et al., 2019), CUBICC (Palumbo et al., 2024), and CelebAMask-HQ (Lee et al., 2020). PolyM-NIST is a synthetic dataset with five modalities, where each example is generated by patching MNIST digits of the same class onto random crops from five background im-ages. MNIST-SVHN pairs MNIST and Street View House Numbers (SVHN) digits with the same labels but different visual styles. CUBICC, a variant of the CUB image-caption dataset, contains bird images paired with textual descrip-tions, grouped into eight species categories, and we use it to evaluate downstream clustering. CelebAMask-HQ is a real-world dataset in which images, masks, and attributes are different modalities describing visual characteristics. 
+
+Baselines. We compare against SOTA methods that use a single latent shared across modalities—MVAE (Wu & Goodman, 2018), MMVAE (Shi et al., 2019), MoPoE (Sut-ter et al., 2021), and HELVAE (Vo & Valera, 2026)—as well as approaches that use distinct shared and modality-specific latents, including DMVAE (Lee & Pavlovic, 2020), MMVAE+ (Palumbo et al., 2023), CMVAE (Palumbo et al., 2024), and DCMEM (Gao et al., 2026). For a fair compar-ison with CMVAE on the downstream clustering task, we also apply the mixture prior on z to H ¨older+ and H ¨older++, yielding CH ¨older+ and CH ¨older++. All experiments report average performance over 3 random seeds, except on CU-BICC, where we use 10 seeds. Further experimental details and results are provided in Appendices B and C. 
+
+Metrics. We assess the quality-coherence trade-off us-ing Fr ´echet Inception Distance ( FID ) (Heusel et al., 2017) as a measure of generative quality and classification ac-curacy on the generated samples as coherence, except for CelebAMask-HQ where we use F1 score. We also evaluate the quality of the posterior approximation using the ELBO .5H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 7000 6000 5000            
+
+> Log-likelihood
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 0.9
+> Conditional Coherence
+> 7000 6000 5000
+> Log-likelihood
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Unconditional Coherence
+> 50 100 150 200
+> Conditional FID
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 0.9
+> Conditional Coherence
+> 50 100 150 200
+> Unconditional FID
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Unconditional Coherence
+> MVAE MMVAE MoPoE Hölder HELVAE DMVAE MMVAE+ CMVAE Hölder+ Hölder++
+
+Figure 2. Trade-offs on PolyMNIST between generative coherence ( ↑) and log-likelihood estimation ( ↑), as well as between generative coherence ( ↑) and generative quality (FID ↓), with β ∈ { 1, 2.5, 5, 10 }. For each model, the Pareto front (dashed line) connects the non-dominated points that achieve the best trade-offs. Optimal region: upper-right for all plots. MMVAE+ CMVAE Hölder+ Hölder++ 
+
+Figure 3. Qualitative results for conditional generation on PolyM-NIST. The input example from the first modality is shown in the top row, and the rows below display four conditional samples for each of the remaining modalities. 
+
+To assess the disentanglement between shared and private subspaces, we evaluate it both directly on the inferred repre-sentations and in the generated images. For the former, we follow prior work by training a linear classifier on the latent spaces and reporting accuracy. We expect high accuracy for the shared latent z and low accuracy for the private latent 
+
+w, which should not encode class information. For the lat-ter, we introduce three new disentanglement metrics : z
+
+content stability ( ↑), z content accuracy ( ↑), and w content accuracy ( ↓). For the first two, we fix z, sample multiple 
+
+w ∼ p(w), decode, and classify the outputs. While z con-tent stability measures agreement across samples, z content accuracy measures accuracy with respect to the ground-truth label. Higher values indicate that content is captured exclusively by z, as fixing z yields outputs with accurate and invariant content despite variations in w. For w content accuracy , we fix w, sample multiple z ∼ p(z), decode, classify the outputs, and measure classification accuracy. Lower values reflect stronger disentanglement. All three metrics are averaged over self- and cross-generation. 20 40 60 80 100 
+
+> FID
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Coherence
+> SVHN to MNIST
+> 100 150 200 250 300
+> FID
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Coherence
+> MNIST to SVHN
+> MVAE
+> MMVAE
+> MoPoE
+> HELVAE
+> DMVAE
+> MMVAE+
+> CMVAE
+> DCMEM
+> Hölder+
+> Hölder++
+
+Figure 4. Trade-offs on MNIST-SVHN between conditional gen-erative coherence ( ↑) and conditional generative quality (FID ↓). For each model, non-dominated points are larger, and dominated points have low opacity. Optimal region: upper-right for both. 
+
+Finally, we assess representation quality via downstream clustering on the shared latent space using K-means and report accuracy ( ACC ), normalized mutual information (NMI), and adjusted rand index (ARI). 
+
+4.1. Generative quality and coherence trade-off PolyMNIST. PolyMNIST has five modalities, so we omit DCMEM, as it is restricted to bimodal settings. We evalu-ate generative coherence and quality using samples drawn from both the joint posterior (conditional) and the prior (un-conditional). Figure 2 summarizes these trade-offs across generative performance metrics for different β values (Hig-gins et al., 2017). Here, we first observe that HELVAE outperforms the rest of the models with a single shared rep-resentation , including H ¨older. Yet, the latter significantly improves the achieved trade-offs compared to MMVAE and MoPoE, showing that the symmetric H ¨older pooling im-proves both quality and coherence, even when limited by mixture subsampling. These results confirm our insights in Section 3.1 and thus argue against the use of mixture sub-sampling in shared-representation models. Consequently, we will not report further H ¨older VAE s, but only HELVAE .Moving to models with distinct shared-private representa-tions , we first observe that DMVAE achieves the lowest FID but exhibits poor coherence; in particular, DMVAE’s factorized representations are highly prone to shortcut solu-6H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Table 1. Conditional generative coherence (F1 score ↑) and conditional generative quality (FID ↓) on CelebAMask-HQ. The given modalities are used to generate the modality on top. The best and second-best results are marked bold and underlined, respectively. Attribute (F1 ↑) Mask (F1 ↑) Image (FID ↓)Given Mask + Image Image Attribute + Image Image Mask + Attribute Mask Attribute MMVAE+ 0.596 ± 0.016 0.601 ± 0.026 0.802 ± 0.021 0.879 ± 0.006 98.33 ± 6.83 92.63 ± 4.67 110.15 ± 6.81 
+
+CMVAE 0.590 ± 0.007 0.609 ± 0.007 0.798 ± 0.008 0.874 ± 0.009 104.92 ± 6.06 95.91 ± 1.52 125.21 ± 8.53 
+
+H¨ older+ 0.632 ± 0.003 0.655 ± 0.001 0.800 ± 0.004 0.896 ± 0.001 78.82 ± 2.44 72.32 ± 2.11 87.19 ± 1.22 
+
+H¨ older++ 0.633 ± 0.007 0.665 ± 0.007 0.792 ± 0.008 0.885 ± 0.017 80.73 ± 7.66 73.64 ± 6.52 90.99 ± 8.66 
+
+Table 2. Digit classification accuracy on the latent representations for MNIST-SVHN, evaluated on the private w, shared z, and joint 
+
+[w, z] subspaces. The best and second-best results are marked bold and underlined, respectively. MNIST Representation SVHN Representation Joint ( ↑) Shared ( ↑) Private ( ↓) Joint ( ↑) Shared ( ↑) Private ( ↓)DMVAE 0.970 ± 0.001 0.862 ± 0.010 0.673 ± 0.043 0.900 ± 0.010 0.898 ± 0.009 0.113 ± 0.001 
+
+MMVAE+ 0.953 ± 0.002 0.857 ± 0.026 0.471 ± 0.056 0.910 ± 0.003 0.911 ± 0.003 0.118 ± 0.004 
+
+DCMEM 0.989 ± 0.001 0.989 ± 0.001 0.241 ± 0.010 0.911 ± 0.002 0.913 ± 0.004 0.129 ± 0.002 
+
+CMVAE 0.948 ± 0.001 0.861 ± 0.060 0.389 ± 0.135 0.913 ± 0.002 0.914 ± 0.002 0.116 ± 0.001 
+
+H¨ older+ 0.976 ± 0.001 0.966 ± 0.003 0.479 ± 0.007 0.923 ± 0.004 0.922 ± 0.004 0.114 ± 0.001 
+
+H¨ older++ 0.977 ± 0.001 0.970 ± 0.001 0.387 ± 0.023 0.922 ± 0.001 0.922 ± 0.001 0.112 ± 0.001 
+
+tions. Disregarding DMVAE, we observe that shared-private models, in general, outperform their single-representation counterparts in the achievable quality-coherence trade-offs, except for HELVAE , which remains overall competitive. Importantly, our H ¨older+ and H ¨older++ yield the best Pareto trade-offs , combining the highest log-likelihood with competitive FID while matching HELVAE in coherence. Although CMVAE achieves the highest unconditional co-herence due to its mixture prior over z, it significantly un-derperforms in log-likelihood. The large improvement of H ¨older+ over MMVAE+ shows again the benefit of symmet-ric H ¨older pooling. Moreover, H ¨older++ closely matches H ¨older+, indicating that hierarchical inference maintains Pareto optimality. Qualitative results in Figure 3 further confirm the generative quality of H¨ older+ and H¨ older++. 
+
+MNIST-SVHN. Figure 4 shows the coherence-FID trade-off for conditional cross-modal generation (across β values). Several baselines exhibit a clear gap between directions: MMVAE+ and CMVAE perform well for SVHN →MNIST but degrade substantially for MNIST →SVHN, whereas MVAE and DMVAE show the opposite trend. In contrast, 
+
+H ¨older+ and H ¨older++ remain in the upper-right region in both directions , combining consistently high coherence with among the overall lowest FID . Relative to DCMEM (varying α), H ¨older-based models deliver higher sample quality (lower FID ) while being competitive in coherence. Finally, as before, H¨ older++ overlaps H¨ older+. 
+
+CelebAMask-HQ. Table 1 reports F1 scores for attribute and mask prediction, and FID for image generation, condi-tioned on subsets of the remaining modalities. Compared to MMVAE+ and CMVAE, H ¨older+ and H ¨older++ consis-tently achieve the best or second-best results across nearly all conditioning settings, with H ¨older+ achieving the high-est image quality and H ¨older++ yielding the best attribute prediction. These results confirm that our methods improve quality-coherence trade-offs on a challenging real-world benchmark . To further enhance visual fidelity, we apply a diffusion model as a post-hoc refinement step. Figure 12 in Appendix C.7 shows that feeding H ¨older++ samples into a pretrained DiffuseVAE (Pandey et al., 2024) improves im-age quality without changing the underlying characteristics. 
+
+Take-away. While HELVAE remains the SOTA among sin-gle shared-representation models, H ¨older+ and H ¨older++ consistently achieve the best Pareto frontier compared to all competing methods overall. Moreover, H ¨older++ closely matches H ¨older+, showing that hierarchical inference pre-serves the coherence-quality trade-off. This improvement comes at the cost of increased computational complexity due to the pairwise terms in our objective, which also contribute to the gains of H ¨older+/++ over SOTA models. However, we do not observe a quadratic increase in training time as the number of modalities grows (see Appendix C.1 for details). 
+
+4.2. Disentanglement of shared and private subspaces 
+
+For PolyMNIST, separating (shared) digit identity from the (private) background is straightforward (Figure 8 in Appendix C.4); so we omit disentanglement metrics. 
+
+MNIST-SVHN. Moving to MNIST-SVHN, disentangling shared and private factors is more challenging due to SVHN’s background clutter. Table 2 shows the disentangle-ment measured directly on the latent representations , indi-cating that H ¨older++ notably reduces MNIST private-latent accuracy compared to H ¨older+. Moreover, for H ¨older++, performance on the joint [w, z] and the shared z differs only slightly, showing that the drop in private-latent accuracy re-7H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Table 3. Clustering performance on CUBICC using shared latent representations. We partition models according to whether z follows a structured clustering prior. The best and second-best results are marked bold and underlined, respectively. Image Representation ( ↑) Caption Representation ( ↑) Joint Representation ( ↑)ACC NMI ARI ACC NMI ARI ACC NMI ARI MMVAE+ 30.1 ± 2.1 16.2 ± 2.8 9.2 ± 1.9 22.9 ± 2.6 7.6 ± 2.8 3.3 ± 2.0 35.5 ± 4.4 25.4 ± 5.2 15.7 ± 4.8 
+
+DCMEM 34.4 ± 28.5 20.7 ± 30.4 17.4 ± 26.9 28.0 ± 18.6 13.5 ± 19.3 9.9 ± 15.3 32.8 ± 26.5 21.1 ± 31.1 17.4 ± 27.0 
+
+H¨ older+ 28.8 ± 3.2 14.0 ± 4.3 7.9 ± 2.8 20.7 ± 1.0 4.9 ± 1.0 1.7 ± 0.6 32.3 ± 3.4 20.7 ± 3.4 11.8 ± 2.3 
+
+H¨ older++ 28.3 ± 2.6 14.3 ± 2.4 7.7 ± 1.8 19.7 ± 1.1 3.9 ± 0.9 1.2 ± 0.5 31.8 ± 2.4 18.8 ± 3.0 10.9 ± 2.3 
+
+CMVAE 51.9 ± 12.8 42.2 ± 12.1 31.1 ± 14.0 44.6 ± 13.8 33.7 ± 12.8 23.8 ± 13.1 58.0 ± 13.8 51.3 ± 12.4 39.3 ± 14.9 
+
+CH¨ older+ 59.1 ± 6.1 48.8 ± 3.4 36.2 ± 4.8 45.3 ± 4.2 32.3 ± 2.2 21.3 ± 2.8 61.3 ± 4.6 51.7 ± 2.8 38.6 ± 3.4 
+
+CH¨ older++ 57.3 ± 3.7 46.4 ± 2.1 34.1 ± 2.3 44.0 ± 3.4 31.4 ± 2.4 20.5 ± 2.4 65.3 ± 5.8 55.1 ± 3.5 43.2 ± 5.2 
+
+Table 4. Disentanglement metrics on MNIST-SVHN. The best and second-best results are marked bold and underlined, respectively. 
+
+w content accuracy ↓
+
+z content stability ↑
+
+z content accuracy ↑
+
+DMVAE 0.168 ± 0.006 0.523 ± 0.004 0.579 ± 0.005 
+
+MMVAE+ 0.151 ± 0.017 0.712 ± 0.044 0.664 ± 0.016 
+
+CMVAE 0.139 ± 0.015 0.803 ± 0.053 0.665 ± 0.022 
+
+DCMEM 0.102 ± 0.001 0.853 ± 0.006 0.883 ± 0.005 
+
+H¨ older+ 0.121 ± 0.005 0.800 ± 0.008 0.838 ± 0.006 
+
+H¨ older++ 0.119 ± 0.001 0.827 ± 0.010 0.857 ± 0.007 
+
+Table 5. Disentanglement metrics on CUBICC. The best and second-best results are marked bold and underlined, respectively. Method 
+
+w content accuracy ↓
+
+z content stability ↑
+
+z content accuracy ↑
+
+MMVAE+ 0.138 ± 0.013 0.846 ± 0.166 0.624 ± 0.049 
+
+DCMEM 0.321 ± 0.081 0.207 ± 0.110 0.204 ± 0.123 
+
+H¨ older+ 0.195 ± 0.048 0.442 ± 0.087 0.443 ± 0.051 
+
+H¨ older++ 0.133 ± 0.004 0.870 ± 0.097 0.619 ± 0.021 
+
+CMVAE 0.136 ± 0.011 0.893 ± 0.145 0.641 ± 0.060 
+
+CH¨ older+ 0.142 ± 0.006 0.587 ± 0.045 0.535 ± 0.030 
+
+CH¨ older++ 0.132 ± 0.003 0.914 ± 0.066 0.642 ± 0.014 
+
+flects reduced leakage into w rather than a degradation of the 
+
+z representation. Our models also outperform DCMEM on the SVHN modality, which is more complex than MNIST. The disentanglement metrics measured on the generated im-ages are reported in Table 4. Here, H ¨older++ improves over H ¨older+ by lowering w content accuracy and increasing z
+
+content accuracy and stability, yielding more robust gener-ations under changes in private factors. While DCMEM achieves the best disentanglement, consistent with its high coherence, it is limited to bimodal settings; in contrast, our approach scales beyond two modalities and remains compet-itive in generative quality and coherence. Qualitative results in Appendix C.5, Figure 9, further show that, for cluttered SVHN inputs containing multiple digits, H ¨older++ is more stable than DCMEM under variations in the private latent w,while maintaining accurate and high-quality generations. 
+
+CUBICC. Table 5 reports disentanglement metrics for cross-modal generation with images as the target modality. Across all three metrics, hierarchical inference yields con-sistent gains (H¨ older++ over H¨ older+ and CH¨ older++ over CH ¨older+), supporting our modeling assumptions. Notably, CH ¨older++ achieves the strongest disentanglement with low variance, outperforming the next-best CMVAE, which exhibits much higher variance. Table 9 in Appendix C.6 reports the disentanglement on the latent representations. 
+
+Take-away. These results confirm that hierarchical infer-ence effectively prevents class information from leaking into the modality-specific representations , especially on com-plex datasets such as CUBICC, while preserving generative performance and downstream-task results (see Section 4.3). This behavior is consistent with our inference design, which conditions w on z to capture posterior dependencies without introducing them into the generative model. 
+
+4.3. Downstream clustering task CUBICC. We apply (bird) clustering to the latent repre-sentations on the CUBICC dataset (Palumbo et al., 2024). Table 3 shows that assuming a mixture model on the shared latent space improves the results. CH ¨older+ and CH ¨older++ rank first and second across all clustering metrics across modalities. While CMVAE is comparable to ours on the caption representation, it exhibits higher variance, similar to DCMEM, indicating sensitivity to training initialization. Refer to Figure 5 in Appendix C.6 for the plots for 10 in-dependent runs of every model. We run paired Hotelling’s 
+
+T 2 tests (Hotelling, 1931) across 10 seeds to compare CM-VAE with CH ¨older+ and CH ¨older++. Our results show that, while our improvement on the caption representation over CMVAE is not statistically significant, CH ¨older+ and CH ¨older++ provide statistically ( p < 0.05 ) and marginally (p ≈ 0.05 ) significant improvements, respectively, in the im-age representation. Remarkably, both H ¨older-based models significantly outperform CMVAE in the joint representa-tion. Finally, under the same standard-prior setting, sta-tistical tests show that we cannot conclude a significant difference in clustering performance between MMVAE+ and our H¨ older+ (see Appendix C.6 for details). 8H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs                                                                                
+
+> Table 6. Effect of hierarchical inference on CUBICC. The best and second-best results are marked bold and underlined, respectively. Method
+> wcontent accuracy ↓
+> zcontent stability ↑
+> zcontent accuracy ↑
+> MMVAE+ 0.138 ±0.013 0.846 ±0.166 0.624 ±0.049
+> MMVAE++ 0.133 ±0.002 0.960 ±0.008 0.640 ±0.010
+> H¨ older+ 0.195 ±0.048 0.442 ±0.087 0.443 ±0.051
+> H¨ older++ 0.133 ±0.004 0.870 ±0.097 0.619 ±0.021
+> CMVAE 0.136 ±0.011 0.893 ±0.145 0.641 ±0.060
+> CMVAE++ 0.130 ±0.003 0.959 ±0.008 0.651 ±0.011
+> CH¨ older+ 0.142 ±0.006 0.587 ±0.045 0.535 ±0.030
+> CH¨ older++ 0.132 ±0.003 0.914 ±0.066 0.642 ±0.014
+
+4.4. Effect of hierarchical inference across models CUBICC. We investigate the effect of hierarchical infer-ence across models by applying it to MMVAE+ and CM-VAE, yielding MMVAE++ and CMVAE++. Table 6 shows consistent improvements across the three disentanglement metrics for all backbones under hierarchical inference. The gains are larger for H ¨older+ and CH ¨older+ because short-cut prevention for pairwise components is activated in the 
+
+M > 2 setting, as in Eq. (3) . Overall, MMVAE++, CM-VAE++, and CH ¨older++ achieve comparable disentangle-ment, while CH ¨older++ remains best in clustering (see Ta-ble 10 in Appendix C.6). These results further confirm that: (i) H ¨older-based VAE s yield better trade-offs across genera-tive performance metrics; and (ii) hierarchical inference is a robust and effective design choice for learning disentangled private-shared representations in multimodal VAEs. 
+
+## 5. Conclusion 
+
+Generative coherence is a fundamental goal of multimodal generative models. Achieving coherent samples requires learning joint representations that capture the semantics shared across modalities. This is orthogonal to generative capacity and is transversal across modeling frameworks. In this work, we focus on multimodal VAE s as a principled and scalable framework for integrating data modalities. We pro-pose a novel multimodal VAE that improves the SOTA qual-ity–coherence trade-off through symmetric H¨ older pooling (i.e., α = 0 .5) and two key architectural choices, enabling the learning of structured latent representations. 
+
+Summary. First, we present the first exact implementation of symmetric H ¨older pooling, whose pairwise components implicitly capture soft cross-modality dependencies by in-creasing regions of mutual support, unlike PoE and MoE ,which assume modality independence. Second, we extend the H ¨older VAE with explicit shared and modality-specific subspaces, further improving the quality-coherence trade-off, increasing sample diversity, and outperforming strong baselines such as MMVAE+. Finally, we introduce a hierar-chical variational posterior that reduces shared-information leakage into modality-specific representations, thereby en-hancing private-shared disentanglement and yielding useful representations for downstream tasks. 
+
+Future work. While our models obtain the best trade-offs among multimodal VAEs, they do not yet match SOTA im-age generators like Denoising Diffusion Probabilistic Mod-els ( DDPM s). Existing approaches close this gap via post-processing, e.g., using a DDPM to denoise VAE -generated images (Palumbo et al., 2024; Zhang et al., 2026). As fu-ture work, we will investigate how to improve generative performance within the VAE framework via latent diffu-sion (Wesego & Rooshenas, 2024a; Bounoua et al., 2024) or flexible priors (Wesego & Rooshenas, 2024b; Yuan et al., 2024; Senellart & Allassonni `ere, 2025; Oubari et al., 2026). Also, following Xiao & Bamler (2023), we will explore sep-arate β values for z and w to regularize the shared and pri-vate latent spaces and control how information is allocated between them. Finally, future work includes a theoretical analysis of our results, showing that H ¨older++ can isolate shared (content) from modality-specific (style) factors. The PyTorch implementation for our paper is available at https://github.com/vothuckhanhhuyen/holderplusplus. 
+
+## Acknowledgements 
+
+We thank the anonymous reviewers at ICML 2026 for their helpful and constructive comments, which improved the clar-ity of the paper. This work has been supported by the project 
+
+“Society-Aware Machine Learning: The paradigm shift de-manded by society to trust machine learning” , funded by the European Union and led by Isabel Valera (ERC-2021-STG, SAML, 101040177). Huyen Vo acknowledges her member-ship in the CS@Max Planck doctoral program. Additionally, Isabel Valera and Mar ´ıa Mart ´ınez-Garc ´ıa acknowledge the stimulating research environment of the GRK 2853/1 “ Neu-roexplicit Models of Language, Vision, and Action ”, funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) under project number 471607914. Views and opinions expressed are, however, those of the author(s) only and do not necessarily reflect those of the aforementioned funding agencies. Neither of the aforemen-tioned parties can be held responsible for them. 
+
+## Impact Statement 
+
+This paper advances multimodal VAE s by improving the quality-coherence trade-off and by promoting disentangle-ment between shared (content) and modality-specific (style) latent factors. These advances may enhance the interpretabil-ity and controllability of multimodal representations. Im-proved multimodal generative models could benefit appli-cations that require consistent cross-modal reasoning, such 9H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+as medical image-report modeling. Nevertheless, in high-stakes domains such as healthcare, we advise practitioners to exercise caution when interpreting the inferred latent spaces, particularly with respect to causal claims, as the proposed models capture statistical dependencies between modalities rather than causal relationships. Moreover, when trained on sensitive data, practitioners should assess the model’s privacy and robustness with respect to potential adversarial attacks aimed at extracting sensitive information. Beyond these considerations, we do not foresee negative societal consequences that are unique to this work, beyond those generally associated with the development and deployment of machine learning models. 
+
+## References 
+
+Bouchacourt, D., Tomioka, R., and Nowozin, S. Multi-Level Variational Autoencoder: Learning Disentangled representations From Grouped Observations. In Proceed-ings of the AAAI Conference on Artificial Intelligence ,volume 32, 2018. Bounoua, M., Franzese, G., and Michiardi, P. Multi-modal latent diffusion. Entropy , 26(4):320, 2024. Burda, Y., Grosse, R., and Salakhutdinov, R. Importance weighted autoencoders. arXiv preprint arXiv:1509.00519 ,2015. Daunhawer, I., Sutter, T. M., Marcinkevi ˇcs, R., and Vogt, J. E. Self-Supervised Disentanglement of Modality-Specific and Shared Factors Improves Multimodal Gener-ative Models. In DAGM German Conference on Pattern Recognition , pp. 459–473. Springer, 2020. Daunhawer, I., Sutter, T. M., Chin-Cheong, K., Palumbo, E., and Vogt, J. E. On the Limitations of Multimodal VAEs. In International Conference on Learning Representations ,2022. Daunhawer, I., Bizeul, A., Palumbo, E., Marx, A., and Vogt, J. E. Identifiability Results for Multimodal Contrastive Learning. In The Eleventh International Conference on Learning Representations , 2023. Gao, L., Chen, W., Wang, D., Guo, F., and Liang, C. Dis-entangled cross-modal representation learning with en-hanced mutual supervision. Advances in Neural Informa-tion Processing Systems , 38:58095–58133, 2026. Garg, A., Jayram, T. S., Vaithyanathan, S., and Zhu, H. Generalized Opinion Pooling. Annals of Mathematics and Artificial Intelligence , 2004. Havtorn, J. D., Frellsen, J., Hauberg, S., and Maaløe, L. Hierarchical vaes know what they don’t know. In Interna-tional Conference on Machine Learning , pp. 4117–4128. PMLR, 2021. Hernandez-Lobato, J., Li, Y., Rowland, M., Bui, T., Hern ´andez-Lobato, D., and Turner, R. Black-Box Alpha Divergence Minimization. In International Conference on Machine Learning , pp. 1511–1520. PMLR, 2016. Heusel, M., Ramsauer, H., Unterthiner, T., Nessler, B., and Hochreiter, S. Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in Neural Information Processing Systems , 30, 2017. Higgins, I., Matthey, L., Pal, A., Burgess, C., Glorot, X., Botvinick, M., Mohamed, S., and Lerchner, A. beta-vae: Learning basic visual concepts with a constrained variational framework. In International Conference on Learning Representations , 2017. Hotelling, H. The generalization of student’s ratio. The Annals of Mathematical Statistics , 2(3):360–378, 1931. Javaloy, A., Meghdadi, M., and Valera, I. Mitigating modal-ity collapse in multimodal vaes via impartial optimization. In International Conference on Machine Learning , pp. 9938–9964. PMLR, 2022. Kingma, D. P. and Ba, J. Adam: A method for stochastic optimization. In 3rd International Conference on Learn-ing Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings , 2015. Kingma, D. P. and Welling, M. Auto-encoding variational bayes. arXiv preprint arXiv:1312.6114 , 2013. Koliander, G., El-Laham, Y., Djuri ´c, P. M., and Hlawatsch, F. Fusion of Probability Density Functions. Proceedings of the IEEE , 110(4):404–453, 2022. Lee, C.-H., Liu, Z., Wu, L., and Luo, P. Maskgan: Towards diverse and interactive facial image manipulation. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 5549–5558, 2020. Lee, M. and Pavlovic, V. Private-Shared Disentangled Mul-timodal VAE for Learning of Hybrid Latent Representa-tions. arXiv preprint arXiv:2012.13024 , 2020. Mancisidor, R. A., Jenssen, R., Yu, S., and Kampffmeyer, M. Aggregation of Dependent Expert Distributions in Multimodal Variational Autoencoders. International Con-ference on Machine Learning , 2025. Oubari, F., Baha, M. E., Meunier, R., D ´ecatoire, R., and MOUGEOT, M. Multi-component VAE with gaussian markov random field. In The 29th International Confer-ence on Artificial Intelligence and Statistics , 2026. Palumbo, E., Daunhawer, I., and Vogt, J. E. MMVAE+: Enhancing the Generative Quality of Multimodal VAEs without Compromises. In The Eleventh International Conference on Learning Representations , 2023. 10 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Palumbo, E., Manduchi, L., Laguna, S., Chopard, D., and Vogt, J. E. Deep Generative Clustering with Multimodal Diffusion Variational Autoencoders. In The Twelfth Inter-national Conference on Learning Representations , 2024. Pandey, K., Mukherjee, A., Rai, P., and Kumar, A. Diffuse-vae: Efficient, controllable and high-fidelity generation from low-dimensional latents. Transactions on Machine Learning Research , 2024. Qiu, P., Zhu, W., Kumar, S., Chen, X., Yang, J., Sun, X., Razi, A., Wang, Y., and Sotiras, A. Multimodal Varia-tional Autoencoder: A Barycentric View. In Proceedings of the AAAI Conference on Artificial Intelligence , vol-ume 39, pp. 20060–20068, 2025. Rainforth, T., Kosiorek, A., Le, T. A., Maddison, C., Igl, M., Wood, F., and Teh, Y. W. Tighter variational bounds are not necessarily better. In International Conference on Machine Learning , pp. 4277–4285. PMLR, 2018. Robert, C. P., Casella, G., and Casella, G. Monte Carlo statistical methods , volume 2. Springer, 1999. Roeder, G., Wu, Y., and Duvenaud, D. K. Sticking the landing: Simple, lower-variance gradient estimators for variational inference. Advances in Neural Information Processing Systems , 30, 2017. Senellart, A. and Allassonni `ere, S. Bridging the inference gap in multimodal variational autoencoders. Journal of Data Science, Statistics, and Visualisation , 5(9), 2025. Shi, Y., Paige, B., Torr, P., et al. Variational Mixture-of-Eexperts Autoencoders for Multi-Modal Deep Generative Models. Advances in Neural Information Processing Systems , 32, 2019. Sønderby, C. K., Raiko, T., Maaløe, L., Sønderby, S. K., and Winther, O. Ladder variational autoencoders. Advances in Neural Information Processing Systems , 29, 2016. Sutter, T. M., Daunhawer, I., and Vogt, J. E. Generalized multimodal elbo. In International Conference on Learn-ing Representations , 2021. Tsai, Y.-H. H., Liang, P. P., Zadeh, A., Morency, L.-P., and Salakhutdinov, R. Learning Factorized Multimodal Rep-resentations. In International Conference on Learning Representations , 2019. Tucker, G., Lawson, D., Gu, S., and Maddison, C. J. Dou-bly reparameterized gradient estimators for monte carlo objectives. In International Conference on Learning Rep-resentations , 2019. Vahdat, A. and Kautz, J. Nvae: A deep hierarchical vari-ational autoencoder. Advances in Neural Information Processing Systems , 33:19667–19679, 2020. Vo, H. and Valera, I. Hellinger multimodal variational autoencoders. In The 29th International Conference on Artificial Intelligence and Statistics , 2026. Von K ¨ugelgen, J., Sharma, Y., Gresele, L., Brendel, W., Sch ¨olkopf, B., Besserve, M., and Locatello, F. Self-Supervised Learning With Data Augmentations Provably Isolates Content from Style. Advances in Neural Infor-mation Processing Systems , 34:16451–16467, 2021. Wang, W., Yan, X., Lee, H., and Livescu, K. Deep Vari-ational Canonical Correlation Analysis. arXiv preprint arXiv:1610.03454 , 2016. Wesego, D. and Rooshenas, P. Multimodal elbo with diffu-sion decoders. arXiv preprint arXiv:2408.16883 , 2024a. Wesego, D. and Rooshenas, P. Score-based multimodal au-toencoder. Transactions on Machine Learning Research ,2024b. Wolff, J., Krishnan, R. G., Ruff, L., Morshuis, J. N., Klein, T., Nakajima, S., and Nabi, M. Hierarchical multi-modal variational autoencoders, 2022. URL https: //openreview.net/forum?id=4V4TZG7i7L_ .Wu, M. and Goodman, N. Multimodal Generative Models for Scalable Weakly-Supervised Learning. Advances in Neural Information Processing Systems , 31, 2018. Xiao, T. Z. and Bamler, R. Trading information between latents in hierarchical variational autoencoders. In Inter-national Conference on Learning Representations , 2023. Yuan, S., Cui, J., Li, H., and Han, T. Learning multimodal latent generative models with energy-based prior. In 
+
+European Conference on Computer Vision , pp. 86–100. Springer, 2024. Zhang, Y., Shen, Y., and Wang, W. Disentanglement of variations with multimodal generative modeling. In The Fourteenth International Conference on Learning Repre-sentations , 2026. 11 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs Supplementary Material 
+
+Table of Contents A Proofs 12 
+
+A.1 Derivations of H¨ older, H¨ older+, and H¨ older++ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 A.2 Lower-bound guarantee of the H¨ older+ and H¨ older++ objectives . . . . . . . . . . . . . . . . . . . . . . 15 A.3 Tighter variational lower bound via IWAE and DReG estimators . . . . . . . . . . . . . . . . . . . . . . 16 
+
+B Experimental details 17 
+
+B.1 Datasets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.2 Evaluation criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.3 Experimental setups . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 
+
+C Additional results 19 
+
+C.1 Additional results: Computational runtime analysis across models . . . . . . . . . . . . . . . . . . . . . 19 C.2 Additional results: Clustering performance consistency across models . . . . . . . . . . . . . . . . . . . 19 C.3 Additional results: Effect of latent dimensionality on generative performance . . . . . . . . . . . . . . . 19 C.4 Additional results: PolyMNIST . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 C.5 Additional results: MNIST-SVHN . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 C.6 Additional results: CUBICC . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 C.7 Additional results: CelebAMask-HQ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 The supplementary material is organized as follows. Section A provides detailed derivations of the H ¨older, H ¨older+, and H ¨older++ objectives, and includes proofs that each objective corresponds to a valid ELBO . Section B provides additional experimental details, including descriptions of the datasets, evaluation criteria, and training setup (architectures and hyperparameters). Section C contains further empirical results, including runtime analysis, clustering consistency across models and random seeds, effect of latent dimensionality, and additional qualitative and quantitative results on all datasets. 
+
+## A. Proofs 
+
+A.1. Derivations of H¨ older, H¨ older+, and H¨ older++ Exact approximation of H ¨older pooling. Consider the H ¨older pooling function with α = 0 .5, applied to the set of unimodal posteriors {qϕj (z|xj )}Mj=1 . Each posterior is a multivariate Gaussian distributions with diagonal covariance matrix, qϕj (z|xj ) = N  z; μj , diag( σ2 
+
+> j
+
+), where z = ( z1, z 2, . . . , z D )⊤ ∈ RD denotes the latent variable, μj =(μj, 1, μ j, 2, . . . , μ j,D )⊤ ∈ RD the mean vector, and diag( σ2 
+
+> j
+
+) = diag( σ2
+
+> j, 1
+
+, σ 2
+
+> j, 2
+
+, . . . , σ 2 
+
+> j,D
+
+)⊤ ∈ RD×D the covariance matrix. For simplicity, we denote the unimodal posterior by qj (z) = qϕj (z|xj ), and the approximate joint posterior by 12 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+q(z) = qϕ(z|X). The pooled density is then defined as 
+
+q(z) = c
+
+
+
+> M
+
+X
+
+> j=1
+
+λj
+
+q
+
+qj (z)
+
+
+
+> 2
+
+,
+
+where c = 1 / R PMj=1 λj
+
+pqj (z)
+
+2
+
+dz. Since determining the weights λj in multimodal VAEs is generally nontrivial, we follow PoE and MoE and set them uniformly. We then obtain 
+
+q(z) = c
+
+
+
+> M
+
+X
+
+> j=1
+
+q
+
+qj (z)
+
+
+
+> 2
+
+= c
+
+
+
+> M
+
+X
+
+> j=1
+
+qj (z) + 2 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+q
+
+qi(z)qj (z)
+
+ .
+
+As qi(z) and qj (z) are multivariate Gaussian distributions with diagonal covariance matrices, they factorize across dimensions as qi(z) = QDd=1 qi,d (zd) and qj (z) = QDd=1 qj,d (zd), where qi,d (zd) and qj,d (zd) denote one-dimensional Gaussian distributions along coordinate zd. Hence, we can express the geometric mean pqi(z)qj (z) between them as 
+
+q
+
+qi(z)qj (z) = 
+
+vuut DY
+
+> d=1
+
+qi,d (zd)qj,d (zd) = 
+
+> D
+
+Y
+
+> d=1
+
+q
+
+qi,d (zd)qj,d (zd).
+
+Leveraging the derivation from Vo & Valera (2026), we obtain pqi,d (zd)qj,d (zd) for each dimension d ∈ { 1, 2, . . . , D } as 
+
+q
+
+qi,d (zd)qj,d (zd) = Sdij q(1 /2)  
+
+> ij,d
+
+(zd) = Sdij N (zd; μij,d , σ 2
+
+> ij,d
+
+), where 
+
+Sdij =
+
+s 2σi,d σj,d 
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+exp − 14(μi,d − μj,d )2
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+!
+
+, μij,d = μi,d σ2 
+
+> j,d
+
++ μj,d σ2
+
+> i,d
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+, σ2 
+
+> ij,d
+
+= 2σ2
+
+> i,d
+
+σ2
+
+> j,d
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+.
+
+Then, pqi(z)qj (z) becomes 
+
+q
+
+qi(z)qj (z) = Sij q(1 /2)  
+
+> ij
+
+(z) = Sij N (z; μij , σ2 
+
+> ij
+
+),
+
+where q(1 /2)  
+
+> ij
+
+(z) = N (z; μij , σ2 
+
+> ij
+
+), μij = ( μij, 1, μ ij, 2, . . . , μ ij,D )⊤, σ2 
+
+> ij
+
+= ( σ2
+
+> ij, 1
+
+, σ 2
+
+> ij, 2
+
+, . . . , σ 2 
+
+> ij,D
+
+)⊤, and 
+
+Sij =
+
+> D
+
+Y
+
+> d=1
+
+Sdij =
+
+> D
+
+Y
+
+> d=1
+
+s 2σi,d σj,d 
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+exp − 14(μi,d − μj,d )2
+
+σ2 
+
+> i,d
+
++ σ2
+
+> j,d
+
+!
+
+.
+
+Overall, we can see that the H¨ older pooled density q(z) is a weighted mixture of Gaussians 
+
+q(z) = 
+
+> M
+
+X
+
+> j=1
+
+πj qj (z) + 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij q(1 /2)  
+
+> ij
+
+(z), (4) where πj = c, π ij = 2 cS ij , and c =
+
+
+
+M + 2 PMi=1 
+
+PMj>i Sij 
+
+−1
+
+.
+
+H ¨older objective. Given M modalities X := {x1, x2, . . . , xM }, we consider the standard multimodal VAE generative model pΘ(X, z) = p(z) QMj=1 pθj (xj |z), and optimize a lower bound of the log-evidence pΘ(X) by maximizing the following objective 
+
+LVAE (x1: M ) = EqΦ(z|X)
+
+
+
+log pΘ(X, z)
+
+qΦ(z|X)
+
+
+
+, (5) 13 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+As in MMVAE (Shi et al., 2019), we set qΦ(z|X) to the uniform mixture, qΦ(z | X) = 1
+
+> M
+
+PMj=1 qϕj (z|xj ). Substituting into Eq. (5) and using linearity of expectation gives an equivalent decomposition into unimodal expectations, while keeping the denominator qΦ(z|X) as the pooled posterior: 
+
+LMMVAE (x1: M ) = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+Eqϕj (z|xj )
+
+
+
+log pΘ(X, z)
+
+qΦ(z|X)
+
+
+
+.
+
+We instead define qΦ(z|X) via H¨ older pooling in Eq. (4), which admits a mixture form 
+
+qΦ(z|X) = 
+
+> M
+
+X
+
+> j=1
+
+πj qϕj (z|xj ) + 
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij q(1 /2)  
+
+> ij
+
+(z|xi, xj ), (6) with πj , π ij ≥ 0 and P 
+
+> j
+
+πj + PMi=1 
+
+PMj>i πij = 1 . Substituting Eq. (6) into the ELBO 5 gives 
+
+LH¨ older (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj Eqϕj (z|xj )
+
+
+
+log pΘ(X, z)
+
+qΦ(z|X)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij Eq(1 /2)   
+
+> ij (z|xi,xj)
+
+
+
+log pΘ(X, z)
+
+qΦ(z|X)
+
+
+
+, (7) which is a valid lower bound on the log-evidence log pΘ(X).
+
+H ¨older+ objective. We extend the shared-latent model by introducing modality-specific latent variables W := 
+
+{w1, w2, . . . , wM }, where each wj captures private factors of modality xj . The generative model is 
+
+pΘ(X, z, W ) = p(z)
+
+> M
+
+Y
+
+> j=1
+
+pθj (xj |z, wj ) p(wj ),
+
+where we assume independent priors over the private latents {p(wj )}Mj=1 . For inference, we use a variational family that factorizes the joint posterior into a pooled encoder for the shared latent and unimodal encoders for the private latents 
+
+qΦ(z, W |X) = qΦz (z|X) qΦW (W |X) = qΦz (z|X)
+
+> M
+
+Y
+
+> j=1
+
+qϕwj (wj |xj ).
+
+To avoid shortcut solutions in cross-modal generation, MMVAE+ (Palumbo et al., 2023) introduces auxiliary distributions over private latent variables for unobserved modalities when estimating cross-modal reconstruction terms. Concretely, when 
+
+z is sampled from expert j, we draw wj ∼ qϕwj (wj |xj ) for the observed modality and draw ˜wn ∼ rn(wn) for each modality n̸ = j. The resulting objective can be written as 
+
+LMMVAE+ (x1: M ) = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+E qϕzj (z|xj )    
+
+> qϕwj(wj|xj)
+> {˜wn∼rn(wn)}n̸=j
+
+log 
+
+ pθj (xj |z, wj )p(z)p(wj )
+
+qϕz (z|X)qϕwj (wj |xj )
+
+Y
+
+> n̸=j
+
+pθn (xn|z, ˜wn)
+
+ , (8) where {rn(wn)}Mn=1 are auxiliary distributions over modality-specific latents. Following the same principle, we extend H ¨older pooling to the shared-private setting and use auxiliary distributions for modality-specific latents that are not inferred from data in a given mixture component, thereby preventing shortcut learning when estimating reconstruction terms for unobserved modalities. Let qΦ(z|X) denote the H ¨older-pooled posterior with unimodal weights πj and pairwise weights πij over components qϕzj (z|xj ) and q(1 /2)  
+
+> ij
+
+(z|xi, xj ). The H ¨older+ objective is 
+
+LH¨ older+ (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj E qϕzj (z|xj )    
+
+> qϕwj(wj|xj)
+> {˜wn∼rn(wn)}n̸=j
+
+log 
+
+ pθj (xj |z, wj )p(z)p(wj )
+
+qϕz (z|X)qϕwj (wj |xj )
+
+Y
+
+> n̸=j
+
+pθn (xn|z, ˜wn)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij E q(1 /2)        
+
+> ij (z|xi,xj)
+> qϕwi(wi|xi)
+> qϕwj(wj|xj)
+> {˜wn∼rn(wn)}n / ∈{ i,j }
+
+log 
+
+ pθi (xi|z, wi)pθj (xj |z, wj )p(z)p(wi)p(wj )
+
+qϕz (z|X)qϕwi (wi|xi)qϕwj (wj |xj )
+
+Y
+
+> n / ∈{ i,j }
+
+pθn (xn|z, ˜wn)
+
+ . (9) 14 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+H ¨older++ objective. Since shared and modality-specific factors can be coupled in the posterior, we adopt a hierarchical variational posterior in which each private latent depends on both the observation and the shared latent, i.e., qϕwj (wj |xj , z)
+
+qΦ(z, W |X) = qΦz (z|X) qΦW (W |X, z) = qΦz (z|X)
+
+> M
+
+Y
+
+> j=1
+
+qϕwj (wj |xj , z). (10) From the H ¨older+ objective in Eq. (9) , substituting the hierarchical variational posterior in Eq. (10) into the ELBO yields the H¨ older++ objective 
+
+LH¨ older++ (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj E qϕzj (z|xj )    
+
+> qϕwj(wj|xj,z)
+> {˜wn∼rn(wn)}n̸=j
+
+log 
+
+ pθj (xj |z, wj )p(z)p(wj )
+
+qϕz (z|X)qϕwj (wj |xj , z)
+
+Y
+
+> n̸=j
+
+pθn (xn|z, ˜wn)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij E q(1 /2)        
+
+> ij (z|xi,xj)
+> qϕwi(wi|xi,z)
+> qϕwj(wj|xj,z)
+> {˜wn∼rn(wn)}n / ∈{ i,j }
+
+log 
+
+ pθi (xi|z, wi)pθj (xj |z, wj )p(z)p(wi)p(wj )
+
+qϕz (z|X)qϕwi (wi|xi, z)qϕwj (wj |xj , z)
+
+Y
+
+> n / ∈{ i,j }
+
+pθn (xn|z, ˜wn)
+
+ . (11) where the highlighted terms indicate the changes relative to H¨ older+. 
+
+A.2. Lower-bound guarantee of the H¨ older+ and H¨ older++ objectives Lower bound guarantee of the H¨ older+ objective. We recall the objective of H¨ older from Eq. (7) 
+
+LH¨ older (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj Eqϕj (z|xj )
+
+
+
+log p(z)pθj (xj |z) Q 
+
+> n̸=j
+
+pθn (xn|z)
+
+qΦ(z|X)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij Eq(1 /2)   
+
+> ij (z|xi,xj)
+
+"
+
+log p(z)pθi (xi|z)pθj (xj |z) Q 
+
+> n / ∈{ i,j }
+
+pθn (xn|z)
+
+qΦ(z|X)
+
+#
+
+. (12) Inspired by the proof in MMVAE+ (Palumbo et al., 2023), for the first term corresponding to the unimodal component, we consider each term in the sum: when z ∼ qϕzj (z|xj ) is sampled from the unimodal encoder, we use this z to compute the conditional likelihood of all M modalities, including the self-reconstruction term log pθj (xj |z) and the cross-modal reconstruction terms log pθn (xn|z) for n̸ = j. Building on this, and using the modality-specific encoder qϕwj (wj |xj ), we derive the lower bound on the likelihood as 
+
+log pθj (xj |z) ≥ Eqϕwj (wj |xj )
+
+"
+
+log pθj (xj |z, wj )p(wj )
+
+qϕwj (wj |xj )
+
+#
+
+, and (13) 
+
+log pθn (xn|z) = log E ˜wn∼rn(wn)pθn (xn|z, ˜wn) ≥ E ˜wn∼rn(wn) log pθn (xn|z, ˜wn), (14) where rn(wn) is an auxiliary prior distribution specific to each target modality n ∈ { 1, 2, . . . , M }, and the second step follows from Jensen’s inequality. The second term in Eq. (12) corresponding to a pairwise component (i, j ) is analogously: when z ∼ q(1 /2)  
+
+> ij
+
+(z|xi, xj ), we bound the reconstruction terms for modalities i and j using their modality-specific posteriors qϕwi (wi|xi) and qϕwj (wj |xj )
+
+as in Eq. (13) , while for each modality n / ∈ { i, j } we use ˜wn ∼ rn(wn) and apply Eq. (14) . Plugging the expressions in 15 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Eqs. (13) and (14) into Eq. (12), we obtain the H¨ older+ objective as 
+
+LH¨ older+ (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj E qϕzj (z|xj )    
+
+> qϕwj(wj|xj)
+> {˜wn∼rn(wn)}n̸=j
+
+log 
+
+ pθj (xj |z, wj )p(z)p(wj )
+
+qϕz (z|X)qϕwj (wj |xj )
+
+Y
+
+> n̸=j
+
+pθn (xn|z, ˜wn)
+
+
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij E q(1 /2)        
+
+> ij (z|xi,xj)
+> qϕwi(wi|xi)
+> qϕwj(wj|xj)
+> {˜wn∼rn(wn)}n / ∈{ i,j }
+
+log 
+
+ pθi (xi|z, wi)pθj (xj |z, wj )p(z)p(wi)p(wj )
+
+qϕz (z|X)qϕwi (wi|xi)qϕwj (wj |xj )
+
+Y
+
+> n / ∈{ i,j }
+
+pθn (xn|z, ˜wn)
+
+ .
+
+Thus, the H¨ older+ objective is a valid ELBO. □
+
+Lower bound guarantee of the H ¨older++ objective. Compared to H ¨older+ (Eq. (9) ), H ¨older++ (Eq. (11) ) uses a hierarchical inference model for the private latent, i.e., qϕwj (wj |xj , z) instead of qϕwj (wj |xj ). This changes the lower bound for the self-reconstruction term 
+
+log pθj (xj |z) = log 
+
+Z
+
+pθj (xj |z, wj )p(wj )dwj
+
+= log 
+
+Z
+
+qϕwj (wj |xj , z) pθj (xj |z, wj )p(wj )
+
+qϕwj (wj |xj , z) dwj
+
+= log Eqϕwj (wj |xj ,z)
+
+" pθj (xj |z, wj )p(wj )
+
+qϕwj (wj |xj , z)
+
+#
+
+≥ Eqϕwj (wj |xj ,z)
+
+"
+
+log pθj (xj |z, wj )p(wj )
+
+qϕwj (wj |xj , z)
+
+#
+
+,
+
+where the last step follows from Jensen’s inequality. Thus, the H¨ older++ objective is a valid ELBO. □
+
+A.3. Tighter variational lower bound via IWAE and DReG estimators The importance weighted autoencoder (IWAE). IWAE (Burda et al., 2015) provides a tighter variational lower bound than the ELBO in Eq. (5) by using a properly weighted multi-sample importance estimator, given by 
+
+LIWAE (x1: M ) = Ez1: K ∼qΦ(z|x1: M )
+
+"
+
+log 
+
+> K
+
+X
+
+> k=1
+
+1
+
+KpΘ(X, zk)
+
+qΦ(zk|X)
+
+#
+
+, (15) with K is the number of samples. In multimodal VAEs, IWAE estimator is often preferred because it typically yields higher-entropy variational posteriors, which is beneficial multimodal settings where each unimodal encoder should allocate probability mass to latent regions that explain other modalities. In MMVAE (Shi et al., 2019), under a MoE joint posterior, they extend LIWAE in Eq. (15) via stratified sampling (Robert et al., 1999) over the M modalities as follows 
+
+LMoE IWAE (x1: M ) = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+Ez1: K ∼qϕj (z|xj )
+
+"
+
+log 
+
+> K
+
+X
+
+> k=1
+
+1
+
+KpΘ(X, zk)
+
+qΦ(zk|X)
+
+#
+
+,
+
+which is a valid ELBO. In our case, under a H ¨older mixture with α = 0 .5 in Eq. (6) , we extend LIWAE in Eq. (15) via stratified sampling over the M modalities to obtain LH¨ older IWAE as follows 
+
+LH¨ older IWAE (x1: M ) = 
+
+> M
+
+X
+
+> j=1
+
+πj Ez1: K ∼qϕj (z|xj )
+
+"
+
+log 
+
+> K
+
+X
+
+> k=1
+
+1
+
+KpΘ(X, zk)
+
+qΦ(zk|X)
+
+#
+
++
+
+> M
+
+X
+
+> i=1
+> M
+
+X
+
+> j>i
+
+πij Ez1: K ∼q(1 /2)   
+
+> ij (z|xi,xj)
+
+"
+
+log 
+
+> K
+
+X
+
+> k=1
+
+1
+
+KpΘ(X, zk)
+
+qΦ(zk|X)
+
+#
+
+,
+
+16 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+which remains a valid lower bound and is tighter than the ELBO. 
+
+The doubly reparametrised gradient estimator (DReG). As mentioned by Roeder et al. (2017); Rainforth et al. (2018), the standard IWAE gradient estimator can exhibit undesirably high variance. Tucker et al. (2019) address this by re-applying the reparameterization trick to obtain the doubly reparameterized gradient (DReG) estimator. Following prior multimodal VAE work that optimizes multi-sample objectives with DReG (Shi et al., 2019; Palumbo et al., 2023; 2024), we adopt the same estimator in our experiments for H¨ older-based models. 
+
+## B. Experimental details 
+
+B.1. Datasets PolyMNIST. Sutter et al. (2021) introduced the dataset as an MNIST extension with diverse backgrounds. Each sample overlays an MNIST digit on a randomly selected 28 × 28 crop from each of five background images, yielding a five-modality benchmark. The digit label is the shared (semantic) factor, while background content and handwriting style are modality-specific. The dataset contains 60 000 training and 10 000 test images. 
+
+MNIST-SVHN. Shi et al. (2019) constructed a bimodal dataset by pairing MNIST and SVHN such that the two modalities in each pair depict the same digit class, aiming to separate conceptual complexity (digit) from perceptual complexity (e.g., color, style, size). To increase cross-domain correspondences, each instance in either dataset is randomly paired with 20 instances of the same class from the other dataset. The dataset contains 56 068 training and 10 000 test images. 
+
+CUBICC. Palumbo et al. (2024) introduced CUBICC, a variant of CUB Image-Captions in which each datapoint is a paired of bird image and caption. To obtain a realistic multimodal clustering benchmark, they merge fine-grained bird sub-species into coarser species-level classes, increasing intra-class variability while preserving shared semantic structure across modalities. The benchmark contains 13 131 image-caption pairs, split into 11 834 train, 638 validation, and 659 test samples, covering 22 sub-species grouped into 8 species (Blackbird, Gull, Jay, Oriole, Tanager, Tern, Warbler, Wren). 
+
+CelebAMask-HQ. Wesego & Rooshenas (2024b) introduced CelebAMask-HQ (Lee et al., 2020) in the context of multimodal VAEs, where images, masks, and attributes constitute the three modalities. All face-part masks are combined into a single black-and-white image, excluding the skin mask. Out of the 40 available attributes, 18 are selected. The dataset contains 30 000 samples, split into 24 183 training, 2 993 validation, and 2 824 test. 
+
+B.2. Evaluation criteria Generative coherence. To evaluate how well our model imputes missing modalities, we use classifier-based coherence. We train a classifier for each modality on its training samples. For unconditional coherence, we generate full multimodal samples from the prior and compute the fraction with consistent predicted labels across modalities. For conditional coherence, we condition on every non-empty subset (excluding the target modality), generate the target, report the fraction whose predicted label matches the ground truth. We report coherence averaged over all subsets and target modalities. 
+
+Generative quality. We use the Fr ´echet Inception Distance (FID) (Heusel et al., 2017) to quantify sample quality. The metric extracts features with a pretrained Inception network and measures the distance between the real and generated feature distributions. Lower FID implies higher visual realism and closer match to the data distribution. 
+
+Disentanglement metrics. To assess disentanglement between the shared and private subspaces, we evaluate both (i) the inferred latent representations and (ii) the generated images. For (i), we follow prior work and train a linear classifier on the latent codes, reporting classification accuracy. We expect high accuracy for the shared latent z and low accuracy for the private latent w, since w should not encode class information. For (ii), we introduce three new generation-based metrics : z content stability ( ↑), z content accuracy ( ↑), and w content accuracy ( ↓). To compute the first two, we fix z,sample multiple w ∼ p(w), decode, and classify the outputs. z content stability measures pairwise label agreement across generated samples, while z content accuracy measures correctness with respect to the ground-truth label. High values indicate that content is encoded primarily in z: fixing z yields outputs with correct and invariant content despite changes in 
+
+w. For w content accuracy, we fix w, sample multiple z ∼ p(z), decode, and compute classification accuracy; lower values indicate that w carries little content information. All three metrics are averaged over self- and cross-generation. Note that for CUBICC we evaluate generation only when the target is an image (image → image and text → image), whereas for MNIST-SVHN we evaluate generation for both modalities as targets. 
+
+17 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+Downstream clustering metrics. We evaluate clustering performance using three standard metrics: clustering accuracy (ACC), normalized mutual information (NMI), and the adjusted rand index (ARI). ACC reports the best label-matching accuracy after permuting cluster IDs via the Hungarian algorithm. NMI measures the shared information between predicted clusters and ground-truth labels, and ARI quantifies partition similarity based on pairwise assignments, corrected for chance. Higher values indicate better clustering for all three metrics. 
+
+B.3. Experimental setups 
+
+We train all models with the reparameterization trick (Kingma & Welling, 2013) and optimize using Adam (Kingma & Ba, 2015) on NVIDIA A100-PCIE-80GB GPUs. Following prior work, we weight the KL term in the ELBO by a coefficient β (Higgins et al., 2017), i.e., βKL( qΦ(z|X)∥p(z)) , and select β via cross-validation over {1.0, 2.5, 5.0, 10 .0}
+
+for PolyMNIST and {1.0, 2.5, 5.0} for MNIST-SVHN, CUBICC, and CelebAMask-HQ. For DCMEM, we choose the method-specific parameter α over {0.1, 0.5, 1.0}. The best value for each dataset is reported in Table 7, which also includes the optimal α for DCMEM. Across datasets, we use an isotropic Gaussian prior and model unimodal posteriors as diagonal-covariance Gaussians. We weight modality likelihood terms by relative dimensionality: the dominant modality is set to 1.0
+
+and the remaining modalities are scaled proportionally to their data dimensions (Shi et al., 2019; Sutter et al., 2021; Javaloy et al., 2022). We report mean ± standard deviation over 3 seeds, except over 10 seeds for CUBICC. For baselines, we use the original implementations: MMVAE+, CMVAE, and open source MultiVAE (Senellart & Allassonni `ere, 2025). Note that in figures and tables reporting a single value per model, we select the value at the best-performing β ( and α for DCMEM). In contrast, the quality-coherence trade-off figures plot results for all β and α values listed above. The only exception is Figure 5, which reports multiple seeds at the best hyperparameters.                                
+
+> Table 7. Optimal βfor all models (except DCMEM) and optimal αfor DCMEM on all our datasets. PolyMNIST MNIST-SVHN CUBICC CelebAMask-HQ DMVAE 1.0 DCMEM 1.0 1.0 MMVAE+ 2.5 2.5 1.0 1.0 CMVAE 2.5 2.5 1.0 1.0 H¨ older+ 5.0 5.0 1.0 1.0 CH¨ older+ 1.0 MMVAE++ 1.0 CMVAE++ 1.0 H¨ older++ 5.0 5.0 1.0 1.0 CH¨ older++ 1.0
+
+PolyMNIST. The encoder and decoder architectures follow Palumbo et al. (2023), with ResNet backbones for all image modalities. We model each modality with a Laplace likelihood and use diagonal Gaussian priors and posteriors; for MMVAE, MMVAE+, and CMVAE we adopt Laplace priors and posteriors, consistent with their original setups. All single-shared-latent baselines are trained for 500 epochs with latent dimensionality 512 , and batch size 256 . For MMVAE, we set the latent dimensionality to 160 . For MMVAE+, CMVAE, H ¨older+, and H ¨older++, we use shared and modality-specific subspaces of 
+
+32 dimensions each. We train MMVAE, MMVAE+, and CMVAE with K = 1 for 150, 150, 250 epochs, respectively, and batch size 256 , whereas H ¨older+ and H ¨older++ are trained with a multi-sample objective with K = 10 for 50 epochs and batch size 32 . For CMVAE, we set the number of clusters to 40 . All models are trained with learning rate 5e−4.
+
+MNIST-SVHN. The encoder and decoder architectures follow Gao et al. (2026), using ResNet backbones for all image modalities. We model each modality with a Laplace likelihood and use diagonal Gaussian priors and posteriors by default; for MMVAE, MMVAE+, and CMVAE, we instead adopt Laplace priors and posteriors. All single-shared-latent baselines are trained for 100 epochs with latent dimensionality 20 . For DMVAE, MMVAE+, CMVAE, H ¨older+, and H ¨older++, we use shared and modality-specific latent subspaces of 10 and 4 dimensions, respectively. We train MMVAE+ and CMVAE with K = 1 for 30 epochs. MMVAE, H ¨older+, and H ¨older++ are trained with a multi-sample objective with K = 10 for 10 
+
+epochs; DMVAE, which is not mixture-based, is also trained for 10 epochs. For CMVAE, we set the number of clusters to 
+
+40 . For DCMEM, we follow the original setup with 32 -dimensional shared and private subspaces and batch size 64 . Finally, all models are trained with batch size 100 and learning rate 5e−4. Note that, for this dataset, we do not rescale likelihood terms by modality dimensionality; instead, we set the likelihood weights to 50 .0 for MNIST and 1.0 for SVHN. 
+
+18 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+CUBICC. The encoder and decoder architectures follow Palumbo et al. (2024), using a ResNet backbone for images and a convolutional network for text. We model each modality with a Laplace likelihood and use diagonal Gaussian priors and posteriors by default. All models, except DCMEM, are trained with a multi-sample objective with K = 10 for 300 
+
+epochs and batch size 32 ; DCMEM is trained for 200 epochs with batch size 64 . All models use a learning rate of 1e−4 and separate shared and modality-specific latent subspaces of 64 and 32 dimensions, respectively. Moreover, for models that use a clustering prior on z, we set the number of clusters to a predefined value of 35 .
+
+CelebAMask-HQ. The encoder and decoder architectures follow Wesego & Rooshenas (2024b), using a ResNet backbone for images and segmentation masks, and an MLP for binary attributes. We model image and mask modalities with a Laplace likelihood and attributes with a Bernoulli likelihood. MMVAE+ and CMVAE use Laplace priors and posteriors, while H ¨older+ and H ¨older++ use diagonal Gaussian priors and posteriors. All models are trained with a multi-sample objective with K = 1 for 100 epochs, batch size 128 , and a learning rate of 5e−4, with separate shared and modality-specific latent subspaces of 128 dimensions each. Moreover, for CMVAE, we set the number of clusters to 40 .
+
+## C. Additional results 
+
+C.1. Additional results: Computational runtime analysis across models 
+
+In Table 8, we report the average per-batch training time on three datasets, MNIST-SVHN ( M = 2 ), CelebAMask-HQ (M = 3 ), and PolyMNIST ( M = 5 ), where M is the number of modalities and K the number of samples for ELBO estimation. The results show that the runtime gap increases with the number of modalities: for M = 2 , the difference is relatively small, while for M = 3 and M = 5 the gap is around 1.8× when comparing H ¨older vs. MMVAE and H ¨older+ vs. MMVAE+. H ¨older++ has nearly the same batch training time as H ¨older+, indicating that the hierarchical inference does not introduce additional cost . Thus, we do not observe a quadratic increase in training time as M grows in our benchmarks ;empirically, this suggests that the pairwise terms are not the main source of complexity, and can be masked by other factors such as latent dimensionality and model architecture. We are not currently aware of an alternative formulation or estimator that would make this computation more efficient, and we leave this for future work.                                            
+
+> Table 8. Training batch time (s) across datasets. We group models by latent structure: shared-only vs. shared-private. Model MNIST-SVHN ( M= 2 )CelebAMask-HQ ( M= 3 )PolyMNIST ( M= 5 )MVAE 0.0482 0.1442 0.1887 MoPoE 0.0321 0.0747 0.1216 HELVAE 0.0303 0.0727 0.0895 DMVAE 0.0537 0.2412 0.3071 MMVAE ( K= 1 )0.0354 0.1717 0.2362 H¨ older ( K= 1 )0.0457 0.3252 0.4007 MMVAE+ ( K= 1 )0.0501 0.1940 0.2884 CMVAE ( K= 1 )0.0827 0.2456 0.2803 H¨ older+ ( K= 1 )0.0597 0.3510 0.4789 H¨ older++ ( K= 1 )0.0617 0.3518 0.4759
+
+C.2. Additional results: Clustering performance consistency across models 
+
+As shown in Table 3, we observe large variance in CMVAE and DCMEM. To visualize this, we plot 10 different seeds for each model under its best configuration. Figure 5 shows that CMVAE and DCMEM are widely spread in the plot, indicating sensitivity to random seeds and thus producing inconsistent results. In contrast, our H ¨older-based models are more robust to initialization and regularization, provide consistent results, and achieve the best overall clustering performance. 
+
+C.3. Additional results: Effect of latent dimensionality on generative performance 
+
+In the shared-private setting, we ablate the modality-specific latent size relative to the shared one on PolyMNIST and MNIST-SVHN in Figure 6 and 7, respectively. H ¨older+ and H ¨older++ are more stable and less sensitive to this choice than MMVAE+ or CMVAE, indicating that the gains stem from aggregation and inference design rather than increased capacity, as long as the latents act as an information bottleneck. In the main results, we report 10% capacity for PolyMNIST and 40% for MNIST-SVHN, matching the MMVAE+ configuration for fair comparison. 19 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 20 30 40 50 60 70 80 
+
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Image
+
+ACC         
+
+> 010 20 30 40 50 60 70 80
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+
+NMI        
+
+> 010 20 30 40 50 60 70
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+
+ARI       
+
+> 20 30 40 50 60 70 80
+
+Joint         
+
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> Caption
+> 010 20 30 40 50 60 70 80
+
+Joint        
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 010 20 30 40 50 60 70
+
+Joint 
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+
+MMVAE+ CMVAE DCMEM Hölder+ CHölder+ CHölder++ 
+
+Figure 5. Clustering performance on CUBICC using latent representations, with each model evaluated at its best configuration. Per model, each point corresponds to a different seed (10 seeds total). The optimal region is the upper-right in both plots. 12.5% 25% 50% 75% 100%                    
+
+> 0.80
+> 0.85
+> 0.90
+> Conditional coherence
+> 12.5% 25% 50% 75% 100%
+> 100
+> 120
+> 140
+> 160
+> Conditional FID
+> 12.5% 25% 50% 75% 100%
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Unconditional coherence
+> 12.5% 25% 50% 75% 100%
+> 100
+> 110
+> 120
+> 130
+> 140
+> 150
+> Unconditional FID
+> 12.5% 25% 50% 75% 100%
+> 7000
+> 6500
+> 6000
+> 5500
+> 5000
+> 4500
+> Log-likelihood
+> Modality-specific latent capacity
+> MMVAE+ CMVAE Hölder+ Hölder++
+
+Figure 6. Generative coherence ( ↑), generative quality (FID ↓), and log-likelihood ( ↑) on PolyMNIST as a function of modality-specific latent capacity. The x-axis percentages denote the relative size of the private subspace w.r.t the shared subspace. 20% 40% 60% 80% 100% 
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Coherence
+
+SVHN to MNIST     
+
+> 20% 40% 60% 80% 100%
+> 20
+> 40
+> 60
+> 80
+> 100
+> FID
+
+SVHN to MNIST     
+
+> 20% 40% 60% 80% 100%
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Coherence
+
+MNIST to SVHN     
+
+> 20% 40% 60% 80% 100%
+> 50
+> 100
+> 150
+> 200
+> 250
+> FID
+
+MNIST to SVHN 
+
+Modality-specific latent capacity 
+
+DMVAE MMVAE+ CMVAE DCMEM Hölder+ Hölder++ 
+
+Figure 7. Generative coherence ( ↑) and generative quality (FID ↓) across cross-generation tasks on MNIST-SVHN as a function of modality-specific latent capacity. The x-axis percentages denote the relative size of the private subspace w.r.t. the shared subspace. 
+
+C.4. Additional results: PolyMNIST Qualitative results. Figure 8 shows cross-modal generation from the first to the third modality, with five samples obtained by varying only the modality-specific latent variables. As expected on PolyMNIST, preserving shared semantic content is straightforward: most models keep the digit identity consistent across samples. However, MMVAE+ and CMVAE still misclassify the digit for challenging cases (4 and 9, respectively). In contrast, our H ¨older+ and H ¨older++ preserve the correct digit information while producing samples with different styles when changing the private factors w.20 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs       
+
+> (a) MMVAE+ (b) CMVAE (c) H¨ older+
+> Figure 8. Five samples of the third modality conditioned on the first modality on PolyMNIST, generated by varying only the modality-specific latent variables. Each column corresponds to a ground-truth digit label from 0 to 9, so all samples within a column share the same digit information. As expected, all three models preserve the class label while changing the private factors.
+
+C.5. Additional results: MNIST-SVHN Qualitative results. Figure 9 shows cross-modal generation from SVHN to MNIST, with five samples obtained by varying only the modality-specific latent variables. DMVAE suffers from shortcut behavior as the generated digit changes when the private factor changes. MMVAE+ and CMVAE preserve the digit, but the resulting samples are less diverse and lower quality. For DCMEM, when the SVHN input has a cluttered background (multiple digits), it struggles to predict the correct label. In contrast, our H ¨older-based models consistently predict the correct label, and the improvement from H ¨older+ to H ¨older++ suggests that hierarchical inference better isolates shared information, yielding generations with higher quality, more diversity, and better accuracy. Similarly, Figure 10 shows cross-modal generation from MNIST to SVHN, with five samples obtained by varying the private latents w. MMVAE+ and CMVAE perform poorly in this setting, whereas DCMEM and our models (H ¨older+ and H ¨older++) preserve the digit as w changes. This qualitative behavior is consistent with the coherence-quality trade-off in Figure 4 and the disentanglement metrics in Table 4.            
+
+> (a) DMVAE (b) MMVAE+ (c) CMVAE
+> (d) DCMEM (e) H¨ older+ (f) H¨ older++
+> Figure 9. Five MNIST samples generated from SVHN on MNIST-SVHN by varying only the modality-specific latent variables. Each column corresponds to a ground-truth digit label from 0 to 9, so all samples within a column share the same digit information.
+
+C.6. Additional results: CUBICC Disentanglement of shared and private subspaces. Table 9 shows classification accuracy using latent representations from the image and caption modalities. The performance of CMVAE, CH ¨older+, and CH ¨older++ is comparable across private, shared, and joint subspaces, with each achieving the best or second-best results in this setting. 21 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+(a) DMVAE (b) MMVAE+ (c) CMVAE 
+
+(d) DCMEM (e) H¨ older+ (f) H¨ older++ 
+
+Figure 10. Five SVHN samples generated from MNIST on MNIST-SVHN by varying only the modality-specific latent variables. Each column corresponds to a ground-truth digit label from 0 to 9, so all samples within a column share the same digit information. 
+
+Table 9. Bird-species classification accuracy on the latent representations for CUBICC, evaluated on the private w, shared z, and joint 
+
+[w, z] subspaces. The best and second-best results are highlighted in bold and underlined, respectively. Image Representation Caption Representation Joint ( ↑) Shared ( ↑) Private ( ↓) Joint ( ↑) Shared ( ↑) Private ( ↓)MMVAE+ 0.798 ± 0.052 0.796 ± 0.045 0.169 ± 0.057 0.630 ± 0.076 0.612 ± 0.092 0.231 ± 0.050 
+
+DCMEM 0.571 ± 0.182 0.373 ± 0.309 0.446 ± 0.032 0.470 ± 0.114 0.289 ± 0.219 0.390 ± 0.042 
+
+H¨ older+ 0.827 ± 0.058 0.783 ± 0.087 0.311 ± 0.059 0.620 ± 0.077 0.592 ± 0.096 0.237 ± 0.047 
+
+H¨ older++ 0.768 ± 0.014 0.758 ± 0.017 0.173 ± 0.027 0.559 ± 0.020 0.546 ± 0.023 0.207 ± 0.014 
+
+CMVAE 0.811 ± 0.048 0.810 ± 0.046 0.165 ± 0.039 0.635 ± 0.069 0.622 ± 0.080 0.233 ± 0.041 
+
+CH¨ older+ 0.820 ± 0.012 0.790 ± 0.017 0.234 ± 0.029 0.590 ± 0.018 0.561 ± 0.014 0.251 ± 0.022 
+
+CH¨ older++ 0.801 ± 0.025 0.800 ± 0.023 0.165 ± 0.024 0.582 ± 0.011 0.574 ± 0.010 0.200 ± 0.014 
+
+Table 10. Effect of hierarchical inference on clustering performance across models on CUBICC. We partition models according to whether 
+
+z follows a structured clustering prior. The best and second-best results are marked bold and underlined, respectively. Image Representation ( ↑) Caption Representation ( ↑) Joint Representation ( ↑)ACC NMI ARI ACC NMI ARI ACC NMI ARI MMVAE+ 30.1 ± 2.1 16.2 ± 2.8 9.2 ± 1.9 22.9 ± 2.6 7.6 ± 2.8 3.3 ± 2.0 35.5 ± 4.4 25.4 ± 5.2 15.7 ± 4.8 
+
+MMVAE++ 29.4 ± 3.0 15.1 ± 2.4 8.3 ± 1.8 20.9 ± 2.0 4.8 ± 1.5 1.7 ± 0.9 36.1 ± 2.7 24.2 ± 2.2 15.1 ± 1.7 
+
+H¨ older+ 28.8 ± 3.2 14.0 ± 4.3 7.9 ± 2.8 20.7 ± 1.0 4.9 ± 1.0 1.7 ± 0.6 32.3 ± 3.4 20.7 ± 3.4 11.8 ± 2.3 
+
+H¨ older++ 28.3 ± 2.6 14.3 ± 2.4 7.7 ± 1.8 19.7 ± 1.1 3.9 ± 0.9 1.2 ± 0.5 31.8 ± 2.4 18.8 ± 3.0 10.9 ± 2.3 
+
+CMVAE 51.9 ± 12.8 42.2 ± 12.1 31.1 ± 14.0 44.6 ± 13.8 33.7 ± 12.8 23.8 ± 13.1 58.0 ± 13.8 51.3 ± 12.4 39.3 ± 14.9 
+
+CMVAE++ 43.6 ± 3.0 33.7 ± 3.8 22.6 ± 2.7 37.7 ± 4.1 25.3 ± 3.9 15.9 ± 3.3 53.2 ± 6.3 45.0 ± 4.7 32.6 ± 4.8 
+
+CH¨ older+ 59.1 ± 6.1 48.8 ± 3.4 36.2 ± 4.8 45.3 ± 4.2 32.3 ± 2.2 21.3 ± 2.8 61.3 ± 4.6 51.7 ± 2.8 38.6 ± 3.4 
+
+CH¨ older++ 57.3 ± 3.7 46.4 ± 2.1 34.1 ± 2.3 44.0 ± 3.4 31.4 ± 2.4 20.5 ± 2.4 65.3 ± 5.8 55.1 ± 3.5 43.2 ± 5.2 
+
+Effect of hierarchical inference across models. As shown in Table 6, hierarchical inference consistently improves three disentanglement metrics across all models. Table 10 reports the corresponding downstream clustering performance in the same setting. For MMVAE+ and H ¨older+, hierarchical inference does not affect clustering performance. While CMVAE is highly sensitive to random seeds under the original architecture, adding hierarchical inference (CMVAE++) substantially reduces variance across seeds, leading to more consistent and stable performance. Overall, introducing a hierarchical 22 H¨ older++: Improving the Quality-Coherence Trade-off in Multimodal VAEs 
+
+posterior improves disentanglement between shared and private latent variables without hurting downstream performance, and CH¨ older+ and CH¨ older++ remain the best-performing models for clustering. 
+
+Downstream clustering task. From Table 10, we compare H ¨older+ and H ¨older++ with MMVAE+ and MMVAE++ under the same standard-prior setting by running multivariate Hotelling’s T 2 tests for image, caption, and joint representations across 10 seeds, using a significance level of 0.05 . For MMVAE+ vs. H ¨older+, the differences are not statistically significant for image ( p = 0 .503 ), caption ( p = 0 .192 ), or joint ( p = 0 .210 ) representations. For MMVAE++ vs. H ¨older++, while the joint representation shows a marginal difference ( p = 0 .066 ), the image ( p = 0 .681 ) and caption ( p = 0 .598 ) comparisons are not statistically significant. Therefore, under the standard prior , we cannot conclude a significant difference between these models. In contrast, with a mixture prior as shown in Section 4.3, our CH ¨older+ and CH ¨older++ achieve better clustering results than CMVAE, with significant gains in the joint representation. 
+
+Qualitative results. Figure 11 shows the captions when conditioning on images. We see that H ¨older+ improves caption quality over MMVAE+, producing more reasonable text relative to the image. H¨ older++ also performs well in this setting. this bird has white white belly and abdomen beak 
+
+and ’s while over mixture ’s ‘s 
+
+this bird has bright belly, metallic and and color 
+
+belly and wings inner and white belly. 
+
+this bird is yellow with in in,, with a back. 
+
+this bird has black crown, white bill and belly breast 
+
+and a grey wings. 
+
+this bird has red with black and has a long short 
+
+beak.. 
+
+bird with gray small, beak that black of and yellow, 
+
+and is crown, black abdomen, color patterns black 
+
+black head, bill yellow red 
+
+a colorful bird with a black head, breast,, black 
+
+breast tan black with with black feathers on the 
+
+feathers of of side the tail. 
+
+white bird with a white feathers and brown wings 
+
+and and long long beak and grey feet. 
+
+this bird has wings that are white and has a thin 
+
+orange orange horse 
+
+this bird has a white chest and white crown, and, 
+
+gray gray 
+
+(a) MMVAE+ a long rump white curved bird yellow is with grey 
+
+legs with head with is orange are secondaries. 
+
+this bird has a blue crown, and primaries and and a 
+
+white belly. 
+
+this bird is a yellow yellow yellow breast with a 
+
+small wing that and orange underbelly.. 
+
+this large white bird has black tones going white 
+
+and long and and, orange beak. 
+
+this bird has a sharp orange bill with a black crown, 
+
+belly and black throat and yellow breast. 
+
+a yellow bird with with black eyes black feathers 
+
+with small yellow.. 
+
+this bird has a small red bill is orange and a black 
+
+breast. 
+
+a large bird with a white breast and a large yellow 
+
+tip. 
+
+a large bird with a bright belly bill red crown and 
+
+webbed feet. 
+
+a white bird with a while tail and, with grey wings 
+
+and a sized sized and beak.  (b) H¨ older+ this bird with an all white beck, is a and white bill, 
+
+and orange stripe, and pointy beak. 
+
+this beautiful coloring bird a a its, nape back breast 
+
+nape, and a under tail nape. 
+
+this bird has an, bright body with with black head 
+
+and yellow feather and a eye head. 
+
+this white bird with thin white body a long crown 
+
+and black crown and tail. 
+
+this bird is yellow with black and has a long, pointy 
+
+beak. 
+
+this is a yellow with with black has and and small 
+
+pointy beak. 
+
+this red bird has a belly and breast with red 
+
+protruding on. 
+
+this bird is a white light grey,, and a skinny.. 
+
+a medium white bird, and black tail, a a orange 
+
+beak. 
+
+this large bird with gray eyes and feathers, a grey 
+
+throat, and a black rectrices.  (c) H¨ older++ 
+
+Figure 11. Qualitative results for MMVAE+, H¨ older+ and H¨ older++ for image-to-caption generation on CUBICC. 
+
+C.7. Additional results: CelebAMask-HQ Qualitative results. To further improve the image quality of our methods, we apply a diffusion model as a post-hoc refinement step. Figure 12 shows that feeding H ¨older++ samples into a pretrained diffusion model DiffuseVAE (Pandey et al., 2024) improves image quality without altering the underlying characteristics. This confirms that our methods learn informative latent representations that can be effectively leveraged by more advanced generative models. (a) Hölder++ output  (b) + Di ff useVAE output 
+
+Male 
+
+Mustache 
+
+Smiling 
+
+Female 
+
+Blond Hair 
+
+Heavy Makeup 
+
+Figure 12. Higher-quality image generation on CelebAMask-HQ obtained by applying DiffuseVAE as a post hoc refinement process, conditioned on the mask and attributes shown in the first two columns. 
+
+23
