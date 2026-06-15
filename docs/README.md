@@ -6,35 +6,31 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-14
-- 运行时间：2026-06-14 21:04:39 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 22:25:06 UTC
 - 运行状态：成功
-- 本次总论文数：5
+- 本次总论文数：3
 - 精读区：2
-- 速读区：3
+- 速读区：1
 
 ### 今日简报（AI）
-今天精读了两篇高分论文——变分近似在KL散度有界时的一致性（9.0）和扩散后验采样的稳定路径空间方法（8.0），速读则覆盖了测试时适应、无监督联邦学习与多模态VAE。最值得看的结果：KL有界下的变分一致性为近似推断提供了理论保障，而路径空间采样显著提升了扩散模型的后验采样稳定性。建议优先阅读精读论文，理解如何用KL界控制推断质量，并尝试将路径空间思路用于你自己的生成任务。
-- 详情：[/202606/14/README](/202606/14/README)
+1) 今日精读两篇高分论文：现代深度学习的不确定性估计与泛化界（10分），以及隐变分拒绝采样（9分），另速读一篇非局部贝叶斯时空建模（7分）。  
+2) 最值得关注两个方向：深度学习的理论泛化能力分析与高效采样方法，均达到9分以上。  
+3) 建议优先精读不确定性估计论文，可提升模型可靠性与可解释性，适合实际应用场景。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [Consistency of variational approximations under bounded Kullback--Leibler divergence](/202606/14/2606.13230v1-consistency-of-variational-approximations-under-bounded-kullback--leibler-divergence)  
+1. [Uncertainty Estimation and Generalization Bounds for Modern Deep Learning](/202606/15/2606.13818v1-uncertainty-estimation-and-generalization-bounds-for-modern-deep-learning)  
+   标签：评分：10.0/10、query:bayes-dl
+   evidence：使用贝叶斯深度学习进行不确定性量化
+2. [Implicit Variational Rejection Sampling](/202606/15/2606.14235v1-implicit-variational-rejection-sampling)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：有界KL散度下变分近似的一致性——直接相关于深度学习中的变分推理
-2. [A Stabilized Path-Space Approach to Diffusion-Based Posterior Sampling](/202606/14/2606.12710v1-a-stabilized-path-space-approach-to-diffusion-based-posterior-sampling)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：基于扩散的后验采样用于贝叶斯反问题及不确定性量化
+   evidence：深度神经网络的变分推断
 
 ### 速读区论文标签
-1. [Multi-Label Test-Time Adaptation with Bayesian Conditional Priors](/202606/14/2606.12925v1-multi-label-test-time-adaptation-with-bayesian-conditional-priors)  
+1. [Nonlocal Bayesian Modeling of Continuous Spatio-Temporal Dynamics](/202606/15/2606.14313v1-nonlocal-bayesian-modeling-of-continuous-spatio-temporal-dynamics)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：贝叶斯条件先验用于多标签识别的测试时自适应
-2. [A solvable model for unsupervised federated learning](/202606/14/2606.13045v1-a-solvable-model-for-unsupervised-federated-learning)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：推导了联邦学习中教师恢复的最优贝叶斯条件
-3. [Hölder++: Improving the Quality-Coherence Trade-off in Multimodal VAEs](/202606/14/2606.13381v1-hlder-improving-the-quality-coherence-trade-off-in-multimodal-vaes)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：多模态变分自编码器改进质量-连贯性权衡
+   evidence：层次贝叶斯模型用于时空不确定性量化
 
 
 <div class="dpr-home-promo-card">
