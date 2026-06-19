@@ -6,27 +6,37 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-18
-- 运行时间：2026-06-18 21:22:59 UTC
+- 最新运行日期：2026-06-19
+- 运行时间：2026-06-19 21:41:52 UTC
 - 运行状态：成功
-- 本次总论文数：2
+- 本次总论文数：5
 - 精读区：2
-- 速读区：0
+- 速读区：3
 
 ### 今日简报（AI）
-今天精读了2篇贝叶斯深度学习论文，分别聚焦无需采样的不确定性校准和流形变分学习。最高分论文提出了一种免采样的校准不确定性估计方法，值得关注；另一篇则用热核先验改进流形上的变分学习。建议深入阅读第一篇论文的校准方法，并探索将其应用于实际模型的不确定性评估。
-- 详情：[/202606/18/README](/202606/18/README)
+1) 今日推荐5篇论文，精读聚焦“尾部利用自适应”与“多任务贝叶斯上下文学习”，均获8.0高分。  
+2) 最值得看的方向：如何通过长尾分布提升模型适应能力，以及贝叶斯框架下的上下文学习新范式。  
+3) 建议优先阅读精读两篇，理解其方法论，尤其适合关注迁移学习与不确定性建模的读者。
+- 详情：[/202606/19/README](/202606/19/README)
 
 ### 精读区论文标签
-1. [Calibrated Sampling-Free Uncertainty Estimation in Bayesian Deep Learning](/202606/18/2606.16214v2-calibrated-sampling-free-uncertainty-estimation-in-bayesian-deep-learning)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：贝叶斯深度学习中的无采样不确定性估计
-2. [On-Manifold Variational Learning with Heat-Kernel Priors](/202606/18/2606.18658v1-on-manifold-variational-learning-with-heat-kernel-priors)  
+1. [Leveraging tails for adaptation](/202606/19/2606.20480v1-leveraging-tails-for-adaptation)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：基于流形锚定的变分学习与热核先验
+   evidence：研究带有重尾先验的贝叶斯后验收缩，展示神经网络的自适应能力
+2. [Multi-Task Bayesian In-Context Learning](/202606/19/2606.20538v1-multi-task-bayesian-in-context-learning)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：通过摊销上下文学习进行贝叶斯神经网络训练
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [EM-NeSy: Expectation Maximization for Neurosymbolic Learning](/202606/19/2606.14463v1-em-nesy-expectation-maximization-for-neurosymbolic-learning)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：使用EM算法进行概率推断的神经符号学习
+2. [Variational Consensus Monte Carlo for Bayesian Mixture](/202606/19/2606.19643v1-variational-consensus-monte-carlo-for-bayesian-mixture)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：面向联邦学习的贝叶斯混合模型变分推断
+3. [On the QUEST for Uncertainty Quantification via Highest Density Regions](/202606/19/2606.19569v1-on-the-quest-for-uncertainty-quantification-via-highest-density-regions)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：提出基于最高密度区域的全新不确定性量化框架，适用于包括深度模型在内的概率机器学习
 
 
 <div class="dpr-home-promo-card">
