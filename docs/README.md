@@ -6,37 +6,30 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-19
-- 运行时间：2026-06-19 21:41:52 UTC
+- 最新运行日期：2026-06-20
+- 运行时间：2026-06-20 20:17:15 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：2
-- 速读区：3
+- 本次总论文数：2
+- 精读区：1
+- 速读区：1
 
 ### 今日简报（AI）
-1) 今日推荐5篇论文，精读聚焦“尾部利用自适应”与“多任务贝叶斯上下文学习”，均获8.0高分。  
-2) 最值得看的方向：如何通过长尾分布提升模型适应能力，以及贝叶斯框架下的上下文学习新范式。  
-3) 建议优先阅读精读两篇，理解其方法论，尤其适合关注迁移学习与不确定性建模的读者。
-- 详情：[/202606/19/README](/202606/19/README)
+今日阅读聚焦两篇论文：精读不确定量化神经网络代理模型（8.0分），速读测试时训练的决策理论分析（7.0分）。
+
+最值得关注的是神经网络代理模型在偏微分方程反问题中的不确定性量化方法，该方向能提升反问题求解的可靠性。
+
+建议后续深入测试时训练的理论框架，理解适应条件与方向选择，这对动态模型更新有直接指导意义。
+- 详情：[/202606/20/README](/202606/20/README)
 
 ### 精读区论文标签
-1. [Leveraging tails for adaptation](/202606/19/2606.20480v1-leveraging-tails-for-adaptation)  
+1. [Neural network surrogates with uncertainty quantification for inverse problems in partial differential equations](/202606/20/2606.20417v1-neural-network-surrogates-with-uncertainty-quantification-for-inverse-problems-in-partial-differential-equations)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：研究带有重尾先验的贝叶斯后验收缩，展示神经网络的自适应能力
-2. [Multi-Task Bayesian In-Context Learning](/202606/19/2606.20538v1-multi-task-bayesian-in-context-learning)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：通过摊销上下文学习进行贝叶斯神经网络训练
+   evidence：用于贝叶斯反问题的神经网络代理与不确定性量化
 
 ### 速读区论文标签
-1. [EM-NeSy: Expectation Maximization for Neurosymbolic Learning](/202606/19/2606.14463v1-em-nesy-expectation-maximization-for-neurosymbolic-learning)  
+1. [A Decision-Theoretic View of Test-Time Training: When, How Far, and Which Directions to Adapt](/202606/20/2606.15569v1-a-decision-theoretic-view-of-test-time-training-when-how-far-and-which-directions-to-adapt)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：使用EM算法进行概率推断的神经符号学习
-2. [Variational Consensus Monte Carlo for Bayesian Mixture](/202606/19/2606.19643v1-variational-consensus-monte-carlo-for-bayesian-mixture)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：面向联邦学习的贝叶斯混合模型变分推断
-3. [On the QUEST for Uncertainty Quantification via Highest Density Regions](/202606/19/2606.19569v1-on-the-quest-for-uncertainty-quantification-via-highest-density-regions)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：提出基于最高密度区域的全新不确定性量化框架，适用于包括深度模型在内的概率机器学习
+   evidence：测试时训练的隐式贝叶斯推断视角
 
 
 <div class="dpr-home-promo-card">
