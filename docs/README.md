@@ -6,29 +6,27 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-21
-- 运行时间：2026-06-21 20:22:52 UTC
+- 最新运行日期：2026-06-22
+- 运行时间：2026-06-22 22:39:59 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：1
+- 本次总论文数：2
+- 精读区：0
 - 速读区：2
 
 ### 今日简报（AI）
-今日重点推荐《Structured Inference with Large Language Gibbs》（8分），在大型语言模型推理结构化方面有突破，同时速读覆盖了PAC-Bayes去随机化和潜变量SDE逼近优化。值得优先精读这篇高评分论文，理解如何将吉布斯采样与LLM结合提升推理效率。
-- 详情：[/202606/21/README](/202606/21/README)
+今日速读2篇论文，分别聚焦LLM信念稳定性与在线分布预测下的漂移和腐败问题。值得关注的方向：LLM从信念漂移到一致性的稳定方法，以及利用潜在聚类几何处理数据漂移的在线预测框架。建议优先阅读《From Drift to Coherence》以理解LLM信念稳定性机制。
+- 详情：[/202606/22/README](/202606/22/README)
 
 ### 精读区论文标签
-1. [Structured Inference with Large Language Gibbs](/202606/21/2606.19264v1-structured-inference-with-large-language-gibbs)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：使用大型语言模型的吉布斯采样进行结构化概率推理
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Smoothness-Based Derandomization of PAC-Bayes Bounds](/202606/21/2606.19105v1-smoothness-based-derandomization-of-pac-bayes-bounds)  
+1. [From Drift to Coherence: Stabilizing Beliefs in LLMs](/202606/22/2606.17832v1-from-drift-to-coherence-stabilizing-beliefs-in-llms)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：神经网络确定预测器的PAC-Bayes界
-2. [Closing the Approximation Gap in Simulation-free Latent SDEs](/202606/21/2606.16138v1-closing-the-approximation-gap-in-simulation-free-latent-sdes)  
+   evidence：使用贝叶斯推理分析LLM信念动态
+2. [Online Distributional Prediction via Latent Cluster Geometry Under Drift and Corruption](/202606/22/2606.18778v1-online-distributional-prediction-via-latent-cluster-geometry-under-drift-and-corruption)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：潜变量SDE的变分推断
+   evidence：使用吉布斯拟后验和可逆跳MCMC进行在线分布预测的近似贝叶斯推断
 
 
 <div class="dpr-home-promo-card">
