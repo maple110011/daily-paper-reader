@@ -1,0 +1,2604 @@
+Title: Scalable Bayesian Additive Models for Stellar Flare Detection via Amortized Gaussian Process Inference and Hidden Markov Models
+
+URL Source: https://arxiv.org/pdf/2606.22601v1
+
+Published Time: Tue, 23 Jun 2026 02:48:58 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+SCALABLE BAYESIAN ADDITIVE MODELS FOR STELLAR FLARE DETECTION VIA AMORTIZED GAUSSIAN PROCESS INFERENCE AND HIDDEN MARKOV MODELS 
+
+BY RODRIGO HERRERA 1,2,a , V IANEY LEOS -B ARAJAS 1,2,3,b , G WENDOLYN EADIE 1,2,4,c ,ELIZAVETA SEMENOVA 5,d AND JAMES DAVENPORT 6,e      
+
+> 1Department of Statistical Sciences, University of Toronto, ar.herrera@mail.utoronto.ca
+> 2Data Sciences Institute, University of Toronto, bvianey.leosbarajas@utoronto.ca
+> 3School of the Environment, University of Toronto, cgwen.eadie@utoronto.ca
+> 4David A. Dunlap Department of Astronomy and Astrophysics, University of Toronto, de.semenova@imperial.ac.uk
+> 5School of Public Health, Imperial College London, ejrad@uw.edu
+> 6Department of Astronomy, University of Washington
+
+Gaussian Processes (GPs) are a powerful tool for Bayesian time-series modeling, yet their cubic computational cost remains a severe barrier for application to long, high-cadence datasets in astronomy. While specialized scalable solvers like Celerite elegantly reduce this scaling to linear time, re-peatedly evaluating the exact likelihood during iterative Bayesian sampling is a bottleneck for developing more complex models, like hierarchical or addi-tive models in which Celerite is only one component. To make this inference computationally tractable, we introduce a generative surrogate framework. By utilizing a Variational Autoencoder (VAE) to learn a compressed repre-sentation of the Celerite prior, we map highly correlated stochastic dependen-cies into a low-dimensional, isotropic manifold. This transition completely bypasses exact covariance operations, shifting the computational burden to a rapid neural network forward pass. Through an extensive simulation study, we show that the generative surrogate accurately reproduces the structural fi-delity of exact physical kernels like Celerite . Finally, we demonstrate embed-ding our VAE approximation into an additive model that combines Celerite 
+
+and a hidden Markov model (HMM) for stellar flare detection in time se-ries data of stars. We evaluate the joint VAE+HMM architecture against the exact Celerite +HMM framework on empirical astrophysical time series and demonstrate that the proposed methodology achieves significant reductions in computational time, enabling the rigorous, large-scale characterization of stellar flares across massive data archives. 
+
+1. Introduction. Gaussian Processes (GPs) provide a highly flexible framework to de-fine distributions over continuous functions. Because of their ability to adapt to complex covariance structures without requiring rigid parametric assumptions, GPs are frequently embedded as foundational components within larger hybrid or additive architectures. This structure appears across diverse scientific domains. In epidemiology, geostatistical models utilize GPs to model spatial correlations in disease risk maps, mixing the continuous spatial field with Poisson processes for discrete case counts (Diggle, Tawn and Moyeed, 1998). In neuroscience, the Poisson-GP Latent Variable Model decomposes neural spike trains into a continuous latent trajectory and discrete firing events (Wu, Koyejo and Pillow, 2017). In fi-nance, Stochastic Volatility Models employ a GP to capture the latent, time-varying volatility surface while a discrete state-space model handles regime shifts (Wu, Koyejo and Pillow, 
+
+Keywords and phrases: time series, machine learning, astrostatistics, approximate Bayesian inference. 
+
+1
+
+> arXiv:2606.22601v1 [stat.ML] 21 Jun 2026 2
+
+2017). However, the widespread adoption of these additive GP frameworks is limited by its associated computational cost (Quiñonero-Candela and Rasmussen, 2005; Hensman, Fusi and Lawrence, 2013). Evaluating the marginal likelihood of an exact GP requires operations on an N ×N covariance matrix, leading to a prohibitive O(N 3) computational scaling. When these models are evaluated within an iterative inference loop, this algebraic overhead ren-ders the models intractable for massive datasets (Ambikasaran et al., 2015; Foreman-Mackey et al., 2017). Considerable research has focused on accelerating GP inference to bypass this bottleneck. Standard statistical approximations, such as the fully independent training conditional (FITC) method (Snelson and Ghahramani, 2005) and sparse variational Gaussian Processes (SVGP) (Titsias, 2009), attempt to reduce the dimensionality of the covariance matrix through the use of inducing points. In domain-specific applications like time series astronomy, specialized structured kernels like Celerite have been developed to exploit semi-separable matrix prop-erties, reducing the exact GP cost to O(N ) (Foreman-Mackey et al., 2017). Alternatively, recent advancements in deep generative modeling have proposed replacing the GP entirely. Notably, the PriorVAE framework (Semenova et al., 2022) demonstrated that a variational autoencoder (VAE) can successfully encode spatial GP priors, shifting the heavy computa-tional burden to an offline training phase and allowing rapid, deterministic function gener-ation during inference. This neural-surrogate strategy provides a highly scalable alternative to foundational deterministic approximation frameworks for latent Gaussian models, most notably the Integrated Nested Laplace Approximation (INLA) (Rue, Martino and Chopin, 2009). While these advancements are significant, a critical gap remains in the literature regarding the application of generative surrogates to complex additive models—particularly those that compose multiple latent processes to capture real-world time-series dynamics (Duvenaud, Nickisch and Rasmussen, 2011; Roberts et al., 2013). Sparse approximations like FITC and SVGP reduce complexity to O(N M 2) (where M is the number of inducing points), but they still require costly matrix inversions at every inference step and frequently struggle to capture complex, high-frequency quasi-periodic structures restricting the number of inducing points inherently smooths out rapid variations (Bauer, van der Wilk and Rasmussen, 2016; Foreman-Mackey et al., 2017). Furthermore, even when utilizing O(N ) optimized solvers like Celerite 
+
+within hierarchical architectures, e.g., Celerite + hidden Markov model (HMM), the repeated evaluation of the exact GP likelihood inside the inference loop remains a significant bottle-neck for large datasets (Esquivel et al., 2024). Exact GPs also induce highly correlated poste-rior geometries for their physical hyperparameters, severely hindering Markov chain Monte Carlo (MCMC) sampling efficiency (Filippone, Zhong and Girolami, 2013; Betancourt and Girolami, 2015). Consequently, there is a need for methodologies that can decouple the con-tinuous GP approximation from the rest of the hierarchical model, thereby preserving the structural power of the GP while drastically reducing the computational complexity of the target likelihood. This paper proposes a novel framework that bridges deep generative learning with exact probabilistic graphical modeling. Specifically, we demonstrate how a pre-trained VAE can be seamlessly integrated as a deterministic surrogate for the GP within a larger Bayesian addi-tive model. By substituting the explicit GP term with the VAE decoder output, we collapse the intractable integral over the function space and bypass traditional covariance matrix oper-ations. Instead of computing dense matrix inverses, the cost of generating the GP trend scales only with the forward pass of the neural network. This transforms the inference problem into finding a single latent vector with a standard normal prior, which creates an uncorrelated, isotropic latent space that is exceptionally efficient for advanced MCMC algorithms. We ap-ply this methodology to the specific additive structure of a VAE+HMM, showing that deep SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 3
+
+learning tools can be seamlessly integrated with standard probabilistic models to facilitate highly complex inference. To validate this proposed framework, we focus on the complex astronomical challenge of detecting stochastic stellar flares against quasi-periodic rotational backgrounds, an addi-tive problem recently modeled via an exact GP+HMM architecture (Esquivel et al., 2024). Through an extensive simulation study, we systematically evaluate the architectural trade-offs of the VAE surrogate. We subsequently apply the joint VAE+HMM pipeline to real time series data of stars measured by the Transiting Exoplanet Survey Satellite (TESS) (Ricker et al., 2015). Our results demonstrate that the proposed surrogate not only approximates the exact GP well but can achieve massive computational speedups. The remainder of this paper is organized as follows. Section 2 describes the stellar datasets utilized in this study. Section 3 details the core methodology, transitioning from the theo-retical GP formulation to the novel VAE+HMM inference pipeline. Section 4 presents the generative simulation study and architectural hyperparameter tuning. In Section 5 we present results of applying our framework to real-world astronomical time series. We conclude with a discussion in Section 6. 
+
+2. Data Description. To evaluate and demonstrate the proposed VAE+HMM frame-work, we utilized observations of brightness over time from three distinct M dwarf stars: TIC 031381302, TIC 089257479, and TIC 234526939. Specifically, we analyzed the two-minute short-cadence Pre-Search Data Conditioning Simple Aperture Photometry (PDCSAP) light curves (i.e., time series) (Jenkins et al., 2016) collected by the Transiting Exoplanet Survey Satellite (TESS) (Ricker et al., 2015). These datasets serve a dual purpose in this study, form-ing the observational foundation for both the generative simulation experiments detailed in Section 4 and the full implementation of the joint flare-detection framework presented in Section 5. These target stars were purposefully selected because their underlying continuous back-ground emissions exhibit a highly diverse array of morphological structures (see Figure 1). This structural diversity effectively spans the characteristic range of GP trends typically mod-eled by the exact Celerite kernel, thereby providing a comprehensive and challenging testbed to evaluate the generalizability, accuracy, and computational efficiency of the VAE as a sur-rogate framework. Furthermore, the time series for these specific targets feature localized temporal windows containing a rich variety of distinct stellar flare events, ranging from iso-lated bursts to dense, complex clusters of flares. These specific flaring intervals are critical for validating the additive capability of the joint methodology. By successfully approximat-ing and detrending the continuous stellar time series via the VAE surrogate, we isolate the remaining stochastic variation, thereby enabling the hidden Markov model (HMM) compo-nent to accurately identify, classify, and segment the flare events without conflating them with the background rotation. 
+
+3. Methodology. 
+
+3.1. Gaussian Processes. A Gaussian Process (GP) is a non-parametric probabilistic model that defines a distribution over functions. It generalizes the multivariate normal distri-bution to infinite dimensions, completely specified by a mean function, m(t), and a covari-ance kernel, k(t, t ′) over time. Specifically, the joint distribution for any finite collection of random variables {Xt} for t ⊂ T ∈ R can be expressed as p(Xt) = N (m(t), k (t, t ′)) .The choice of the kernel function k(t, t ′), i.e. the covariance function, encodes our prior beliefs about the underlying structure and correlation of the data and can be adapted to var-ied and complex data sets. Common kernels chosen in practice are the squared exponential, 4
+
+TIC 031381302 0 2 4 6 8 10 
+
+> 1600
+> 1650
+> 1700
+> 1750
+> 1800
+> 1850
+
+TIC 089257479 0 2 4 6 8
+
+> 8000
+> 8200
+> 8400
+> 8600
+> 8800
+> 9000
+
+TIC 234526939 0 2 4 6 8 10 
+
+> Time Since Observation Start (Days)
+> 5150
+> 5200
+> 5250
+> 5300
+> 5350
+> 5400 Raw PDCSAP Flux
+
+Fig 1: Brightness over time from three distinct M dwarf stars. The left column identifies the object, and the plotted points represent the PDCSAP flux for each target. 
+
+Matérn, and periodic covariance functions (Rasmussen and Williams, 2006). This flexibility makes GPs a popular choice for modeling complex, convoluted background trends in time-series analysis and is commonly used for modeling time series data from stars. 3.2. The Celerite Kernel for Stellar Rotation. For many physical systems, such as stellar light curves, we require a kernel that captures quasi-periodicity: a signal with a dominant frequency that evolves or decays over time. Standard periodic kernels, even when multi-plied by decay terms, scale cubically O(N 3) and become computationally prohibitive for large datasets. To model these physical variations efficiently at a lower computation cost, the 
+
+Celerite kernel was developed (Foreman-Mackey et al., 2017). The Celerite kernel is defined via its power spectral density (PSD). The PSD describes how the variance (or power) of a time series is distributed across different frequencies. That is, if a PSD can be approximated as a specific rational function, its corresponding time-domain covariance kernel is exactly a sum of complex exponentials. We define this as the general underlying Celerite kernel: (1) k(τ ) = 
+
+> J
+
+X
+
+> j=1
+
+aj e−cj τSCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 5
+
+where τ = |ti − tj | is the absolute time difference, and aj , c j are complex coefficients. The specific structure of this kernel—a sum of exponentials—transforms the resulting covariance matrix into a semiseparable matrix. Because of this semiseparable structure, the correla-tion between any two time points can be expressed as a product of terms. This factorization allows matrix operations, such as inversion and determinant evaluation, to be executed se-quentially, which reduces the computational complexity from the standard O(N 3) to O(N )
+
+(Ambikasaran et al., 2015). Thus, Celerite is not a single kernel, but rather a flexible family of kernels that can take multiple functional derivative forms depending on the physical system being modeled. A core building block in the Celerite family is the stochastically driven damped, simple harmonic oscillator (SHO) (Foreman-Mackey et al., 2017). A damped SHO represents a sys-tem that naturally oscillates at a fundamental frequency but is subject to random perturbations and energy dissipation (damping) over time. This acts as a direct physical analogue for a ro-tating star with finite-lifetime surface features (e.g., stellar spots) (Angus et al., 2018). The PSD of a single, damped SHO is given by: (2) S(ω) = 
+
+r 2
+
+πS0ω40
+
+(ω2 − ω20 )2 + ω20 ω2/Q 2
+
+where S0 is proportional to the power, ω0 is the undamped resonant frequency, and Q is the quality factor determining the damping. As derived by the Celerite algorithm, the corre-sponding covariance kernel in the time domain physically translates to: (3) kSHO (τ ) = S0ω0Q exp 
+
+
+
+− ω0τ
+
+2Q
+
+  
+
+cos( ωdτ ) + ω0
+
+2Qω d
+
+sin( ωdτ )
+
+
+
+where ωd = ω0
+
+q
+
+1 − 14Q2 is the damped frequency. While a single SHO captures a fundamental frequency, many complex systems—such as starspot distributions appearing on opposite stellar hemispheres—introduce strong periodic signals at the first harmonic (half the primary period). To robustly model this without losing physical consistency, we utilize a double harmonic oscillator. This is constructed by sum-ming two SHO terms ( k(τ ) = kSHO 1 (τ ) + kSHO 2 (τ )). To maintain physical cohesion, the parameters of these two oscillators are algebraically coupled using a base set of parameters 
+
+{τ1, τ 2, τ 3, τ 4, τ 5}, given by the primary oscillator (fundamental) and the secondary oscillator (first harmonic): 
+
+Q1 = 0 .5 + τ3 + τ4
+
+ω1 = 4πQ 1
+
+τ2
+
+p4Q21 − 1
+
+S1 = τ1
+
+ω1Q1
+
+and 
+
+Q2 = 0 .5 + τ3
+
+ω2 = 8πQ 2
+
+τ2
+
+p4Q22 − 1
+
+S2 = τ5τ1
+
+ω2Q2
+
+.
+
+In this coupled structure, τ2 serves as the base period of the system. The mathematical formu-lation forces ω2 to operate at exactly twice the fundamental frequency of ω1.The parameters 
+
+τ3 and τ4 control the quality factors (damping timescales), while τ1 and τ5 dictate the base amplitude and the fractional amplitude of the harmonic, respectively. 3.3. Approximation of the Gaussian Process via Variational Autoencoders. While the computational cost of the Celerite kernel is O(N ), fitting Celerite to larger time series ( >
+
+2000 observations) may require hours, and sometimes days of computation time, especially in a Bayesian framework. In order to accelerate Bayesian inference, we propose a surrogate model to approximate Celerite using a deep generative model, described next. 6
+
+3.3.1. Neural Networks as Function Approximators. To make the model computation-ally tractable during iterative Bayesian sampling, we employ a variational autoencoder (VAE), which uses a neural network architecture to approximate the background trend in the time series. A neural network is a parameterized function that maps inputs to outputs via a sequence of linear transformations and non-linear activations. These networks act as universal function approximators. To achieve this, we introduce a low-dimensional vector 
+
+z ∈ RL, known as the latent variable. The space containing these vectors acts as a com-pressed, information-dense representation of the time series, useful here because it captures the fundamental physical properties of the data itself, such as rotation phase and spot am-plitude in our stellar time series example.The neural network’s role is to learn the complex mapping from this simple latent space z to the highly structured output of the target kernel. 3.3.2. The VAE Architecture. We adopt the VAE architecture from the PriorVAE frame-work (Semenova et al., 2022). It consists of two coupled networks, the encoder Eγ (x) and the decoder Dψ(z). The encoder Eγ (x) maps the input time series x ∈ RN to a variational posterior distribution in the latent space, (4) (μγ (x), σ 2 
+
+> γ
+
+(x)) = Eγ (x)
+
+z|x ∼ N (μγ (x), σ 2 
+
+> γ
+
+(x)IL).
+
+The decoder Dψ(z) maps the latent vector z back to the observation space to reconstruct the function, (5) ˆx|z ∼ D ψ(z), z ∼ N (0 , I L).
+
+The objective of the VAE is to maximize the evidence lower bound (ELBO): (6) L(ψ, γ ; x) = Eqγ (z|x)[log pψ(x|z)] − DKL (qγ (z|x)|| p(z)) 
+
+The reconstruction term Eqγ (z|x)[log pψ(x|z)] encourages the decoder to accurately recon-struct input samples drawn from the target GP prior (e.g., the synthetic light curves used as the training dataset), while the regularization term DKL is the Kullback-Leibler divergence between the approximate posterior qγ (z|x) and the latent space prior p(z). We choose a standard normal prior p(z) = N (0 , I L) for the latent variables to ensure the space is well-regularized. By training the VAE on a large dataset generated from simulated light curves from the 
+
+Celerite kernel, the network learns to decouple the generative process into distinct training and inference phases: y ˆy 
+
+> y
+> ˆy
+> μ
+> μ
+> σ
+> σ
+> z
+> z
+> c
+> c
+> Encoder
+> Encoder
+> Decoder
+> Decoder
+> Sample
+> Sample
+> Variational
+> Autoencoder
+> Conditional
+> Variational
+> Autoencoder
+> Fig 2: Schematic representation of the overarching Variational Autoencoder (VAE) architecture. Diagram adapted from (Semenova et al., 2023) SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 7
+
+3.3.2.1. The Training Phase. During training, the encoder observes the simulated GP data 
+
+xsim and maps it to the approximate posterior distribution. The KL-divergence term ensures this learned posterior structurally aligns with the standard normal prior: 
+
+qγ (z|xsim ) ≈ N (0 , I L)
+
+Concurrently, the decoder network’s parameters ψ—which consist of the trainable weights and biases of its hidden layers—are optimized to map these structured latent vectors back into high-fidelity time series reconstructions. The optimal network parameters are found by maximizing the ELBO: 
+
+ψ∗, γ ∗ = argmax 
+
+> ψ,γ
+
+L(ψ, γ ; xsim )
+
+Through this optimization, the decoder parameters learn the exact covariance structure of the GP. 
+
+3.3.2.2. The Inference Phase (Surrogate Model). Once the VAE is fully trained, the en-coder’s job is complete, and it is no longer needed. For our downstream Bayesian inference, the pre-trained decoder acts as our stand-alone surrogate model. We can now generate new, valid realizations of the continuous trend (e.g., stellar rotation) simply by sampling z from the standard normal prior and passing it through the optimized weights of the decoder: 
+
+z ∼ N (0 , I L)
+
+ftrend = Dψ∗ (z)
+
+This sequential strategy allows us to completely bypass the expensive GP covariance matrix operations, providing a highly efficient, deterministic method for evaluating the background trend in any subsequent Bayesian model. 3.3.3. Architectural Hyperparameters: Latent and Hidden Dimensions. The computa-tional viability and predictive performance of the surrogate model depends on two hyper-parameters: the latent dimension ( L) and the hidden dimension ( H). Properly setting these architectural parameters prior to maximizing the ELBO is essential to balance data size, com-putational efficiency, and model generalization. The latent dimension L defines the size of the latent vector z ∈ RL, and acts as the primary information bottleneck. It dictates the num-ber of independent variables utilized to compress and describe the underlying physical state of the system (e.g., phase, amplitude, and spot evolution). The hidden dimension H dictates the width (number of neurons) of the dense hidden layers comprising the encoder and de-coder neural networks themselves. It determines the mathematical capacity of the network to approximate the highly non-linear, quasi-periodic dependencies of the target kernel. The algebraic scaling of the network illustrates precisely why selecting these dimensions is a critical prerequisite. Consider an input time series of size N . During the forward pass to evaluate the ELBO, the encoder linearly transforms the N -dimensional data into the hidden space, applies a non-linear activation function σ, and maps the result to the L-dimensional latent space. The core mathematical operations at each layer are matrix multiplications: 
+
+hlayer = σ(Win x + bin )
+
+zμ, z σ = Wlatent hlayer + blatent 
+
+where hlayer ∈ RH is the intermediate hidden representation, and zμ, z σ ∈ RL define the mean and standard deviation vectors of the approximate posterior distribution. Here, bin and 
+
+blatent represent the bias vectors, which shift the output of the linear transformation to in-crease the model’s flexibility in fitting the data. The function σ represents the non-linear activation function (e.g., ReLU or ELU). 8
+
+The initial weight matrix Win has dimensions H × N , requiring O(H · N ) floating-point operations. The subsequent projection matrix Wlatent has dimensions L × H, requiring O(L ·
+
+H) operations. After sampling z from the latent distribution, the decoder performs the exact inverse spatial expansion, mapping L → H → N algebraically: 
+
+hdec = σ(Wdec _in z + bdec _in )ˆx = Wout hdec + bout 
+
+where Wdec _in has dimensions H × L and Wout has dimensions N × H, reconstructing the high-dimensional continuous signal ˆx ∈ RN . Note that the activation function σ applied in the decoder is still a forward non-linear activation (typically the same function used in the encoder), not an inverse function. This enables the network to progressively construct the complex non-linearities of the target output. Consequently, the total number of trainable parameters and the memory footprint per optimization step scale proportionally with (N ·
+
+H) + ( H · L). This imposes practical trade-offs: 1. Computational Limits: If H and L are excessively large relative to a massive input size N , the resulting weight matrices will require large amounts of memory, potentially exhausting available system memory or rendering the ELBO maximization impractically slow. 2. Overfitting: If the dimensions are too large, rather than learning the generalized underly-ing physics of the GP kernel, the model will simply memorize the training set. While the training error will approach zero, the surrogate model will overfit, meaning its predictive metrics on new, unseen data trajectories will rapidly degrade, ultimately undermining the downstream Bayesian inference. 3. Underfitting: Conversely, if H and L are too compact, the information bottleneck is too severe. The network will lack the capacity to capture the true covariance structure, leading to poor reconstructions and loss of vital signal information. Therefore, identifying the optimal balance for H and L relative to the input data size N is an important step to ensure the VAE successfully compresses the physical signal without memorizing noise, resulting in a fast, robust, and generalizable surrogate model. 3.3.4. Bayesian Suitability: Geometry of the Posterior. The VAE framework offers a dis-tinct, fundamental advantage for Bayesian inference due to the geometry of the posterior. In standard GP inference, Bayesian analysis requires directly sampling the physical hyper-parameters (e.g., Period, Amplitude, Damping). These parameters are often highly corre-lated (e.g., amplitude and damping often trade off against one another), creating a complex, "banana-shaped" posterior geometry that is notoriously difficult for MCMC samplers to ex-plore efficiently. In the VAE surrogate framework, instead of sampling these correlated physical hyper-parameters, the MCMC algorithm simply samples the components of the latent vector 
+
+z = [ z1, . . . , z L]T . By design—due to the KL-divergence regularization term maximized dur-ing the VAE training—the prior on z is a standard normal distribution N (0 , I L) with uncor-related components. This mathematical restructuring of the parameter space ensures the pos-terior geometry is structurally simpler and closer to a symmetric, isotropic sphere. This sim-plified geometry is exceptionally well-suited for advanced samplers like Hamiltonian Monte Carlo (HMC) or the No-U-Turn Sampler (NUTS). SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 9
+
+3.4. Additive Models and Compositional Inference. 
+
+3.4.1. The Additive Model Setup. In many scientific domains, the GP is only one compo-nent of a larger model. In this project, we propose an additive model that is the combination of a GP, namely the Celerite kernel to describe stellar rotation, and an HMM to describe the flaring process (GP+HMM). We assume the observed data at time t, denoted Yt, is condition-ally dependent on a discrete latent state sequence St which we interpret as the star’s flaring states. The observation is modeled as the sum of two components: (7) Yt|St = ft + Rt|St
+
+Where the trend ft is modeled via Celerite and is independent of the flaring process and the residual Rt|St is the state-dependent flaring process which describes whether the star is in a quiet, flaring, or decaying state. The challenge is that the HMM models the residuals 
+
+Rt = Yt − ft and since the true continuous trend ft is unknown, we must jointly infer it alongside the parameters of the HMM. 3.4.2. The Standard GP+HMM. In the standard framework (Esquivel et al., 2024), the trend f is a random variable drawn from the GP prior. To compute the full marginal likelihood of the observations Y , we must integrate over the continuous GP function space and sum over all possible discrete state sequences S:
+
+LGP +HM M (Y ) = 
+
+Z X
+
+> S
+
+P (Y |f, S )P (S)
+
+!
+
+P (f |K) df 
+
+Here, K represents the dense N × N covariance matrix generated by the GP kernel (e.g., the 
+
+Celerite kernel), which captures the temporal correlation of the trend. The evaluation couples the residuals with this covariance structure through the GP prior: 
+
+P (f |K) ∝ 1
+
+p|K| exp 
+
+
+
+− 12 (Y − R)T K−1(Y − R)
+
+
+
+This coupling means that evaluating the joint likelihood requires evaluating the covariance matrix K−1 repeatedly during inference, making the MCMC loop scaling highly dependent on the cost of matrix inversion. 3.4.3. The Proposed VAE+HMM. In our proposed framework, we substitute the stochas-tic GP prior with the deterministic VAE decoder. The continuous trend is no longer a random variable drawn from K, but a direct, deterministic transformation of the low-dimensional latent vector z: f = Dψ(z). Therefore, the intractable integral over the function space is en-tirely replaced by inference over the low-dimensional latent space. Crucially, we treat z as an active, inferable parameter. We perform joint Bayesian inference to simultaneously estimate the posterior distribution of the latent vector z alongside the parameters of the HMM. During this joint estimation, the conditional likelihood of the data given z simplifies dramatically to evaluating the HMM strictly on the deterministic residuals: 
+
+LV AE +HM M (Y |z) = X
+
+> S
+
+P (Y |D ψ(z), S )P (S)
+
+Because the trend is deterministic for any proposed z during the sampling loop, there is no covariance matrix to invert. The target log-likelihood for our joint inference collapses completely to standard HMM operations on the residual vector Rt = Yt − D ψ(z)t:
+
+LV AE +HM M =
+
+> N
+
+X
+
+> t=1
+
+log PHMM (Rt|St)10 
+
+As demonstrated mathematically, the substitution of the dense covariance matrix—and thus the explicit GP itself—within any larger hierarchical system can be performed in a similar manner. This approach yields a generalized likelihood reduction, resulting in significant com-putational savings across a wide variety of hybrid mixture architectures. Crucially, because this substitution completely preserves the fundamental probabilistic structure of the HMM (Zucchini, MacDonald and Langrock, 2016), exact inference on the deterministic residuals remains straightforward. We utilize the forward algorithm to efficiently compute the marginal likelihood required for MCMC sampling, and subsequently apply the Viterbi algorithm to de-code the optimal sequence of hidden states upon convergence. Full mathematical details of these procedures are provided in the HMM Inference: Forward and Viterbi Algorithms sup-plementary material section. 3.4.4. Full Bayesian Inference Algorithm. The specific mathematical structure of the HMM implemented in this project—including the state definitions, allowable transition paths, and non-standard emission distributions—is directly adapted from the GP+HMM framework developed by Esquivel et al. (2024). We perform joint Bayesian inference on the latent variable z (which generates the VAE trend) and the HMM parameters using the No-U-Turn Sampler (NUTS) (Hoffman and Gel-man, 2014), implemented via the NumPyro probabilistic programming library in Python (Phan, Pradhan and Jankowiak, 2019). To illustrate how the VAE architecture completely replaces the GP within the additive model while leaving the HMM probabilistic logic fully in-tact, we detail the complete end-to-end methodology in Algorithm 1. This pipeline combines descriptive logic with the exact algebraic operations required to execute it, accommodating real-world data issues by incorporating a binary mask mt ∈ { 0, 1} for missing observations. 
+
+4. Simulation Study. 
+
+4.1. Practical Application of the VAE and Data Normalization. While the theoretical formulation of the VAE provides a robust mathematical surrogate for GPs (as detailed in Section 3.3), its practical implementation requires amplitude normalization. In standard deep learning, neural networks struggle to optimize when input features exhibit extreme, uncon-strained variability. In our context, raw stellar brightness data can vary wildly in amplitude. If passed directly into the VAE, the optimization of the ELBO function becomes numerically unstable, often resulting in exploding gradients. To ensure stability, we force the simulated GP trajectories to match the standardized scale of the real astronomical test data (approximately −3 to +3 ) prior to network optimization. However, standard normalization (using the mean and standard deviation) is highly sensitive to outliers, such as the flares we aim to detect. Therefore, we employ a robust normalization pipeline based on the median and the median absolute deviation (MAD). For each simulated light curve x, we compute the median flux across the entire time se-ries and the absolute deviations from that median. The MAD is then scaled by a constant factor of 1.4826 to make it asymptotically consistent with the standard deviation of a normal distribution. The normalized flux is thus computed as: 
+
+xnorm = x − median (x)1.4826 · median (|x − median (x)|)
+
+Concurrently, the temporal x-axis is constrained via a standard min-max scaling to project the observation times onto a strictly [0 , N ] interval. This dual-normalization ensures the VAE weights remain stable during ELBO maximization, focusing entirely on the structural mor-phology of the trend rather than arbitrary scaling factors. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 11 
+
+Algorithm 1 End-to-End VAE-HMM Inference Pipeline 
+
+Phase I: Prior Surrogate Training 
+
+1. Generate Simulated Data: Sample a training dataset of M continuous trajectories, each of length N , from the exact GP prior defined by the target kernel K:
+
+X(i) 
+
+> sim
+
+∼ N (0 , K )
+
+2. Maximize ELBO: Train the VAE architecture to map Xsim through the latent space z.3. Extract Surrogate: Discard the encoder and retain the optimized decoder weights ψ∗ as the deterministic generative function Dψ∗ (·).
+
+Phase II: Joint MCMC Inference (Bypassing Covariance Matrix Operations) 
+
+For each MCMC iteration k:
+
+4. Sample Priors: Draw continuous variables for the latent space and HMM parameters from their respective prior distributions. μ, σ, and α represent fixed prior hyperparameters. To enforce physically logical sequences, the transition matrix Θ(k) forbids specific state changes (e.g., forcing a Quiet state before a Decay state is impossible): 
+
+z(k) ∼ N (0 , I L), σ(k) 
+
+> noise
+
+∼ HalfNormal (1 .0) log( λ(k) 
+
+> f
+
+) ∼ N (μf , σ f ), logit (λ(k) 
+
+> d
+
+) ∼ N (μd, σ d)ΘQ, ΘF , ΘD ∼ Dirichlet (α) = ⇒ Θ(k) =
+
+
+
+θQQ θQF 00 θF F θF D 
+
+θDQ θDF θDD 
+
+
+
+5. Deterministic Transform (The VAE Pass): Map the sampled z through the fixed surrogate to generate the continuous trend. 
+
+f (k) 
+
+> trend
+
+= Dψ∗ (z(k))
+
+6. Residual Computation: Isolate the state-dependent signals: 
+
+R(k) 
+
+> t
+
+= Yt − f (k)
+
+> trend,t
+
+7. Likelihood Evaluation (Forward Algorithm): We define Et(j) ≡ log P (Rt|St = j) as the log-emission probability of the residual under state j. This is evaluated subject to the observed data mask mt. If an obser-vation is missing ( mt = 0 ), its log-emission Et is safely forced to 0.0.• Calculate Log-Emissions Et for each state: 
+
+Et(Q) = mt · log N (R(k) 
+
+> t
+
+|0, σ (k)
+
+> noise
+
+)
+
+Et(F ) = mt · log ExpModNormal (R(k) 
+
+> t
+
+|R(k)
+
+> t−1
+
+, σ (k)
+
+> noise
+
+, λ (k) 
+
+> f
+
+)
+
+Et(D) = mt · log N (R(k) 
+
+> t
+
+|λ(k) 
+
+> d
+
+R(k)
+
+> t−1
+
+, σ (k)
+
+> noise
+
+)
+
+• Recursive LogSumExp Update for Forward Probabilities αt(j):
+
+αt(j) = log 
+
+ X
+
+> i∈{ Q,F,D }
+
+exp 
+
+
+
+αt−1(i) + log Θ (k)
+
+> ij
+
+ + Et(j)
+
+• Total Log-Likelihood: log L(k) = LogSumExp (αN )
+
+8. HMC Step: Compute gradients of the log-posterior, log P (θ|Y ) ∝ log L(k) + log P (θ), with respect to all sampled variables to propose the next step via Hamiltonian dynamics. 
+
+Phase III: Optimal State Decoding 
+
+9. Sample-Wise Viterbi: For each retained MCMC sample s ∈ { 1, . . . , S }, apply the Viterbi Algorithm using its specific parameters Φ(s) and residuals R(s):
+
+V (s) 
+
+> t
+
+(j) = max 
+
+> i
+
+
+
+V (s)
+
+> t−1
+
+(i) + log Θ (s)
+
+> ij
+
+
+
++ E(s) 
+
+> t
+
+(j)
+
+BackPtr (s) 
+
+> t,j
+
+= argmax i
+
+
+
+V (s)
+
+> t−1
+
+(i) + log Θ (s)
+
+> ij
+
+12 
+
+Scenario 1 (Smooth & Simple) 
+
+This scenario represents a smooth trend with minimal high-frequency oscillations. It effec-tively models a star with slow rotation and stable, long-lived starspots. 0 1000 2000 3000 4000 5000 6000 7000  
+
+> Normalized Time
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> Normalized Flux Trend Observed Data
+
+Parameter Value 
+
+Q1 5.337618 
+
+S1 7.216781 
+
+ω1 1.02038 
+
+Q2 3.186107 
+
+S2 5.836664 
+
+ω2 1.718205 Fig 3: Scenario 1: Smooth and simple trend (left) alongside its exact generative Celerite parameters (right). 
+
+Scenario 2 (Fast & Noisy) 
+
+This setup features a much faster periodicity with a higher density of oscillations. The rapid fluctuations create a visually “noisy” background, testing the network’s ability to compress high-frequency variations without blurring the actual continuous signal. 0 1000 2000 3000 4000 5000 6000 7000  
+
+> Normalized Time
+> 0.75
+> 0.50
+> 0.25
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> Normalized Flux Trend Observed Data
+
+Parameter Value 
+
+Q1 6.543659 
+
+S1 -1.503824 
+
+ω1 2.932907 
+
+Q2 6.227217 
+
+S2 -4.181246 
+
+ω2 3.626107 Fig 4: Scenario 2: Fast and noisy highly oscillatory trend (left) alongside its generative parameters (right). 
+
+Scenario 3 (Complex & Amplitude Modulated) 
+
+The final scenario introduces a highly complex morphological structure, driven by a dominant first harmonic in the Celerite parameters. This generates a dynamic amplitude envelope and irregular, beating oscillatory patterns. 0 1000 2000 3000 4000 5000 6000 7000  
+
+> Normalized Time
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> Normalized Flux Trend Observed Data
+
+Parameter Value 
+
+Q1 5.277176 
+
+S1 4.481018 
+
+ω1 1.937558 
+
+Q2 2.35105 
+
+S2 2.785322 
+
+ω2 2.640813 Fig 5: Scenario 3: Complex multi-peaked trend (left) alongside its generative parameters (right). SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 13 
+
+4.2. Simulated Celerite Scenarios and Data Scales. To evaluate the surrogate model un-der realistic astronomical conditions, we based our three distinct simulation scenarios on real stellar brightness data (see Figures 3, 4 and 5 for visual representations and accompanying descriptions of these scenarios). For each case, the example continuous trend shown in the subsequent figures was obtained directly by fitting the full GP+HMM framework (Esquivel et al., 2024) to actual TESS observations. From these empirical fits, we extracted the mean generative Celerite parameters ( Q1, ω 1, S 1, Q 2, S 2, ω 2). These exact parameters were sub-sequently used to generate the large synthetic GP datasets required to train our VAE. This empirical grounding ensures that our training simulations capture a diverse and physically accurate spectrum of true background stellar behavior. Additionally, for visual clarity in the figures, we plot only every 10th data point of these highly dense time-series. Furthermore, another important aspect for the computational efficiency of the VAE sur-rogate is the size of the observation vectors. To mirror the reality of our target astronomical analyses, we evaluated each scenario across three distinct data lengths: N = 2000 , N = 5000 ,and N = 7000 . These specific sizes were chosen because they encompass the typical obser-vational windows provided by TESS. For strict comparability across these scales, the un-derlying generative sequence remains identical within each scenario; the smaller datasets are exact temporal truncations of the largest sequence (i.e., the N = 5000 dataset consists exactly of the first 5000 observations of the N = 7000 trend). 4.3. Hyperparameter Tuning. As outlined in Section 3.3.3, the dimensions of the VAE dictate its capacity to approximate the GP kernel. While theoretical intuition suggests that expanding the network dimensions should strictly improve the approximation, practical Bayesian applications present a strict trade-off between geometric accuracy and computa-tional cost. A fundamental rule in VAE design is that the latent dimension ( L) must be strictly less than or equal to the hidden dimension ( H) (Kingma and Welling, 2013). The latent space is de-signed to act as an information bottleneck, forcing the network to distill the complex tempo-ral sequence into dense, fundamental generative features (Goodfellow, Bengio and Courville, 2016). If L > H , the bottleneck is inverted; the network mathematically loses the capacity to compress the data, resulting in sparse, unstructured mappings that severely degrade the model’s predictive power. To map the trade-off between computational cost and approximation accuracy, we propose and test five distinct architectural tuning configurations, summarized in Table 1. 4.4. Performance and Efficiency Metrics. To benchmark the five VAE configurations across the different scenarios and data sizes, we divide our analysis into two distinct cate-gories: performance metrics and efficiency metrics (assessing computational speed and sam-pling geometry). For every experimental combination (scenario × data size × configuration), the MCMC algorithm was run for 2000 total iterations, comprising 1000 burn-in tuning steps                    
+
+> TABLE 1
+> The five architectural tuning configurations evaluated in the simulation study, detailing their respective Hidden (H) and Latent ( L) dimensions and estimated VRAM footprint.
+> Model Configuration Hidden Dim ( H)Latent Dim ( L)Est. VRAM Usage 1. Tiny 128 32 Very Low
+> 2. Small 256 64 Low
+> 3. Medium 1024 128 Moderate
+> 4. Large 2048 256 High
+> 5. Ultra 3072 512 Very High
+
+14 
+
+and 1000 drawn posterior samples. To ensure a standardized evaluation of computational time, all inference tasks were executed on a 14-inch MacBook Pro equipped with an Apple M3 Pro chip and 18 GB of memory. 4.4.1. Performance Metrics. Model accuracy is quantified using the mean squared error (MSE) and mean absolute error (MAE) to measure the absolute deviation between the true GP continuous trend and the VAE surrogate reconstruction. Additionally, we calculate the coefficient of determination ( R2) to assess the proportion of the trend’s variance successfully captured by the surrogate. While the following analysis focuses on these aggregated quan-titative metrics, the complete visual validation—including individual VAE fits and residual diagnostic plots for all 45 simulated conditions—is provided in the Extended Simulation Diagnostics supplementary material section. The results in Figure 6 highlight a clear spectrum of structural capability across the ar-chitectures. The Tiny and Small configurations generally underfit the data when faced with highly complex structures (Scenario 3) or massive data sizes ( N = 7000 ), yielding higher absolute errors and lower R2 values. Conversely, there is a visible optimization point around the Medium and Large models, where the network capacity is sufficient to drive the error near zero and the R2 toward 1.0. However, Figure 6 also reveals the subtle dangers of capacity scaling combined with sim-ple, limited data. In Scenario 1, the performance metrics for the smallest data size ( N = 2000 ,dark blue line) show a distinct “hump” or degradation in performance when moving from the 
+
+Small to the Medium architecture. This behavior is symptomatic of the well-documented 
+
+Scenario 1 Scenario 2 Scenario 3 
+
+Smooth & Simple Fast & Noisy Complex & Amplitude Modulated 
+
+MSE Tiny 
+
+> Small
+> Medium
+> Large
+> Ultra
+> 0.000
+> 0.001
+> 0.002
+> 0.003 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.0
+> 0.1
+> 0.2 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.0
+> 0.2
+> 0.4
+
+MAE Tiny 
+
+> Small
+> Medium
+> Large
+> Ultra
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.2
+> 0.4
+> 0.6
+
+R2Tiny 
+
+> Small
+> Medium
+> Large
+> Ultra
+> 0.992
+> 0.994
+> 0.996
+> 0.998
+> 1.000 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 Tiny
+> Small
+> Medium
+> Large
+> Ultra
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+
+Training Data Size   
+
+> 2000 5000 7000
+
+Fig 6: Performance metrics (MSE, MAE, and R2) comparing the model’s predictive accuracy across three distinct simulated scenarios. The shared legend for all subplots is provided below. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 15 
+
+“double descent” phenomenon in modern machine learning Belkin et al. (2019). At this spe-cific intermediate capacity—often referred to as the interpolation threshold—expanding the network dimensions on a smaller dataset initially leads to severe overfitting. The neural net-work uses its available capacity to precisely memorize localized noise rather than generaliz-ing the highly predictable underlying trend, causing a dip in predictive accuracy. As network dimensions increase further into the Large and Ultra configurations, the model enters a mas-sively over-parameterized regime, effectively smoothing out these memorized artifacts and allowing the test metrics to recover. Ultimately, the choice of architecture depends heavily on the user’s specific goals and com-putational constraints; we do not prescribe a single universally “best” architecture. If higher precision is required for a highly convoluted physical trend, a configuration like the Medium 
+
+or Large model could be an appropriate option. However, if the underlying GP structure is relatively simple (like Scenario 1), the Tiny and Small architectures work well. As explicitly indicated by the extremely small scale of the y-axes in the Scenario 1 plots, the absolute difference in error between the smallest and largest networks is practically negligible. In such cases, or when operating under strict hardware constraints, smaller architectures remain viable and efficient options. 4.4.2. Efficiency Metrics. Because the primary motivation of substituting a GP with a VAE is computational acceleration, we monitor the inference time (in seconds). Finally, to validate the quality of the posterior geometry, we record the effective sample size (ESS) across all sampled parameters. The efficiency metrics reiterate the need to carefully balance network dimensions. Ta-ble 2 provides explicit empirical evidence of the computational penalty incurred by over-parameterization. While the Ultra model possesses the highest theoretical capacity, moving from the Medium to the Ultra architecture results in a massive inflation of inference time (e.g., jumping from 87 to 489 seconds in Scenario 1, N = 5000 ) with rapidly diminishing structural returns. Furthermore, the latent space L = 512 of the Ultra model creates a high-dimensional geometry that is significantly harder for the NUTS sampler to explore efficiently,                                                                                                           
+
+> TABLE 2
+> Computational time (in seconds) and the mean effective sample size (ESS) calculated across all inferred model parameters for the five surrogate model architectures. Results are evaluated across three data sizes ( N) and divided by the three simulation scenarios.
+> N= 2 ,000 N= 5 ,000 N= 7 ,000
+> Model Time ESS Time ESS Time ESS Scenario 1
+> 1. Tiny 28 196 30 1839 18 1977 2. Small 11 2107 36 2155 33 2067 3. Medium 31 2110 87 3018 94 2721 4. Large 106 2203 211 1993 184 2836 5. Ultra 364 2029 489 2383 546 2660
+> Scenario 2
+> 1. Tiny 52252 62381 30 2064 2. Small 72818 26 2145 23 2226 3. Medium 37 1913 69 2585 228 2454 4. Large 155 2385 248 2441 269 2536 5. Ultra 392 1792 477 2534 418 2385
+> Scenario 3
+> 1. Tiny 61869 72122 11 1300 2. Small 52537 15 1974 48 490 3. Medium 26 2141 57 2941 87 2911 4. Large 105 2476 148 2827 209 3079 5. Ultra 274 1787 344 2960 428 2589 16
+
+explicitly reflected in a persistent drop in the average ESS. Therefore, selecting a configura-tion that matches—but does not exceed—the complexity of the data is critical for preserving the accelerated Bayesian sampling the VAE is designed to provide. 
+
+5. Results and Applications. As demonstrated in Section 4, the variational autoencoder (VAE) possesses the mathematical capacity to approximate complex Celerite trends inde-pendently of the specific underlying structure or data size. Building upon this validation, the complete additive VAE+HMM framework detailed in the methodology was applied to real empirical stellar brightness data (as introduced in Section 2). 5.1. Comparison: Celerite+HMM vs. VAE+HMM. To validate the practical utility of the surrogate model, the inference pipeline described in Algorithm 1 was implemented on real observations from TESS. Here, we directly compare the results obtained from the ex-act Celerite +HMM framework against our proposed VAE+HMM architecture for two spe-cific target stars: TIC 089257479 and TIC 234526939. The results for the third target, TIC 031381302, are provided in the supplementary material, as the exact Celerite +HMM baseline failed to converge. The specific configurations (hidden and latent dimensions) chosen to process these real-world datasets, detailed in Table 3, were directly informed by the empirical intuition devel-oped during our simulation study, coupled with an a priori exploratory data analysis of each respective time series to assess structural complexity and the likely prevalence of flare events. To ensure a rigorously fair baseline for comparison, both the exact and surrogate Bayesian ap-proaches were executed under identical sampling conditions: 2 parallel MCMC chains, each run for 2000 total iterations (comprising 1000 burn-in samples and 1000 posterior samples for each chain). While the simulation study established that the VAE can independently approximate a 
+
+Celerite trend, it is critical to assess its stability when fit jointly with the hidden Markov model component on noisy, real-world data. Figure 7 illustrates this joint performance by plotting the continuous background trend estimated by the exact Celerite +HMM model against the trend inferred by the VAE+HMM surrogate for both target stars. The tight, consistent clustering directly along the dashed Y = X identity line provides strong empirical evidence that the VAE+HMM framework successfully captures the under-lying Gaussian Process. In the left panel (TIC 089257479), the variance of the scatter is ex-tremely low. A close inspection of the extreme positive values in this panel reveals a marginal underestimation, where the core density of the surrogate predictions dips slightly below the identity line. This indicates that the VAE inherently applies a minor smoothing effect to the absolute highest peaks of the trend. In the context of scalable Bayesian inference, this minor peak-smoothing is a highly acceptable theoretical trade-off for computational acceleration. In contrast, the right panel (TIC 234526939) presents a demonstrably more challenging dataset characterized by a highly complex background structure and a denser population of localized flare events. While this structural complexity naturally introduces a slightly wider predictive variance—visible as a broader dispersion of the purple scatter—the core density of             
+
+> TABLE 3
+> Configurations of the proposed VAE+HMM framework implemented for the empirical analysis of the target stars. The table details the chosen hidden and latent dimensions alongside the total observation sequence length (N) evaluated for each respective TESS light curve.
+> Target Observation Hidden Dim ( H)Latent Dim ( L)Data Size ( N)TIC 089257479 257 64 7067
+> TIC 234526939 5200 125 7529
+
+SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 17 1.0 0.5 0.0 0.5 1.0 
+
+> Celerite + HMM Trend
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> VAE + HMM Trend
+
+(a) TIC 089257479 1.0 0.5 0.0 0.5 1.0  
+
+> Celerite + HMM Trend
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> VAE + HMM Trend
+
+(b) TIC 234526939 Inferred Trends Perfect Agreement (Y=X) 
+
+Fig 7: Scatter plots comparing the continuous background trend estimated by the standard Celerite +HMM frame-work (x-axis) against the proposed VAE+HMM surrogate model (y-axis). The dashed black line represents the 
+
+Y = X identity. The tight adherence of the estimations to this diagonal demonstrates the high accuracy and struc-tural fidelity of the VAE approximation compared to the exact Gaussian Process. 
+
+the VAE surrogate remains robustly centered along the identity line. Furthermore, the use of alpha-blending (transparency) in both panels visually confirms that the vast majority of the posterior density remains aligned with the baseline. Finally, while convergence was successfully achieved in all cases—yielding potential scale reduction factors ( ˆR) strictly less than 1.05 and an effective sample size (ESS) greater than 2000—the VAE+HMM framework demonstrated a large improvement in computational cost. As detailed in Table 4, replacing the iterative O(N ) matrix inversions of the exact Celerite 
+
+kernel with the pre-trained neural forward pass of the VAE drastically reduced inference times. For TIC 089257479, the surrogate achieved a massive ∼260x speedup, compressing what would be hours of computation into minutes. Furthermore, as demonstrated by the re-sults for TIC 234526939, even exceptionally difficult cases featuring complex trend structures and numerous flares remain highly manageable under the proposed framework. While the ab-solute computation time naturally increases for such demanding time series, the VAE+HMM approach still achieves a ∼3x speedup, reaching full convergence significantly faster than the exact GP alternative. 
+
+TABLE 4
+
+Comparison of computational inference time (in seconds) between the exact Celerite+HMM framework and the proposed VAE+HMM surrogate model when applied to the empirical TESS light curves. The speedup factor highlights the substantial acceleration achieved by the surrogate while maintaining the structural fidelity shown in Figure 7. 
+
+Target Observation Celerite + HMM VAE + HMM Speedup Factor TIC 089257479 39568 152 ∼ 260x TIC 234526939 55607 18584 ∼ 3x 18 0 1000 2000 3000 4000 5000 6000 7000 
+
+> Normalized Time
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Normalized Flux
+> VAE Trend
+> Quiet
+> Firing
+> Decay
+> Fig 8: TIC 089257479 mean-centered light curve along with the fit of the proposed VAE+HMM framework, which simultaneously models the continuous background trend using the VAE surrogate, models the distribution of the observations across 3 states (Quiet, Firing, Decay) and assigns each point to its most likely state in the time series.
+
+5.2. Stellar Time Series Analysis. For our primary target star, TIC 089257479, we present the comprehensive results of the VAE+HMM framework applied to the entire dataset. The model successfully approximates the trend (estimated by the VAE) and distributions of observations in our 3 states (Quiet, Firing, Decay) dictated by the HMM. Because the sheer volume of data in the full light curves visually compresses individual events, we subsequently isolate a specific time window for each star. These zoomed-in panels clearly illustrate the pre-cise detection of localized flare morphologies and are accompanied by their respective Viterbi decoding posterior distributions, demonstrating that we are able to both estimate the trend as well as detect stellar flares with the HMM. To examine the framework’s performance on a significantly more challenging dataset, the corresponding analysis for our second target, TIC 234526939, is provided as supplementary material. Figure 8 displays the full mean-centered light curve for TIC 089257479. The VAE suc-cessfully tracks the star’s smooth, highly regular periodic background trend. Against this baseline, the HMM isolates several distinct, high-amplitude flare events. Because the under-lying physics of this star are relatively stable, the vast majority of the time series is classified as the Quiet state, punctuated by sparse but energetic outbursts reaching normalized fluxes in excess of 35. To examine the model’s localized behavior, Figure 9 zooms in on the most prominent flare event occurring between normalized times t = 2625 and t = 2750 . The top panel illustrates a classic flare morphology: a rapid, singular burst accurately tagged as the Firing state, fol-lowed by a gradual return to the baseline appropriately classified as the Decay state. The bottom panel confirms the robustness of the inference; the Viterbi decoding posterior propor-tions demonstrate near-absolute certainty ( 100% ) in the state assignments. This suggests that the VAE baseline provides a stable foundation for the HMM to identify discrete states. 
+
+6. Discussion. In this paper, we introduced a scalable generative surrogate framework designed to bypass the computational bottlenecks of exact GP inference within additive Bayesian models for astronomical time series. By training a VAE to compress the struc-tured covariance of the Celerite kernel into an isotropic latent space, we eliminated the need for repetitive, dense matrix inversions during iterative MCMC sampling. We demonstrated the efficacy of this VAE+HMM architecture on empirical TESS light curves, successfully decomposing the continuous, quasi-periodic stellar rotation from stochastic flaring events. Crucially, our methodology achieved massive computational speedups while preserving the SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 19 2640 2660 2680 2700 2720 2740        
+
+> Normalized Time
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Normalized Flux
+> Zoomed-In Region: VAE Trend + HMM States
+> VAE Trend
+> 95% Credible Interval
+> Quiet
+> Firing
+> Decay 2640 2660 2680 2700 2720 2740
+> Time Normalized
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> State Confidence
+> Viterbi Decoding Posterior Proportions
+> Firing Decay Quiet Te
+> xt Te
+> xt
+
+Fig 9: Detected flare example from implementing the VAE+HMM framework on the real-time series of TIC 089257479, focusing on the specific normalized time interval from t = 2625 to t = 2750 . Top panel: Shows the fit of the VAE+HMM model to this localized flare event, including the estimated continuous background trend and the assigned state for each point. Bottom panel: Posterior distribution of Viterbi sequences per observation, representing the proportion of the assigned states over this exact same time interval. 
+
+structural fidelity and probabilistic rigor of the exact mathematical formulation, thereby mak-ing the fitting of high-cadence datasets highly efficient. With the computational barriers of the continuous baseline alleviated, this framework is primed for large-scale application across diverse stellar catalogs. Because our joint model efficiently isolates stochastic flares and captures the uncertainty of their durations directly with the HMM, applying this pipeline to massive databases of M-dwarf stars will allow for highly precise estimations of population-level flare energy and flare frequency distributions (FFD). To further accelerate this pipeline at the catalog level, future work will focus on opti-mizing the downstream discrete inference. While the VAE surrogate successfully resolves the continuous GP bottleneck, implementing the HMM components—specifically the Forward marginalization and Viterbi state-decoding algorithms—within a high-performance, vector-ized computing framework like JAX would fully utilize GPU hardware, rendering the end-to-end additive inference almost instantaneous. Furthermore, expanding the generative surrogate itself offers a highly promising avenue for unified time-series modeling. Currently, the VAE is trained on simulations tailored to individual observational targets. A natural evolution is to construct a single, amortized sur-rogate model capable of generalizing across a vast array of stars. By conditioning the learn-ing process of the neural network directly on the generative physical parameters (e.g., the exact Celerite frequencies and damping factors), the network could dynamically adapt to di-verse stellar morphologies without requiring retraining. This conditioned architecture, draw-ing on advancements such as the PriorCVAE framework (Semenova et al., 2023), could subsequently be extended to accommodate the multivariate, multi-band observations antici-20 
+
+pated from future satellite missions. Ultimately, coupling a conditioned generative surrogate with vectorized discrete inference creates a uniquely powerful paradigm for hierarchical, population-level astrophysical characterization. 
+
+Acknowledgments. RH, VLB and GE received funding from the Data Sciences Institute at the University of Toronto and the Canadian Statistical Sciences Institute, Ontario. VLB and GE were supported by the Natural Sciences and Engineering Research Council of Canada. SUPPLEMENTARY MATERIAL 
+
+Data and code 
+
+Data and code developed for reproducibility of the results in the paper are available as Sup-plementary Material in the form of a compressed folder. The folder includes the empirical TESS light curve files, the complete VAE+HMM codebase featuring an example to run the full model for the results presented in Section 5, and a detailed README file for its use. This can also be downloaded from a GitHub repository: https://github.com/rodri98bh/VAE_ HMM_Stellar_Flares. REFERENCES 
+
+AMBIKASARAN , S., F OREMAN -M ACKEY , D., G REENGARD , L., H OGG , D. W. and O’N EIL , M. (2015). Fast direct methods for Gaussian processes. IEEE Transactions on Pattern Analysis and Machine Intelligence 38 
+
+252–265. ANGUS , R., M ORTON , T., A IGRAIN , S., F OREMAN -M ACKEY , D. and R AJPAUL , V. (2018). Inferring proba-bilistic stellar rotation periods using Gaussian processes. Monthly Notices of the Royal Astronomical Society 
+
+474 2094–2108. BAUER , M., VAN DER WILK , M. and R ASMUSSEN , C. E. (2016). Understanding probabilistic sparse Gaussian process approximations. In Advances in Neural Information Processing Systems 29 1533–1541. BELKIN , M., H SU , D., M A, S. and M ANDAL , S. (2019). Reconciling modern machine-learning practice and the classical bias–variance trade-off. Proceedings of the National Academy of Sciences 116 15849–15854. BETANCOURT , M. and G IROLAMI , M. (2015). Hamiltonian Monte Carlo for hierarchical models. In Current trends in Bayesian methodology with applications 79–101. CRC Press. DIGGLE , P. J., T AWN , J. A. and M OYEED , R. A. (1998). Model-based geostatistics. Journal of the Royal Statis-tical Society: Series C (Applied Statistics) 47 299–350. DUVENAUD , D. K., N ICKISCH , H. and R ASMUSSEN , C. E. (2011). Additive Gaussian processes. In Advances in Neural Information Processing Systems 24 226–234. ESQUIVEL , J. A., S HEN , Y., L EOS -B ARAJAS , V., E ADIE , G., S PEAGLE , J., C RAIU , R. V., M EDINA , A. and D AVENPORT , J. (2024). Detecting stellar flares in photometric data using hidden Markov models. arXiv preprint arXiv:2404.13145 .FILIPPONE , M., Z HONG , M. and G IROLAMI , M. (2013). A comparative evaluation of stochastic-based inference methods for Gaussian process models. Machine Learning 93 93–114. FOREMAN -M ACKEY , D., A GOL , E., A MBIKASARAN , S. and A NGUS , R. (2017). Fast and scalable Gaussian process modeling with applications to astronomical time series. The Astronomical Journal 154 220. GOODFELLOW , I., B ENGIO , Y. and C OURVILLE , A. (2016). Deep Learning . MIT Press. HENSMAN , J., F USI , N. and L AWRENCE , N. D. (2013). Gaussian processes for big data. In Proceedings of the 29th Conference on Uncertainty in Artificial Intelligence (UAI) 282–290. AUAI Press. HOFFMAN , M. D. and G ELMAN , A. (2014). The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamil-tonian Monte Carlo. Journal of Machine Learning Research 15 1593–1623. JENKINS , J. M., T WICKEN , J. D., M CCAULIFF , S., C AMPBELL , J., S ANDERFER , D., L UNG , D., M ANSOURI -SAMANI , M., G IROUARD , W., T ENENBAUM , P., K LAUS , T. et al. (2016). The TESS science processing operations center. In Software and Cyberinfrastructure for Astronomy IV 9913 99133E. SPIE. KINGMA , D. P. and W ELLING , M. (2013). Auto-encoding variational bayes. arXiv preprint arXiv:1312.6114 .PHAN , D., P RADHAN , N. and J ANKOWIAK , M. (2019). Composable effects for flexible and accelerated proba-bilistic programming in NumPyro. arXiv preprint arXiv:1912.11554 .QUIÑONERO -C ANDELA , J. and R ASMUSSEN , C. E. (2005). A unifying view of sparse approximate Gaussian process regression. Journal of Machine Learning Research 6 1939–1959. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 21 
+
+RASMUSSEN , C. E. and W ILLIAMS , C. K. I. (2006). Gaussian Processes for Machine Learning . MIT Press, Cambridge, MA. RICKER , G. R., W INN , J. N., V ANDERSPEK , R., L ATHAM , D. W., B AKOS , G. Á., B EAN , J. L., B ERTA -THOMPSON , Z. K., B ROWN , T. M., B UCHHAVE , L., B UTLER , N. R. et al. (2015). Transiting Exoplanet Survey Satellite (TESS). Journal of Astronomical Telescopes, Instruments, and Systems 1 014003. ROBERTS , S., O SBORNE , M., E BDEN , M., R EECE , S., G IBSON , N. and A IGRAIN , S. (2013). Gaussian pro-cesses for time-series modelling. Philosophical Transactions of the Royal Society A: Mathematical, Physical and Engineering Sciences 371 20110550. RUE , H., M ARTINO , S. and C HOPIN , N. (2009). Approximate Bayesian inference for latent Gaussian models by using integrated nested Laplace approximations. Journal of the Royal Statistical Society: Series B (Statistical Methodology) 71 319–392. SEMENOVA , E., X U, Y., H OWES , A., R ASHID , T., B HATT , S., M ISHRA , S. and F LAXMAN , S. (2022). Prior-VAE: encoding spatial priors with variational autoencoders for small-area estimation. Journal of The Royal Society Interface 19 20220094. SEMENOVA , E., V ERMA , P., C AIRNEY -L EEMING , M., S OLIN , A., B HATT , S. and F LAXMAN , S. (2023). PriorCVAE: scalable MCMC parameter inference with Bayesian deep generative modelling. arXiv preprint arXiv:2304.04307 .SNELSON , E. and G HAHRAMANI , Z. (2005). Sparse Gaussian processes using pseudo-inputs. In Advances in Neural Information Processing Systems 18 .TITSIAS , M. (2009). Variational learning of inducing variables in sparse Gaussian processes. In Artificial Intelli-gence and Statistics 567–574. PMLR. WU, A., K OYEJO , O. and P ILLOW , J. (2017). Gaussian process based nonlinear latent structure discovery in multivariate spike train data. Advances in Neural Information Processing Systems 30 .ZUCCHINI , W., M AC DONALD , I. L. and L ANGROCK , R. (2016). Hidden Markov Models for Time Series: An Introduction Using R , 2nd ed. Monographs on Statistics and Applied Probability . CRC Press, Boca Raton, FL. 22 
+
+APPENDIX A: HMM INFERENCE: FORWARD AND VITERBI ALGORITHMS Substituting the Gaussian Process (GP) with the variational autoencoder (VAE) decoder only changes how the continuous trend is generated; it does not alter the fundamental proba-bilistic structure of the hidden Markov model (HMM). This means we can still fit an HMM to the data and estimate the parameters associated with the three states of interest. Once fitted, we can perform state decoding and assign the most likely states that generated our data using standard dynamic programming methods such as the Viterbi algorithm. We depend on two algorithms to perform inference and do state decoding in HMMs for this paper, the forward algorithm for likelihood evaluation and the Viterbi algorithm for state decoding. 
+
+A.1. The Forward Algorithm (Likelihood Evaluation). The forward algorithm com-putes the (marginal) likelihood of an HMM. Because there are many possible sequences of hidden states that could have produced the data, enumerating every single path is computa-tionally intractable. Instead, the forward algorithm uses dynamic programming to efficiently sum over the probabilities of all possible state sequences step-by-step. Let αt(j) = P (R1, . . . , R t, S t = j) be the forward probability of observing the residuals up to time t and ending in state j. The recursive update relies on this summation: (A.1) αt(j) = 
+
+ X
+
+> i∈{ Q,F,D }
+
+αt−1(i)Θ ij 
+
+ · P (Rt|St = j)
+
+where Θij is the state transition matrix and P (Rt|St = j) is the emission probability of the residual under the distribution of state j. The likelihood LV AE +HM M can be computed by P 
+
+> i∈{ Q,F,D }
+
+αT (i).
+
+A.2. The Viterbi Algorithm (State Decoding). The Viterbi algorithm estimates the most likely sequence of hidden states that produced the observations given the parameter values. Once the MCMC sampler converges and we have our final model parameters, we want to know exactly when the system was in each specific state. Let Vt(j) be the maximum probability of any path leading to state j at time t. The recursive update is: (A.2) Vt(j) = max  
+
+> i∈{ Q,F,D }
+
+(Vt−1(i)Θ ij ) · P (Rt|St = j)
+
+During this forward pass, the algorithm actively stores "backpointers" to remember the best previous state choice at each step. Finally, it traces these backpointers in reverse to reconstruct the optimal hidden state sequence (the Viterbi path). APPENDIX B: EXTENDED SIMULATION DIAGNOSTICS This supplementary document provides the complete set of diagnostic plots for the simu-lation study presented in Section 4 of the main manuscript. For each of the three simulated Celerite scenarios (Smooth & Simple, Fast & Noisy, Com-plex & Amplitude Modulated), we provide visual diagnostics across the three evaluated data sizes ( N = 2000 , 5000 , 7000 ). Within each condition, we plot the variational autoencoder (VAE) approximation against the true continuous Gaussian Process (GP) trend (left column), and the corresponding residual distributions (right column) for all five evaluated architectural configurations (Tiny through Ultra). SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 23 
+
+B.1. Scenario 1: Smooth & Simple. VAE Approximation Fit Residuals Tiny 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.08 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+> Error
+
+Small 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.08 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Medium 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+> Error
+
+Large 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+> Error
+
+Ultra 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.075 
+
+0.050 
+
+0.025 
+
+0.000 
+
+0.025 
+
+0.050 
+
+0.075 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.1: Diagnostic plots for Scenario 1 ( N = 2000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. 24 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.2: Diagnostic plots for Scenario 1 ( N = 5000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 25 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.3: Diagnostic plots for Scenario 1 ( N = 7000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. 26 
+
+B.2. Scenario 2: Fast & Noisy. VAE Approximation Fit Residuals Tiny 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+> Error
+
+Small 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.6 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+> Error
+
+Medium 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+> Error
+
+Large 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.100 
+
+0.075 
+
+0.050 
+
+0.025 
+
+0.000 
+
+0.025 
+
+0.050 
+
+0.075 
+
+0.100 
+
+> Error
+
+Ultra 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.06 
+
+0.04 
+
+0.02 
+
+0.00 
+
+0.02 
+
+0.04 
+
+0.06 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.4: Diagnostic plots for Scenario 2 ( N = 2000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 27 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.075 
+
+0.050 
+
+0.025 
+
+0.000 
+
+0.025 
+
+0.050 
+
+0.075 
+
+0.100 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.5: Diagnostic plots for Scenario 2 ( N = 5000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. 28 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.3 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.6: Diagnostic plots for Scenario 2 ( N = 7000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 29 
+
+B.3. Scenario 3: Complex & Amplitude Modulated. VAE Approximation Fit Residuals Tiny 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Error
+
+Small 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.5 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.00 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+> Error
+
+Medium 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+> Error
+
+Large 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+> Error
+
+Ultra 0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 250 500 750 1000 1250 1500 1750 2000 
+
+Normalized Time 
+
+0.15 
+
+0.10 
+
+0.05 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.7: Diagnostic plots for Scenario 3 ( N = 2000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. 30 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.5 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.75 
+
+0.50 
+
+0.25 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.6 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 
+
+Normalized Time 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.8: Diagnostic plots for Scenario 3 ( N = 5000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 31 
+
+VAE Approximation Fit Residuals Tiny 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Error
+
+Small 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Error
+
+Medium 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.5 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.5 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Error
+
+Large 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.8 
+
+0.6 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+> Error
+
+Ultra 0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+1.0 
+
+0.5 
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+> Normalized Flux
+
+0 1000 2000 3000 4000 5000 6000 7000 
+
+Normalized Time 
+
+0.4 
+
+0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+> Error
+
+Observed Data VAE Predicted Mean 90% Credible Interval 
+
+Fig B.9: Diagnostic plots for Scenario 3 ( N = 7000 ). The left column displays the true GP trend versus the surrogate VAE approximation. The right column displays the corresponding residual errors. 32 
+
+APPENDIX C: FULL MODEL RESULTS AND CONVERGENCE RESILIENCE FOR TIC 031381302 This supplementary section presents the comprehensive modeling results for the M dwarf target TIC 031381302. Beyond demonstrating the full-scale application of the proposed framework, the analysis of this specific stellar light curve highlights a critical computational advantage of the VAE surrogate over the exact mathematical formulation. During the evaluation of this target, the standard Celerite+HMM framework exhibited se-vere pathological behavior. Specifically, the exact Gaussian Process approach struggled to achieve stable Markov chain Monte Carlo (MCMC) convergence within the localized tempo-ral window from t = 1354 .108511 to t = 1364 .518159 . In this interval, the exact kernel failed to adequately disentangle the complex background morphology from the localized stochastic variation, leading to non-convergent chains and a breakdown of the inference pipeline. In stark contrast, the proposed VAE+HMM framework processed the entire observational sequence seamlessly. By leveraging a neural architecture configured with a hidden dimension of H = 1024 and a latent dimension of L = 128 , the surrogate model maintained robust structural fidelity across the entire light curve, successfully resolving the background trend even through the highly complex epoch where the exact Celerite model failed. Furthermore, the generative surrogate achieved this stable joint inference with high com-putational efficiency. The complete VAE+HMM pipeline reached full Bayesian convergence for TIC 031381302 in precisely 3,600 seconds. This performance not only demonstrates the capability of the surrogate to accurately detect flares across the full time series, but also un-derscores its computational resilience in highly complex regimes where the exact Gaussian Process becomes computationally intractable or analytically unstable. 0 1000 2000 3000 4000 5000 6000 7000 
+
+> Normalized Time
+> 5
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> Normalized Flux
+> VAE Trend
+> Quiet
+> Firing
+> Decay
+> Fig C.10: TIC 031381302 mean-centered light curve along with the fit of the proposed VAE+HMM framework, which simultaneously models the continuous background trend using the VAE surrogate and hidden Markov model, as well as assigns discrete states (Quiet, Firing, Decay) to each point in the time series via state decoding post-inference.
+
+APPENDIX D: FULL MODEL RESULTS AND EXTENDED TIME SERIES ANALYSIS FOR TIC 234526939 Following the detailed analysis of our primary target, TIC 089257479, this supplementary section presents the comprehensive modeling results for the M dwarf target TIC 234526939. Mirroring the structure of the main text, this appendix provides both the full-scale applica-tion of the proposed VAE+HMM framework and a zoomed-in examination of a localized, complex flaring event. Crucially, the analysis of this specific stellar light curve highlights the SCALABLE BAYESIAN MODELS FOR STELLAR FLARE DETECTION 33 
+
+structural fidelity and robustness of the surrogate model when applied to a highly challenging dataset characterized by high-frequency background oscillations and dense flare clusters. 0 1000 2000 3000 4000 5000 6000 7000 
+
+> Normalized Time
+> 4
+> 2
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> Normalized Flux
+> VAE Trend
+> Quiet
+> Firing
+> Decay
+
+Fig D.11: TIC 234526939 mean-centered light curve along with the fit of the proposed VAE+HMM framework, which simultaneously models the continuous background trend using the VAE surrogate and hidden Markov model, as well as assigns discrete Markov states (Quiet, Firing, Decay) to each point in the time series via state decoding post-inference. 
+
+Figure D.11 presents the full light curve for TIC 234526939, representing a significantly more challenging dataset. The underlying VAE trend must adapt to a highly complex, rapidly oscillating background structure. Despite this high-frequency, noisy variation, the VAE sur-rogate avoids overfitting to the localized extremes, maintaining a continuous baseline that al-lows the HMM to successfully detect a dense cluster of flare events scattered heavily through-out the entire observation window. Figure D.12 focuses on a localized time interval ( t = 2850 to t = 3000 ) for this complex star. Even with the undulating VAE trend shifting directly beneath the flare, the framework identifies the discrete state transitions. The top panel shows a clear sequence from the Quiet state, to an intense Firing phase, through an extended Decay phase, and smoothly back to Quiet. The corresponding Viterbi proportions in the bottom panel reaffirm this precision; despite the inherent volatility of the star’s background emission, the state transitions remain remarkably sharp, maintaining extremely high certainty for the duration of the event. 34 2860 2880 2900 2920 2940 2960 2980         
+
+> Normalized Time
+> 2
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Normalized Flux
+> Zoomed-In Region: VAE Trend + HMM States
+> VAE Trend
+> 95% Credible Interval
+> Quiet
+> Firing
+> Decay 2860 2880 2900 2920 2940 2960 2980
+> Time Normalized
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> State Confidence
+> Viterbi Decoding Posterior Proportions
+> Firing Decay Quiet
+
+T
+
+e
+
+xt T
+
+e
+
+xt 
+
+Fig D.12: Detected flare example from implementing the VAE+HMM framework on the real time series of TIC 234526939, focusing on the specific normalized time interval from t = 2850 to t = 3000 . Top panel: Shows the fit of the VAE+HMM model to this localized flare event, including the estimated continuous background trend and the assigned state for each point. Bottom panel: State “decoding distributions” across all Viterbi sequences per observation, representing the posterior probabilities of the assigned states over this exact same time interval.

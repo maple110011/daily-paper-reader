@@ -1,0 +1,2197 @@
+Title: SOAP-Bubbles: Structured Weight Uncertainty for Neural Networks
+
+URL Source: https://arxiv.org/pdf/2606.23357v1
+
+Published Time: Tue, 23 Jun 2026 03:14:13 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+# SOAP-Bubbles ◦❍
+
+# Structured Weight Uncertainty for Neural Networks 
+
+Adrian R. Minut 1∗ Nico Daheim 2 Marco Miani 3
+
+Mohammad Emtiyaz Khan 4,5 Wu Lin 6 Thomas Möllenhoff 5†
+
+> 1
+
+Sapienza University of Rome, Rome, Italy 
+
+> 2
+
+Ubiquitous Knowledge Processing Lab (UKP Lab), Department of Computer Science, Technical University of Darmstadt National Research Center for Applied Cybersecurity ATHENE, Germany 
+
+> 3
+
+Technical University of Denmark, Lyngby, Denmark 
+
+> 4
+
+TU Darmstadt & Hessian Center for AI (hessian.AI), Darmstadt, Germany 
+
+> 5
+
+RIKEN Center for Advanced Intelligence Project, Tokyo, Japan 
+
+> 6
+
+University of Central Florida, Orlando, United States 
+
+Abstract 
+
+Structured weight-uncertainty can improve many aspects of deep learning, but it remains costly to estimate and difficult to implement. Here, we show that these issues can be addressed by adapting the SOAP optimizer. Our key idea is to run IVON, an existing diagonal-covariance variational method, in the eigenspace of SOAP’s preconditioner and then use the preconditioner to transform the diagonal estimate into a non-diagonal covariance. The resulting method has costs similar to those of SOAP and requires no drastic changes to training pipelines. We call the posteriors obtained in this way SOAP-Bubbles and our new optimizer Eigenspace-VON (EVON). We show that, for logistic regression, EVON recovers the exact Gaussian covariance and that, for language model pretraining, it yields significantly better results than existing diagonal-covariance methods. Our work makes it easier to estimate more expressive posterior distributions for deep learning at scale. 
+
+1 Introduction 
+
+Weight uncertainty promises many improvements over current deep learning recipes. For example, it can be useful for exploration in reinforcement learning (Sehnke et al., 2010), to better weight models in model merging (Daheim et al., 2024), to improve language generation by combining the predictions of many model samples (Daheim et al., 2025; Gan and Isola, 2026), or to provide a better understanding of model behavior via improved influence estimation (Nickl et al., 2023). There is a long list of other applications (Nguyen et al., 2018; Osawa et al., 2019; Wang et al., 2024; Cong et al., 2025; Khan, 2025; Möllenhoff et al., 2025, inter alia) but, ultimately, techniques for estimating weight uncertainty explicitly during training are rarely used in practice and real-world settings. One reason for this gap is that available variational learning methods for large models, such as IVON (Shen et al., 2024), rely on diagonal Gaussians. This diagonal structure restricts the expres-sivity of the learned distribution and the resulting weight uncertainty. Structured (non-diagonal) approximations, such as those using Kronecker-factored structures (Immer et al., 2021; Daxberger et al., 2021; Eschenhagen et al., 2023; Dhahri et al., 2024; Hong et al., 2025), can learn much richer uncertainty representations. Yet, these post-hoc methods, such as Laplace’s method, introduce signifi- 
+
+> ∗Part of this work done during an internship at RIKEN AIP.
+> †Correspondence to:
+
+thomas.moellenhoff@riken.jp 
+
+> Preprint.
+> arXiv:2606.23357v1 [cs.LG] 22 Jun 2026
+
+NanoGPT-123M-FineWeb1B      
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>      
+> 
+> 
+> 
+>   
+> 
+> 
+
+    
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>  
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+IVON 
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> Large NN Small NN
+
+          
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>      
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>  
+
+    
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+    
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+# ✔
+
+# ✘
+
+Test-Time Posterior Sampling 
+
+Llama-134M       
+
+> 
+> 
+> 
+> 
+> 
+> 
+> !
+> 4816 32 64
+> MC samples
+> °1.0
+> °0.5
+> 0.0
+> 0.5
+> 1.0
+> PPL improvement (%)
+> £10 °1
+> EVON
+> IVON
+> 
+> 
+> 
+> 
+> 
+>   
+> 
+> SO
+> Bubble Covariance
+> Diagonal
+> Covariance
+> SOAP Bubble
+> Exact
+> Posterior
+> MAP
+> SOAP’s
+> Precond.
+
+SOAP-Bubbles > Diagonal  
+
+> 
+> 
+> 
+
+Figure 1: Our key idea is to use SOAP’s preconditioner to transform diagonal covariances into non-diagonal ones. We call the resulting posteriors SOAP-Bubbles and they provide a much better fit to the exact posterior. Our new optimizer EVON runs the state-of-the-art variational method IVON in SOAP’s eigenspace and significantly improves both the training speed and final loss for language models (here, NanoGPT). SOAP-Bubble posteriors obtained with EVON also work much better for model averaging during test-time than IVON’s diagonal posteriors. cant overhead by requiring stored training examples and a secondary pass over the data. Existing structured variational methods (Bae et al., 2018; Zhang et al., 2018; Louizos and Welling, 2016; Mishkin et al., 2018; Lin et al., 2019, 2021; Fadel et al., 2025) are difficult to implement, incur substantial memory and compute overheads, and have not yet been shown to scale effectively to modern architectures like language models. Ideally, we would like a method that combines ease of implementation, minimal overhead, and scalability with expressive uncertainty estimation. To bridge this gap, we introduce SOAP-Bubbles , a novel family of expressive, non-diagonal posterior distributions. SOAP-Bubbles are transformations of diagonal covariances, where the transformation is a rotation constructed from SOAP’s preconditioner (Vyas et al., 2025). By considering a diag-onal posterior within a rotated subspace, SOAP-Bubbles can capture block-diagonal covariances in the original space without the prohibitive costs usually associated with structured covariance approximations. We illustrate the main idea in Fig. 1 (left), where compared to the axis-aligned diagonal Gaussian, the SOAP-Bubble provides a superior fit to the exact posterior. In our theoretical contribution, we show that SOAP-Bubbles can often recover the optimal full-Gaussian posterior approximation, for example in binary logistic regression. To efficiently optimize and sample from these structured posteriors at scale, we propose the Eigenspace Variational Online Newton (EVON) algorithm. EVON entails only a simple modification to the SOAP optimizer (Vyas et al., 2025). SOAP (ShampoO with Adam in the Preconditioner’s Eigenbasis) constructs a block-diagonal preconditioner from stochastic minibatch gradients and runs Adam within the resulting eigenspace. EVON builds directly on this structure, operating in the same eigenspace but replacing Adam with the mean-field variational method IVON (Shen et al., 2024). This maps a diagonal variational method in the eigenspace to a non-diagonal, expressive posterior in the original weight space, achieving the performance of structured variational inference without requiring extensive changes to standard training pipelines. In our experiments, we demonstrate that EVON allows SOAP-Bubbles to scale to language model training, yielding consistently better results than IVON under the same computational budget. For example, when training NanoGPT on FineWeb-1B (Penedo et al., 2024), EVON significantly im-proves validation loss, as shown in Fig. 1 (middle). Furthermore, ensembling models sampled from SOAP-Bubbles substantially outperforms ensembling from IVON’s diagonal posterior, see Fig. 1 (right). This confirms that our approach not only improves training optimization dynamics but successfully captures a richer representation of weight uncertainty. To contextualize EVON’s design and understand why capturing these non-diagonal covariances has historically been so challenging, we next turn to the foundations of variational learning and prior efforts to model structured weight uncertainty. 22 Variational Learning and Structured Weight Uncertainty 
+
+Scalable and practical estimation of non-diagonal (or structured) weight uncertainty for large deep networks remains an important open problem. Post-hoc Laplace approximations (Daxberger et al., 2021; Eschenhagen et al., 2023) have been scaled to modern neural networks, but require an additional pass through the training data which comes with extra costs and is not always available. In contrast, variational learning methods estimate weight uncertainty during training but scalable implementations are typically restricted to the mean-field (diagonal variance) setting. We now introduce variational learning (VL) in detail, and discuss challenges of VL and going beyond diagonal variances. In deep learning we usually minimize a loss function ℓ(θ) = Pni=1 ℓi(θ)/n over n data examples with respect to the parameter θ. To model weight uncertainty, VL instead searches for a distribution over the parameters and targets a related objective over q(θ),
+
+min  
+
+> q∈Q
+
+ζ Eq(θ)[ℓ(θ)] + KL( q(θ) ∥ p(θ)) , (1) where Q is a set of candidate posterior distributions. The additional Kullback-Leibler term regularizes towards a prior p(θ), here assumed to be an isotropic Gaussian with zero-mean. This corresponds to a quadratic regularizer (non-decoupled weight-decay) and in this paper, we will always use prior variance (ζδ )−1I, where δ > 0 is the usual weight-decay parameter. Variational learning for large deep nets faces several challenges, the most prominent being the choice of the posterior distribution family Q. If Q is chosen as a family of Gaussian distributions with diagonal covariance, then every parameter in the neural network has a mean and a variance. Naively optimizing both the mean and the variance, as is often done with Adam or SGD in the variational Bayesian inference literature, doubles the number of optimization variables and departs from standard deep learning optimizers. 
+
+2.1 Diagonal Variational Methods and IVON 
+
+It is possible to formulate algorithms for the variational objective in Eq. 1 which take similar form to the Adam optimizer and do not introduce additional variables, as shown by Khan et al. (2018); Zhang et al. (2018) and later scaled to larger models (Osawa et al., 2019; Shen et al., 2024). These methods exploit a connection between Gaussian posteriors and second-order optimization. The main idea is that the update for the diagonal posterior variance takes a similar form to the exponential moving average of the diagonal curvature approximation tracked in Adam. Thus, only small modifications to Adam, such as adding the posterior noise to the weights before computing the gradient, are required to target the variational objective. For example, the Variational Online Newton (VON) method of Khan et al. (2018) can be implemented with the following update rules: 
+
+bh ← bg ◦ (θ − m)/σ2, h ← β2 h + (1 − β2) bh, m ← m − α (bg + δ m)/(h + δ), (2) where bg is the stochastic gradient evaluated at a weight sampled from the posterior θ ∼N (m, diag( σ2)) with variance σ2 = 1 /(ζ(h + δ)) is the posterior variance. bh is the per-parameter curvature estimate obtained via Stein’s identity (element-wise product denoted by ◦), h is the running average of the (positive) curvature with decay rate β2, δ > 0 is a small prior/regularization constant and α is the learning rate. The mean update for m uses the curvature as a preconditioner and a weight-decay term δm due to the prior. IVON adds an additional quadratic correction term to the h-update to keep the posterior variance positive, as well as momentum and clipping. Both VON and IVON however maintain only a single scalar curvature estimate per parameter (no extra auxiliary variables beyond the usual running average), injects Gaussian posterior noise via the sampled θ, and targets the variational objective in Eq. 1. This makes it a natural baseline for diagonal variational methods, but as all diagonal variational methods, it cannot track inter-parameter correlations in the posterior covariance. 
+
+2.2 Non-Diagonal Variational Methods 
+
+Extending variational learning to Gaussians with non-diagonal covariances in a scalable manner is non-trivial. There has been earlier work on noisy variants of second-order methods with Kronecker-factored curvature approximations (K-FAC), see (Zhang et al., 2018; Bae et al., 2018). However, K-FAC methods have not yet been shown to work well for modern language model training, and similar 3is to be expected of their noisy counterparts which target the variational objective. SLANG (Mishkin et al., 2018) maintains a low-rank plus diagonal posterior, but has not been shown to scale to large problems and comes both with implementation and memory overheads. Similarly, the recent VIKING method (Fadel et al., 2025) requires expensive projection steps to optimize non-diagonal covariances, and has not been shown to scale to transformer architectures. Bayesian online natural gradient (BONG) (Jones et al., 2024) tracks non-diagonal covariances but has only been run on small MNIST-scale models. Variational methods for matrix Gaussian posteriors (Louizos and Welling, 2016; Lin et al., 2019; van der Ouderaa et al., 2024) have so far also only been shown to work on smaller problems and usually require significant changes to training pipelines. Overall, no scalable and easy-to-use non-diagonal variational methods, i.e., implemented as optimizers, that can train modern neural networks exist so far. Our work aims to fill this gap. 
+
+2.3 Kronecker-Factored Preconditioners and SOAP 
+
+Recently, optimizers with Kronecker-factored preconditioners, including Shampoo (Gupta et al., 2018) and SOAP (Vyas et al., 2025), have gained attention for language model training. For instance, a distributed implementation of Shampoo (Shi et al., 2023) won a recent challenge on optimization for deep learning (Kasimbeg et al., 2025). Here, we build on these advances. Modern practical versions of the Shampoo optimizer, here written for a single 2D parameter matrix 
+
+Θ inside a neural network, use the following update: 
+
+L ← βL + (1 − β)GG ⊤, R ← βR + (1 − β)G⊤G, Θ ← Θ − αL−1/p GR −1/p , (3) where G denotes the stochastic minibatch gradient. We do not consider momentum and weight decay for simplicity. While the original Shampoo uses p = 4 , the recent works Morwani et al. (2025); Vyas et al. (2025); Eschenhagen et al. (2025) suggest using a square root, that is, p = 2 . Vyas et al. (2025) show a striking similarity of the above update with p = 2 to running a step of Adafactor or Adam in the eigenspace obtained from the above running average matrices L and R:
+
+QL ← Eig (L), QR ← Eig (R), Θ ← Θ − αQLUQ ⊤ 
+
+> R
+
+, (4) where U is Adam’s preconditioned update, that is, the gradient momentum divided by running average of squared gradients. A crucial point is that the momentum and preconditioner are built from the projected gradients G◦ = Q⊤ 
+
+> L
+
+GQ R. They refer to the above method as ’ShampoO with Adam in the Preconditioners Eigenbasis’ (SOAP), and show promising performance across various language model pretraining tasks. We summarize SOAP for a single layer in Alg. 1. In the following, we show that the SOAP optimizer can be modified to minimize Eq. 1 for a variational family of Gaussian posteriors with structured covariance which we call SOAP-Bubbles. The main idea is to replace the Adam update used in SOAP in the eigenspace spanned by QL and QR from Eq. 4 in order to target the variational objective. 
+
+3 SOAP-Bubble: Posteriors within the SOAP Eigenbasis 
+
+To formalize this idea, we consider a variational family defined within a transformed coordinate space. Rather than learning a diagonal Gaussian directly in the original parameter space θ, as IVON (Shen et al., 2024) does, we define a diagonal Gaussian over a transformed variable w:
+
+Qdiag = N (w | m, diag (σ2)) | m ∈ RP , σ ∈ RP 
+
+> +
+
+, (5) 
+
+w is connected to the original parameter via θ = Pw , where P is assumed to be an orthonormal matrix in the following. Under this transformation, the corresponding family in the original space has non-diagonal covariances: 
+
+Qbubble =
+
+n
+
+N (θ | Pm , Pdiag (σ2)P⊤) | m ∈ RP , σ ∈ RP
+
+> +
+
+o
+
+. (6) Later, we will pick P to be a rotation built from a Kronecker product of SOAP’s QR and QL matrices, and will therefore refer to elements q ∈ Q bubble as a SOAP-Bubble. The main insight to allow for an efficient implementation is that the variational objective for the family Qbubble with structured covariance can actually be written over the diagonal family with a transformed loss. The following theorem formalizes this fact. 4Algorithm 1 SOAP (Vyas et al., 2025) No Sampling 
+
+> 1: 2:
+
+Update Preconditioner and Momentum  
+
+> 3:
+
+G ← b∇ℓ(Θ), G◦ ← Q⊤ 
+
+> L
+
+GQ R 
+
+> 4:
+
+bH ← G◦ ⊙ G◦ 
+
+> 5:
+
+¯G ← β1 ¯G + (1 − β1)G◦ 
+
+> 6:
+
+H ← β2H + (1 − β2) bH
+
+Update Parameters  
+
+> 7:
+
+U ← ¯G/(√H + ϵ) 
+
+> 8:
+
+Θ ← Θ − αQLUQ ⊤
+
+> R
+
+Update Eigenbasis  
+
+> 9:
+
+L ← β3L + (1 − β3)GG ⊤ 
+
+> 10:
+
+R ← β3R + (1 − β3)G⊤G 
+
+> 11:
+
+Every T steps: 
+
+QL, QR ← Eig (L), Eig (R)
+
+Update momentum ¯G (new basis) 
+
+Algorithm 2 EVON (Proposed Method) Sample Parameters  
+
+> 1:
+
+Vi,j ← 1/(ζ(Hi,j + δ))  
+
+> 2:
+
+Θ ← M + QLEQ ⊤ 
+
+> R
+
+, Ei,j ∼ N (0 , V i,j )
+
+Update Hessian and Momentum  
+
+> 3:
+
+G ← b∇ℓ(Θ), G◦ ← Q⊤ 
+
+> L
+
+GQ R 
+
+> 4:
+
+bH ← clip (E ⊙ G◦/V) 
+
+> 5:
+
+¯G ← β1 ¯G + (1 − β1)G◦ 
+
+> 6:
+
+H ← β2H + (1 − β2) bH
+
++ 12 (1 − β2)2( bH − H)⊙2/(H + δ)
+
+Update Posterior Mean  
+
+> 7:
+
+U ← ( ¯G + δQ⊤ 
+
+> L
+
+MQ R)/(H + δ) 
+
+> 8:
+
+M ← M − α clip  QLUQ ⊤
+
+> R
+
+
+
+Update Eigenbasis  
+
+> 9:
+
+L ← β3L + (1 − β3)GG ⊤ 
+
+> 10:
+
+R ← β3R + (1 − β3)G⊤G 
+
+> 11:
+
+Every T steps: 
+
+QL, QR ← Eig (L), Eig (R)
+
+Update momentum ¯G (new basis) Figure 2: EVON entails only simple modifications to the SOAP optimizer (highlighted in red ). Given an existing implementation of SOAP, it is easy to implement and scales to large problems as SOAP does. ⊙ denotes element-wise multiplication of matrices, / elementwise division and ⊙2 elementwise squaring. As in Vyas et al. (2025), the updates are written here for a single 2D parameter matrix. 
+
+Theorem 1. For the above variational families Qdiag and Qbubble , the following holds: 
+
+(1) = min 
+
+> q∈Q bubble
+
+ζ Eq(θ)[ℓ(θ)] + KL( q(θ) ∥ N (θ | m0, Σ0)) = min 
+
+> q∈Q diag
+
+ζ Eq(w)[ℓ(Pw )] + KL 
+
+
+
+q(w) ∥ N (w | P⊤m0, P⊤Σ0P)
+
+
+
+. (7) The result follows directly from the invariance of the KL under invertible transformations, which is the equality case in the data-processing inequality (Cover and Thomas, 2006). A complete proof is in Sec. A. 
+
+3.1 Eigenbasis Variational Online Newton (EVON) 
+
+Using Thm. 1, we can obtain our proposed EVON method shown in Alg. 2. The method is derived by applying IVON (Lin et al., 2020; Shen et al., 2024) to the variational objective in q(w), where we set P = QR ⊗ QL as the Kronecker product of the matrices estimated in SOAP. In particular, we use (Shen et al., 2024, Alg. 1) and rewrite the iteration in terms of the posterior in the original space θ. The variational objective in q(w) then fits exactly the form used in (Shen et al., 2024, Eq. 1) under a transformed loss ˜ℓ(w) = ℓ(Pw ). A full self-contained derivation is given in Sec. B, and the resulting EVON method is shown in Alg. 2. The modifications made in red to SOAP in Alg. 2 cause the EVON method to estimate a variational posterior with non-diagonal covariance in the original space θ:
+
+q(θ) = N (θ | vec (M), (QR ⊗ QL) diag (vec (V)) ( Q⊤ 
+
+> R
+
+⊗ Q⊤ 
+
+> L
+
+)) . (8) EVON minimizes Eq. 1 for this family of posteriors, whereas SOAP just targets the regular loss ℓ(θ).We will now go over all the modifications that EVON makes to SOAP in Alg. 2, one by one. 5
+
+> 
+
+          
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>      
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+>  
+
+    
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+    
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+Figure 3: EVON is not only scalable to language models, but also exact in standard variational Bayesian inference applications. Here, we show that on a binary Bayesian logistic regression, EVON can recover the exact posterior among all full Gaussians. In the left, we plot EVON’s covariance against the exact full 256 × 256 posterior covariance matrix on the USPS dataset (16x16 grayscale digits, 3vs5). EVON also matches the variational objective of the full Gaussian posterior whereas IVON converges slower and to a worse value. (i) Unlike SOAP, EVON uses random samples drawn from the variational posterior (see Eq. 8) in lines 1 and 2 and then computes the gradient at the randomly sampled weights in line 3. This yields an unbiased estimator of the expected loss Eq(θ)[ℓ(θ)] in the variational objective rather than targeting the regular loss ℓ(θ) as in SOAP. (ii) Line 4 changes the squared-gradient to an estimator of the (expected) Hessian. It is known that using squared-gradients approximation to the Hessian within a variational method leads to biased solutions, even on simple logistic regression problems (Khan et al., 2018, Fig. 2a). Due to this change, EVON is able to recover exact solutions on simple variational Bayesian problems, though a squared-gradient heuristic may also work well for deep learning as it trades-off variance for bias (Graves, 2011; Osawa et al., 2019). To reduce the variance, we added an optional clipping in line 4, which we found empirically to improve the method when training transformers. (iii) Line 6 uses the quadratic correction term proposed by Lin et al. (2020), which ensures that the posterior precision remains positive. This is needed, since we departed from the squared-gradient estimator to a Hessian estimator, which may not be positive anymore in nonconvex problems. (iv) The preconditioned gradient in line 7 now includes the prior, written through the weight-decay parametrization δ, and we precondition with the Hessian rather than the square-root. (v) Line 8 uses a clipping of the preconditioned gradient. EVON has the option to either use element-wise clipping as in IVON or the Sophia optimizer (Liu et al., 2024), or to use spectral-clipping (Carlson et al., 2015; Jordan et al., 2024b). The remaining lines of the two algorithms are completely identical, allowing to implement EVON as a simple modification of SOAP’s existing codebase. Since SOAP updates both QL and QR
+
+occasionally during the iteration, the variational family that is being optimized also changes during the course of training. When updating QL and QR in line 11, both for SOAP and EVON the momentum ¯G is projected into the new space via ¯G ← Q⊤ 
+
+> L
+
+Q′
+
+> L
+
+G′(Q′
+
+> R
+
+)⊤QR, where the apostrophe denotes the old Q and ¯G. However, both methods do not update H into the new space. 
+
+3.2 Implementation Details 
+
+We now discuss several key implementation details which are important to make EVON practical. 
+
+Distributed Training. In distributed data-parallel training, using independent noise across GPUs is beneficial as it reduces the variance of these stochastic estimators (Kingma et al., 2015; Osawa et al., 2019). EVON requires a careful implementation beyond a naive distributed data-parallel reduction of gradients to ensure the noisy gradients are aggregated consistently for the Hessian estimator. 
+
+Approximate Eigenbasis. Both SOAP and EVON use the QR decomposition as an efficient approxi-mation to the eigendecomposition in line 11, as explained in Vyas et al. (2025). We use float32 
+
+precision for the (approximate) eigenbasis computation, but the rest can be kept in bfloat16 .
+
+Adaptive Hessian Clipping. Optionally, we clip the Hessian estimator in line 4 adaptively relative to the current moving average of the Hessian. Specifically, if F is the raw Hessian estimator in line 4 at 6
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+IVON  EVON 
+
+Prediction 
+
+at Samples 
+
+Prediction 
+
+at Mean 
+
+> EVON
+> Exact
+> (HMC) IVON
+
+   
+
+
+
+
+
+     
+
+>     
+>  
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+
+IVON  EVON     
+
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> 
+> Large NN Small NN
+>    
+> 
+> 
+> 
+>  
+
+Posterior Sampling 
+
+Llama-134M-C4-2B  Llama-134M-C4-2B 
+
+Posterior Sampling   
+
+> 4816
+> MC sam
+> °2
+> 0
+> 2
+> PPL improvement vs mean (%)  £10 °3
+
+# TODO 
+
+# TODO 
+
+# TOD     
+
+>  
+> !
+> 
+> 
+> 
+> 
+> !
+>  
+> 
+> 
+> 
+>  
+> 
+> 
+> 
+> 
+> 
+> "  !!  
+> 
+> 
+> 
+
+Test-Time Posterior Sampling     
+
+> 4816 32 64
+> MC samples
+> °1
+> 0
+> 1
+> PPL improve vs mean (%)  £10 °1
+> EVON
+> IVON
+
+(a)  (b) 8 16 32 64 
+
+> MC samples
+> 10 °1
+> EVON
+> IVON
+> riance
+
+Figure 4: (a) We compare IVON and EVON’s posterior samples on a small and a large MLP. While both methods work for large MLPs, for small networks, IVON’s uncertainty estimates outside of the data are collapsed. In contrast, EVON gives more diverse posterior samples in regions where the data does not fully specify the solution, showing the strength of non-diagonal posterior covariances. 
+
+(b) We show exact posterior marginal distributions (gray) computed with HMC (Hoffman and Gelman, 2014; Carpenter et al., 2017) on multiclass logistic regression on the UCI Iris dataset against IVON’s mean-field approximation (black) and EVON’s posterior (red). IVON’s mean-field approximation underestimates the variance, while EVON better captures the HMC marginals. a given step, we apply element-wise clipping to obtain clip (F, −γ(H + ϵ), γ (H + ϵ)) , where H is the current Hessian estimate, γ is a clip ratio (defaulting to 10 ), and ϵ is a small constant. 
+
+Clipping. EVON can either use element-wise clipping or spectral clipping to the final parameter update matrix. Spectral clipping is implemented using a quintic Newton-Schulz iteration, as in Muon (Jordan et al., 2024b), which approximates the orthogonalization without requiring a full SVD. 
+
+3.3 Theoretical Guarantees 
+
+Originally, we conceived EVON as a scalable way to obtain non-diagonal covariances for large-scale variational Bayesian training of transformer-based language models. In experiments on simple linear models we found that the method is surprisingly exact and often recovers the exact posterior among all multivariate Gaussian posteriors. Motivated by these practical findings, shown in Fig. 3, we provide here a theoretical explanation under which conditions exact solutions are possible. The following theorem and corollary characterize sufficient conditions under which this is the case. 
+
+Theorem 2. Assume a linear model f , loss function c, an isotropic prior and a dataset 
+
+D = {(xi, y i)}i=1 ,...,n . If the matrices L and {xix⊤ 
+
+> i
+
+}i=1 ,...,n and the matrices R and 
+
+{Eθ∼q [∇2 
+
+> f
+
+c(yi, f (Θ, xi))] }i=1 ,...,n are simultaneously diagonalizable, then the optimal posterior q
+
+among all multivariate Gaussians is a SOAP-Bubble, that is, in EVON’s variational family. 
+
+Corollary 1. Assume a linear model, and an isotropic prior. For binary logistic regression and for general linear regression, both with orthogonal datapoints/features xi, the exact full Gaussian posterior among all multivariate Gaussians is a SOAP-Bubble, that is, in EVON’s variational family. 
+
+4 Experiments 
+
+4.1 Illustrative Examples 
+
+We illustrate the intuition behind EVON on a simple logistic regression problem with two-dimensional features in Fig. 1. IVON uses a diagonal posterior covariance, visualized as an ellipse in the figure. This forces the ellipse to be axis aligned which causes the posterior mean to move far away from the mode. EVON’s rotated space aligns well with the shape of the posterior, allowing for a rotated ellipse that captures more of the posterior mass. In Fig. 4 (left), we run IVON and EVON on one large and one small fully-connected neural network on a simple regression task. Due to the limited capacity of the small neural network, the uncertainty estimates from IVON’s diagonal posterior lack diversity. EVON’s non-diagonal posterior finds highly 7    
+
+> 
+> 
+> 
+>    
+> 
+> 
+> 
+>  
+
+Llama-134M-C4-2B  Llama-134M-C4-2B 
+
+Posterior Sampling   
+
+> 4816
+> MC sampl
+> °2
+> 0
+> 2
+> PPL improvement vs mean (%)  £10 °3
+
+# TODO 
+
+# TODO 
+
+# TOD     
+
+>  
+> !
+> 
+> 
+> 
+> 
+> !
+>  
+> 
+> 
+> 
+>  
+> 
+> 
+> 
+> 
+> 
+> "  !!  
+> 
+> 
+> 
+
+Test-Time Posterior Sampling     
+
+> 4816 32 64
+> MC samples
+> °1
+> 0
+> 1
+> PPL improve vs mean (%)  £10 °1
+> EVON
+> IVON
+
+Figure 5: EVON also works well on Llama models, improving significantly over IVON training, similar to how SOAP improves over AdamW. EVON’s final validation loss is lower than SOAP’s and training with EVON provides a variational posterior on top for free. Averaging next-token probabilities of random models drawn from EVON’s SOAP-Bubble before predicting the next token decreases the test-loss more than using IVON’s posterior. diverse solutions in regions where there is little data which highlights the benefits of non-diagonal posterior covariances for neural networks. Details for both of these experiments are found in Sec. E.1. 
+
+4.2 Bayesian Logistic Regression 
+
+To study the expressiveness of EVON’s variational family we consider a binary Bayesian logistic regression problem on the USPS digit classification task next. We compare EVON to an exact full Gaussian posterior and show the results in Fig. 3. We find that both the covariance structure and variational bound attained match those of the full Gaussian posterior. This validates our theoretical result of Thm. 2. A diagonal posterior used in IVON leads to a worse variational bound and slower convergence. SLANG (Mishkin et al., 2018) can also approximate the full Gaussian posterior when the rank is sufficiently high (see Fig. 1 of Mishkin et al. (2018) which uses the same experimental setup), but SLANG has so far not been shown to scale to larger problems. We also consider a multiclass Bayesian logistic regression problem on the UCI Iris dataset on the right hand side of Fig. 4. There, we compute exact posterior marginals using sampling (Hoffman and Gelman, 2014). EVON’s Gaussian marginals closely match these exact marginals, whereas IVON’s marginals are highly concentrated. We report details for these experiments in Sec. E.2. 
+
+4.3 Language Model Pre-Training 
+
+Our goal is to show that EVON can provide good performance on larger scales, for example, for language model pretraining. To show this, we pretrain language models using NanoGPT (Jordan et al., 2024a) (125M parameters) in Fig. 1 (right) and the LLaMA-based architecture from Glentis et al. (2025) (134M parameters) with EVON, following the same setup as Lin et al. (2026) in Fig. 5, and compare it to AdamW, IVON, and SOAP. We fix training hyperparameters like the token budget, batch size, learning-rate schedule, and data pipeline across all methods and only swap the optimizer. We report details for these experiments in Sec. E.3. In Fig. 1, we compare IVON, and EVON on NanoGPT pre-training on a 1B subset of FineWeb (Penedo et al., 2024). EVON demonstrates superior performance by quickly reaching a lower loss in the initial phase of the optimization, and maintains a large gap up until the end of training. We additionally report the perplexity (PPL) improvement relative to each method’s posterior mean as a function of the number of Monte Carlo samples used for Bayesian model-averaging on a held-out validation set. For very small sample counts, averaging is not yet beneficial, but with more samples both methods improve over their posterior means. EVON delivers larger gains and scales better with the number of samples, whereas IVON’s improvements quickly saturate. This indicates that EVON’s non-diagonal posterior provides more useful uncertainty estimates that could be employed further for test-time scaling, where IVON’s posterior has already provided improvements (Cong et al., 2025). 8Metric Optimizer CARS DTD EuroSAT GTSRB MNIST RESISC45 SUN397 SVHN Acc. ↑
+
+AdamW 84 .03 2.75 81 .20 1.29 98 .32 0.44 98 .97 0.11 99 .51 0.13 95 .61 0.25 77 .85 0.22 96 .76 0.37 
+
+IVON 87 .11 0.39 80 .48 0.43 98 .71 0.12 98 .71 0.11 99 .52 0.12 95 .17 0.32 77 .21 0.11 96 .98 0.34 
+
+—”— @32 87 .32 0.53 80 .60 0.39 98 .78 0.07 98 .74 0.08 99 .53 0.12 95 .23 0.25 77 .27 0.11 97 .01 0.32 
+
+SOAP 81 .39 4.05 82 .98 0.89 98 .98 0.08 98 .40 0.14 99 .55 0.09 95 .74 0.03 77 .51 0.09 96 .92 0.15 
+
+EVON 88 .11 0.45 82 .15 0.36 98 .72 0.13 99 .02 0.13 99 .60 0.06 95 .31 0.82 78 .84 0.24 97 .35 0.19 
+
+—”— @32 88 .51 0.47 81 .99 0.26 98 .87 0.11 99 .11 0.15 99 .63 0.05 95 .79 0.22 79 .28 0.16 97 .41 0.16 
+
+NLL ↓
+
+AdamW 0.564 0.086 0.813 0.043 0.055 0.012 0.046 0.010 0.031 0.005 0.156 0.007 0.854 0.018 0.133 0.011 
+
+IVON 0.409 0.010 0.731 0.006 0.042 0.006 0.053 0.007 0.033 0.007 0.183 0.008 0.791 0.006 0.132 0.015 
+
+—”— @32 0.411 0.013 0.670 0.013 0.034 0.003 0.051 0.007 0.032 0.007 0.164 0.009 0.775 0.003 0.129 0.014 
+
+SOAP 0.675 0.160 0.696 0.014 0.042 0.005 0.070 0.010 0.035 0.004 0.161 0.009 0.832 0.013 0.141 0.005 
+
+EVON 0.415 0.010 0.787 0.013 0.044 0.005 0.059 0.010 0.027 0.002 0.180 0.010 0.758 0.004 0.129 0.008 
+
+—”— @32 0.409 0.008 0.633 0.005 0.035 0.002 0.035 0.005 0.026 0.001 0.123 0.007 0.695 0.003 0.117 0.005 
+
+ECE ↓
+
+(×100 )AdamW 4.92 0.60 9.21 0.69 0.89 0.12 0.29 0.06 1.01 0.02 2.21 0.09 9.03 0.57 0.78 0.20 
+
+IVON 1.67 0.41 4.93 0.40 0.61 0.15 0.59 0.09 1.07 0.18 2.50 0.20 4.84 0.24 0.69 0.15 
+
+—”— @32 5.76 0.54 2.47 0.52 0.43 0.08 0.60 0.11 1.09 0.18 1.64 0.22 3.75 0.18 0.79 0.14 
+
+SOAP 5.46 1.10 7.04 0.78 0.71 0.08 0.75 0.14 0.85 0.04 2.48 0.15 7.57 0.68 0.69 0.08 
+
+EVON 3.89 0.22 8.86 0.26 0.57 0.10 0.58 0.13 0.95 0.03 2.70 0.18 6.54 0.20 0.98 0.12 
+
+—”— @32 6.39 0.61 3.53 0.32 0.67 0.05 0.86 0.15 1.49 0.04 0.51 0.17 1.30 0.18 2.73 0.30 
+
+Brier ↓
+
+AdamW 0.235 0.038 0.292 0.016 0.026 0.006 0.015 0.002 0.009 0.002 0.069 0.003 0.330 0.005 0.052 0.006 
+
+IVON 0.188 0.007 0.291 0.004 0.020 0.002 0.018 0.002 0.008 0.002 0.077 0.004 0.327 0.001 0.049 0.006 
+
+—”— @32 0.191 0.008 0.282 0.006 0.018 0.001 0.018 0.002 0.008 0.002 0.073 0.004 0.324 0.001 0.048 0.006 
+
+SOAP 0.271 0.056 0.263 0.008 0.017 0.001 0.024 0.003 0.008 0.001 0.067 0.002 0.329 0.002 0.051 0.002 
+
+EVON 0.177 0.005 0.281 0.002 0.020 0.001 0.017 0.002 0.007 0.001 0.071 0.003 0.308 0.001 0.045 0.003 
+
+—”— @32 0.182 0.005 0.260 0.002 0.018 0.000 0.013 0.002 0.007 0.000 0.062 0.003 0.296 0.002 0.043 0.002 
+
+Table 1: We finetune CLIP ViT-B/16 on 8 classification datasets. EVON is highlighted in gray , the best scores are bolded , and the second best scores are in red. When compared to IVON, EVON often provides improvements in terms of Accuracy, Negative Log-Likelihood (NLL), Expected Calibration Error (ECE) and Brier scores. For variational optimizers, we can improve scores by averaging the predictions of 32 model samples (BMA). EVON’s gains are often bigger compared to IVON’s, suggesting that the estimated posterior is more informative. In Fig. 5 (left, middle), we compare IVON, SOAP, AdamW and EVON on LLaMA training. We train all models on the same 2B token subset of C4 (Raffel et al., 2020). Just as SOAP improves upon AdamW, EVON improves over IVON and reaches an overall lower loss than SOAP, while also providing a variational posterior. The variational posterior is immediately useful to get better results with more inference compute, and Fig. 5 shows that averaging softmax predictions of posterior ensembles for predicting the next token reduces the overall validation loss. We observe a bigger reduction in test loss for EVON than for IVON, again suggesting that the non-diagonal posterior contains better uncertainty estimates. 
+
+4.4 Fine-Tuning CLIP Models 
+
+Finally, we use EVON to finetune CLIP models (Radford et al., 2021) on several downstream tasks in the visual domain. We initialize the model with the OpenAI ViT-B/16 backbone pre-trained using the AdamW optimizer. We then train the linear layers of the ViT model (99% of parameters) on 8 visual classification benchmarks. We list these benchmarks in Sec. E.4 along with further experimental details. We evaluate all methods in terms of downstream accuracy, negative log-likelihood (NLL), expected calibration error (ECE, Naeini et al. (2015)), and Brier score (Brier, 1950) and compare EVON to AdamW, IVON, and SOAP. Results are summarized in Table 1. EVON performs on par with the best performing optimizers and sometimes outperforms them, especially in terms of NLL, ECE and Brier score. To test the effectiveness of the estimated posteriors, we perform Bayesian Model Averaging, which we report as EVON@32 in the table (indicating that we use 32 Monte Carlo samples). Same applies to IVON@32. As shown, variational optimizers provide comparable or better performance, even with pre-trained checkpoints obtained from a non-variational optimizer (AdamW). EVON is especially effective at improving over the best accuracy of the non-variational counterparts. At the same time, when using Bayesian Model Averaging, calibration and uncertainty quantification performance remains strong. Interestingly, we find that across the tested optimizers, the best result for each task is often achieved with 32 Monte Carlo samples for EVON. For IVON, averaging predictions only brings marginal improvements compared to the mean, perhaps due to lack of expressiveness of the diagonal 9covariances. For both IVON and EVON, we note inconsistencies in the ECE metrics after BMA in some cases; following Baan et al. (2022), these deviations may stem from the reliance on hard labels or finite-sample bias. Implementation details can be found in Sec. E.4. 
+
+5 Discussion and Limitations 
+
+Scaling variational learning with structured weight uncertainty to large neural networks has tradition-ally been a hard problem. Our proposed EVON method offers a simple solution, requiring only few modifications to the contemporary second-order deep learning optimizer SOAP. Our results further confirm a fundamental connection between second-order optimization and Gaussian variational Bayesian methods (Opper and Archambeau, 2009; Khan et al., 2018). Due to this connection, further advances in second-order optimization are expected to lead to better variational learning methods, and vice versa, variational Bayesian principles can inform the design of better optimizers. Despite being scalable to large problems, EVON also works surprisingly well on classical variational Bayesian inference problems, and we have provided some theoretical justifications for that. For language model training, EVON can even surpass SOAP’s final validation loss while offering additional SOAP-Bubble posteriors for free. These can be used to improve validation loss during test-time, and evaluating their usefulness in various downstream applications such as continual learning (Nguyen et al., 2018), model understanding (Nickl et al., 2023), language generation (Daheim et al., 2025) or exploration and data collection in open-ended settings (Silver and Sutton, 2025) is a promising avenue for future research. In distributed settings, EVON requires a careful implementation to minimize computational overhead compared to Adam. Since EVON is structurally similar to SOAP, this can be addressed by building on top of improvements over SOAP or Shampoo (Shi et al., 2023; Lin et al., 2026). Like any other variational learning method, EVON also introduces an extra hyperparameter, ζ, from the variational objective that must be tuned carefully. Setting ζ too large causes the posterior to collapse, while setting it too small leads to unstable training. Developing scaling laws to predict how to optimally choose ζ for a given model and dataset size remains an important direction for future work. 
+
+Acknowledgements 
+
+We thank Cong Bai for helpful discussions and help with implementing the EVON method. This work is supported by the Bayes duality project, JST CREST Grant Number JPMJCR211. TM acknowledges the support of JSPS KAKENHI Grant Number 26H02541. This research work has been funded by the German Federal Ministry of Research, Technology and Space and the Hessian Ministry of Higher Education, Research, Science and the Arts within their joint support of the National Research Center for Applied Cybersecurity ATHENE. ARM acknowledges support from Sapienza University of Rome, under Startup Research project TVT (Task Vector Transfer across heterogeneous models). 
+
+Author Contribution 
+
+Authors: Adrian R. Minut (ARM), Nico Daheim (ND), Marco Miani (MM), Mohammad Emtiyaz Khan (MEK), Wu Lin (WL), Thomas Moellenhoff (TM). MEK and TM discussed the possibility of variational training in a subspace. This led TM to develop a first version of the EVON algorithm and run some proof-of-concept experiments. With feedback from WL, ND and TM, ARM refined the method and implemented a scalable variant. ARM conducted all the experiments on Llama, nanoGPT and ViT with help from ND, WL and TM. TM did the small-scale illustrative experiments with suggestions from MEK. MM derived the theoretical results, with feedback from TM. All authors contributed to writing the paper, as well as proof-reading. 10 References 
+
+Baan, J., Aziz, W., Plank, B., and Fernandez, R. (2022). Stop measuring calibration when humans disagree. In Goldberg, Y., Kozareva, Z., and Zhang, Y., editors, Conference on Empirical Methods in Natural Language Processing (EMNLP) , pages 1892–1915, Abu Dhabi, United Arab Emirates. Association for Computational Linguistics. Bae, J., Zhang, G., and Grosse, R. (2018). Eigenvalue corrected noisy natural gradient. In Neural Information Processing Systems (Bayesian Deep Learning Workshop) .Brier, G. W. (1950). Verification of Forecasts Expressed in Terms of Probability. Monthly Weather Review , 78(1):1–3. Carlson, D. E., Collins, E., Hsieh, Y.-P., Carin, L., and Cevher, V. (2015). Preconditioned spectral descent for deep learning. In Advances in Neural Information Processing Systems (NeurIPS) .Carpenter, B., Gelman, A., Hoffman, M. D., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M., Guo, J., Li, P., and Riddell, A. (2017). Stan: A probabilistic programming language. Journal of Statistical Software , 76:1–32. Cheng, G., Han, J., and Lu, X. (2017). Remote sensing image scene classification: Benchmark and state of the art. Proceedings of the IEEE , 105(10):1865–1883. Cimpoi, M., Maji, S., Kokkinos, I., Mohamed, S., and Vedaldi, A. (2014). Describing textures in the wild. In IEEE Conference on Computer Vision and Pattern Recognition (CVPR) .Cong, B., Daheim, N., Shen, Y., Yokota, R., Khan, M. E., and Möllenhoff, T. (2025). Improving LoRA with variational learning. arXiv:2506.14280 .Cover, T. M. and Thomas, J. A. (2006). Elements of information theory . John Wiley & Sons. Daheim, N., Meister, C., Möllenhoff, T., and Gurevych, I. (2025). Uncertainty-aware decoding with minimum Bayes risk. In International Conference on Learning Representations (ICLR) .Daheim, N., Möllenhoff, T., Ponti, E., Gurevych, I., and Khan, M. E. (2024). Model merging by uncertainty-based gradient matching. In International Conference on Learning Representations (ICLR) .Daxberger, E., Kristiadi, A., Immer, A., Eschenhagen, R., Bauer, M., and Hennig, P. (2021). Laplace redux–effortless Bayesian deep learning. In Advances in Neural Information Processing Systems (NeurIPS) .Dhahri, R., Immer, A., Charpentier, B., Günnemann, S., and Fortuin, V. (2024). Shaving weights with Occam’s razor: Bayesian sparsification for neural networks using the marginal likelihood. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) .Eschenhagen, R., Defazio, A., Lee, T.-H., Turner, R. E., and Shi, H.-J. M. (2025). Purifying Shampoo: Investigating Shampoo’s heuristics by decomposing its preconditioner. In Advances in Neural Information Processing Systems (NeurIPS) .Eschenhagen, R., Immer, A., Turner, R., Schneider, F., and Hennig, P. (2023). Kronecker-factored approximate curvature for modern neural network architectures. In Advances in Neural Information Processing Systems (NeurIPS) .Fadel, S. G., Roy, H., Krämer, N., Zainchkovskyy, Y., Syrota, S., Mahou, A. V., Ek, C. H., and Hauberg, S. (2025). VIKING: Deep variational inference with stochastic projections. In Advances in Neural Information Processing Systems (NeurIPS) .Gan, Y. and Isola, P. (2026). Neural thickets: Diverse task experts are dense around pretrained weights. arXiv:2603.12228 .Glentis, A., Li, J., Han, A., and Hong, M. (2025). A minimalist optimizer design for LLM pretraining. In ES-FoMo III: 3rd Workshop on Efficient Systems for Foundation Models .11 Graves, A. (2011). Practical variational inference for neural networks. In Advances in Neural Information Processing Systems (NeurIPS) .Gupta, V., Koren, T., and Singer, Y. (2018). Shampoo: Preconditioned stochastic tensor optimization. In International Conference on Machine Learning (ICML) .Helber, P., Bischke, B., Dengel, A., and Borth, D. (2019). EuroSAT: A novel dataset and deep learning benchmark for land use and land cover classification. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing , 12(7):2217–2226. Hoffman, M. D. and Gelman, A. (2014). The No-U-Turn Sampler: Adaptively setting path lengths in Hamiltonian Monte Carlo. J. Mach. Learn. Res. , 15(1):1593–1623. Hong, D. M., Mlodozeniec, B. K., Eschenhagen, R., and Turner, R. E. (2025). Better hessians matter: Studying the impact of curvature approximations in influence functions. In Mechanistic Interpretability Workshop at NeurIPS 2025 .Huggins, J., Kasprzak, M., Campbell, T., and Broderick, T. (2020). Validated variational inference via practical posterior error bounds. In International Conference on Artificial Intelligence and Statistics (AISTATS) .Immer, A., Bauer, M., Fortuin, V., Rätsch, G., and Emtiyaz, K. M. (2021). Scalable marginal likelihood estimation for model selection in deep learning. In International Conference on Machine Learning (ICML) .Jones, M., Chang, P., and Murphy, K. (2024). Bayesian online natural gradient (BONG). In Advances in Neural Information Processing Systems (NeurIPS) .Jordan, K., Bernstein, J., Rappazzo, B., @fernbear.bsky.social, Vlado, B., Jiacheng, Y., Cesista, F., Koszarsky, B., and @Grad62304977 (2024a). modded-nanoGPT: Speedrunning the NanoGPT baseline. Jordan, K., Jin, Y., Boza, V., Jiacheng, Y., Cesista, F., Newhouse, L., and Bernstein, J. (2024b). Muon: An optimizer for hidden layers in neural networks. Kasimbeg, P., Schneider, F., Eschenhagen, R., Bae, J., Sastry, C. S., Saroufim, M., Feng, B., Wright, L., Yang, E. Z., Nado, Z., et al. (2025). Accelerating neural network training: An analysis of the AlgoPerf competition. In International Conference on Learning Representations (ICLR) .Khan, M. E. (2025). Knowledge adaptation as posterior correction. arXiv:2506.14262 .Khan, M. E., Nielsen, D., Tangkaratt, V., Lin, W., Gal, Y., and Srivastava, A. (2018). Fast and scalable Bayesian deep learning by weight-perturbation in Adam. In International Conference on Machine Learning (ICML) .Khan, M. E. and Rue, H. (2023). The Bayesian learning rule. J. Mach. Learn. Res. (JMLR) ,24(281):1–46. Kingma, D. P., Salimans, T., and Welling, M. (2015). Variational dropout and the local reparameteri-zation trick. In Advances in Neural Information Processing Systems (NeurIPS) .Krause, J., Stark, M., Deng, J., and Fei-Fei, L. (2013). 3D object representations for fine-grained categorization. In 2013 IEEE International Conference on Computer Vision Workshops .Lin, W., Khan, M. E., and Schmidt, M. (2019). Fast and simple natural-gradient variational inference with mixture of exponential-family approximations. In International Conference on Machine Learning (ICML) .Lin, W., Lowe, S. C., Dangel, F., Eschenhagen, R., Xu, Z., and Grosse, R. B. (2026). Understand-ing and improving Shampoo and SOAP via Kullback-Leibler minimization. In International Conference on Learning Representations (ICLR) .Lin, W., Nielsen, F., Emtiyaz, K. M., and Schmidt, M. (2021). Tractable structured natural-gradient descent using local parameterizations. In International Conference on Machine Learning (ICML) .12 Lin, W., Schmidt, M., and Khan, M. E. (2020). Handling the positive-definite constraint in the Bayesian learning rule. In International Conference on Machine Learning (ICML) .Liu, H., Li, Z., Hall, D., Liang, P., and Ma, T. (2024). Sophia: A scalable stochastic second-order op-timizer for language model pre-training. In International Conference on Learning Representations (ICLR) .Louizos, C. and Welling, M. (2016). Structured and efficient variational deep learning with matrix Gaussian posteriors. In International Conference on Machine Learning (ICML) .Mishkin, A., Kunstner, F., Nielsen, D., Schmidt, M., and Khan, M. E. (2018). SLANG: Fast structured covariance approximations for Bayesian deep learning with natural gradient. In Advances in Neural Information Processing Systems (NeurIPS) .Möllenhoff, T., Swaroop, S., Doshi-Velez, F., and Khan, M. E. (2025). Federated ADMM from Bayesian duality. In International Conference on Learning Representations (ICLR) .Morwani, D., Shapira, I., Vyas, N., Malach, E., Kakade, S. M., and Janson, L. (2025). A new perspective on Shampoo’s preconditioner. In International Conference on Learning Representations (ICLR) .Murphy, K. P. (2012). Machine learning: a probabilistic perspective . MIT Press. Naeini, M. P., Cooper, G., and Hauskrecht, M. (2015). Obtaining well calibrated probabilities using Bayesian binning. In AAAI Conference on Artificial Intelligence (AAAI) , volume 29. Netzer, Y., Wang, T., Coates, A., Bissacco, A., Wu, B., and Ng, A. Y. (2011). Reading digits in natural images with unsupervised feature learning. In NIPS workshop on deep learning and unsupervised feature learning , volume 2011, page 5. Nguyen, C. V., Li, Y., Bui, T. D., and Turner, R. E. (2018). Variational continual learning. In 
+
+International Conference on Learning Representations (ICLR) .Nickl, P., Xu, L., Tailor, D., Möllenhoff, T., and Khan, M. E. (2023). The memory-perturbation equation: Understanding model’s sensitivity to data. In Advances in Neural Information Processing Systems (NeurIPS) .Opper, M. and Archambeau, C. (2009). The variational Gaussian approximation revisited. Neural Computation , 21(3):786–792. Osawa, K., Swaroop, S., Jain, A., Eschenhagen, R., Turner, R. E., Yokota, R., and Khan, M. E. (2019). Practical deep learning with Bayesian principles. Advances in Neural Information Processing Systems (NeurIPS) .Penedo, G., Kydlíˇ cek, H., Lozhkov, A., Mitchell, M., Raffel, C., Von Werra, L., Wolf, T., et al. (2024). The fineweb datasets: Decanting the web for the finest text data at scale. In Advances in Neural Information Processing Systems (NeurIPS) .Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al. (2021). Learning transferable visual models from natural language supervision. In International Conference on Machine Learning (ICML) .Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena, M., Zhou, Y., Li, W., and Liu, P. J. (2020). Exploring the limits of transfer learning with a unified text-to-text transformer. In J. Mach. Learn. Res. (JMLR) , volume 21, pages 1–67. Sehnke, F., Osendorfer, C., Rückstieß, T., Graves, A., Peters, J., and Schmidhuber, J. (2010). Parameter-exploring policy gradients. Neural Networks , 23(4):551–559. Shen, Y., Daheim, N., Cong, B., Nickl, P., Marconi, G. M., Bazan, C., Yokota, R., Gurevych, I., Cremers, D., Khan, M. E., and Möllenhoff, T. (2024). Variational learning is effective for large deep networks. In International Conference on Machine Learning (ICML) .13 Shi, H.-J. M., Lee, T.-H., Iwasaki, S., Gallego-Posada, J., Li, Z., Rangadurai, K., Mudigere, D., and Rabbat, M. (2023). A distributed data-parallel PyTorch implementation of the distributed Shampoo optimizer for training neural networks at-scale. arXiv preprint arXiv:2309.06497 .Silver, D. and Sutton, R. S. (2025). Welcome to the era of experience. Google AI , 1:11. Stallkamp, J., Schlipsing, M., Salmen, J., and Igel, C. (2012). Man vs. computer: Benchmarking machine learning algorithms for traffic sign recognition. Neural Networks , 32:323–332. van der Ouderaa, T. F., van der Wilk, M., and De Haan, P. (2024). Noether’s razor: Learning conserved quantities. In Advances in Neural Information Processing Systems (NeurIPS) .Vyas, N., Morwani, D., Zhao, R., Shapira, I., Brandfonbrener, D., Janson, L., and Kakade, S. M. (2025). SOAP: Improving and stabilizing shampoo using adam for language modeling. In 
+
+International Conference on Learning Representations (ICLR) .Wang, Y., Shi, H., Han, L., Metaxas, D., and Wang, H. (2024). Blob: Bayesian low-rank adaptation by backpropagation for large language models. In Advances in Neural Information Processing Systems (NeurIPS) .Xiao, J., Ehinger, K. A., Hays, J., Torralba, A., and Oliva, A. (2014). Sun database: Exploring a large collection of scene categories. International Journal of Computer Vision , 119:3–22. Zhang, G., Sun, S., Duvenaud, D., and Grosse, R. (2018). Noisy natural gradient as variational inference. In International Conference on Machine Learning (ICML) .
+
+A Proof of Thm. 1 
+
+Theorem 1. For the above variational families Qdiag and Qbubble , the following holds: 
+
+(1) = min 
+
+> q∈Q bubble
+
+ζ Eq(θ)[ℓ(θ)] + KL( q(θ) ∥ N (θ | m0, Σ0)) = min 
+
+> q∈Q diag
+
+ζ Eq(w)[ℓ(Pw )] + KL 
+
+
+
+q(w) ∥ N (w | P⊤m0, P⊤Σ0P)
+
+
+
+. (7) 
+
+Proof. The main idea is that any q ∈ Q bubble can be written as a linear transformation (pushforward) 
+
+P♯q′ for a distribution q′ ∈ Q diag . To see this, recall that a linear transformation of a Gaussian is another Gaussian, that is, P♯N (m′, Σ′) = N (Pm ′, PΣ ′P⊤). Since any member of Qbubble is obtained that way, we can rewrite the variational objective in Eq. 1 over the structured family as a minimization over the pushforward of the diagonal family: (1) = min 
+
+> q′∈Q diag
+
+ζ Eθ∼P♯q′ [ℓ(θ)] + KL( P♯q′ ∥ N (m0, Σ0)) . (9) Using the fact that the pushforward is adjoint to the pullback, we can rewrite the expected loss as 
+
+Eθ∼P♯q′ [ℓ(θ)] = Ew∼q′ [ℓ(Pw )] , which gives us the first part of the statement. For the KL-term, we use the fact that the KL-divergence is invariant under invertible transformations T♯ of both measures, that is: KL( P♯q′ ∥ N (m0, Σ0)) = KL( T♯P♯q′ ∥ T♯N (m0, Σ0)) . This is the equality case in the data-processing inequality, when all information is preserved due to invertibility (Cover and Thomas, 2006). The result also holds for more general divergences, and for self-contained proof, see for example Huggins et al. (2020, Lemma 3.1). Setting T = P−1 = P⊤ and noticing that T♯P♯ = id ♯
+
+we get, 
+
+KL( T♯P♯q′ ∥ T♯N (m0, Σ0)) = KL 
+
+
+
+id ♯q′ ∥ P⊤ 
+
+> ♯
+
+N (m0, Σ0)
+
+
+
+(10) 
+
+= KL 
+
+
+
+q′ ∥ N (P⊤m0, P⊤Σ0P)
+
+
+
+, (11) which concludes the proof. 14 B Derivation of the EVON Algorithm 
+
+In this appendix, we derive the proposed EVON method and show how it leads to the SOAP-like updates of Alg. 2. To derive EVON, we start from the variational online Newton (VON) method in Khan and Rue (2023, Eq. 12) applied to the variational objective in q(w), which is Eq. 7 in the main text. The VON method directly targets Eq. 7. For a generic Gaussian family N (θ | m, diag (s)−1)
+
+with diagonal covariance and isotropic Gaussian prior, m0 = 0 and Σ0 = s−10 I the method reads: 
+
+s ← (1 − ρ)s + ρ ζEq(θ)[diag (∇2ℓ(θ))] + s0I , (12) 
+
+m ← m − ρdiag (s)−1  ζEq(θ)[∇ℓ(θ)] + s0m , (13) where ρ > 0 is a learning rate. Now, we apply the above VON updates to the reparametrized problem in w from Thm. 1, which leads to the following updates: 
+
+s′ ← (1 − ρ)s′ + ρ
+
+
+
+ζEq(w)[diag (P⊤∇2ℓ(Pw )P)] + s0I
+
+
+
+, (14) 
+
+m′ ← m′ − ρ diag(s’) −1 
+
+ζP⊤Eq(w)[∇ℓ(Pw )] + s0m′
+
+. (15) Here, we used the chain-rule for gradient and Hessian for the ℓ(Pw ). We will now use Price’s theorem (Lin et al., 2019, Theorem 4) to write the Hessian in terms of gradients. Also using stochastic gradients, both for minibatches and the expectations, and writing h = ( s′ − s0)/ζ , s0 = ζδ , and using short-hand notation g◦ for the projected gradient, the above can be simplified: 
+
+g ← b∇ℓ(P(m′ + ϵ)) , g◦ ← P⊤g, ϵ ∼ N (ϵ | 0, σ2) (16) 
+
+h ← (1 − ρ)h + ρg◦ϵ/σ2, (17) 
+
+m′ ← m′ − ρ diag (h + δ)−1 (g◦ + δm′) . (18) Multiplying the last line from the left with P, we can bring the update to the original θ-space: 
+
+m ← m − ρ Pdiag (h + δ)−1 
+
+g◦ + δP⊤m
+
+
+
+. (19) To arrive at the form shown in Alg. 2, we apply the method to neural networks with L layers, where the weights θ = cat (vec (Θ1), . . . , vec (ΘL)) are assumed to be a concatenation of matrix parameters 
+
+Θl flattened into vectors via vec (·). The inverse of vec (·) is denoted by mat (·). We also assume 
+
+P to be a block-diagonal matrix with blocks P1, . . . , PL such that Plθl = QlLΘl(QlR)⊤, that is, 
+
+Pl = QlR ⊗ QlL has Kronecker-factored structure. To simplify notation, following (Vyas et al., 2025), we write the method for a single matrix parameter and drop the index l. Capital letters denote matrix version of the parameter that was vectorized before. 
+
+G ← b∇ℓ(M + QLEQ ⊤ 
+
+> R
+
+), G◦ ← Q⊤ 
+
+> L
+
+GQ R, Ei,j ∼ N (0 , V i,j ) (20) 
+
+H ← (1 − ρ)H + ρG◦ ⊙ E/V, (21) 
+
+M ← M − ρQL
+
+h 
+
+G◦ + δQ⊤ 
+
+> L
+
+MQ R
+
+
+
+/(H + δ)
+
+i
+
+Q⊤ 
+
+> R
+
+, (22) where Vi,j = 1 /ζ (Hi,j + δ) are the entries of V = mat (σ2). Importantly, the matrix V is not to be confused with the posterior covariance in the original space. It is the diagonal variance σ2 in the rotated space, reshaped in matrix form. The posterior distribution in the original space for that layer is written in Eq. 8 in the main text. The posterior covariance over all parameters is a block-diagonal matrix, where each block has such a Kronecker-factored form. To arrive at our EVON algorithm in Alg. 2, a few more tricks are introduced. We use a different learning rate for the Hessian and name it β2 and introduce a gradient momentum ¯G. This leads to the following updates: 
+
+G ← b∇ℓ(M + QLEQ ⊤ 
+
+> R
+
+), G◦ ← Q⊤ 
+
+> L
+
+GQ R, Ei,j ∼ N (0 , V i,j ) (23) 
+
+bH ← G◦ ⊙ E/V, (24) 
+
+¯G ← β1 ¯G + (1 − β1)G◦, (25) 
+
+H ← β2H + (1 − β2) bH + 12 (1 − β2)2(H − bH)2/(H + δ), (26) 
+
+M ← M − αQL
+
+h ¯G + δQ⊤ 
+
+> L
+
+MQ R
+
+
+
+/(H + δ)
+
+i
+
+Q⊤ 
+
+> R
+
+. (27) 15 In the Hessian update, we also added the quadratic correction term used in IVON (Shen et al., 2024). These updates give lines 1–8 in Alg. 2, where we also added clipping to stabilize the algorithm in practice. Lines 9, 10, 11 are identical to SOAP and update the matrix P during training. 
+
+C Theoretical Guarantees on Full Posterior Recovery 
+
+In this section, we prove Thm. 2 and Cor. 1 from the main paper. In order to do so, we first clarify some notation, we give analytical expressions for some quantities like the Hessian and the matrices L
+
+and R, and we provide three technical Lemmas. 
+
+C.1 Notation and Preliminaries 
+
+We consider a linear model f : Rd×o × Rd → Ro with parameter Θ ∈ Rd×o and data x ∈ Rd
+
+f (Θ, x) = Θ⊤x (28) for which the Jacobian is 
+
+∇θ f (Θ, x) = Io ⊗ x⊤ ∈ Ro×do (29) where Io is the identity matrix of size o and we keep the notation from the main paper of θ = vec (Θ).The number of parameters is equal to the product of data and label dimensionality P = do .Given some cost function c(y, f (Θ, x)) that measures the offset between label y and model prediction 
+
+f (Θ, x), the loss evaluated over a dataset D = {(xi, y i)}i=1 ,...,n is ℓ(θ) = Pni=1 c(yi, f (Θ, xi)) 
+
+and by chain rule its gradient is 
+
+∇θ ℓ(θ) = 
+
+> n
+
+X
+
+> i=1
+
+∇θ f (Θ, xi)⊤ · ∇ fi c(yi, f i) (30) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+(Io ⊗ xi) · ∇ fi c(yi, f i) = 
+
+> n
+
+X
+
+> i=1
+
+vec  xi∇fi c(yi, f i)⊤ ∈ Rdo (31) Thus, the gradient in matrix form is a sum of outer products 
+
+∇Θl(θ) = 
+
+> n
+
+X
+
+> i=1
+
+xi∇fi c(yi, f i)⊤ ∈ Rd×o (32) where fi is a shorthand for f (Θ, xi).The expected Hessian under a posterior distribution q(θ) is equal to 
+
+Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] = 
+
+> n
+
+X
+
+> i=1
+
+∇θ f (Θ, xi)⊤Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ∇θ f (Θ, xi) (33) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+(Io ⊗ xi)Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)]( Io ⊗ x⊤ 
+
+> i
+
+) (34) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ⊗ (xix⊤ 
+
+> i
+
+) ∈ Rod ×od (35) that is a sum of Kronecker products. The matrices L and R are the Exponential Moving Averages (EMA) of outer products of the gradient in matrix form, as in Eq. 32. Assuming to use full-batch gradients, T steps of the optimizer will follow some trajectory θ, . . . , θT . The Exponential Moving Average computed iteratively (In Algorithm lines 9 and 10) is equivalent to a geometric average over the trajectories, that is, for any function g
+
+the following holds: EMA θ [g(θ)] = (1 − β3)
+
+> T
+
+X
+
+> t=0
+
+βT −t+1 g(θt). (36) 16 The matrix L is a weighted sum of outer products of data 
+
+L = EMA θ
+
+∇Θℓ(θ) · ∇ Θℓ(θ)⊤ (37) 
+
+= EMA θ
+
+
+
+> n
+
+X
+
+> i,j =1
+
+xi · ∇ fi c(yi, f i)⊤ · ∇ fj c(yj , f j ) · x⊤
+
+> j
+
+ (38) 
+
+=
+
+> n
+
+X
+
+> i,j =1
+
+EMA θ
+
+⟨∇ fi c(yi, f i), ∇fj c(yj , f j )⟩| {z }
+
+> ∈R
+
+xix⊤
+
+> j
+
+| {z } 
+
+> ∈Rd×d
+
+, (39) where the scalar coefficients that weight the sum are given by the EMA of the scalar product between residuals. Similarly, the matrix R is a weighted sum of outer products of residuals 
+
+R = EMA θ
+
+∇Θℓ(θ)⊤ · ∇ Θℓ(θ) (40) 
+
+= EMA θ
+
+
+
+> n
+
+X
+
+> i,j =1
+
+∇fi c(yi, f i) · x⊤ 
+
+> i
+
+· xj · ∇ fj c(yj , f j )⊤
+
+ (41) 
+
+=
+
+> n
+
+X
+
+> i,j =1
+
+⟨xi, xj ⟩
+
+| {z }
+
+> ∈R
+
+EMA θ
+
+∇fi c(yi, f i) · ∇ fj c(yj , f j )⊤| {z }
+
+> ∈Ro×o
+
+, (42) where the scalar coefficients that weight the sum are given by the scalar product between data. Neglecting the QR approximation for simplicity, the rotated eigenbase is defined as 
+
+P = Eig (R) ⊗ Eig (L) ∈ Rod ×od (43) And EVON’s variational family (SOAP-Bubbles) is 
+
+Qbubble =
+
+n
+
+N (θ | m, Pdiag (σ2)P⊤) | m ∈ RP , σ ∈ RP
+
+> +
+
+o
+
+. (44) Is this flexible enough? We study under which conditions this variational family does contain the optima among multivariate Gaussians. To see this, we first need to prove a few technical Lemmas. 
+
+C.2 Technical Lemmas Lemma 1. Let q ∼ N (μ, Σ) be a local minima of the variational problem in Eq. 1 among the family of multivariate Gaussians , then 
+
+q ∈ Q bubble ⇐⇒ P⊤Eθ∼q [∇2 
+
+> θ
+
+l(θ)] P is diagonal (45) 
+
+Proof. First, given that q is a local minima, it must satisfy Σ−1 = ζEθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] + Σ −10 . The mode of the Gaussians can always be equated. Then q ∈ Q bubble if and only if its covariance can be expressed by the variational family, i.e. if and only if there exists σ ∈ RP 
+
+> +
+
+such that Σ = Pdiag (σ2)P⊤. This, in turn, is true if and only if Σ−1 = Pdiag (σ−2)P⊤, and such σ exists as long as P⊤Σ−1P is diagonal. An isotropic prior Σ−10 = αI remains isotropic under any change of basis P⊤Σ−10 I =
+
+αI. Consequently, P⊤Σ−1P = P⊤  ζEθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] + Σ −10
+
+ P = ζP⊤Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] P + αI is diagonal if and only if P⊤Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] P is diagonal. In Eq. 43 multiple eigendecompositions may exist. For example, for the identity matrix, any basis is a valid set of eigenvectors. Once one is fixed, the condition in the RHS of Eq. 45 may not hold. This is quite restrictive, and in fact it makes more sense to ask whether there exists an eigendecomposition such that the matrix in the RHS of Eq. 45 is diagonal. This existence condition is studied in the next lemma, where M plays the role of the expected hessian. 
+
+Lemma 2. Let M be a symmetric matrix. Then the following holds There exist an eigendecomposition Eig (R)
+
+and an eigendecomposition Eig (L)
+
+such that P⊤MP is diagonal 
+
+⇐⇒ 
+
+R ⊗ L and M are simultaneously diagonalizable with U = U1 ⊗ U2
+
+that is both U⊤MU and U⊤(R ⊗ L)U
+
+are diagonal 
+
+17 Proof idea: By defining P = Eig (R) ⊗ Eig (L) we are choosing P to be an eigenbasis of R ⊗ L. An orthogonal matrix ( P in this case) diagonalizes a matrix M if it is made by an M-eigenbasis. Then 
+
+R ⊗ L and M have the same eigenbasis P.
+
+Proof. First recall some known linear algebra properties: an eigendecomposition is an orthogonal matrix that diagonalizes a matrix, and product of orthogonal matrices is orthogonal. The Kronecker product of orthogonal matrices is orthogonal. 
+
+⇒ Let Eig (R) and Eig (L) be the eigendecompositions in the LHS of the statement, then we have 
+
+R = Eig (R)DREig (R)⊤ L = Eig (L)DLEig (L)⊤ (46) for two diagonal matrices DR and DL. Consequently, we have 
+
+R ⊗ L = ( Eig (R)DREig (R)⊤) ⊗ (Eig (L)DLEig (L)⊤) (47) 
+
+= ( Eig (R) ⊗ Eig (L)) 
+
+| {z }
+
+> =
+
+P
+
+(DR ⊗ DL) ( Eig (R) ⊗ Eig (L)) ⊤
+
+| {z }
+
+> =
+
+P⊤
+
+(48) where DR ⊗ DL is diagonal and P = Eig (R) ⊗ Eig (L) diagonalizes the matrix R ⊗ L. Since P
+
+diagonalizes also M by hypothesis, R ⊗ L and M are simultaneously diagonalizable, by definition. 
+
+⇐ Let U = U1 ⊗ U2 be the orthogonal matrix that simultaneously diagonalizes R ⊗ L and M .First let’s see that both U1 and U2 must be orthogonal matrices. UU ⊤ = I implies that 
+
+(U⊤ 
+
+> 1
+
+U1)⊗U⊤ 
+
+> 2
+
+(U⊤ 
+
+> 2
+
+U2) = ( U⊤ 
+
+> 1
+
+⊗U⊤ 
+
+> 2
+
+)( U1 ⊗U2) = ( U1 ⊗U2)⊤(U1 ⊗U2) = U⊤U = I = I⊗I
+
+(49) which implies that U⊤ 
+
+> 1
+
+U1 = I and U⊤ 
+
+> 2
+
+U2 = I, so the two matrices are indeed orthogonal. The fact that U1 ⊗ U2 diagonalizes R ⊗ L, assumed by hypothesis, means that for some diagonal matrix D it holds 
+
+D = ( U1 ⊗ U2)⊤(R ⊗ L)( U1 ⊗ U2) = ( U⊤ 
+
+> 1
+
+RU 1) ⊗ (U⊤ 
+
+> 2
+
+LU 2). (50) A Kronecker product is diagonal only if both its factors are diagonal. Which implies that there exists two diagonal matrices D1 and D2 such that 
+
+D1 = U⊤ 
+
+> 1
+
+RU 1 D2 = U⊤ 
+
+> 2
+
+LU 2 D = D1 ⊗ D2 (51) Then U1 is an eigenbasis for R and similarly U2 is an eigenbasis for L. Then 
+
+P = Eig (R) ⊗ Eig (L) = U1 ⊗ U2 = U (52) so P = U and since U diagonalises M by hypothesis, also P diagonalises M. Which is equivalent to P⊤MP being diagonal, which concludes the proof. We then consider the RHS condition of the previous Lemma in our setting, that is, when the matrix 
+
+M is the expected Hessian Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] . Then we can use the equivalent Hessian formulation from Eq. 35 to prove the following Lemma. Note that this is a sufficient but not necessary condition. 
+
+Lemma 3. The matrices R ⊗ L and Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] are simultaneously diagonalizable if (1) L, x1x⊤ 
+
+> 1
+
+, . . . , xnx⊤ 
+
+> n
+
+are simultaneously diagonalizable, (2) R, Eθ∼q [∇2 
+
+> f1
+
+c(y1, f 1)] , . . . , Eθ∼q [∇2 
+
+> fn
+
+c(yn, f n)] are simultaneously diagonalizable. Moreover, the orthogonal matrix U that diagonalizes them is also Kronecker factorized. Proof. Notice that R ⊗ L and Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] are both symmetric, since they are defined as sum and Kronecker products of symmetric matrices. Consequently, if R ⊗ L and Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] are simultaneously diagonalizable if and only if they commute, formally 
+
+(R ⊗ L)Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] = Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)]( R ⊗ L). (53) 18 Following the expression for the expected Hessian in Eq. 35, this is equivalent to 
+
+(R ⊗ L)
+
+> n
+
+X
+
+> i=1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ⊗ (xix⊤ 
+
+> i
+
+)
+
+!
+
+=
+
+> n
+
+X
+
+> i=1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ⊗ (xix⊤ 
+
+> i
+
+)
+
+!
+
+(R ⊗ L)
+
+(54) which can be equivalently rearranged as 
+
+> n
+
+X
+
+> i=1
+
+(REθ∼q [∇2 
+
+> fi
+
+c(yi, f i)]) ⊗ (Lx ix⊤ 
+
+> i
+
+) = 
+
+> n
+
+X
+
+> i=1
+
+(Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] R) ⊗ (xix⊤ 
+
+> i
+
+L). (55) This equality can be satisfied in various ways, and this is the reason why this Lemma only provides a sufficient condition. One possibility (but not the only one) is that the equality holds for each added 
+
+i = 1 , . . . , n in the sum individually, i.e. 
+
+(REθ∼q [∇2 
+
+> fi
+
+c(yi, f i)]) ⊗ (Lx ix⊤ 
+
+> i
+
+) = ( Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] R) ⊗ (xix⊤ 
+
+> i
+
+L) for all i = 1 , . . . , n (56) In fact if we sum Eq. 56 for all i = 1 , . . . , n then we obtain exactly Eq. 55. We can equate each factor in the Kronecker products in Eq. 56 and obtain 
+
+REθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] = Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] R and Lx ix⊤ 
+
+> i
+
+= xix⊤ 
+
+> i
+
+L for all i = 1 , . . . , n (57) Note that Eq. 57 implies Eq. 56, which is what we need, but the inverse implication only holds up to scalar factors. Eq. 57 contains exactly hypotheses (1) and (2) of the Lemma. Then as we saw Eq. 57 ⇒ Eq. 56 ⇒
+
+Eq. 55 ⇔ Eq. 54 ⇔ Eq. 53 ⇔ R ⊗ L and Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] are simultaneously diagonalizable. This concludes the first part of the proof. We now show that the orthogonal matrix U that diagonalizes them is also Kronecker factorized. By hypothesis (1), there exists an orthogonal matrix U2 and n + 1 
+
+diagonal matrices {D(i)2 }i=0 ,...,n such that 
+
+D(0) 2 = U⊤ 
+
+> 2
+
+LU 2 D(i)2 = U⊤ 
+
+> 2
+
+xix⊤ 
+
+> i
+
+U2 for every i = 1 , . . . , n (58) Similarly, by hypothesis (2), there exists an orthogonal matrix U1 and n + 1 diagonal matrices 
+
+{D(i)1 }i=0 ,...,n such that 
+
+D(0) 1 = U⊤ 
+
+> 1
+
+RU 1 D(i)1 = U⊤ 
+
+> 1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] U1 for every i = 1 , . . . , n (59) We argue that U = U1 ⊗ U2 is the matrix that diagonalizes both R ⊗ L and Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] and concludes the proof. We show these conditions explicitly, respectively 
+
+U⊤(R ⊗ L)U = ( U1 ⊗ U2)⊤(R ⊗ L)( U1 ⊗ U2) = ( U⊤ 
+
+> 1
+
+RU 1) ⊗ (U⊤ 
+
+> 2
+
+LU 2) (60) 
+
+= D(0) 1 ⊗ D(0) 2 (61) 
+
+U⊤Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] U = ( U1 ⊗ U2)⊤
+
+> n
+
+X
+
+> i=1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ⊗ (xix⊤ 
+
+> i
+
+)
+
+!
+
+(U1 ⊗ U2) (62) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+(U1 ⊗ U2)⊤  Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] ⊗ (xix⊤ 
+
+> i
+
+) (U1 ⊗ U2) (63) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+
+
+U⊤ 
+
+> 1
+
+Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] U1
+
+
+
+⊗
+
+
+
+U⊤ 
+
+> 2
+
+(xix⊤ 
+
+> i
+
+)U2
+
+
+
+(64) 
+
+=
+
+> n
+
+X
+
+> i=1
+
+D(i)1 ⊗ D(i)2 (65) and both Eq. 61 and Eq. 65 are diagonal matrices. This concludes the proof. For the general case it is worth mentioning that Eq. 55 could be studied with a different approach. In fact, according to Eq. 39, the matrix L is a weighted average of the xix⊤ 
+
+> i
+
+matrices. Similarly, according to Eq. 42, the matrix R is a weighted average of expected gradients outer products. For some specific choices of loss and under some further assumption on the EMA’s trajectory, such outer product is equal to the expected Hessian. However, we do not wish to make assumptions on the EMA as they are not easy to guarantee in practice. 19 C.3 Proof of the Main Results 
+
+With these Lemmas in place, we can finally prove Thm. 2. We restate it below for convenience. 
+
+Theorem 2. Assume a linear model f , loss function c, an isotropic prior and a dataset 
+
+D = {(xi, y i)}i=1 ,...,n . If the matrices L and {xix⊤ 
+
+> i
+
+}i=1 ,...,n and the matrices R and 
+
+{Eθ∼q [∇2 
+
+> f
+
+c(yi, f (Θ, xi))] }i=1 ,...,n are simultaneously diagonalizable, then the optimal posterior q
+
+among all multivariate Gaussians is a SOAP-Bubble, that is, in EVON’s variational family. Proof. By hypothesis, both conditions (1) and (2) of Lemma 3 hold, thus implying that R ⊗ L and 
+
+M = Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] are simultaneously diagonalizable with some U = U1 ⊗ U2, that is, both 
+
+U⊤MU and U⊤(R ⊗ L)U are diagonal. That is exactly the assumption on the RHS of Lemma 2, and we can apply it to deduce that there exists an eigendecomposition Eig (R) and an eigendecomposition Eig (L) such that the orthogonal matrix P = Eig (R) ⊗ Eig (L), as in Eq. 43, is an eigenbasis for the expected loss Hessian, that is, that the matrix P⊤Eθ∼q [∇2 
+
+> θ
+
+ℓ(θ)] P is diagonal. Finally, once established that the matrix P can be an eigenbasis, Lemma 1 implies that the stationary points of the variational problem in Eq. 1 are a SOAP-Bubble. Equivalently, EVON’s variational family is flexible enough to contain the optimal multivariate Gaussian posterior. This concludes the proof. We now derive some sufficient conditions for each of the requirements of the Theorem, two related to the matrix R and one related to the matrix L. These allow to prove Cor. 1, which we restate for convenience. 
+
+Corollary 1. Assume a linear model, and an isotropic prior. For binary logistic regression and for general linear regression, both with orthogonal datapoints/features xi, the exact full Gaussian posterior among all multivariate Gaussians is a SOAP-Bubble, that is, in EVON’s variational family. Proof. Sufficient conditions for R and Eθ∼q [∇2 
+
+> fi
+
+c(yi, f i)] 
+
+If we are solving a regression task, it means that c(yi, f i) = ∥yi − fi∥2, or some scalar multiple of it. Thus, its Hessian ∇2 
+
+> fi
+
+c(yi, f i) and consequently the expectation is equal to the identity, or some scalar multiple of it. The hypothesis of Thm. 2 then follows since any matrix R is simultaneously diagonalizable with the identity. Alternatively, if we are solving a binary logistic regression task, it means that the output dimensionality 
+
+o = 1 . Consequently, the expected Hessian matrix is simply a scalar and trivially any (scalar) matrix 
+
+R is simultaneously diagonalizable with any scalar. 
+
+Sufficient conditions for L and xix⊤
+
+> i
+
+If the datapoints are orthogonal, that is, ⟨xj , x k⟩ = 0 for j̸ = k then, using the expression of L in Eq. 39, we have that for every i = 1 , . . . , n 
+
+Lx i =
+
+
+
+> n
+
+X
+
+> j=1
+
+EMA θ
+
+⟨∥∇ fj c(yj , f j )∥2⟩ xj x⊤
+
+> j
+
+ xi = EMA θ
+
+⟨∥∇ fi c(yi, f i)∥2⟩ xix⊤ 
+
+> i
+
+xi (66) and similarly that for every i = 1 , . . . , n 
+
+x⊤ 
+
+> i
+
+L = x⊤
+
+> i
+
+
+
+> n
+
+X
+
+> j=1
+
+EMA θ
+
+⟨∥∇ fj c(yj , f j )∥2⟩ xj x⊤
+
+> j
+
+ = EMA θ
+
+⟨∥∇ fi c(yi, f i)∥2⟩ x⊤ 
+
+> i
+
+xix⊤
+
+> i
+
+(67) which we can use to prove that the condition holds, as 
+
+Lx ix⊤ 
+
+> i
+
+= EMA θ
+
+⟨∥∇ fi c(yi, f i)∥2⟩ xix⊤ 
+
+> i
+
+xix⊤ 
+
+> i
+
+= xix⊤ 
+
+> i
+
+L for all i = 1 , . . . , n (68) Notably, the same equality holds if some datapoints are parallel, rather than orthogonal, that is, if for any j̸ = k it holds either ⟨xj , xk⟩ = 0 or xj = xk. Thus the proof also extends to repeated datapoints. 20 (a) 2000 4000 6000 8000 10000 
+
+Step 
+
+> 0.002
+> 0.004
+> 0.006
+> Hessian Value
+
+Attention Query     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.001
+> 0.002
+> 0.003
+> 0.004
+
+Attention Key     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+
+Attention Value 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Count
+
+(b) 2000 4000 6000 8000 10000 
+
+Step 
+
+> 0.00015
+> 0.00020
+> 0.00025
+> 0.00030
+> 0.00035
+> 0.00040
+> Hessian Value
+
+Attention Query     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.00015
+> 0.00020
+> 0.00025
+> 0.00030
+> 0.00035
+> 0.00040
+
+Attention Key     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.00015
+> 0.00020
+> 0.00025
+> 0.00030
+> 0.00035
+> 0.00040
+
+Attention Value 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Count
+
+(c) 2000 4000 6000 8000 10000 
+
+Step 
+
+> 0.0005
+> 0.0010
+> 0.0015
+> 0.0020
+> Hessian Value
+
+Attention Query     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.0005
+> 0.0010
+> 0.0015
+
+Attention Key     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.0001
+> 0.0002
+> 0.0003
+> 0.0004
+> 0.0005
+
+Attention Value 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Count
+
+(d) 2000 4000 6000 8000 10000 
+
+Step 
+
+> 0.001
+> 0.002
+> 0.003
+> Hessian Value
+
+Attention Query     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.0002
+> 0.0004
+> 0.0006
+> 0.0008
+
+Attention Key     
+
+> 2000 4000 6000 8000 10000
+
+Step 
+
+> 0.01
+> 0.02
+> 0.03
+
+Attention Value 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Count
+
+Figure 6: Evolution of the EVON Hessian distribution in SOAP’s eigenspace (plotted every 1000 training steps) for the attention matrices in the sixth block of NanoGPT. We compare the baseline (Plain) optimizer (a) as a reference against other variants. Tight Hessian adaptive clipping (clip) (b) results in a much narrower range of smaller Hessian values, which may overestimate the posterior variance. The Phased Gradients (PG) (c) and the whitening (Whiten) (d) variants produce a distribution much closer to the baseline’s, maintaining similar optimization dynamics. 
+
+D Investigating Potential Improvements to EVON 
+
+We investigate potential improvements to the EVON optimizer on the NanoGPT pretraining task, reporting our results in Fig. 7 and Table 2. We fix the hyperparameters of the baseline optimizer and enable or disable the following components: Phased Gradients (PG), Hessian adaptive clipping (clip) with tight ratio (1.5) and preconditioned gradient Whitening (Whiten). The table presents the final test loss for each optimizer variant, and the effectiveness of the posterior is studied by performing Bayesian Model Averaging (BMA) with 20 Monte Carlo samples. 
+
+Phased Gradients (PG). Phased Gradients alternates every training step between two phases: one phase computes gradients at perturbed parameter values for Hessian estimation, while the other computes gradients at the posterior mean to update the L and R preconditioners. Both phases update the posterior mean. Our findings indicate that Phased Gradients (PG) can accelerate initial convergence when combined with other variants (Whiten and clip). Phased Gradients and tight Hessian adaptive clipping degrade the overall performance of the optimizer in isolation. Conversely, whitening the preconditioned 21 Config Loss@mean Loss@20MC Whiten 3.241 3.240 (-0.015%) Whiten+PG+clip 3.242 3.241 (-0.015%) Whiten+clip 3.243 3.242 (-0.021%) Whiten+PG 3.262 3.261 (-0.016%) Plain 3.299 3.297 (-0.047%) Clip 3.320 3.318 (-0.047%) PG+clip 3.410 3.409 (-0.020%) PG 3.442 3.442 (-0.018%) Table 2: Performance evaluation of EVON variants in the NanoGPT pretrain-ing task. Results include the final test loss, measuring both the loss of the pos-terior mean, and the loss at 20 Monte Carlo samples after Bayesian Model Av-eraging (BMA). We highlight the rela-tive change over the mean in green. gradient yields notable improvements in stability and final test loss; the posterior estimation is not significantly affected when we compare the final loss of the posterior mean and BMA (Table 2). To further understand these behaviors, we examine the effects of these modifications on the estimated Hessian. Figs. 6a to 6d show the histograms of the estimated Hessian in Shampoo’s eigenspace for each variant. We observe that both Hessian adaptive clipping (Fig. 6b) and Phased Gradients (Fig. 6c) result in narrower distributions with much smaller Hessian values. This behavior may indicate an overestimate of the posterior variance. The whitening variant (Fig. 6d) preserves a Hessian distribution and training behavior very close to the baseline’s. 0 2000 4000 6000 8000 10000 
+
+> Step
+> 3.3
+> 3.4
+> 3.5
+> 3.6
+> 3.7
+> Validation Loss
+> PG PG+clip Clip Plain Whiten+PG Whiten+clip Whiten+PG+clip Whiten (Best)
+
+(a) Evaluation loss curves. 0 2000 4000 6000 8000 10000  
+
+> Step
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> % Improvement@20MC
+
+(b) BMA loss improvement. 
+
+Figure 7: Evaluation loss curve and BMA test loss improvement for different EVON variants during NanoGPT pretraining. (a) EVON with Whitening (Whiten) achieves the lowest test loss, demonstrating the effectiveness of whitening the preconditioned gradient. In contrast, variants utilizing only Phased Gradients (PG) and Hessian adaptive clipping (clip) underperform both the baseline (Plain) and EVON with Whitening. (b) Percentage improvement in test loss when using BMA with 20 Monte Carlo samples compared to the posterior mean. 22 Table 3: Hyperparameters for the illustrative examples and logistic-regression experiments. 
+
+Experiment Method ζ α h0 δ β1 β2 clip-radius 
+
+Neural network regression, Fig. 4(a) 
+
+Small MLP EVON 2×10 5 → 10 4 10 5 ×10 −2 10 −4 0.9 0.999 10 −2
+
+Small MLP IVON 10 4 1 10 −2 10 −5 0.9 0.9995 10 −1
+
+Large MLP EVON 10 4 10 5 ×10 −2 10 −4 0.9 0.999 10 −2
+
+Large MLP IVON 10 4 1 10 −2 10 −5 0.9 0.9995 10 −1
+
+UCI Iris multiclass logistic regression, Fig. 4(b) 
+
+LogReg EVON n 2 10 −2 10 −4/n 0.9 0 .99985 10 −1
+
+LogReg IVON n 1 5×10 −2 10 −4/n 0.9 0.9995 10 −1
+
+USPS 3vs 5 binary logistic regression, Fig. 3 
+
+LogReg EVON n 1 10 −1 0.01 /n 0.9 0.999 10 −1
+
+LogReg IVON n 1 5×10 −2 0.01 /n 0.9 0.9995 10 −1
+
+Table 4: Hyperparameters for NanoGPT and Llama. EVON uses spectral clipping ( γ is the adaptive Hessian clipping parameter). IVON uses element-wise clipping with the listed radius.                                             
+
+> Setup ζh0αβ11−β2δβ3clipping EVON (NanoGPT) 5.27 ×10 65.82 ×10 −12.96 ×10 −20.943 9.12 ×10 −47.97 ×10 −50.995 γ= 1 .5
+> IVON (NanoGPT) 4.66 ×10 71.80 ×10 −21.42 ×10 20.890 1.23 ×10 −41.72 ×10 −5–10 −4
+> EVON (Llama) 1.52 ×10 76.08 ×10 −22.25 ×10 −10.898 4.59 ×10 −46.73 ×10 −70.950 γ= 1 .5
+> IVON (Llama) 5.06 ×10 81.95 ×10 −31.18 ×10 30.826 7.29 ×10 −53.93 ×10 −7–2.49 ×10 −4
+
+E Details on the Experiments and Hyperparameters 
+
+To ensure reproducibility, we report all hyperparameters for each dataset in Table 5. We will release EVON as a PyTorch optimizer package and the code to reproduce all figures and tables. 
+
+E.1 Illustrative Examples Illustrative experiment in Fig. 1. The experiment uses a linearly separable binary classification dataset with 2D features, from the Bayesian logistic regression chapter of Murphy (2012). Both EVON and IVON are run with small learning rate for many steps to ensure convergence to their respective exact solution of the variational objective, which are shown as the ellipses in the figure. 
+
+Neural network regression experiments in Fig. 4 (a). We follow the setup from Fadel et al. (2025, Figure 5), where our small MLP has the same 1-8-8-1 architecture with tanh -activations. The large MLP has an 1-64-64-64-1 architecture with ELU activations. Both methods train for 10000 optimization steps using full-batch gradients, as the dataset only consists of 10 data points. Both EVON and IVON use elementwise clipping, EVON does not use any Hessian clipping. The hyperparameters are in Table 3. 
+
+E.2 Bayesian Logistic Regression Experiment in Fig. 3. We follow the setup of Mishkin et al. (2018, Fig. 1), which is binary logistic regression on the USPS dataset, considering the 3vs5 classification case. We train for 30000 steps using full-batch gradients. Both IVON and EVON use elementwise clipping, EVON does not use any Hessian clipping. The hyperparameters are in Table 3. 
+
+Experiment in Fig. 4 (b). The experiment is multiclass logistic regression on the UCI Iris dataset. The hyperparameters are in Table 3. For EVON, the eigenbasis is updated every 25 steps and no Hessian clipping is used. We use Stan (Carpenter et al., 2017) via the PyStan package to compute the exact posterior marginals via Hamiltonian Markov-Chain Monte Carlo (HMC) and the No-U-Turn Sampler (NUTS) (Hoffman and Gelman, 2014). 23 E.3 Language Model Pretraining 
+
+The experimental setup for NanoGPT (Jordan et al., 2024a) and Llama (Glentis et al., 2025) follows the experiments shown in Lin et al. (2026, Fig. 1), who provide tuned baselines and hyperparameters for AdamW and SOAP. All methods are run on a single H100 GPU with batch size 512. For NanoGPT, a linear warmup, constant step size and linear cooldown is used. Llama has linear warmup with cosine decay. Both SOAP and EVON update the preconditioner every 10 steps using QR decomposition. For both experiments, EVON and IVON’s hyperparameters were tuned using equal budget of 500 runs in a random search over all hyperparameters. Both EVON and IVON use AdamW for the embedding layer and 1D tensors, where AdamW uses the same hyperparameters as Lin et al. (2026). The best hyperparameters (wrt final validation loss) found by the random search are summarized in Table 4. 
+
+E.4 CLIP Finetuning 
+
+We train CLIP models on CARS (Krause et al., 2013), DTD (Describable Textures Dataset) (Cimpoi et al., 2014), EuroSAT (Helber et al., 2019), GTSRB (German Traffic Sign Recognition Benchmark) (Stallkamp et al., 2012), MNIST, RESISC45 (Cheng et al., 2017), SUN397 (Xiao et al., 2014), and SVHN (Netzer et al., 2011) For each dataset, we tune the hyperparameters of the optimizers using a random search over the parameter ranges defined in Table 5, running 50 iterations for each optimizer and dataset. We then test the best hyperparameters using 5 different random seeds. We set early stopping patience to 3 epochs for all optimizers, monitoring the validation loss. In Table 6 we report the best hyperparameter values found for each optimizer and dataset. Optimizer Hyperparameter Distribution Range / Values Learning rate α Log-uniform [10 −6, 5 × 10 −4]
+
+AdamW Weight decay λ Log-uniform [10 −4, 10 −1]
+
+Learning rate α Log-uniform [10 −4, 10 −1]
+
+Weight decay δ Log-uniform [10 −6, 10 −3]SGD Momentum μ Uniform [0 .8, 0.99] 
+
+Learning rate α Log-uniform [10 −4, 5 × 10 −2]
+
+Weight decay δ Log-uniform [10 −7, 10 −2]
+
+ζ Grid {10 7, 5×10 7, 10 8, 5×10 8, 10 9, 10 10 }
+
+Hessian init h0 Grid {10 −3, 10 −2, 10 −1}
+
+β1 Grid {0.8, 0.9, 0.95 , 0.99 }
+
+IVON 
+
+1 − β2 Grid {10 −3, 5×10 −4, 10 −4, 10 −5}
+
+Learning rate α Log-uniform [10 −6, 5 × 10 −4]
+
+Weight decay δ Log-uniform [10 −4, 2 × 10 −1](β1, 1 − β2) Grid {0.85 , 0.9, 0.95 } × { 5×10 −2, 10 −2}
+
+(6 pairs) SOAP 
+
+β for L and R Grid {0.9, 0.95 , 0.99 }
+
+Learning rate α Log-uniform [10 −4, 10 −1]
+
+Weight decay δ Log-uniform [10 −7, 10 −2]
+
+ζ Grid {10 7, 5×10 7, 10 8, 5×10 8, 10 9, 10 10 }
+
+Hessian init h0 Grid {10 −3, 10 −2, 10 −1}
+
+EVON 
+
+(β1, 1 − β2) Grid {0.8, 0.9, 0.95 , 0.99 } ×{10 −3, 5×10 −4, 10 −4, 10 −5}
+
+(16 pairs) Table 5: Hyperparameter sweep ranges for CLIP finetuning. For continuous hyperparameters we use a log-uniform (learning rate, weight decay) or uniform (momentum) distribution. For discrete hyperparameters we search over the listed grid values. 24 Optimizer Hyperparameter CARS DTD EuroSAT GTSRB 
+
+α 3.04 × 10 −5 1.7 × 10 −5 7.04 × 10 −6 9.93 × 10 −6
+
+AdamW δ 8.91 × 10 −3 0.0144 2.56 × 10 −3 1.19 × 10 −4
+
+α 3.54 × 10 −4 1.12 × 10 −4 1.43 × 10 −3 2.38 × 10 −3
+
+δ 1.01 × 10 −3 3.14 × 10 −6 6.89 × 10 −6 5.15 × 10 −4
+
+ζ 5 × 10 7 10 8 5 × 10 8 10 9
+
+Hessian init h0 0.01 10 −3 0.1 0.01 
+
+β1 0.99 0.9 0.9 0.8 IVON 
+
+1 − β2 10 −4 10 −4 10 −4 10 −4
+
+α 7.43 × 10 −5 3.71 × 10 −5 9.43 × 10 −6 1.56 × 10 −5
+
+δ 0.04575 1.67 × 10 −4 4.81 × 10 −3 2.49 × 10 −4
+
+(β1, 1 − β2) (0 .9, 0.01) (0 .85 , 0.01) (0 .95 , 0.01) (0 .95 , 0.01) 
+
+SOAP 
+
+β for L and R 0.9 0.95 0.99 0.99 
+
+α 0.06263 3.74 × 10 −3 0.07636 0.01957 
+
+δ 1.87 × 10 −7 1.13 × 10 −4 5.98 × 10 −4 1.4 × 10 −6
+
+ζ 10 7 10 8 5 × 10 7 10 7
+
+Hessian init h0 0.01 5 × 10 −3 10 −3 0.01 
+
+β1 0.95 0.95 0.95 0.95 EVON 
+
+1 − β2 0.05 0.05 0.05 0.05 Optimizer Hyperparameter MNIST RESISC45 SUN397 SVHN 
+
+α 1.98 × 10 −6 5.1 × 10 −6 1.4 × 10 −5 1.46 × 10 −5
+
+AdamW δ 1.7 × 10 −4 1.08 × 10 −3 4 × 10 −4 0.01245 
+
+α 6.75 × 10 −3 2.78 × 10 −3 5.28 × 10 −3 8.09 × 10 −4
+
+δ 3.39 × 10 −3 1.67 × 10 −3 3.51 × 10 −4 2.88 × 10 −3
+
+ζ 5 × 10 8 5 × 10 8 10 8 5 × 10 8
+
+Hessian init h0 10 −3 0.01 10 −3 0.1 
+
+β1 0.95 0.99 0.95 0.99 IVON 
+
+1 − β2 5 × 10 −4 10 −4 10 −3 5 × 10 −4
+
+α 5.73 × 10 −6 1.27 × 10 −5 7.5 × 10 −6 9.2 × 10 −5
+
+δ 2.57 × 10 −3 7.33 × 10 −3 3.83 × 10 −4 1.89 × 10 −4
+
+(β1, 1 − β2) (0 .9, 0.05) (0 .85 , 0.01) (0 .9, 0.01) (0 .95 , 0.05) 
+
+SOAP 
+
+β for L and R 0.99 0.99 0.95 0.95 
+
+α 0.04798 0.09509 0.03325 0.08859 
+
+δ 9.45 × 10 −6 1.33 × 10 −6 1.08 × 10 −7 3.08 × 10 −6
+
+ζ 10 7 10 8 5 × 10 8 10 10 
+
+Hessian init h0 0.01 10 −3 10 −3 0.01 
+
+β1 0.95 0.95 0.95 0.95 EVON 
+
+1 − β2 0.05 0.05 0.05 0.05 Table 6: Best hyperparameters for CLIP finetuning. For each dataset and optimizer, we report the best hyperparameter values found during the grid search. In these experiments, we enable adaptive hessian clipping (with a loose 2.0 ratio) and preconditioned gradient whitening for EVON. 25
