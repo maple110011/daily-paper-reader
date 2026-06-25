@@ -6,32 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-24
-- 运行时间：2026-06-24 21:28:30 UTC
+- 最新运行日期：2026-06-25
+- 运行时间：2026-06-25 22:09:28 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：1
-- 速读区：3
+- 本次总论文数：6
+- 精读区：5
+- 速读区：1
 
 ### 今日简报（AI）
-今日精读可解释性医学图像分割，速读函数空间回归、变分聚类与因果生成。最值得关注的亮点：高斯过程显式建模标注偏差与变异性，实现可解释分割。下一步建议优先关注精读论文的代码与实验细节。
-- 详情：[/202606/24/README](/202606/24/README)
+今日精读5篇，核心聚焦变分推断理论的深度进展。值得重点关注基于熵输运下降的变分推断新方法，以及变分深度高斯过程中后验坍缩与参数初始化的分析。后续可进一步探索这些方法在实际模型中的初始化策略与收敛性改善。
+- 详情：[/202606/25/README](/202606/25/README)
 
 ### 精读区论文标签
-1. [Interpretable Probabilistic Medical Image Segmentation via Gaussian Process with Explicit Modelling of Annotation Bias and Variability](/202606/24/2606.23177v1-interpretable-probabilistic-medical-image-segmentation-via-gaussian-process-with-explicit-modelling-of-annotation-bias-and-variability)  
+1. [Variational Inference via Entropic Transport Descent](/202606/25/2606.25265v1-variational-inference-via-entropic-transport-descent)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：随机变分高斯过程用于概率分割
+   evidence：通过熵传输下降的变分推断
+2. [An Analysis of Posterior Collapse, Parameterization and Initialization in Variational Deep Gaussian Processes](/202606/25/2606.25882v1-an-analysis-of-posterior-collapse-parameterization-and-initialization-in-variational-deep-gaussian-processes)  
+   标签：评分：9.0/10、query:bayes-dl
+   evidence：变分深度高斯过程中后验坍塌的分析
+3. [On-Manifold Variational Learning with Heat-Kernel Priors](/202606/25/2606.18658v2-on-manifold-variational-learning-with-heat-kernel-priors)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：基于热核先验的流形变分学习
+4. [Efficient Analytic Uncertainty Quantification for Multi-Modal Regression](/202606/25/2606.25188v1-efficient-analytic-uncertainty-quantification-for-multi-modal-regression)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：使用变分贝叶斯推断进行多模态回归的不确定性量化
+5. [Gaussian Mean Field Variational Inference can Overestimate Predictive Variance](/202606/25/2606.25745v1-gaussian-mean-field-variational-inference-can-overestimate-predictive-variance)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：平均场变分推断预测方差分析
 
 ### 速读区论文标签
-1. [Flow Annealing Posterior Sampling for Function-Space Regression and Inverse Problems](/202606/24/2606.22346v1-flow-annealing-posterior-sampling-for-function-space-regression-and-inverse-problems)  
+1. [Closed-form solutions to some generalized variational inference problems](/202606/25/2606.25492v1-closed-form-solutions-to-some-generalized-variational-inference-problems)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：函数空间中的贝叶斯后验采样用于不确定性量化
-2. [SphereVBx: Spherical Variational Bayes Clustering for Simplified EEND-VC Diarization](/202606/24/2606.24528v1-spherevbx-spherical-variational-bayes-clustering-for-simplified-eend-vc-diarization)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：使用von Mises-Fisher混合模型的变分贝叶斯聚类用于说话人分割
-3. [Causal Variational Deep Embedding: A Family of Interventional Generators for Confounded Images](/202606/24/2606.21806v1-causal-variational-deep-embedding-a-family-of-interventional-generators-for-confounded-images)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：因果约束下的变分自编码器用于深度生成模型
+   evidence：贝叶斯模型的变分推断
 
 
 <div class="dpr-home-promo-card">

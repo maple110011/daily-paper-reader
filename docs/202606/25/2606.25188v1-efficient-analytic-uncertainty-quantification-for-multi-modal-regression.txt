@@ -1,0 +1,1356 @@
+Title: Efficient Analytic Uncertainty Quantification for Multi-Modal Regression
+
+URL Source: https://arxiv.org/pdf/2606.25188v1
+
+Published Time: Thu, 25 Jun 2026 00:19:56 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+# Efficient Analytic Uncertainty Quantification for Multi-Modal Regression 
+
+Kun Jin 1 James Harrison 2 Jiawei Li 1 Sihan Liu 1 Jiayi Liu 1
+
+Randolph Linderman 1 Yuening Li 2 Arnab Bhadury 1 Sourabh Prakash Bansod 1
+
+Liang Liu 1 Jasper Snoek 21Google 2Google DeepMind 
+
+{kunjin, jamesharrison, jweili, liusih, jiayil, randylinderman}@google.com {yueningl, arniebh, spbansod, liangliu, jsnoek}@google.com 
+
+# Abstract 
+
+Efficient uncertainty quantification (UQ) is essential for trustworthy large-scale learning. Existing UQ methods for regression tasks mainly operate under the assumption that the conditional label marginal satisfies single-peak parametric models, e.g., Gaussians, where the negative log-likelihood function simplifies to the mean square error. However, such single-peak assumptions fail in regression tasks featuring multi-modal distributions. On the other hand, semi-parametric meth-ods which achieve strong regression performance for multi-modal distributions often lack efficient quantification on their prediction variances. In this work, we extend UQ techniques based on Variational Bayesian Inference (VBI) to two widely used semi-parametric regression models that yield histogram-like reconstructions of the conditional label densities: Quantile Regression (QR) and Classification Restoration (CR). Our approach introduces a unified, distribution-agnostic frame-work that simultaneously achieves accurate estimation of complex conditional distributions and highly efficient UQ. Theoretically, our method is grounded in novel formulations of QR and CR within the VBI framework, yielding analytic Evidence Lower Bounds (ELBO) to streamline training and a closed-form or ana-lytically approximated predictive density for efficient inference. Empirically, we evaluate our methods on three large-scale regression benchmarks with multi-modal label distributions. Our framework outperforms state-of-the-art multi-modal re-gression baselines, and even matches predictive performance of computationally expensive ensemble models. Furthermore, by leveraging epistemic uncertainty estimation, our approach enables highly data-efficient active learning strategies. 
+
+# 1 Introduction 
+
+Predictive uncertainty quantification (UQ) — the process of estimating a model’s confidence in its own predictions — is essential for trustworthy machine learning in high-stakes applications like ride sharing and recommendation systems [Kendall and Gal, 2017]. One of the mainstream approaches to UQ relies on variational Bayesian inference (VBI). In particular, applying VBI restrictively to the last layer (e.g., Variational Bayesian Last Layer, or VBLL) [Harrison et al., 2024] stands out due to its exceptional computational efficiency as compared to more elementary UQ methods based on costly ensemble learning. For continuous regression problems, the canonical approach within this framework is to assume that the conditional label follows a simple Gaussian distribution. This unimodal parametric assumption is favored because it allows for a mathematically simple analytic derivation of the Evidence Lower Bound (ELBO) of the log-likelihood loss, enabling strictly O(1) 
+
+per-sample inference and training costs. 
+
+> Preprint.
+> arXiv:2606.25188v1 [cs.LG] 23 Jun 2026
+
+However, in high-uncertainty real-world applications, the conditional label distribution often deviates from simple Gaussian behaviors, instead exhibiting input-dependent, complex multi-modality. For instance, in video recommendation systems, the watch time distributions are empirically found to possess multi-modality due to disjoint user engagement patterns, which is thoroughly discussed in [Zhao et al., 2025]. Simple parametric assumptions fail fundamentally to capture the full complexity of this multi-modality. When a model is trained using log-likelihood objectives assuming a Gaussian conditional distribution, the train loss simplifies to mean square error (MSE), forcing the model to fit a Gaussian distribution approximately at the conditional expectation of the true label distribution. However, in multi-modal distributions characterized by disjoint clusters, this expected mean often resides in a “valley” between different clusters, where the data conditional density is close to zero. We term this the “Ghost Value” pathology: the model fits a distribution whose density peaks at an area with low data-density. Consequently, the model is forced to produce a bloated predicted variance to maintain data coverage over the actual, distant data modes. This structural failure then leads to severely miscalibrated epistemic uncertainty and significantly degraded prediction quality (e.g., Figure 1 A). To unlock more reliable UQ in such setups, our structural innovation is a distribution-agnostic framework that generalizes VBI beyond simple Gaussian assumptions to more complex, semi-parametric approaches — specifically Quantile Regression (QR) and Classification Restoration (CR) . Our method simultaneously enables (1) the reconstruction of complex conditional distributions in multi-modal regression, and (2) efficient UQ in analytic form, matching the O(1) training and inference cost of deterministic networks. Empirically, we demonstrate two advantages across diverse, large-scale multimodal domains. First, under standard training, our framework achieves competitive performance compared to state-of-the-art baselines in density estimation and out-of-distribution (OOD) sensitivity. Second, our analytic epistemic uncertainty unlocks highly data-efficient active learning; by reliably isolating epistemic uncertainty from aleatoric uncertainty, it achieves better predictive accuracy with substantially fewer labels while remaining computationally tractable at scale. 
+
+1.1 Related Works Efficient Uncertainty Quantification in Regression. Deterministic methods like SNGP [Liu et al., 2020], Deep Evidential Regression (DER) [Amini et al., 2020], and the standard Variational Bayesian Last Layer (VBLL) [Harrison et al., 2024] achieve O(1) inference but rely on unimodal (e.g., Gaussian) assumptions, triggering the Ghost Value pathology in multi-modal regimes. Conversely, ensemble and sampling-based methods [Lakshminarayanan et al., 2017, Gal and Ghahramani, 2016] face a severe operational trade-off: while leading to reliable density and epistemic uncertainty estimation, they incur an O(M ) multiplier that is impractically expensive. 
+
+Multi-Modal Regression and Density Estimation. Mixture Density Networks (MDNs) [Bishop, 1994] model multi-modal targets but suffer from optimization instability and lack analytic epistemic UQ. Distributional approaches like CREAD [Sun et al., 2024] use Classification Restoration to bypass Ghost Values but lack epistemic UQ and consistency guarantees. In the continuous domain, Confor-malized Quantile Regression (CQR) [Romano et al., 2019] produces contiguous intervals that fail on disjoint supports without epistemic decomposition. Furthermore, prior Bayesian quantile regression [Abeywardana and Ramos, 2015, Yang et al., 2016] relies on Gaussian scale-mixture representations, requiring auxiliary parameters or expensive Monte-Carlo sampling based approximations. 
+
+Uncertainty-Aware Active Learning. While Bayesian Active Learning by Disagreement (BALD) [Houlsby et al., 2011, Gal et al., 2017] is a dominant paradigm, applying sampling-based acquisition to large-scale regression introduces severe computational bottlenecks. Deep Ensembles [Lakshmi-narayanan et al., 2017] and MC-Dropout require multiple stochastic forward passes per candidate, stalling massive pool evaluations and retraining loops — an issue exacerbated in batch settings [Kirsch et al., 2019]. Deterministic methods like DER [Amini et al., 2020] offer O(1) efficiency but fail on disjoint data; non-Bayesian heuristics [Yoo and Kweon, 2019, Sener and Savarese, 2018] conflate epistemic ignorance with aleatoric data noise. 2Figure 1: Visualize our contributions with synthetic data. The target distribution is bimodal 
+
+(y has high probability mass around 0 and 1), which triggers the “Ghost Value” pathology at 
+
+y ≈ 0.5 in unimodal models (Panel A). The x > 2 region denotes out-of-distribution (OOD) inputs where the ground truth distribution is gradually transitioning into pure noise. Our framework achieves (1) representation of the conditional distribution and (2) efficient quantification of uncertainty . Comparing Panel C and A, QR-VBLL resolves the “Ghost Value” pathology by leveraging distribution-agnostic semi-parametric representations (e.g., QR), ensuring multi-modal consistency. Comparing Panel C and B, our method provides robust uncertainty quantification: QR-VBLL correctly inflates epistemic uncertainty (distribution entropy) in the OOD region to reflect model ignorance, whereas the deterministic Std QR baseline collapses the weight posterior, effectively exhibiting zero epistemic uncertainty and failing to recognize OOD inputs. 
+
+# 2 Problem Formulation 
+
+We consider a probabilistic regression setting with a dataset D = ( X , Y) = {(xi, y i)}Ni=1 , where X
+
+denotes the collection of inputs xi ∈ RD and Y denotes the continuous targets yi ∈ R. Our objective is to model the conditional density p(y|x) in a manner that simultaneously (1) estimates the true multi-modal distribution of the data, and (2) efficiently quantifying predictive uncertainties. Under the VBI formulation, we assume a prior distribution over the model weights w and would like to estimate the posterior p(w|D ). For inference, the predictive distribution is marginalized over the posterior: p(y|x) = R p(y|x, w )p(w|D )dw while the predictive variance can be decomposed into 
+
+aleatoric uncertainty — variance caused by inherent data noise — and epistemic uncertainty —variance caused by lack of observational data — via the Law of Total Variance: Var (y|x) = Ew∼p(w|D )[Var (y|x, w )] 
+
+| {z }
+
+> Aleatoric (Data Noise)
+
++ Var w∼p(w|D )(E[y|x, w ]) 
+
+| {z }
+
+> Epistemic (Model Ignorance)
+
+(1) On the one hand, standard VBLL approaches parameterize p(y|x) as a unimodal Gaussian 
+
+N (y; μ(x), Var (y|x)) minimizing negative log-likelihood (NLL). In the homoscedastic limit, this minimizes MSE, forcing the model to fit a Gaussian centered at the conditional expectation E[y|x].As introduced in Section 1, this formulation leads to a structural failure on multi-modal data. Math-ematically, if the true target distribution p∗(y|x) is a disjoint mixture, the conditional expectation 
+
+Ep∗ [y|x] frequently lies in a region of near-zero density. Minimizing NLL forces the unimodal network to predict a Gaussian centered at this near-zero density region, and subsequently inflate its variance σ2(x) to maintain coverage over the distant true modes. This destroys both predictive accuracy and uncertainty calibration (see Figure 1, A). On the other hand, semi-parametric methods based on standard deterministic networks (e.g., Standard QR) collapse the weight posterior p(w|D ) to a point estimate, eliminating the epistemic term Var p(w|D )(E[y|x, w ]) entirely and making them incapable of expressing structural ignorance when encountering sparse, out-of-distribution (OOD) samples; moreover, they may also conflate missing knowledge with data noise, leading to inflated aleatoric variance Ep(w|D )[Var (y|x, w )] (Figure 1, B). Our formal objective is to construct a framework that combines the best of both worlds: accurately modeling the density p(y|x, w ) to flexibly support multi-modal topologies, ensuring the marginal-ization over w remains analytically tractable, and decoupling estimations of aleatoric and epistemic uncertainties in O(1) time. 3x 
+
+> Spectral Backbone
+> ϕ(x)
+> VBLL Head
+> q(w)∼ N
+> Quantiles
+> ˆqκ(x)
+> Scalars
+> y
+> κ
+> Predicted CDF
+
+(a) Path A: QR-VBLL . Estimates conditional quantiles to approximate the CDF.   
+
+> x
+> Spectral Backbone
+> ϕ(x)
+> VBLL Head
+> q(w)∼ N
+> Softmax
+> p(y|x)
+> Logits z
+> Predicted PDF
+
+(b) Path B: CR-VBLL . Discretizes the target space to to approximate the PDF. 
+
+(c) Qualitative comparison of QR-VBLL and CR-VBLL on synthetic data with multimodal distribution. 
+
+Figure 2: The Modular Distribution-Agnostic Uncertainty Framework. Both paths share a distance-aware backbone and variational inference engine, but diverge at the output head to address different topological needs: (a) QR-VBLL is better at continuous, smooth shapes, since it excels at 
+
+Global Fidelity , smoothly capturing the gradual spread without binning artifacts and (b) CR-VBLL is better at sharp, disjoint densities, since it excels at Mode Precision , i.e., resolving the sharp split. 
+
+# 3 Modular Distribution-Agnostic Framework 
+
+Our framework simultaneously achieves accurate density estimation with efficient UQ. At a technical level, it integrates three modular components: a distance-aware backbone, a shared Variational Bayesian inference engine, and task-specific output heads for either QR or CR. 
+
+3.1 Component 1: Distance-Preserving Backbone 
+
+Standard deep networks often suffer from “feature collapse”, mapping OOD inputs to in-distribution representations. To mitigate this, we apply Spectral Normalization to the backbone f (x), and adopt a 
+
+Spectral-Residual architecture [Liu et al., 2020], as well as an alternative that concatenates the raw input x to form ϕ(x) = [ f (x), x ] (detailed in Appendix D.3.1). 
+
+Assumption 1 (Spectral Normalization [Liu et al., 2020]) . The backbone network ϕ(x) employs spectral normalization, ensuring it is bi-Lipschitz: there exist constants c2 ≥ c1 > 0 such that 
+
+c1∥x1 − x2∥2 ≤ ∥ ϕ(x1) − ϕ(x2)∥2 ≤ c2∥x1 − x2∥2 for all x1, x 2.
+
+This property is standard in distance-aware learning for OOD sensitivity [Liu et al., 2020]. 
+
+3.2 Component 2: The Variational Bayesian Engine 
+
+We employ a Variational Bayesian Last Layer (VBLL) [Harrison et al., 2024] to disentangle aleatoric and epistemic uncertainty efficiently. We treat the backbone ϕ(x) as deterministic but model the weights of the final layer w as random variables, approximating the true pos-terior p(w|D ) with a variational distribution q(w). The Evidence Lower Bound (ELBO) is 
+
+log p(Y|X ) ≥ PNi=1 Eq(w)[log p(yi|xi, w )] − KL (q(w) ∥ p(w)) , where p(w) is the prior over the last layer parameters and i indexes the data. Rather than sampling weights w ∼ q(w) to compute the expected log likelihood—which introduces high variance—we analytically compute the moments of the pre-activation logits and the resulting ELBO. For a linear last layer, the logits z = w⊤ϕ(x) follow a Gaussian distribution: 
+
+z ∼ N (m, s 2); m := w⊤ϕ(x), s 2 := ϕ(x)⊤Sϕ (x).
+
+Analytic marginalization allows us to compute the deterministic ELBO during training and exact predictive moments during inference in a single forward pass . While the variance computation 
+
+ϕ(x)⊤Sϕ (x) scales quadratically with feature dimension O(D2) for dense covariance, this cost 4is negligible for standard bottleneck layers (e.g., D = 64 in our experiments) compared to the backbone latency. Thus, our framework achieves effective O(1) inference complexity relative to ensemble-based methods that require O(M ) full network evaluations. 
+
+3.3 Path A: Variational Bayesian Quantile Regression (QR-VBLL) 
+
+In multi-modal quantile regression, one estimates a number of quantiles of the conditional distribution 
+
+y|x using the pinball loss (see Equation (8)), and the final point estimate is derived by numerically integrating over the estimated quantiles using the trapezoidal rule. This path develops a VBI style method for quantile regression. In particular, let δ = y − z ∼ N (y − ¯w⊤ϕ(x), ϕ (x)⊤Sϕ (x)) .
+
+VBLL-QR relies on computation of Eq(w)[log p(yt | xt, w )] = Eδ [log p(δ; σ, κ )] , where 
+
+p(δ; σ, κ ) = κ(1 − κ)
+
+σ
+
+exp  − κσ δ if δ ≥ 0exp   1−κσ δ if δ < 0 (2) is the asymmetric Laplace distribution density. A discussion of this likelihood function in the context of Bayesian quantile regression and its connection to pinball loss is provided in Appendix B.1. The following result gives a closed-form formula of this expected log likelihood function. The proof is provided in the Appendix B. 
+
+Theorem 1. Let σ > 0, κ ∈ (0 , 1) , and δ ∼ N (¯δ, s 2). Then, 
+
+Eδ [log p(δ; σ, κ )] = log κ(1 − κ)
+
+σ − ¯δσ (κ − 1 + Φ( ¯δs )) − sσ N ( ¯δs ; 0 , 1) , (3) 
+
+where Φ( ·) denotes the CDF of the standard normal. 
+
+Thus, the expected log likelihood can be computed analytically, and can be represented in terms of functions that are typically available in automatic differentiation packages. The variational posterior and the neural network weights can be trained by backpropagation through this loss function. Substituting the analytic expectation in Eq. (3) into the variational objective yields the loss function to be minimized for QR-VBLL: 
+
+LQR ,κ = −
+
+> N
+
+X
+
+> i=1
+
+Eδ [log p(yi − zi; σκ, κ )] 
+
+| {z }
+
+> Analytic Data Term (Eq.(3))
+
++β D KL (q(w)|| p(w)) 
+
+| {z }
+
+> Regularization
+
+(4) The overall loss is then summed over a predefined set of quantiles κ ∈ K with independent epistemic variance σκ: LQR = P 
+
+> κ∈K
+
+LQR,κ . Prediction in this model is done by marginalizing over the variational posterior: p(y|x) = Eq(w)[p(y|x, w )] . This following result shows that this is analytically tractable. 
+
+Proposition 1. Let σ > 0, κ ∈ (0 , 1) , δ ∼ N (¯δ, s 2), λ+ = κσ , and λ− = κ−1 
+
+> σ
+
+. Then, 
+
+Eδ [p(δ; σ, κ )] = −σλ −λ+
+
+"
+
+exp 
+
+
+
+−λ− ¯δ + 12 λ2
+
+> −
+
+s2
+
+
+
+Φ
+
+
+
+− ¯δ − λ−s2
+
+s
+
+
+
++ exp 
+
+
+
+−λ+ ¯δ + 12 λ2+s2
+
+
+
+Φ
+
+ ¯δ − λ+s2
+
+s
+
+ #
+
+. (5) This density is a mixture of exponentially-modified Gaussian distributions, smoothing the hard quantile estimates based on the local epistemic uncertainty s2.
+
+3.4 Path B: Variational Bayesian Classification Restoration (CR-VBLL) 
+
+We discretize the continuous target domain into K fixed bins. The model outputs a probability vector 
+
+p(y|x) = Softmax (z) ∈ RK , where the pre-activation logits z are marginalized over the variational posterior. Since our K bins represent contiguous intervals of a single continuous target variable rather than heterogeneous categories, we impose a physically motivated structural assumption that the bins share a homogeneous epistemic uncertainty (formally detailed in Assumption 2), where the pre-activation logits follow z ∼ N (m, s 2(x)IK ), yielding the objective: 
+
+LCR = Ez∼N (m,s 2(x)IK )[NLL CE (z, y )] + βD KL (q(w)|| p(w)) (6) 5For training, we apply again Jensen’s inequality to approximate the expected log-sum-exp term in Equation (6). For prediction, we leverage the multi-class probit approximation [Bishop, 2006] 
+
+Ew [p(y|w, x )] ≈ Softmax  m/ (p1 + π 
+
+> 8
+
+s2(x))  , which yields a closed-form approximation that preserves the predictive argmax while flattening the confidence of uncertain inputs. 
+
+Remark 1 (Path Selection, Figure 2 (c)) . QR-VBLL excels at Global Fidelity : it provides robust coverage for heavy-tailed or sparse distributions (minimizing Continuous Ranked Probability Score, CRPS [Gneiting and Raftery, 2007]) without binning artifacts. CR-VBLL excels at Mode Precision :its discrete nature captures sharp, disjoint peaks with high fidelity, minimizing NLL. 
+
+# 4 Framework Properties and Efficiency 
+
+We provide the theoretical guarantees of our framework. 
+
+Efficient UQ We derive an analytic decomposition of uncertainty that enables single-pass inference (O(1) ), bypassing the prohibitive computational costs of sampling-based methods. 
+
+Proposition 2 (Efficient UQ) . Consider the aleatoric variance and the epistemic variance defined as in Equation (1) For both VBLL-QR and VBLL-CR, the two types of variances are fully analytic, and can be computed without Monte Carlo sampling. 1
+
+Table 1: Comparison of UQ methods. N : training data size, M : ensemble size, S: MC samples. 
+
+Distribution-Agnostic (Ours): Makes no parametric assumption about the density shape p(y|x),but relies on asymptotic consistency rather than finite-sample coverage bounds. Distribution-Free: 
+
+Guarantees finite-sample coverage (e.g., Conformal Prediction [Romano et al., 2019]) regardless of the underlying distribution p(x, y ). Parametric Mixture: Assumes the density is a weighted sum of fixed base distributions (e.g., Gaussians in MDNs), which limits expressivity on disjoint supports.                                                      
+
+> Method Multi-modal Uncertainty Inference Training p(y|x)Distribution Consistency Decomposition Cost Cost Assumption
+> Deep Ensembles (MSE) ×Via disagreement O(M)O(M N )Parametric Mixture MC-Dropout (MSE) ×Via sampling O(S)O(N)Approx. Mixture Evidential (DER) ×Analytic O(1) O(N)Normal-Inv. Gaussian SNGP (Standard, MSE) ×Analytic O(1) O(N)Gaussian Conformal (CQR) ✓Coverage Only O(1) O(N)Distribution-Free
+> QR-VBLL (Ours) ✓Analytic O(1) O(N)Distribution-Agnostic CR-VBLL (Ours) ✓Analytic O(1) O(N)Distribution-Agnostic
+
+We contrast the computational complexity of our framework against established baselines (Table 1). 
+
+Sampling-Based vs. Deterministic. Sampling methods incur prohibitive costs for real-time systems: Deep Ensembles [Lakshminarayanan et al., 2017] require O(M ) compute for both training and inference, while MC-Dropout [Gal and Ghahramani, 2016] requires O(S) inference passes. Baselines with O(1) efficiency either can not estimate the arbitrary conditional density (DER, CQR) or suffer from optimization instability (MDN), or rely on approximate uncertainty quantification (SNGP). 
+
+Ours (Analytic & Efficient). QR-VBLL and CR-VBLL achieve optimal O(1) training and inference latency, matching standard deterministic regression while providing the rigorous uncertainty decom-position of Bayesian methods. Unlike SNGP, which approximates the GP posterior, our framework derives a tractable analytic decomposition of the variational posterior. Memory overhead is negligible (< 0.1% parameters), restricted to the final layer’s variational weights. 
+
+OOD Sensitivity We establish that epistemic uncertainty grows quadratically with distance from the training manifold, structurally guaranteeing a conservative, calibrated “Safety Net” on out-of-distribution inputs. 
+
+Proposition 3 (OOD Sensitivity and Epistemic Growth) . Under the Bi-Lipschitz Property (Assump-tion 1), let x′ be an OOD input at distance d = min x∈D train || x′ − x|| 2 from the training set. For any 
+
+d ≥ R/c 1, where R = max x∈D train || ϕ(x)|| 2, the epistemic uncertainty s2(x′) is lower-bounded by a quadratic function of the distance: s2(x′) = ϕ(x′)⊤Sϕ (x′) ≥ λmin (S)( c1d − R)2.     
+
+> 1For QR-VBLL, Var represents the standard scalar variance derived via the Asymmetric Laplace Distribution. For CR-VBLL, the use of Var is a slight abuse of notation to maintain a unified equation format; the uncertainty quantification is formally resolved in the K-dimensional categorical distribution space via the Trace operator (see Appendix C.1).
+
+6(a) WeChat (b) KuaiRec (c) Uber 
+
+Figure 3: Target distributions for Real-World Benchmarks. The label density plots reveal the complex, multi-modal nature of real-world regression tasks. (a) WeChat exhibits sharp, disjoint modes typical of user engagement (skip vs. complete). (b) KuaiRec shows a heavy-tailed distribution with a spike at the max value. (c) Uber displays smooth bimodality representing different traffic conditions. 
+
+Remark 2 (Implicit Calibration via Marginalization) . Note that because the raw conditional quantile estimators are deterministic posterior means, individual predicted quantiles do not natively inflate with epistemic variance. Instead, our OOD "Safety Net" is achieved via the marginalization of the weight posterior, which structurally flattens the full continuous predictive density proportional to 
+
+s2(x) (see Appendix C.3 for detailed description and derivations). 
+
+Asymptotic Consistency Last but not least, we show that our framework makes accurate distribution estimations as the sample size grows. We provide the detailed mathematical derivations and formal proofs in Appendix C.4. 
+
+Proposition 4 (Asymptotic Consistency) . As the dataset size N → ∞ , QR-VBLL converges to the true conditional quantiles, and CR-VBLL converges in probability to the true target density. 
+
+# 5 Experiments 
+
+We evaluate our framework on three large-scale benchmarks: WeChat (Short-Form Video Recommen-dation), KuaiRec (Short-Form Video Recommendation), and Uber (Ride Sharing). As illustrated in Figure 3, these datasets exhibit highly non-Gaussian, multi-modal target distributions where standard MSE-based approaches are prone to failure. We use bold font to indicate the best performance under each method category. To ensure a rigorous and fair comparison on methods across disjoint (CR) and continuous (Gaus-sian/QR) paradigms, we standardize the evaluation metrics. (1) Discretized NLL: We partition the target space into 10 uniform buckets. For continuous models (Gaussian, QR-VBLL), we integrate the predicted PDF (or difference in CDF) over each bucket to obtain probability masses. We then compute the NLL of these masses against the discretized ground truth. (2) Discretized ECE: Simi-larly, we compute ECE using these 10 fixed buckets to measure the alignment between the predicted probability mass and the empirical frequency of the target falling within each bucket. (3) CRPS remains a continuous metric calculated on the full CDF. (4) RMSE is computed based on the predicted conditional mean and the label. Detailed definitions are provided in Appendix D. Due to space constraints, simplified results for WeChat, KuaiRec and Uber datasets are presented in Table 2, and standard deviations are included in the corresponding full tables, Table 7, 8, and 9 in Appendix D. The WeChat dataset (Figure 3a) features a highly disjoint target distribution (0.0 vs 1.0 watch ratios) with sharp density peaks. CR-VBLL achieves“Mode Precision” with the best NLL among single-pass methods, effectively matching or beating the computationally expensive methods except for CR-Ensemble. QR-VBLL excelled at global fidelity with the best CRPS in single-pass methods. The KuaiRec dataset (Figure 3b) exhibits a more smooth conditional label distribution with a heavy-tail. While the MDN achieves the lowest NLL among single-pass methods, this comes at a cost to global fidelity, yielding a CRPS ( 0.2117 ) more than that of QR-VBLL ( 0.1964 ). Meanwhile, QR-VBLL achieves the best CRPS and ECE among single-pass methods, also with more consistent performance than MDN on the other datasets, and even outperforms the computationally expensive QR-Ensemble on NLL and ECE. The Uber dataset (Figure 3c) contains sparse data with a bimodal but continuous target distribution. Again QR-VBLL is giving a compelling performance against single-pass and ensemble baselines. 7Table 2: Performance comparison across WeChat, KuaiRec, and Uber datasets. We report the mean values for NLL, RMSE, CRPS, and ECE. Methods are categorized into (1) single-pass baselines (2) single-pass CR (3) single-pass QR and (4) ensemble. Bold (based on more precise metrics in Table 7, 8, and 9) indicates the best performance among each method category. The Ensemble Baselines 
+
+(bottom section) require 5× computational cost; notably, our single-pass solutions outperform existing methods with similar computation cost and even match or exceed the expensive baselines.                                                                                                                                                                                                               
+
+> WeChat (Recommendation) KuaiRec (Recommendation) Uber (Transportation) Method NLL RMSE CRPS ECE NLL RMSE CRPS ECE NLL RMSE CRPS ECE
+> Gaussian 2.1657 1.0466 0.4380 0.0264 1.5070 0.4457 0.2093 0.0291 2.6766 0.4686 0.3039 0.0848 SNGP 2.2730 0.7740 0.4439 0.0302 1.7470 0.4440 0.2394 0.0497 1.8745 0.4516 0.2634 0.0341
+> VBLL 2.1708 0.8327 0.4315 0.0251 1.5184 0.4484 0.2117 0.0327 3.3107 0.4533 0.3061 0.1043 DER 2.1443 0.7811 0.4226 0.0263 1.4163 0.4580 0.2131 0.0231 2.8354 0.4541 0.3299 0.1196 MDN 1.9515 1.2464 0.4418 0.0070 1.2943 0.4495 0.2117 0.0136 4.0078 0.4606 0.3264 0.1181 Vanilla QR 2.0317 0.7629 0.4156 0.0066 1.3938 0.4438 0.1968 0.0136 2.3728 0.4578 0.2686 0.0370 CQR 2.0446 0.7723 0.4226 0.0065 1.4018 0.4447 0.1976 0.0148 1.9435 0.4590 0.2666 0.0379 QR-MCD 2.0297 0.7646 0.4172 0.0062 1.4049 0.4439 0.1978 0.0145 2.1179 0.4606 0.2686 0.0357
+> QR-VBLL 1.9616 0.7614 0.4134 0.0067 1.3716 0.4433 0.1964 0.0122 1.7830 0.4495 0.2560 0.0080
+> Vanilla CR 1.9199 0.7664 0.4063 0.0126 1.3978 0.4550 0.1991 0.0237 2.5328 0.4550 0.2911 0.0804 CR-SNGP 1.9377 0.7756 0.4151 0.0133 1.3874 0.4584 0.1980 0.0237 1.7892 0.4512 0.2559 0.0087 CR-MCD 1.9245 0.7687 0.4072 0.0119 1.3937 0.4551 0.1991 0.0237 2.2687 0.4584 0.2882 0.0719
+> CR-VBLL 1.9189 0.7654 0.4068 0.0119 1.3867 0.4549 0.1989 0.0235 1.7839 0.4505 0.2559 0.0072
+> Ensemble 2.1502 0.8035 0.4315 0.0300 1.4980 0.4405 0.2085 0.0285 2.7145 0.4668 0.3070 0.0903 QR-Ensemble 1.9973 0.7506 0.4076 0.0055 1.3858 0.4433 0.1958 0.0136 2.1280 0.4578 0.2686 0.0393
+> CR-Ensemble 1.8981 0.7547 0.3982 0.0137 1.3880 0.4540 0.1980 0.0237 2.3305 0.4506 0.2693 0.0506
+
+Figure 4: Visualizing UQ. Epistemic uncertainty is high for cold-start users and decays as the model observes more data. 
+
+Figure 5: The test NLL curves for active learning methods on KuaiRec, demon-strating data efficiency improvement. Moreover, both CR-VBLL and QR-VBLL are having a much larger advantage margin from the “safety net” effect (like Figure 1 B vs C) on sparse data. 
+
+5.1 Uncertainty-Aware Active Learning 
+
+Validating the epistemic signal. We verify that the predicted epistemic variance correctly reflects true model ignorance. As illustrated in Figure 4, the average epistemic uncertainty on the WeChat dataset is highest for cold-start users with minimal interaction history ( N < 20 ) and decays monotonically as their history increases. This confirms that our architecture successfully identifies “known unknowns” in sparse data regimes, providing a reliable, inflated variance to prevent overconfident predictions for under-represented users. 
+
+Operationalizing uncertainty for data acquisition. Having established that this epistemic signal is faithful, we next demonstrate how it can be leveraged to address a critical bottleneck in industrial applications: the prohibitive cost of acquiring labeled data. Because our framework reliably isolates epistemic ignorance from inherent aleatoric noise, it enables highly efficient active learning. 
+
+Experimental setup and baselines. We evaluate the data efficiency of our framework across all three distribution topologies (WeChat, KuaiRec, and Uber) by simulating a cold-start active learning loop. We initialize the model with 20% of the training data and iteratively acquire samples. Standard uncertainty sampling relies on the total predictive variance (implicitly setting γ = 1 ), which frequently wastes budget by getting trapped in irreducible data noise. To successfully bypass these extreme high-8noise traps while preserving calibration, we propose a Hybrid acquisition strategy A(x). Leveraging our analytic variance decomposition (Proposition 2), we explicitly decouple and downweight the aleatoric component: 
+
+A(x) = Var q (E[y|x, w ]) + γ · Eq [Var (y|x, w )] (7) Setting a discounted γ ∈ (0 , 1) (e.g., γ = 0 .1 for WeChat and γ = 0 .2 for KuaiRec and Uber; ablation in Appendix D.3) ensures the model prioritizes exploring sparse regions. Crucially, retaining this downweighted aleatoric signal allows the model to deliberately sample just enough noisy areas to correctly calibrate the variance head, acting as a distributional regularizer without being overwhelmed by pure noise. We compare our O(1) Hybrid strategy against four baselines: (1) Random sampling over the unlabeled pool; (2) Bayesian Active Learning by Disagreement via Vanilla QR MCD (BALD-MCD) ( O(S)), which measures Monte Carlo Dropout disagreement via the variance of predictive means over S = 25 stochastic passes; (3) BALD of QR-VBLL (BALD-VBLL) ( O(1) ), the analytic analogue of BALD for our setting, defined as the ratio of epistemic to total variance Var q (E[y|x, w ]) /Var q (y|x) computed in closed form; and (4) Pure Epistemic ( O(1) ) sampling based purely on the weight uncertainty variance ( γ = 0 ). Critically, all non-random strategies share the exact same model and posterior, ensuring an unconfounded comparison. Table 3: Active Learning Performance across datasets. We report both NLL (mode precision) and CRPS (global fidelity) to ensure improvements are genuine. We transpose the evaluation to highlight method performance across topologies: WeChat (disjoint), KuaiRec (heavy-tailed), and Uber (bimodal). We also include the WeChat Cold-Start subset to demonstrate uncertainty acquisition value in sparse regimes. The full active learning metrics with standard deviations are covered in Appendix D                                                    
+
+> Method WeChat (Full) WeChat (Cold) KuaiRec Uber
+> NLL CRPS NLL CRPS NLL CRPS NLL CRPS
+> Hybrid (Ours) 2.0206 0.4434 2.0157 0.4602 1.7423 0.2085 1.7840 0.2562
+> BALD-MCD ( O(S))2.0258 0.4434 2.0195 0.4612 1.8175 0.2100 1.7851 0.2562
+> BALD-VBLL ( O(1) )2.0277 0.4454 2.0162 0.4620 2.0450 0.2144 1.7853 0.2564 Pure Epistemic 2.0283 0.4452 2.0167 0.4618 1.7662 0.2100 1.7848 0.2568 Random (43% more training samples) 2.0261 0.4438 2.0176 0.4602 1.7502 0.2085 1.7919 0.2562
+
+Results and insights. As shown in Table 3, the results support three major conclusions regarding our uncertainty decomposition: (1) Efficiency vs. quality: Our Hybrid strategy matches or outperforms BALD-MCD across all three datasets despite requiring no additional forward passes. The O(1) ana-lytic decomposition provides an acquisition signal of equal or superior quality to the computationally expensive O(S) Monte Carlo approximation. (2) The necessity of controlled aleatoric sampling: 
+
+There is a consistent performance gap between our Hybrid approach and both BALD-VBLL and Pure Epistemic sampling ( γ = 0 ). This confirms that explicitly incorporating a downweighted aleatoric term provides a critical regularizing signal. Pure epistemic sampling strictly avoids inherent data noise, which inadvertently starves the variance head of the samples needed to correctly calibrate the aleatoric uncertainty. Conversely, standard total-variance sampling (e.g., γ = 1 ) would over-index on and be trapped by high-noise regions. By using a discounted γ, our Hybrid approach successfully avoids the trap of pure noise exploration, while simultaneously ensuring the variance head is properly calibrated. (3) Superior data efficiency: Our framework achieves better NLL and CRPS using 70% 
+
+of all the labeled samples on WeChat, Uber, and KuaiRec, the Hybrid approach yielded the best performance, suggesting our analytic decomposition is particularly valuable on complex, heavy-tailed distributions where aleatoric and epistemic signals are notoriously difficult to disentangle. 
+
+# 6 Conclusion 
+
+We introduced the first modular, distribution-agnostic framework to simultaneously achieve (1) accu-rate multimodal distribution estimation and (2) efficient uncertainty quantification. Our framework branches into Quantile Regression (QR) for continuous shapes and Classification Restoration (CR) for disjoint modes. Critically, we present sampling-free objectives for training both classes of models, including novel results for analytical variational QR. By pairing a distance-preserving backbone with a Variational Bayesian Last Layer (VBLL), our architecture injects calibrated epistemic uncertainty 9into predictions requiring only a single forward pass ( O(1) ). We provide both theoretical and nu-merical evidence to show our framework provides a robust and efficient solution for trustworthy multi-modal regression. 
+
+Limitations & Future Directions. Our approach currently relies on dataset-specific heuristics for routing between QR/CR paths; developing a fully adaptive, data-driven routing module is a key future direction. Furthermore, establishing tight finite-sample error bounds for the complete VBLL framework, and expanding to multivariate targets, remain important open challenges. Additionally, we currently use a relatively naive method for reconstructing predictive PDF/CDFs with QR, ensembling over the variational posterior. It may be possible and of interest to develop more efficient methods of reconstruction. 
+
+References 
+
+Sachinthaka Abeywardana and Fabio Ramos. Variational inference for nonparametric bayesian quantile regression. In Proceedings of the Twenty-Ninth AAAI Conference on Artificial Intelligence ,2015. Alexander Amini, Wilko Schwarting, Guy Rosman, Sertac Karaman, and Daniela Rus. Deep evidential regression. In Advances in Neural Information Processing Systems (NeurIPS) , volume 33, pages 14927–14937, 2020. Christopher M Bishop. Mixture density networks. In Technical Report NCRG/4288, Aston University ,1994. Christopher M Bishop. Pattern recognition and machine learning. Springer , 2006. N. N. ˇ Cencov. Estimation of an unknown distribution density from observations. Soviet Mathematics ,3:1559–1562, 1962. Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. International Conference on Machine Learning (ICML) , pages 1050–1059, 2016. Yarin Gal, Riashat Islam, and Zoubin Ghahramani. Deep bayesian active learning with image data. In 
+
+Proceedings of the 34th International Conference on Machine Learning (ICML) , pages 1183–1192. PMLR, 2017. Tilmann Gneiting and Adrian E Raftery. Strictly proper scoring rules, prediction, and estimation. 
+
+Journal of the American Statistical Association , 102(477):359–378, 2007. James Harrison, John Willes, and Jasper Snoek. Variational Bayesian last layers. In International Conference on Learning Representations (ICLR) , 2024. Neil Houlsby, Ferenc Huszár, Zoubin Ghahramani, and Máté Lengyel. Bayesian active learning for classification and preference learning. arXiv preprint arXiv:1112.5745 , 2011. Alex Kendall and Yarin Gal. What uncertainties do we need in Bayesian deep learning for computer vision? In Advances in Neural Information Processing Systems (NeurIPS) , volume 30, 2017. Andreas Kirsch, Joost Van Amersfoort, and Yarin Gal. Batchbald: Efficient and diverse batch active learning for deep neural networks. In Advances in Neural Information Processing Systems (NeurIPS) , volume 32, 2019. Roger Koenker. Quantile regression , volume 38. Cambridge university press, 2005. Roger Koenker and Gilbert Bassett Jr. Regression quantiles. Econometrica , 1978. Hideo Kozumi and Genya Kobayashi. Gibbs sampling methods for bayesian quantile regression. 
+
+Journal of statistical computation and simulation , 2011. Agustinus Kristiadi, Matthias Hein, and Philipp Hennig. Being Bayesian, even just a bit, fixes overconfidence in ReLU networks. In Proceedings of the 37th International Conference on Machine Learning (ICML) , volume 119, pages 5436–5446. PMLR, 2020. 10 Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncertainty estimation using deep ensembles. In Advances in Neural Information Processing Systems (NeurIPS) , volume 30, 2017. Qing Li, Nan Lin, and Ruibin Xi. Bayesian regularized quantile regression. Bayesian Analysis , 2010. Jeremiah Liu, Zi Lin, Shreyas Padhy, Dustin Tran, Tania Bedrax-Weiss, and Balaji Lakshminarayanan. Simple and principled uncertainty estimation with deterministic deep learning via distance aware-ness. In Advances in Neural Information Processing Systems (NeurIPS) , volume 33, pages 7498–7512, 2020. Yaniv Romano, Evan Patterson, and Emmanuel Candes. Conformalized quantile regression. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , volume 32, 2019. David W. Scott. On optimal and data-based histograms. Biometrika , 66(3):605–610, 1979. doi: 10.1093/biomet/66.3.605. Ozan Sener and Silvio Savarese. Active learning for convolutional neural networks: A core-set approach. In International Conference on Learning Representations (ICLR) , 2018. Seonguk Seo, Paul Hongsuck Seo, and Bohyung Han. Learning for single-shot confidence calibration in deep neural networks through stochastic inferences. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 9030–9038, 2019. Ingo Steinwart and Andreas Christmann. Estimating conditional quantiles with the help of the pinball loss. Bernoulli , 17(1):211–225, 2011. doi: 10.3150/10-BEJ267. Jie Sun, Zhaoying Ding, Ben Wang, et al. CREAD: A classification-restoration framework with error adaptive discretization for watch time prediction. In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI) , volume 38, pages 9002–9010, 2024. Ichiro Takeuchi, Quoc V Le, Timothy D Sears, and Alexander J Smola. Nonparametric quantile estimation. Journal of Machine Learning Research , 7:1231–1264, 2006. Efthymios G Tsionas. Bayesian quantile inference. Journal of statistical computation and simulation ,2003. Aad W Van der Vaart. Asymptotic statistics , volume 3. Cambridge university press, 2000. Yunwen Yang, Huixia Judy Wang, and Xuming He. Posterior inference in bayesian quantile regression with asymmetric laplace likelihood. International Statistical Review , 2016. Zhilin Yang, Zihang Dai, Ruslan Salakhutdinov, and William W. Cohen. Breaking the softmax bottle-neck: A high-rank RNN language model. In International Conference on Learning Representations ,2018. URL https://openreview.net/forum?id=HkwZSG-CZ .Donggeun Yoo and In So Kweon. Learning loss for active learning. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 93–102, 2019. Keming Yu and Rana A Moyeed. Bayesian quantile regression. Statistics & Probability Letters ,2001. Xu Zhao, RuiBo Ma, Jiaqi Chen, Weiqi Zhao, Ping Yang, and Yao Hu. Multi-granularity distribution modeling for video watch time prediction via exponential-gaussian mixture network. In Proceed-ings of the Nineteenth ACM Conference on Recommender Systems (RecSys ’25) , pages 1–10. ACM, 2025. 11 A Nomenclature and Notation 
+
+Table 4: Summary of mathematical notation. 
+
+Symbol Description 
+
+Data and Backbone 
+
+D Dataset of N i.i.d. observations, D = {(xi, y i)}Ni=1 
+
+X Collection of inputs of D, X = {xi}Ni=1 
+
+Y Collection of labels of D, Y = {yi}Ni=1 
+
+x ∈ RD Input feature vector, D is the feature dimension 
+
+y ∈ R Continuous target variable 
+
+ϕ(x; ψ) Deterministic neural backbone output (features) 
+
+ψ Deterministic parameters (weights) of the backbone network 
+
+w Stochastic weights of the final linear layer vec (w) Flattened 1-D vector of w
+
+Variational Inference 
+
+p(w) Prior distribution over weights (typically N (0 , I ))
+
+q(w) Variational approximate posterior distribution 
+
+w, S Variational parameters (mean vector and covariance) 
+
+z Pre-activation logits, z = w⊤ϕ(x)
+
+m Mean of logits under q(w), m = w⊤ϕ(x)
+
+s2 Variance of logits (Epistemic), s2 = ϕ(x)⊤Sϕ (x)
+
+Path A: Quantile (QR) 
+
+κ Quantile level, κ ∈ (0 , 1) 
+
+ρκ(·) Pinball loss function 
+
+σ Scale parameter of the Asymmetric Laplace (set to 1) 
+
+ˆqκ(x) Predicted conditional quantile at level κqκ(x) True conditional quantile at level κ
+
+ˆF (y|x) Reconstructed Cumulative Distribution Function (CDF) 
+
+LQR Expected Pinball Loss objective (deterministic ELBO) 
+
+Path B: Classification Restoration (CR) 
+
+K Number of discretization bins 
+
+B Set of fixed bin centers, B = {b1, . . . , b K }
+
+Bk The k-th bin 
+
+∆ Bin width ( (ymax − ymin )/K )
+
+p(x) Predicted probability vector over bins (Softmax output) 
+
+LCR Expected Negative Log-Likelihood objective for CR 
+
+Theoretical Analysis 
+
+δood Distance of OOD input from training manifold ( min x∈D train ∥x′ − x∥2)
+
+R Radius of the training feature manifold ( max ∥ϕ(x)∥2)
+
+λmin (S) Minimum eigenvalue of the variational covariance matrix 
+
+L Lipschitz constant of the true density 
+
+Lf Lipschitz constant of the backbone fc1, c 2 Constants for lower and upper bounds for Bi-Lipschitz condition (Assumption 1) 
+
+12 Table 5: Table of Abbreviations. 
+
+Abbreviation Full Name 
+
+Methods & Models 
+
+VBLL Variational Bayesian Last Layer CR-VBLL Classification Restoration VBLL (Ours) QR-VBLL Quantile Regression VBLL (Ours) MDN Mixture Density Networks MCD Monte Carlo Dropout DER Deep Evidential Regression SNGP Spectral-normalized Neural Gaussian Process CQR Conformalized Quantile Regression BALD Bayesian Active Learning by Disagreement 
+
+Metrics & Objectives 
+
+NLL Negative Log-Likelihood MSE Mean Squared Error RMSE Root Mean Squared Error CRPS Continuous Ranked Probability Score ECE Expected Calibration Error ELBO Evidence Lower Bound KL Kullback–Leibler Divergence 
+
+Concepts & Distributions 
+
+UQ Uncertainty Quantification OOD Out-of-Distribution CDF Cumulative Distribution Function PDF Probability Density Function ALD Asymmetric Laplace Distribution PIT Probability Integral Transform SN Spectral Normalization 
+
+13 B Quantile Regression VBLL Algorithmic Details 
+
+B.1 Background and Related Work 
+
+Quantile regression Koenker and Bassett Jr [1978] uses the pinball loss function 
+
+ρκ(δ) = 
+
+κδ δ ≥ 0(κ − 1) δ δ < 0 (8) where δ is error δ = y − z, for true label y and prediction z, and where κ ∈ (0 , 1) corresponds to the quantile to be regressed. The asymmetric Laplace distribution 2,
+
+p(δ; σ, κ ) = κ(1 − κ)
+
+σ exp( −ρκ( δσ )) 
+
+is a natural probabilistic interpretation of the quantile loss function Yu and Moyeed [2001]; choosing scale parameter σ = 1 recovers exactly the quantile regression loss in maximum likelihood estimation (plus a constant function of κ). Bayesian inference for quantile estimation has primarily relied on Monte Carlo methods [Tsionas, 2003, Li et al., 2010]. See Yang et al. [2016] for a survey of inferential methods. Most relevant to our work is the variational inference scheme of Abeywardana and Ramos [2015], which builds on the Kozumi and Kobayashi [2011] formulation in developing a correspondence between the asymmetric Laplace distribution and a scalar mixture of Gaussians (with a particular distribution over mixture weights). They use Gaussian processes for their underlying function approximation. Abeywardana and Ramos [2015] exploit the Gaussian mixture perspective, introducing a variational posterior for the mixture weights. Our variational approach exactly computes the ELBO for the asymmetric Laplace, avoiding the need to introduce a variational posterior that may differ from the true posterior. Regressing a set of quantiles (with e.g. (κ1, κ 2, . . . , κ N ) with κi < κ j for i < j ) allows the construction of an estimate of the predictive density. Indeed, knowledge of the quantile locations and corresponding κ values corresponds to a set of points on the CDF; construction of an empirical CDF or PDF relies on an interpolation method between these points. Linear interpolation between these points is a common choice, and results in a piecewise-constant density Koenker [2005]. Bayesian inference of quantiles can therefore be thought of as generating a distribution over empirical CDFs, although the realized distribution still relies on interpolation method. 
+
+B.2 ELBO and Predictive Likelihood 
+
+We will first provide proofs of Theorem 1 and Proposition 1, and then provide context for these results. 
+
+Proof of Theorem 1. We have 
+
+E[log p(δ; σ, κ )] = log κ(1 − κ)
+
+σ − E[ρκ( δσ )] (9) for which 
+
+E[ρκ( δσ )] = 
+
+Z ∞−∞ 
+
+N (δ; ¯δ, s 2)ρκ( δσ )dδ (10) 
+
+= κσ
+
+Z ∞
+
+> 0
+
+δN (δ; ¯δ, s 2)dδ + (κ − 1) 
+
+σ
+
+Z 0
+
+> −∞
+
+δN (δ; ¯δ, s 2)dδ (11) This is a known integral for which 
+
+I := 
+
+Z ∞
+
+> 0
+
+δN (δ; ¯δ, s 2)dδ = ¯δΦ( ¯δs ) + sN ( ¯δs ; 0 , 1) (12) 
+
+> 2Note that we discuss zero-mean asymmetric Laplace distributions here. Because the asymmetric Laplace distribution is a member of the location-scale family, the density of the error under the zero mean distribution corresponds exactly to the density of the label with non-zero mean.
+
+14 Figure 6: Analytic smoothing of the Asymmetric Laplace surrogate likelihood. The standard pinball loss (dashed) contains a non-differentiable kink at zero error. By taking the expectation over the Gaussian variational posterior in QR-VBLL, the effective data objective (solid) is analytically smoothed proportional to the epistemic uncertainty s. This renders the objective strictly twice-differentiable. where Φ( ·) denotes the CDF of the standard normal. By symmetry, 
+
+Z 0
+
+> −∞
+
+δN (δ; ¯δ, s 2)dδ = −
+
+Z ∞
+
+> 0
+
+(−δ)N (−δ; ¯δ, s 2)dδ (13) 
+
+= ¯δΦ( − ¯δs ) − sN (− ¯δs ; 0 , 1) (14) 
+
+= ¯δ(1 − Φ( ¯δs )) − sN ( ¯δs ; 0 , 1) . (15) Then, grouping terms, we have 
+
+E[ρκ( δσ )] = κσ (¯δΦ( ¯δs ) + sN ( ¯δs ; 0 , 1)) + (κ − 1) 
+
+σ (¯δ(1 − Φ( ¯δs )) − sN ( ¯δs ; 0 , 1)) (16) 
+
+= ¯δσ (κ − 1 + Φ( ¯δs )) + sσ N ( ¯δs ; 0 , 1) (17) 
+
+Proof of Proposition 1. We will take the same approach as previously, and split the expectation into two integrals. We note 
+
+Eq(w)[p(y | x, w )] = 
+
+Z ∞−∞ 
+
+κ(1 − κ)
+
+σ exp( −ρκ( δσ )) N (δ; ¯δ, s 2)dδ (18) 
+
+= −σλ −λ+
+
+Z 0
+
+> −∞
+
+exp( −λ−δ)N (δ; ¯δ, s 2)dδ +
+
+Z ∞
+
+> 0
+
+exp( −λ+δ)N (δ; ¯δ, s 2)dδ 
+
+
+
+(19) 15 for which 
+
+Z 0
+
+> −∞
+
+exp( −λ−δ)N (δ; ¯δ, s 2)dδ =
+
+Z 0
+
+> −∞
+
+1
+
+s√2π exp( −λ−δ − 12s2 (δ − ¯δ)2)dδ (20) 
+
+= exp( −λ− ¯δ + 12 λ2
+
+> −
+
+s2)
+
+Z 0
+
+> −∞
+
+N (δ; ¯δ − λ−s2, s 2)dδ (21) 
+
+= exp( −λ− ¯δ + 12 λ2
+
+> −
+
+s2)Φ( − ¯δ − λ−s2
+
+s ) (22) where the second equality is arrived at by completing the square. The RHS integral can be treated similarly, yielding the marginal density. We can also state the following result on the predictive mean and variance. 
+
+Corollary 1. Let p(y|x) be the marginal distribution from Proposition 1. Then, the first two moments are 
+
+E[y | x] = ¯ w⊤ϕ(x) + σ(1 − 2κ)
+
+κ(1 − κ) (23) Var (y | x) = ϕ(x)⊤Sϕ (x) + σ2(1 − 2κ + 2 κ2)
+
+κ2(1 − κ)2 . (24) 
+
+Proof. We can write y = z + δ, where z ∼ N ( ¯ w⊤ϕ(x), ϕ (x)⊤Sϕ (x)) and δ is asymmetric Laplace distributed with zero location parameter, and these are independent. Thus, the moments of the sum are the sum of the moments. The first term in each of Equations 23 and 24 are the corresponding moments of the Gaussian, and the second term corresponds to the moments of the asymmetric Laplace with location zero. The VBLL model structure pairs naturally with the asymmetric Laplace likelihood, and yields analytically computable expectations for both the ELBO and the predictive density. Further extensions to this model are possible: because the scale term σ appears only through log σ and 1/σ in the ELBO, variational inference for this parameter is possible. We note that (inverse) gamma or log-Gaussian variational posteriors are possible, providing a more robust model and enabling modeling of heteroscedasticity. We compare the expected vs standard pinball loss in Figure 6. 16 C Formal Proofs in Section 4 
+
+Before detailing the derivations, we first formalize the structural assumption regarding the variational posterior of the last-layer weights, which is central to the O(1) efficiency of CR-VBLL. 
+
+Assumption 2 (Isotropic Logit Covariance via Homogeneous Discretization) . Following the exact factorization of the Variational Bayesian Last Layer [Harrison et al., 2024], we model the variational posterior over the K classes independently as q(W ) = QKk=1 N ( ¯ wk, S k). The independence of the weight vectors wk mathematically guarantees a strictly diagonal logit covariance matrix 
+
+ΣZ = diag (s21(x), . . . , s 2 
+
+> K
+
+(x)) .Crucially, because our K classes do not represent heterogeneous, independent categories (as in standard classification), but rather contiguous, discretized intervals of a single continuous target variable (e.g., watch time), we impose a physically motivated structural assumption: the underlying epistemic uncertainty is homogeneous across these adjacent bins. We therefore constrain the class-specific posteriors to share the same covariance matrix S (i.e., Sk = S, ∀k). This structural homogenization naturally yields an isotropic logit covariance ΣZ = s2(x)IK , where the shared scalar variance is s2(x) = ϕ(x)⊤Sϕ (x).Remark 3 (Efficiency Trade-off and Fallback to Diagonal Covariance) . It is important to note that relaxing Assumption 2 to a standard diagonal covariance (i.e., allowing Sk̸ = Sj ) would still provide valid and rigorous uncertainty quantification. In fact, if we fallback to this weaker diagonal assumption, our formulation perfectly matches the scalable Laplace approximations established by prior works [Kristiadi et al., 2020, Harrison et al., 2024], and we would derive the exact same UQ properties. However, maintaining distinct variances s2
+
+> k
+
+(x) across classes introduces a critical computational and predictive trade-off. Mathematically, heterogeneous diagonal elements preclude a closed-form solution for the multi-class softmax expectation, necessitating computationally expensive Monte Carlo (MC) sampling. Furthermore, applying class-specific variance scaling inside the softmax can perturb the predictive argmax of the base model. By restricting our variational family to the isotropic space, we consciously trade the unnecessary degrees of freedom in bin-specific variances for an elegant O(1) closed-form analytic inference that strictly preserves the original mode precision. Under Assumption 2, the K × K epistemic covariance matrix of the predictive distribution is analytically approximated via the Delta method as ˜JΣZ ˜J⊤, where ˜J = diag (˜ p)−˜p˜p⊤ is the Jacobian of the softmax evaluated at the probit-scaled logits ˜μ = μ/ p1 + π 
+
+> 8
+
+s2(x), and ˜p = Softmax (˜ μ).The dimensionally aligned scalar epistemic variance vepi (x) is simply the trace of this matrix: 
+
+vepi (x) = Tr 
+
+ ˜JΣZ ˜J⊤
+
+= s2(x)Tr 
+
+ ˜J ˜J⊤
+
+= s2(x)∥ ˜J∥2 
+
+> F
+
+(25) Expanding the trace of the squared Jacobian yields a fully analytic, closed-form scalar variance that solely depends on the scaled predictive probabilities and our epistemic scalar s2(x):
+
+vepi (x) = s2(x)
+
+
+
+> K
+
+X
+
+> k=1
+
+˜p2 
+
+> k
+
+− 2
+
+> K
+
+X
+
+> k=1
+
+˜p3 
+
+> k
+
++
+
+> K
+
+X
+
+> k=1
+
+˜p2
+
+> k
+
+!2 (26) 
+
+Remark 4. Following Harrison et al. [2024], we apply Jensen’s inequality to upper-bound the expected log-sum-exp term in Eq [NLL CE (z, y )] . This guarantees a fully analytic and deterministic surrogate objective for training: 
+
+Eq [NLL CE (z, y )] ≤ − my + log 
+
+> K
+
+X
+
+> k=1
+
+exp 
+
+
+
+mk + s2(x)2
+
+
+
+(27) where my denotes the mean logit of the ground truth bin. 
+
+C.1 Proof of Proposition 2 (Analytic Decomposition) 
+
+Proof. Let p(y|x) = R p(y|x, w )q(w)dw be the marginal predictive distribution. The Law of Total Variance states: 
+
+Var q (y|x) = Eq(w)[Var( y|x, w )] 
+
+| {z }
+
+> Aleatoric
+
++ Var q(w)(E[y|x, w ]) 
+
+| {z }
+
+> Epistemic
+
+17 where the moments are taken with respect to the variational posterior q(w).
+
+Analytic Tractability in VBLL: The decomposition is computable in a single forward pass due to the closed-form moments of the logits z = w⊤ϕ(x). Under the Gaussian posterior, the logit variance is computed analytically as s2 = ϕ(x)⊤Sϕ (x). We apply this to both paths: 1. Path A: QR-VBLL. 
+
+For QR-VBLL, the surrogate likelihood is the Asymmetric Laplace Distribution (ALD). As derived in Corollary 1, the predictive random variable for a specific quantile κ is the sum of the latent Gaussian logits z and the ALD noise ϵ. By linearity of variance: Var κ(y|x) = Var (ϵ) + s2(x)
+
+Crucially, because the ALD is utilized as a surrogate likelihood to recover the pinball loss, its scale parameter σ must be fixed (e.g., σ = 1 ). Consequently, the theoretical ALD variance Var (ϵ) evaluates to a static constant depending only on κ. We explicitly note that this static term is an artifact of the surrogate objective and does not represent the true input-dependent aleatoric noise of the data. We compute from the global reconstructed CDF To quantify the actual, multi-modal aleatoric variance of the target variable y, (derived from the full set of K predicted quantiles). 
+
+vale (x) = 
+
+> K−1
+
+X
+
+> k=1
+
+(κk+1 − κk)
+
+ ˆq2 
+
+> k
+
++ ˆ qk ˆqk+1 + ˆ q2
+
+> k+1
+
+3
+
+
+
+− ˆμ(x)2, (28) where ˆμ(x) = PK−1  
+
+> k=1 ˆqk+ˆ qk+1
+> 2
+
+(κk+1 − κk) is the expected predictive mean. The epistemic term in this decomposition strictly and accurately captures the closed-form posterior logit variance s2(x) in O(1) time. 2. Path B: CR-VBLL. 
+
+For CR-VBLL, (y|x, w ) follows a histogram distribution over K bins. To strictly avoid the “Ghost Value” pathology—where computing continuous variance using bin midpoints artificially inflates uncertainty on multi-modal targets—we quantify uncertainty completely within the K-dimensional probability space. Let p = Softmax (w⊤ϕ(x)) ∈ RK denote the conditional categorical probability vector given a specific weight w. Because w ∼ q(w) is a random variable under the variational posterior, p itself is a random vector. By the Law of Total Covariance, the total covariance matrix of the categorical prediction decomposes into the expected conditional covariance and the covariance of the expectation. To project this into a unified scalar metric and formally justify the variance notation in Proposition 2, we apply the Trace ( Tr ) operator, which preserves the linear additive decomposition. 
+
+Aleatoric Uncertainty: The conditional covariance matrix of a categorical variable is diag (p) − pp ⊤. Applying the Trace operator yields the scalar aleatoric term, which resolves exactly to the expected Gini impurity of the distribution: 
+
+vale (x) = Eq
+
+Tr (diag (p) − pp ⊤) = Eq
+
+1 − p⊤p (29) This metric cleanly captures the intrinsic data noise (e.g., dispersion across multiple modes) mathematically, without relying on the continuous semantic distance between bins. To compute the aleatoric variance vale (x) = Eq
+
+1 − p⊤p analytically in O(1) time, we evaluate the expected Gini impurity using the approximated predictive mean. Let the latent logits be distributed as g(x) ∼ N (μ, Σs), where μ = ¯ w⊤ϕ(x) and Σs = ϕ(x)⊤Σwϕ(x).We first approximate the expected categorical probability ˆpk = Eq [pk] by mapping the softmax function to a Bradley-Terry style pairwise probit formulation [Kristiadi et al., 2020]: 
+
+ˆpk ≈
+
+exp 
+
+ μk√1+ ησ 2
+
+> k
+
+PKj=1 exp 
+
+ μj
+
+√1+ ησ 2
+
+> j
+
+ , (30) 18 where σ2 
+
+> k
+
+= [Σ s]kk is the marginal logit variance for class k and η = π/ 8 is the standard probit scaling factor. The aleatoric uncertainty is then efficiently approximated as vale (x) ≈
+
+(1 − ˆp⊤ ˆp) − vepi (x) = 1 − PKk=1 ˆp2 
+
+> k
+
+− vepi (x).
+
+Epistemic Uncertainty: The epistemic uncertainty is quantified by the trace of the predictive covariance of the softmax outputs: Tr (Eq [pp ⊤] − ¯p¯p⊤), where ¯p = Eq [p].Assuming the last-layer weights follow a Gaussian variational posterior q(w) ∼ N (w, S ),the pre-softmax logits z = w⊤ϕ(x) are a deterministic linear projection of these weights. Consequently, their conditional distribution q(z|x) is strictly Gaussian, N (m, Σz ), where 
+
+m = ¯ w⊤ϕ(x). Under an isotropic variance assumption across classes, we have Σz = s2IK ,where s2 = ϕ(x)⊤Sϕ (x).During inference, we approximate the expected softmax outputs using the probit-softmax approximation [Kristiadi et al., 2020]: ˆp ≈ Softmax (˜ z), where ˜z = m√1+ ηs 2 denotes the temperature-scaled mean logits, and η is a scaling parameter. To obtain a tight, closed-form expression for the covariance, we apply the first-order multivariate Delta method. Standard application of the Delta method requires a Taylor expansion around the mean of the input, m. However, doing so causes the softmax outputs to collapse toward a one-hot distribution for OOD samples, leading to a severe underestimation of epistemic uncertainty. To circumvent this issue, we instead evaluate at the temperature-scaled mean logits ˜z.Specifically, let J = diag (ˆ p) − ˆpˆp⊤ denote the Jacobian of the softmax function evaluated at ˜z. The K × K epistemic covariance matrix of the predictive distribution is analytically approximated as JΣz J⊤. The scalar epistemic variance vepi (x) is simply the trace of this matrix 3:
+
+vepi (x) = Tr  JΣz J⊤ = s2(x)Tr  JJ ⊤ . (31) By expanding around ˜z, the approximate probabilities ˆp remain bounded away from a one-hot vector even for extreme OOD samples. This ensures the trace term is strictly lower-bounded, allowing the final epistemic variance to scale properly with s2(x). Ultimately, this yields a fully closed-form and principled scalar variance decomposition, Var total (x) = 
+
+vale (x) + vepi (x), which avoids Monte Carlo sampling and can be computed efficiently All components are deterministic and closed-form, allowing for O(1) inference. 
+
+Remark 5 (The Categorical Gap in Histogram Uncertainty) . In standard histogram regression, variance is typically computed using the continuous metric distance between bin midpoints. However, applying continuous metric variance to highly multi-modal distributions severely inflates the uncertainty score whenever distant modes co-exist (the "Ghost Value" pathology), conflating the natural multi-modality of the data with true epistemic ignorance or excessive aleatoric noise. To break this conflation, CR-VBLL deliberately treats the histogram bins as an unordered categorical space p ∈ RK . By quantifying uncertainty strictly within the probability simplex (e.g., via Gini impurity and Trace of the covariance matrix) and disregarding the ordinal distance between bins, CR-VBLL measures the sharpness of the distributional modes rather than their spatial spread. This "classification-style" uncertainty ensures that sharp, distant multi-modal predictions are correctly assigned low uncertainty, fulfilling the "Mode Precision" property described in Remark 1. 
+
+C.2 Proof of Proposition 3 (OOD Sensitivity) 
+
+Proof. Let x∗ = arg min x∈D train ∥x′ − x∥2 be the training point closest to the OOD input x′, such that ∥x′ − x∗∥2 = d.
+
+1. Lower Bounding the Feature Norm: By the lower bound of the bi-Lipschitz property in Assumption 1, the distance in feature space is bounded by the distance in input space: 
+
+∥ϕ(x′) − ϕ(x∗)∥2 ≥ c1∥x′ − x∗∥2 = c1d          
+
+> 3Albeit having size K×K, the term Tr  JJ ⊤can be evaluated in O(K)time. Throughout the paper, we treat Kas a constant as it is usually much smaller than the backbone model size.
+
+19 Using the reverse triangle inequality, we can bound the norm of the OOD feature ∥ϕ(x′)∥2:
+
+∥ϕ(x′)∥2 ≥ ∥ ϕ(x′) − ϕ(x∗)∥2 − ∥ ϕ(x∗)∥2
+
+By defining R = max x∈D train ∥ϕ(x)∥2 as the maximum norm of any training feature, we have: 
+
+∥ϕ(x′)∥2 ≥ c1d − R
+
+2. Lower Bounding the Epistemic Variance: To lower bound the quadratic form v(x′) = 
+
+ϕ(x′)⊤Sϕ (x′), we use the minimum eigenvalue of S:
+
+v(x′) ≥ λmin (S)|| ϕ(x′)|| 22
+
+We analyze the lower bound in two regimes: • Outside the Horizon ( d ≥ R/c 1): In this case, c1d − R ≥ 0. Since both sides of the norm inequality are non-negative, we can square the inequality while preserving the direction: 
+
+v(x′) ≥ λmin (S)( c1d − R)2
+
+This confirms the quadratic growth of uncertainty with distance d.• Inside the Horizon ( d < R/c 1): Here, the lower bound is trivial ( v(x′) ≥ 0) as uncertainty is governed by the local inductive bias of the kernel rather than asymptotic distance. 
+
+Conclusion: The quadratic "Safety Net" guarantee v(x′) ∝ d2 strictly holds for all inputs beyond the OOD horizon dOOD = R/c 1.
+
+C.3 Proof of Calibration & Coverage Proposition 5 (Calibration and Coverage via Marginalization (Simplified)) . The marginalization of the weight posterior in the VBLL framework acts as an implicit regularizer against overconfidence. By optimizing the ELBO (Eq. 6 / Eq. 3), the predictive distributions satisfy the following properties: 
+
+Path A (QR): Marginalization induces an analytic smoothing of the Asymmetric Laplace likelihood (Theorem 1) into a mixture of exponentially-modified Gaussians (Proposition 1). Structurally, this forces the predictive variance to explicitly incorporate the epistemic uncertainty s2(x), ensuring that predictive intervals inflate on OOD inputs to prevent the zero-width collapse common in standard quantile regression. 
+
+Path B (CR): Marginalization induces an input-dependent temperature scaling, strictly reducing maximum confidence in regions of high epistemic uncertainty [Seo et al., 2019, Kristiadi et al., 2020]. 
+
+We derive these results separately for the Classification and Regression paths, where the calibration guarantees are presented along with the derivations. 
+
+Part 1: Path A (QR-VBLL) 
+
+For a specific quantile level κ, the marginal predictive distribution pκ(y|x) is a mixture of two exponentially-modified Gaussian (EMG) terms. This distribution arises from the analytic convolution of the Asymmetric Laplace likelihood (specific to κ) with the Gaussian variational posterior q(w) ∼N (w, S ).
+
+Formal Local Density Function: Using the results in Proposition 1, let the logit mean be m =
+
+w⊤ϕ(x) and the epistemic variance be s2 = ϕ(x)⊤Sϕ (x). The marginal density for quantile κ is defined analytically as: 
+
+pκ(y|x) = −σλ −λ+
+
+
+
+exp 
+
+
+
+−λ−δ + 12 λ2
+
+> −
+
+s2
+
+
+
+Φ
+
+
+
+− δ − λ−s2
+
+s
+
+
+
++ exp 
+
+
+
+−λ+δ + 12 λ2+s2
+
+
+
+Φ
+
+ δ − λ+s2
+
+s
+
+  
+
+(32) Where: δ = y − m is the centered error. λ+ = κσ and λ− = κ−1 
+
+> σ
+
+are parameters derived from the quantile level κ and scale σ. Φ( ·) is the standard normal CDF. 20 Part 2: Path B (CR-VBLL) 
+
+Let the predictive distribution be the expectation of the softmax function over the Gaussian posterior 
+
+q(w) = N (w, S ). The probability for class k is given by the integral: 
+
+ˆpk(x) = 
+
+Z
+
+Softmax (w⊤ϕ(x)) k N (w|w, S ) dw (33) The analytic solution is intractable. We employ the probit approximation for the Softmax-Gaussian integral [Kristiadi et al., 2020], which approximates the convolution of a sigmoid-like function with a Gaussian by scaling the input. This yields: 
+
+ˆpk(x) ≈ Softmax w⊤ϕ(x)
+
+p1 + ηs 2(x)
+
+!
+
+> k
+
+(34) where s2(x) = ϕ(x)⊤Sϕ (x) is the epistemic variance of the logits, and η = π/ 8 is the standard probit approximation constant [Bishop, 2006]. Let T (x) = p1 + ηs 2(x) be the induced temperature scaling. • Inequality Proof: Since the covariance matrix S is positive semi-definite, s2(x) ≥ 0
+
+implies T (x) ≥ 1. For any logit vector z, the operation Softmax (z/T ) with T > 1 strictly increases the entropy and decreases the maximum probability compared to T = 1 (unless z
+
+is uniform). Thus ∀x s.t. s2(x) > 0:
+
+max  
+
+> k
+
+ˆpk(x) < max  
+
+> k
+
+Softmax (μ(x)) k subject to μ(x)̸ = c1, (35) where 1 ∈ RK is a vector of ones and c ∈ R.• OOD Limit: From Proposition 3, as the distance from the training manifold increases (d → ∞ ), the epistemic variance grows quadratically ( s2(x) → ∞ ). Meanwhile, the mean logits μ(x) grow at most linearly ( O(d)). Under the probit approximation, the induced temperature T (x) = p1 + ηs 2(x) also grows linearly ( O(d)). Consequently, the scaled logits μ(x)/T (x) converge to a finite constant vector as d → ∞ , rather than diverging to infinity. This fundamental property ensures that the marginal predictive distribution ˆp(x) is strictly bounded away from a one-hot (Dirac delta) distribution. This further ensures that the epistemic uncertainty given by s2(x)Tr 
+
+ diag (ˆ p(x)) − ˆp(x)ˆ p(x)⊤2
+
+(defined as in (31) )is at least Ω( s2(x)) . By naturally tempering the logits with epistemic uncertainty, the model effectively avoids making overly confident predictions on extreme OOD data, acting as a reliable OOD safety net. 
+
+Theoretical Implications for Calibration: 
+
+• Analytic Smoothing (Local): Unlike standard quantile regression which minimizes the pinball loss and can collapse to “hard” or crossing quantiles (Dirac deltas), the EMG formulation naturally “smooths” the local density estimate pκ(y|x) based on the epistemic uncertainty s2.
+
+Variance Decomposition (Local vs. Global): By the Law of Total Variance, the predictive variance for a specific quantile surrogate density decomposes analytically: Var κ(y|x) = σ2(1 − 2κ + 2 κ2)
+
+κ2(1 − κ)2
+
+| {z }
+
+> Aleatoric
+
++ s2(x)
+
+| {z } 
+
+> Epistemic
+
+(36) Because σ is fixed to recover the pinball loss, the first term evaluates to a static constant. While this theoretical ALD noise cannot physically represent the input-dependent aleatoric variance of y (which must instead be derived globally from the reconstructed CDF), this local additive form remains structurally critical. It mathematically ensures that the localized variance for any specific quantile cannot collapse to zero if epistemic model uncertainty 
+
+s2(x) is present. • Global OOD Safety Net: As established in Remark 2, the deterministic posterior means of the individual predicted quantiles ( ˆqκ(x)) do not natively inflate or disperse strictly as 21 a function of epistemic variance. However, the OOD “safety net” mechanism is robustly preserved through the marginalization process. As the epistemic variance s2(x) grows on OOD data, the predictive distributions around each estimated quantile become highly uncertain. When constructing the continuous predictive density by integrating over these uncertain quantile estimates, the resulting marginal predictive density significantly flattens. This analytic smoothing prevents the model from outputting overly confident, sharp densities in OOD regions, effectively recovering the desired safety net behavior without requiring the underlying quantile point estimates to physically disperse. 
+
+C.4 Proof of Asymptotic Consistency Assumption 3 (Smoothness of True Distribution [Scott, 1979]) . The true conditional density p(y|x)
+
+is bounded and Lipschitz continuous with respect to y with constant L, i.e., |p(y1|x) − p(y2|x)| ≤ 
+
+L|y1 − y2| for all y1, y 2 ∈ Y .Remark 6 (Smoothness vs. Discreteness) . As visualized in the empirical target distribution in Figure 3, user feedback often exhibits sharp transitions. We treat these not as mathematical discontinuities (Dirac deltas), which would violate Assumption 3, but as high-density regions separated by steep, continuous gradients (implying a large but finite Lipschitz constant L). The Lipschitz assumption serves as a sufficient condition for our convergence proofs without restricting the model’s practical ability to capture the highly multi-modal nature of real-world data. 
+
+Assumption 4 (Model Capacity and Dimensionality) . The neural network backbone ϕ(x) ∈ RD has sufficient capacity to act as a universal approximator, meaning the network representation capacity is allowed to grow with the sample size N . Crucially for CR-VBLL, as we take the number of histogram bins K → ∞ to analyze asymptotic consistency, we assume the backbone feature dimensionality 
+
+D grows alongside K such that D ≥ K − 1. This prevents the pre-activation logits from being restricted to a low-dimensional affine subspace, ensuring the model retains the degrees of freedom required to independently control the K bin probabilities and match arbitrary target densities. Remark 7 (Overcoming the Softmax Bottleneck) . Assumption 4 mathematically circumvents the well-known “Softmax Bottleneck” [Yang et al., 2018]. If the number of discrete bins K strictly exceeds the feature dimension D + 1 , the pre-activation logit vector is confined to a low-rank affine subspace. Consequently, the output softmax distribution loses the capacity to express arbitrary categorical distributions, violating the universal approximation guarantee. By explicitly coupling D
+
+and K (i.e., D ≥ K − 1), we ensure the network retains full representational rank over the discretized bins as K → ∞ .
+
+C.4.1 Path A: QR-VBLL Assumption 5 (Bernstein-von Mises Conditions for Variational Posterior) . We assume that the data-generating process and the chosen variational family satisfy the conditions for the Bernstein-von Mises (BvM) theorem. Specifically, as N → ∞ , the variational posterior q(w) exhibits asymptotic normality and contracts its probability mass around the true parameter w∗ that minimizes the expected Pinball Loss. 
+
+While BvM guarantees generally fail for fully stochastic deep neural networks due to weight uniden-tifiability and singular Fisher Information matrices, our Variational Bayesian Last Layer (VBLL) framework circumvents this limitation. By performing approximate inference exclusively on the final linear layer conditioned on a deterministic feature backbone ϕ(x), the inference task reduces to a generalized linear model. Under standard regularity conditions and assuming full-rank features, this restricted parameter space is strictly identifiable, rendering the BvM assumption rigorously justified [Liu et al., 2020, Van der Vaart, 2000]. 
+
+Lemma 1 (Consistency of QR) . Let ˆqκ(x) be the estimator minimizing the expected Pinball Loss 
+
+Lκ. Provided the hypothesis space is a universal approximator, the excess risk converges to zero as 
+
+N → ∞ :
+
+R[ˆ qκ] − R[q∗
+
+> κ
+
+] ≤ O(N −1/2) → 0 (37) 
+
+This risk bound is established in Takeuchi et al. [2006, Theorem 6], while universal consistency to the true quantile function is proven in Steinwart and Christmann [2011, Theorem 3.1]. 
+
+Proposition 6 (Asymptotic Consistency for QR-VBLL.) . Let ˆQV BLL (κ|x) be the estimator induced by the VBLL variational posterior q(w). Under Assumption 5, as N → ∞ , the KL-divergence 
+
+22 regularization term vanishes relative to the data likelihood (Eq. 4), causing the posterior q(w) to contract to the optimal quantile regression solution. Consequently, the VBLL estimator inherits the universal consistency of the non-parametric quantile estimator (Lemma 1), ensuring that the estimated quantiles converge to the true conditional quantiles: 
+
+| ˆQV BLL (κ|x) − Q∗(κ|x)| P
+
+−→ 0 (38) 
+
+Proof. Let the true conditional quantile function at level κ be f ∗ 
+
+> κ
+
+(x). We model the quantile function using the VBLL backbone as f (x; w) = w⊤ϕ(x). The VBLL objective (Eq. 4) maximizes the Evidence Lower Bound (ELBO): 
+
+LQR =
+
+> N
+
+X
+
+> i=1
+
+Eq(w) [log p(yi|xi, w )] − βD KL (q(w)|| p(w)) (39) where the log-likelihood corresponds to the Asymmetric Laplace Distribution (ALD): log p(y|x, w ) ∝−ρκ(y − f (x; w)) .
+
+Step 1: Convergence of the Variational Posterior. As the sample size N → ∞ , the data term scales with N , while the KL-divergence prior regularization term remains constant (or scales sub-linearly if 
+
+β is annealed). The objective is dominated by the sum of expected log-likelihoods: 
+
+1
+
+N LQR ≈ 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+Eq(w)[−ρκ(yi − w⊤ϕ(xi))] .
+
+By Assumption 5, the variational posterior q(w) concentrates its probability mass around the pa-rameter w∗ that minimizes the expected Pinball Loss (Maximum Likelihood Estimation for ALD). Consequently, under this assumption, the variance of q(w) shrinks as O(1 /N ), and the mean μw
+
+converges to w∗.
+
+Step 2: Consistency of the Estimator. Since the backbone ϕ(x) satisfies the universal approximation property (Assumption 4), there exists a sequence of parameters wN such that w⊤ 
+
+> N
+
+ϕ(x) converges to the true quantile function f ∗ 
+
+> κ
+
+(x) in the sup-norm. From Lemma 4.8 in [Takeuchi et al., 2006], the minimizer of the Pinball Loss is a consistent estimator of the true quantile. Since our variational objective asymptotically coincides with the Pinball Loss minimization, the VBLL estimator ˆqκ(x) = 
+
+Eq(w)[w⊤ϕ(x)] converges to the true minimizer. 
+
+Conclusion. Combining the concentration of the posterior q(w) and the consistency of the risk minimizer, we have: 
+
+sup 
+
+> x∈X
+
+|ˆqκ(x) − f ∗ 
+
+> κ
+
+(x)| P
+
+−→ 0 as N → ∞ (40) This confirms that QR-VBLL is an asymptotically consistent estimator for the true conditional quantiles. 
+
+C.4.2 Path B: CR-VBLL Lemma 2 (Consistency of Histogram Density Estimation) . Let ˆpCR (y|x; K) be a histogram density estimator with K bins of width ∆. If the true density p(y|x) is Lipschitz continuous and bounded, then as N → ∞ and K → ∞ such that ∆ → 0 and K/N → 0, the Integrated Mean Squared Error (IMSE) converges to zero: IMSE = E
+
+Z
+
+(ˆ pCR (y|x) − p(y|x)) 2dy = O(N −2/3) → 0 (41) 
+
+This consistency is explicitly stated in Scott [1979, Section 2], relying on the convergence proofs of ˇCencov [1962]. 
+
+Proposition 7 (Asymptotic Consistency for CR-VBLL.) . Let ˆpVBLL (y|x) be the estimator induced by the VBLL variational posterior q(w). As N → ∞ , the KL-divergence regularization term in the ELBO vanishes relative to the data likelihood, causing the posterior q(w) to contract to the Maximum Likelihood Estimate (MLE). Consequently, the CR-VBLL estimator inherits the consistency of the base histogram estimator (Lemma 2): 
+
+DKL (p(y|x)∥ˆpVBLL (y|x)) P
+
+−→ 0 (42) 23 Proof. Let the true conditional density be p(y|x) defined on compact support Y = [ ymin , y max ].CR-VBLL discretizes Y into K bins B1, . . . , B K with centers zk and width ∆ = ( ymax − ymin )/K .The estimated density is given by the histogram estimator: 
+
+ˆpCR (y|x) = 
+
+> K
+
+X
+
+> k=1
+
+πk(x) · I{y ∈ Bk}
+
+∆ ,
+
+where πk(x) = Softmax k(ϕ(x)) represents the probability mass assigned to bin k.The Kullback-Leibler (KL) divergence between the true and estimated density decomposes as: 
+
+DKL (p∥ˆpCR ) = 
+
+Z
+
+> Y
+
+p(y|x) log p(y|x)ˆpCR (y|x) dy 
+
+=
+
+Z
+
+p(y|x) log p(y|x) dy 
+
+| {z } 
+
+> −H (p)(Entropy)
+
+−
+
+> K
+
+X
+
+> k=1
+
+Z
+
+> Bk
+
+p(y|x) log 
+
+ πk(x)∆
+
+
+
+dy. 
+
+Step 1: Approximation Error (Bias). By Assumption 3 (Distribution Smoothness), p(y|x) is Lipschitz continuous with constant L. For histogram estimators, while the integrated squared bias component of the IMSE is bounded by O(∆ 2) [Scott, 1979, Theorem 2.1], the absolute pointwise approximation bias is bounded by O(∆) . Specifically, for any y ∈ Bk, the deviation from the true bin probability density is bounded: 
+
+p(y|x) − π∗
+
+> k
+
+(x)∆ ≤ L∆,
+
+where π∗
+
+> k
+
+(x) = R 
+
+> Bk
+
+p(y|x)dy is the true probability mass of bin k. Thus, as the bin width ∆ → 0
+
+(implying K → ∞ ), the approximation error vanishes. 
+
+Step 2: Estimation Error (Variance). By Assumption 4 (Model Capacity), the neural network backbone ϕ(x) is trained with categorical cross-entropy, which is equivalent to minimizing the discrete KL divergence DKL (π∗(x)∥π(x)) . Given the universal approximation property of neural networks and the consistency of M-estimators, the estimated probabilities converge in probability to the true bin probabilities: ˆπ(x) P
+
+−→ π∗(x) as N → ∞ .
+
+Conclusion. Combining both steps, as the sample size N → ∞ and bin count K → ∞ (such that 
+
+K/N → 0 to ensure sufficient samples per bin), the expected KL divergence converges to zero: 
+
+Ex [DKL (p(y|x)∥ˆpCR (y|x))] → 0.
+
+This proves that CR-VBLL is a consistent density estimator for Lipschitz continuous targets. In production recommendation systems, the number of bins K is often fixed (e.g., K = 100 ) for computational efficiency. We provide the detailed error bound for this practical setting, following the derivation in Scott [1979]. 24 D Additional Experimental Details 
+
+Discretized Negative Log-Likelihood (NLL). To benchmark continuous and discrete models on a unified scale, we discretize the target domain [ymin , y max ] into K = 10 bins B1, . . . , B K .For a continuous model predicting density p(y|x) (or CDF F (y|x)), the probability mass for bin Bk =[lk, u k] is computed as: 
+
+ˆP (y ∈ Bk) = 
+
+Z uk
+
+> lk
+
+p(y|x)dy = F (uk|x) − F (lk|x)
+
+The NLL is then the negative log-probability of the bin containing the true yi:
+
+N LL = − 1
+
+N
+
+> N
+
+X
+
+> i=1
+> K
+
+X
+
+> k=1
+
+I(yi ∈ Bk) log ˆP (y ∈ Bk)
+
+Discretized Expected Calibration Error (ECE). To rigorously evaluate conditional, instance-level confidence calibration, we compute the standard ECE by grouping the predictions into M = 10 
+
+equally spaced confidence bins. For each test sample i, we identify the predicted target bin ˆki =
+
+argmax k ˆP (yi ∈ Bk) and its associated predictive confidence ˆci = max k ˆP (yi ∈ Bk). We then partition the N samples into M subsets {Im}Mm=1 based on their confidence scores ˆci. The ECE is calculated as the weighted average of the absolute difference between the empirical accuracy and the average confidence within each bin: ECE =
+
+> M
+
+X
+
+> m=1
+
+|Im|
+
+N |acc (Im) − conf (Im)| (43) where conf (Im) = 1
+
+> |Im|
+
+P 
+
+> i∈Im
+
+ˆci is the average confidence of samples in bin m, and acc (Im) = 
+
+> 1
+> |Im|
+
+P 
+
+> i∈Im
+
+1(yi ∈ Bˆki ) is the empirical accuracy of the top predictions in that bin. 
+
+D.1 Implementation and Hyperparameters 
+
+All models were implemented in PyTorch and trained on a single NVIDIA A100 GPU. 
+
+1. Data Preprocessing & Feature Engineering. 
+
+• ID Encoding: WeChat has user ID embedding, pre-trained video content understanding embedding and video ID embedding; KuaiRec has user ID embedding, and video ID embedding; Uber has customer ID embedding and location name embedding. • Duration Transformation: To capture non-linear biases (e.g., short vs. long videos), we discretized the continuous video duration into 100 quantile bins (KQR = 100 ) following Sun et al. [2024]. These bin indices were mapped to learnable embedding vectors of dimension Ddur , allowing the model to learn distinct latent representations for different duration cohorts. • Target Scaling: The watch time ratio y was clipped to the range [0 , 3.0] to mitigate the impact of outliers. 
+
+2. Backbone Architecture. We employed a standard Multi-Tower architecture shared across all baselines: • Embeddings: User/Item embeddings of dimension d = 16 (WeChat) and d = 32 (KuaiRec). • Feature Interaction: Concatenation of ID and Duration embeddings, followed by a 3-layer MLP ( 256 → 128 → 64 ) with ReLU activations and Dropout ( p = 0 .1). • Spectral Normalization: Applied to all linear layers in the backbone and also applied input concatenation at the last layer such that the bi-Lipschitz property in Assumption 1 is guaranteed for SNGP, CR-VBLL and QR-VBLL. 
+
+3. Training Configuration. Choice of bin counts and quantile numbers are covered in Appendix D.4. 25 Table 6: Hyperparameter settings. Parameter WeChat KuaiRec Uber Batch Size 2048 2048 2048 Learning Rate 1e−3 1e−3 1e−3
+
+Optimizer Adam Adam Adam Training Bin Count 40 40 40 Training Quantile Numbers 100 100 100 Evaluation Bin Count 10 10 10 Training Epochs 5 5 3MDN Mixture Number 5 5 5Train/Test Ratio 80%/20% 80%/20% 80%/20% 
+
+D.2 Full Experiment Results Table 
+
+In our experimental evaluation, we tailored our reporting strategy to the training stability of each dataset. Table 7: Full experimental results on the WeChat dataset. We report Mean ± Standard Deviation over 5 independent runs. QR-VBLL demonstrates state-of-the-art NLL performance among quantile regression methods.                                                                                                                                                                                                         
+
+> Method NLL ↓RMSE ↓CRPS ↓ECE ↓
+> Parametric Regression Baselines
+> Vanilla Gaussian 2.1657 ±0.0081 1.0466 ±0.2960 0.4380 ±0.0004 0.0264 ±0.0017 SNGP (Reg) 2.2730 ±0.0249 0.7740 ±0.0024 0.4439 ±0.0038 0.0302 ±0.0045 VBLL (Reg) 2.1708 ±0.0090 0.8327 ±0.0299 0.4315 ±0.0019 0.0251 ±0.0006 DER 2.1443 ±0.0089 0.7811 ±0.0016 0.4226 ±0.0021 0.0263 ±0.0008 MDN 1.9515 ±0.0133 1.2464 ±0.1343 0.4418 ±0.0052 0.0070 ±0.0012
+> Quantile Regression (QR) Methods
+> Vanilla QR 2.0317 ±0.0107 0.7629 ±0.0005 0.4156 ±0.0004 0.0066 ±0.0006 CQR 2.0446 ±0.0042 0.7723 ±0.0016 0.4226 ±0.0009 0.0065 ±0.0005 QR-MC Dropout 2.0297 ±0.0038 0.7646 ±0.0009 0.4172 ±0.0006 0.0062 ±0.0002 QR-VBLL (Ours) 1.9616 ±0.0004 0.7614 ±0.0005 0.4134 ±0.0004 0.0067 ±0.0004
+> Classification Restoration (CR) Methods
+> Vanilla CR 1.9199 ±0.0074 0.7664 ±0.0026 0.4063 ±0.0003 0.0126 ±0.0007 CR-SNGP 1.9377 ±0.0019 0.7756 ±0.0007 0.4151 ±0.0004 0.0133 ±0.0006 CR-MC Dropout 1.9245 ±0.0042 0.7687 ±0.0018 0.4072 ±0.0007 0.0119 ±0.0002 CR-VBLL (Ours) 1.9189 ±0.0028 0.7654 ±0.0010 0.4068 ±0.0006 0.0119 ±0.0004
+> Ensemble Benchmarks
+> Ensemble (Reg) 2.1502 ±0.0021 0.8035 ±0.0303 0.4315 ±0.0005 0.0300 ±0.0012 CR-Ensemble 1.8981 ±0.0022 0.7547 ±0.0015 0.3982 ±0.0007 0.0137 ±0.0001 QR-Ensemble 1.9973 ±0.0009 0.7506 ±0.0003 0.4076 ±0.0002 0.0055 ±0.0003
+
+D.3 Ablation Studies D.3.1 Spectral Normalization with Input Concatenation 
+
+To rigorously validate our architectural design, we conducted an ablation study on the KuaiRec dataset comparing the standard Spectral Normalization (SN-Only) backbone against our proposed SN+Raw configuration. The results are summarized in Table 10. The analysis demonstrates that the SN+Raw architecture is the optimal choice for the VBLL frame-work, providing consistent gains in NLL and RMSE for both proposed methods: The impact here is decisive. Adding raw features reduces NLL from 1.404 to 1.372 and significantly improves calibration (ECE drops from 0.017 to 0.012 ). This confirms that while Spectral Normaliza-tion is necessary for OOD detection (Section 4), strictly constraining the Lipschitz constant limits 26 Table 8: Full experimental results on the KuaiRec dataset. We report Mean ± Standard Deviation over 5 independent runs. QR-VBLL (using the SN+Raw backbone) achieves NLL and CRPS virtually identical to the 5-model Ensemble, demonstrating high efficiency. 
+
+Method NLL ↓ RMSE ↓ CRPS ↓ ECE ↓
+
+Parametric Regression Baselines 
+
+Vanilla Gaussian 1.5070 ± 0.0034 0.4457 ± 0.0006 0.2093 ± 0.0006 0.0291 ± 0.0011 SNGP (Reg) 1.7470 ± 0.0143 0.4440 ± 0.0002 0.2394 ± 0.0025 0.0497 ± 0.0003 VBLL (Reg) 1.5184 ± 0.0024 0.4484 ± 0.0001 0.2117 ± 0.0002 0.0327 ± 0.0005 DER 1.4163 ± 0.0032 0.4580 ± 0.0005 0.2131 ± 0.0002 0.0231 ± 0.0003 MDN 1.2943 ± 0.0039 0.4495 ± 0.0005 0.2117 ± 0.0009 0.0136 ± 0.0002 
+
+Quantile Regression (QR) Methods 
+
+Vanilla QR 1.3938 ± 0.0024 0.4438 ± 0.0001 0.1968 ± 0.0002 0.0136 ± 0.0007 CQR 1.4018 ± 0.0055 0.4447 ± 0.0003 0.1976 ± 0.0003 0.0148 ± 0.0015 QR-MC Dropout 1.4049 ± 0.0041 0.4439 ± 0.0001 0.1978 ± 0.0000 0.0145 ± 0.0016 
+
+QR-VBLL (Ours) 1.3716 ± 0.0048 0.4433 ± 0.0001 0.1964 ± 0.0002 0.0122 ± 0.0007 
+
+Classification Restoration (CR) Methods 
+
+Vanilla CR 1.3978 ± 0.0049 0.4550 ± 0.0009 0.1991 ± 0.0001 0.0237 ± 0.0010 CR-SNGP 1.3874 ± 0.0032 0.4584 ± 0.0015 0.1998 ± 0.0002 0.0223 ± 0.0006 
+
+CR-MC Dropout 1.3937 ± 0.0010 0.4551 ± 0.0006 0.1987 ± 0.0001 0.0234 ± 0.0004 
+
+CR-VBLL (Ours) 1.3867 ± 0.0015 0.4549 ± 0.0007 0.1989 ± 0.0001 0.0235 ± 0.0002 
+
+Ensemble Benchmarks 
+
+Ensemble (Reg) 1.4980 ± 0.0022 0.4450 ± 0.0004 0.2085 ± 0.0003 0.0285 ± 0.0004 CR-Ensemble 1.3880 ± 0.0006 0.4540 ± 0.0005 0.1980 ± 0.0000 0.0237 ± 0.0005 QR-Ensemble 1.3858 ± 0.0024 0.4433 ± 0.0001 0.1958 ± 0.0002 0.0136 ± 0.0008 
+
+Figure 7: CR-VBLL Sensitivity (Bins KCR ): Efficiency vs. Calibration Trade-off. While increasing 
+
+KCR from 20 to 40 yields significant NLL gains across all datasets (Left), further increasing KCR 
+
+often leads to CRPS degradation (Right) due to the “sharpening effect,” where the model becomes overconfident in specific bins. We select KCR = 40 as the optimal balance between predictive likelihood and calibration stability. the model’s ability to scale output magnitudes for precise regression in the tails. Re-introducing raw features resolves this bottleneck. Given that SN+Raw consistently enhances the predictive likelihood of VBLL models with negligible parameter overhead ( ∼ 2 − 3% ), we adopt it as the default backbone. 
+
+D.4 Sensitivity Analysis of Discretization Resolution 
+
+We conducted a comprehensive sensitivity analysis to determine the optimal discretization resolution for both methods: the number of bins KCR for CR-VBLL and the number of quantiles KQR for QR-VBLL. We evaluated the performance on the WeChat, KuaiRec, and Uber datasets across the range {20 , 40 , 60 , 80 , 100 }. The results are visualized in Figure 7 and Figure 8. 27 Table 9: Full experimental results on the Uber dataset. We report Mean ± Standard Deviation over 5 independent runs. CR-VBLL and QR-VBLL demonstrate superior performance across all metrics, with significant gains in NLL compared to baselines. 
+
+Method NLL ↓ RMSE ↓ CRPS ↓ ECE ↓
+
+Parametric Regression Baselines 
+
+Vanilla Gaussian 2.6766 ± 0.3467 0.4686 ± 0.0008 0.3039 ± 0.0077 0.0848 ± 0.0106 SNGP (Reg) 1.8745 ± 0.0046 0.4516 ± 0.0005 0.2634 ± 0.0007 0.0341 ± 0.0008 
+
+VBLL (Reg) 3.3107 ± 0.2359 0.4533 ± 0.0016 0.3061 ± 0.0022 0.1043 ± 0.0039 DER 2.8354 ± 0.0250 0.4541 ± 0.0002 0.3299 ± 0.0019 0.1196 ± 0.0015 MDN 4.0078 ± 0.4319 0.4606 ± 0.0032 0.3264 ± 0.0063 0.1181 ± 0.0043 
+
+Quantile Regression (QR) Methods 
+
+Vanilla QR 2.3728 ± 0.4327 0.4578 ± 0.0008 0.2670 ± 0.0019 0.0370 ± 0.0037 CQR 1.9435 ± 0.0361 0.4590 ± 0.0020 0.2666 ± 0.0025 0.0379 ± 0.0053 QR-MC Dropout 2.1179 ± 0.1991 0.4606 ± 0.0002 0.2686 ± 0.0006 0.0357 ± 0.0022 
+
+QR-VBLL (Ours) 1.7830 ± 0.0028 0.4495 ± 0.0002 0.2560 ± 0.0002 0.0080 ± 0.0013 
+
+Classification Restoration (CR) Methods 
+
+Vanilla CR 2.5328 ± 0.0509 0.4550 ± 0.0057 0.2911 ± 0.0125 0.0804 ± 0.0115 CR-SNGP 1.7892 ± 0.0007 0.4512 ± 0.0001 0.2559 ± 0.0000 0.0087 ± 0.0010 CR-MC Dropout 2.2687 ± 0.0777 0.4584 ± 0.0102 0.2882 ± 0.0152 0.0719 ± 0.0012 
+
+CR-VBLL (Ours) 1.7839 ± 0.0005 0.4505 ± 0.0002 0.2559 ± 0.0000 0.0072 ± 0.0004 
+
+Ensemble Benchmarks 
+
+Ensemble (Reg) 2.7145 ± 0.1050 0.4686 ± 0.0028 0.3068 ± 0.0008 0.0903 ± 0.0036 CR-Ensemble 2.3305 ± 0.0502 0.4506 ± 0.0002 0.2693 ± 0.0029 0.0506 ± 0.0039 QR-Ensemble 2.1280 ± 0.0587 0.4598 ± 0.0005 0.2686 ± 0.0006 0.0393 ± 0.0006 
+
+Table 10: Ablation study on backbone architecture: Spectral Normalization (SN) vs. SN + Raw Features (SN+Raw) on KuaiRec. The SN+Raw architecture consistently improves NLL and RMSE for QR-VBLL, demonstrating that re-introducing raw features recovers information lost by the strict spectral constraint. Bold indicates the best performance per method.                                                            
+
+> Method Backbone NLL ↓RMSE ↓CRPS ↓ECE ↓
+> Vanilla QR SN 1.4047 ±0.0005 0.4451 ±0.0004 0.1981 ±0.0001 0.0142 ±0.0005 SN+Raw 1.3938 ±0.0024 0.4438 ±0.0001 0.1968 ±0.0002 0.0136 ±0.0007
+> QR-VBLL SN 1.4043 ±0.0025 0.4451 ±0.0004 0.1985 ±0.0002 0.0169 ±0.0015 SN+Raw 1.3716 ±0.0048 0.4433 ±0.0001 0.1964 ±0.0002 0.0122 ±0.0007
+
+Classification Restoration: The Efficiency Trade-off For CR-VBLL, Figure 7 reveals a distinct trade-off between local likelihood and global calibration: • NLL Saturation: Increasing the bin count from 20 to 40 results in consistent NLL improve-ments across all datasets (e.g., significant drops on KuaiRec and Uber). However, beyond 
+
+M = 40 , the marginal gain in likelihood diminishes significantly. • Calibration Degradation: Crucially, for M > 40 , we observe that CRPS often stagnates or degrades (particularly on WeChat and KuaiRec). This aligns with the theoretical "sharpening effect" [Gneiting and Raftery, 2007]: as the discrete distribution becomes highly granular, the model maximizes NLL by placing excessive mass on single bins, which penalizes the global cumulative ranked score if slightly misaligned. 
+
+Decision: We select M = 40 as the default. This setting captures the "knee" of the performance curve, ensuring high predictive accuracy and computational efficiency (keeping the final classification layer lightweight) while avoiding the calibration penalties associated with hyper-fine discretization. 
+
+Quantile Regression: High-Resolution Robustness For QR-VBLL, Figure 8 demonstrates a different behavioral pattern characterized by robustness: 28 Figure 8: QR-VBLL Sensitivity (Quantiles KQR ): High-Resolution Robustness. Unlike CR, Quantile Regression benefits monotonically from higher resolution. On the sparse Uber dataset, NLL improves continuously as KQR increases (Left), while calibration (CRPS) remains stable without degradation (Right). We select KQR = 100 to maximize precision on difficult distributions without incurring penalties on simpler ones. Here the CRPS metrics in the curves are timed with a constant of 0.5. • Monotonic Improvement: On challenging, sparse distributions (Uber), increasing the quan-tile resolution K provides strictly monotonic benefits for NLL ( 2.26 → 1.83 ), indicating that high resolution is necessary to approximate irregular cumulative distribution functions. • No Overfitting: Unlike the binning approach, increasing K to 100 does not degrade CRPS on any dataset. The quantile estimates effectively approximate the continuous CDF without imposing artificial discrete boundaries, allowing the model to scale to high resolutions without "over-sharpening." 
+
+Decision: Given the absence of a performance penalty on dense data and the clear necessity for high resolution on sparse data, we standardize on K = 100 for all QR experiments. 
+
+D.5 Ablation Study: Hybrid Acquisition Hyperparameter ( γ)
+
+To determine the optimal balance between exploration (epistemic uncertainty) and noise characteri-zation (aleatoric uncertainty), we conduct an ablation study on the hyperparameter γ in our hybrid acquisition function in Eqn (7). 
+
+A(x) = s2(x) + γσ 2(x).Table 11 and 12 present the full results on WeChat. We compare various γ values (trained on 70% samples) against a Random Sampling baseline trained on the full dataset. 
+
+Key Findings: 
+
+• Benefit of Aleatoric Sampling ( γ > 0): Pure epistemic sampling ( γ = 0 ) yields a test NLL of 2.0283. Introducing a moderate amount of aleatoric uncertainty ( γ = 0 .1) significantly improves this score, achieving the best Full NLL of 2.0206 . This confirms our hypothesis that sampling high-noise regions helps the model accurately calibrate its variance estimates, though penalizing it too aggressively ( γ ≥ 0.3) begins to degrade performance. • Efficiency vs. Random Baseline: Notably, our optimal Hybrid strategy ( γ = 0 .1) trained on only 560k samples comfortably outperforms the pure Random Sampling baseline trained on the full 800k dataset (NLL 2.0261). • Cold-Start Consistency: These improvements are mirrored in the sparse Cold-Start subset. The γ = 0 .1 strategy achieves an NLL of 2.0157, significantly outperforming both the pure epistemic strategy (2.0167) and the 800k Random baseline (2.0176). 
+
+D.6 Visualizing Calibration Improvements 
+
+While the main text reports the scalar Expected Calibration Error (ECE), we visualize the full probabilistic quality of our method using Reliability Diagrams (Calibration Curves) in Figure 9. 29 Table 11: Ablation of Acquisition Hyperparameter γ on WeChat (Full Test Set). We compare different weights for aleatoric uncertainty against a Random Sampling baseline. The Hybrid strategy with γ = 0 .1 achieves the best performance across all metrics with only 560k samples, outperforming both the pure epistemic strategy ( γ = 0 ) and the pure Random baseline using 800k samples.                                                                                                                       
+
+> Strategy Samples NLL ↓RMSE ↓CRPS ↓ECE ↓
+> Random Baseline 800k 2.0261 ±0.0017 0.8037 ±0.0013 0.4438 ±0.0008 0.0093 ±0.0017 BALD-MCD 560k 2.0258 ±0.0069 0.8033 ±0.0021 0.4434 ±0.0012 0.0100 ±0.0013 BALD-VBLL 560k 2.0277 ±0.0056 0.8063 ±0.0038 0.4454 ±0.0024 0.0138 ±0.0020 Epistemic Only ( γ= 0 )560k 2.0283 ±0.0063 0.8062 ±0.0037 0.4452 ±0.0024 0.0135 ±0.0017
+> Hybrid ( γ= 0 .1)560k 2.0206 ±0.0032 0.8034 ±0.0010 0.4434 ±0.0006 0.0091 ±0.0007
+> Hybrid ( γ= 0 .2)560k 2.0225 ±0.0119 0.8065 ±0.0058 0.4456 ±0.0038 0.0144 ±0.0055 Hybrid ( γ= 0 .3)560k 2.0292 ±0.0050 0.8073 ±0.0027 0.4460 ±0.0018 0.0130 ±0.0022 Hybrid ( γ= 0 .5)560k 2.0284 ±0.0121 0.8078 ±0.0029 0.4464 ±0.0020 0.0123 ±0.0045
+
+Table 12: Ablation of Acquisition Hyperparameter γ on WeChat (Cold-Start Users). Evaluating the active learning strategies on the sparse, cold-start subset. Incorporating aleatoric uncertainty (γ > 0) consistently improves calibration and predictive likelihood over purely epistemic sampling.                                                                                                                       
+
+> Strategy Samples NLL ↓RMSE ↓CRPS ↓ECE ↓
+> Random Baseline 800k 2.0176 ±0.0010 0.8332 ±0.0015 0.4602 ±0.0008 0.0102 ±0.0023 BALD-MCD 560k 2.0195 ±0.0093 0.8349 ±0.0004 0.4612 ±0.0004 0.0120 ±0.0024 BALD-VBLL 560k 2.0162 ±0.0031 0.8358 ±0.0037 0.4620 ±0.0024 0.0142 ±0.0014 Epistemic Only ( γ= 0 )560k 2.0167 ±0.0038 0.8357 ±0.0036 0.4618 ±0.0022 0.0136 ±0.0006
+> Hybrid ( γ= 0 .1)560k 2.0157 ±0.0053 0.8330 ±0.0010 0.4602 ±0.0004 0.0092 ±0.0008
+> Hybrid ( γ= 0 .2)560k 2.0204 ±0.0109 0.8357 ±0.0049 0.4620 ±0.0032 0.0162 ±0.0036 Hybrid ( γ= 0 .3)560k 2.0212 ±0.0034 0.8371 ±0.0023 0.4628 ±0.0014 0.0149 ±0.0018 Hybrid ( γ= 0 .5)560k 2.0155 ±0.0112 0.8367 ±0.0042 0.4626 ±0.0028 0.0129 ±0.0029
+
+For regression tasks, calibration is assessed via the Probability Integral Transform (PIT) values, 
+
+ui = ˆF (yi|xi), where ˆF is the predicted cumulative distribution function. For a perfectly calibrated model, the PIT values should be uniformly distributed in [0 , 1] , resulting in a calibration curve that lies on the diagonal y = x.As observed in Figure 9, the Vanilla Gaussian baseline (Blue) deviates significantly from the diagonal. The characteristic “S-shape” indicates that the model is miscalibrated at the tails—a direct symptom of the “Ghost Value” pathology, where the model artificially inflates variance to cover disjoint modes, effectively assigning probability mass to regions that should be empty. In contrast, 
+
+CR-VBLL (Green) closely hugs the diagonal, confirming that our distribution-free approach produces reliable probability estimates across the entire support of the target variable. 30 Table 13: Active Learning Performance on KuaiRec (Full Test Set). Comparison of active learning strategies using 560k samples against a Random baseline using 800k samples. 
+
+Strategy Samples NLL ↓ RMSE ↓ CRPS ↓ ECE ↓
+
+Random Baseline 800k 1.7502 ± 0.0079 0.4531 ± 0.0001 0.2085 ± 0.0002 0.0093 ± 0.0003 BALD-MCD 560k 1.8175 ± 0.0146 0.4554 ± 0.0002 0.2100 ± 0.0002 0.0079 ± 0.0008 
+
+BALD-VBLL 560k 2.0450 ± 0.0078 0.4620 ± 0.0003 0.2144 ± 0.0004 0.0133 ± 0.0033 Epistemic Only ( γ = 0 ) 560k 1.7662 ± 0.0080 0.4543 ± 0.0004 0.2100 ± 0.0008 0.0119 ± 0.0025 Hybrid ( γ = 0 .1) 560k 1.7564 ± 0.0113 0.4535 ± 0.0004 0.2090 ± 0.0004 0.0129 ± 0.0034 Hybrid ( γ = 0 .2) 560k 1.7423 ± 0.0156 0.4531 ± 0.0002 0.2085 ± 0.0004 0.0120 ± 0.0041 Hybrid ( γ = 0 .3) 560k 1.7519 ± 0.0274 0.4533 ± 0.0003 0.2094 ± 0.0012 0.0149 ± 0.0053 Hybrid ( γ = 0 .5) 560k 1.7553 ± 0.0212 0.4532 ± 0.0003 0.2090 ± 0.0006 0.0126 ± 0.0037 Table 14: Active Learning Performance on Uber (Full Test Set). Comparison of active learning strategies using ∼84k samples against a Random baseline using ∼120k samples. 
+
+Strategy Samples NLL ↓ RMSE ↓ CRPS ↓ ECE ↓
+
+Random Baseline ∼120k 1.7919 ± 0.0062 0.4494 ± 0.0001 0.2564 ± 0.0000 0.0110 ± 0.0006 
+
+BALD-MCD ∼84k 1.7851 ± 0.0020 0.4494 ± 0.0001 0.2564 ± 0.0001 0.0146 ± 0.0007 BALD-VBLL ∼84k 1.7853 ± 0.0030 0.4493 ± 0.0000 0.2562 ± 0.0000 0.0139 ± 0.0008 Epistemic Only ( γ = 0 ) ∼84k 1.7848 ± 0.0030 0.4494 ± 0.0001 0.2568 ± 0.0002 0.0142 ± 0.0019 Hybrid ( γ = 0 .1) ∼84k 1.7841 ± 0.0018 0.4494 ± 0.0001 0.2562 ± 0.0000 0.0150 ± 0.0008 Hybrid ( γ = 0 .2) ∼84k 1.7840 ± 0.0021 0.4493 ± 0.0000 0.2562 ± 0.0000 0.0138 ± 0.0006 Hybrid ( γ = 0 .3) ∼84k 1.7850 ± 0.0025 0.4494 ± 0.0001 0.2562 ± 0.0000 0.0152 ± 0.0010 Hybrid ( γ = 0 .5) ∼84k 1.7854 ± 0.0024 0.4494 ± 0.0001 0.2562 ± 0.0000 0.0147 ± 0.0008 
+
+Figure 9: Reliability Diagram on WeChat. Comparison of calibration curves between Vanilla Gaussian regression and our CR-VBLL method. The Gaussian model shows significant deviation due to the unimodal assumption failure, while CR-VBLL maintains robust calibration (hugging the diagonal), effectively acting as a “Safety Net” by correctly modeling the multi-modal density. 31
