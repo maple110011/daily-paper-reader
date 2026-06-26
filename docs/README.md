@@ -6,38 +6,36 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-25
-- 运行时间：2026-06-25 22:09:28 UTC
+- 最新运行日期：2026-06-26
+- 运行时间：2026-06-26 21:54:34 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：5
+- 本次总论文数：4
+- 精读区：3
 - 速读区：1
 
 ### 今日简报（AI）
-今日精读5篇，核心聚焦变分推断理论的深度进展。值得重点关注基于熵输运下降的变分推断新方法，以及变分深度高斯过程中后验坍缩与参数初始化的分析。后续可进一步探索这些方法在实际模型中的初始化策略与收敛性改善。
-- 详情：[/202606/25/README](/202606/25/README)
+今日精读2篇、速读1篇，共4篇论文，重点聚焦贝叶斯神经网络与不确定性评估。
+
+最值得关注：《Equivariance and Augmentation for Bayesian Neural Networks》（9.0）探讨等变性增强贝叶斯网络效果；《Decision-Aligned Evaluation of Uncertainty Quantification》（8.0）提出决策导向的不确定性评估新标准。
+
+建议优先精读第一篇，理解等变性如何提升模型泛化；速读的《Neural Architecture Distributions》可辅助了解随机分割新范式。
+- 详情：[/202606/26/README](/202606/26/README)
 
 ### 精读区论文标签
-1. [Variational Inference via Entropic Transport Descent](/202606/25/2606.25265v1-variational-inference-via-entropic-transport-descent)  
+1. [Equivariance and Augmentation for Bayesian Neural Networks](/202606/26/2606.26273v1-equivariance-and-augmentation-for-bayesian-neural-networks)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：通过熵传输下降的变分推断
-2. [An Analysis of Posterior Collapse, Parameterization and Initialization in Variational Deep Gaussian Processes](/202606/25/2606.25882v1-an-analysis-of-posterior-collapse-parameterization-and-initialization-in-variational-deep-gaussian-processes)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：变分深度高斯过程中后验坍塌的分析
-3. [On-Manifold Variational Learning with Heat-Kernel Priors](/202606/25/2606.18658v2-on-manifold-variational-learning-with-heat-kernel-priors)  
+   evidence：基于变分推断的贝叶斯神经网络数据增强
+2. [Decision-Aligned Evaluation of Uncertainty Quantification](/202606/26/2606.26990v1-decision-aligned-evaluation-of-uncertainty-quantification)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：基于热核先验的流形变分学习
-4. [Efficient Analytic Uncertainty Quantification for Multi-Modal Regression](/202606/25/2606.25188v1-efficient-analytic-uncertainty-quantification-for-multi-modal-regression)  
+   evidence：面向决策的不确定性评估
+3. [Ribbon: Scalable Approximation and Robust Uncertainty Quantification](/202606/26/2606.27269v1-ribbon-scalable-approximation-and-robust-uncertainty-quantification)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：使用变分贝叶斯推断进行多模态回归的不确定性量化
-5. [Gaussian Mean Field Variational Inference can Overestimate Predictive Variance](/202606/25/2606.25745v1-gaussian-mean-field-variational-inference-can-overestimate-predictive-variance)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：平均场变分推断预测方差分析
+   evidence：贝叶斯自助法的可扩展近似，用于不确定性量化
 
 ### 速读区论文标签
-1. [Closed-form solutions to some generalized variational inference problems](/202606/25/2606.25492v1-closed-form-solutions-to-some-generalized-variational-inference-problems)  
+1. [Neural Architecture Distributions: A New Paradigm for Stochastic Segmentation](/202606/26/2606.21061v1-neural-architecture-distributions-a-new-paradigm-for-stochastic-segmentation)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：贝叶斯模型的变分推断
+   evidence：学习架构分布用于随机分割，属于贝叶斯深度学习方法
 
 
 <div class="dpr-home-promo-card">
