@@ -6,36 +6,24 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-26
-- 运行时间：2026-06-26 21:54:34 UTC
+- 最新运行日期：2026-06-27
+- 运行时间：2026-06-27 20:50:21 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：3
-- 速读区：1
+- 本次总论文数：1
+- 精读区：1
+- 速读区：0
 
 ### 今日简报（AI）
-今日精读2篇、速读1篇，共4篇论文，重点聚焦贝叶斯神经网络与不确定性评估。
-
-最值得关注：《Equivariance and Augmentation for Bayesian Neural Networks》（9.0）探讨等变性增强贝叶斯网络效果；《Decision-Aligned Evaluation of Uncertainty Quantification》（8.0）提出决策导向的不确定性评估新标准。
-
-建议优先精读第一篇，理解等变性如何提升模型泛化；速读的《Neural Architecture Distributions》可辅助了解随机分割新范式。
-- 详情：[/202606/26/README](/202606/26/README)
+今日精读一篇高评分理论论文，聚焦Bootstrap覆盖校准。该研究为广义后验可信集提供了严谨的校准理论，值得深入理解其数学框架。建议读者结合具体贝叶斯模型，思考该理论如何提升推断可靠性。
+- 详情：[/202606/27/README](/202606/27/README)
 
 ### 精读区论文标签
-1. [Equivariance and Augmentation for Bayesian Neural Networks](/202606/26/2606.26273v1-equivariance-and-augmentation-for-bayesian-neural-networks)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：基于变分推断的贝叶斯神经网络数据增强
-2. [Decision-Aligned Evaluation of Uncertainty Quantification](/202606/26/2606.26990v1-decision-aligned-evaluation-of-uncertainty-quantification)  
+1. [A Theory of Bootstrap Coverage Calibration for Generalized Posterior Credible Sets](/202606/27/2606.25729v1-a-theory-of-bootstrap-coverage-calibration-for-generalized-posterior-credible-sets)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：面向决策的不确定性评估
-3. [Ribbon: Scalable Approximation and Robust Uncertainty Quantification](/202606/26/2606.27269v1-ribbon-scalable-approximation-and-robust-uncertainty-quantification)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：贝叶斯自助法的可扩展近似，用于不确定性量化
+   evidence：为使用bootstrap校准广义后验可信集提供理论，与贝叶斯不确定性量化相关
 
 ### 速读区论文标签
-1. [Neural Architecture Distributions: A New Paradigm for Stochastic Segmentation](/202606/26/2606.21061v1-neural-architecture-distributions-a-new-paradigm-for-stochastic-segmentation)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：学习架构分布用于随机分割，属于贝叶斯深度学习方法
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
