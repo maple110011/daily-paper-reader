@@ -6,24 +6,24 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-27
-- 运行时间：2026-06-27 20:50:21 UTC
+- 最新运行日期：2026-06-28
+- 运行时间：2026-06-28 20:56:42 UTC
 - 运行状态：成功
 - 本次总论文数：1
-- 精读区：1
-- 速读区：0
+- 精读区：0
+- 速读区：1
 
 ### 今日简报（AI）
-今日精读一篇高评分理论论文，聚焦Bootstrap覆盖校准。该研究为广义后验可信集提供了严谨的校准理论，值得深入理解其数学框架。建议读者结合具体贝叶斯模型，思考该理论如何提升推断可靠性。
-- 详情：[/202606/27/README](/202606/27/README)
+今天速读了一篇关于从多个稀疏数据集学习动力系统的论文，提出分层贝叶斯建模方法。该方法有效整合稀疏数据推断系统动态，适合实验数据有限的领域。建议关注此方法在生物或物理系统建模中的应用。
+- 详情：[/202606/28/README](/202606/28/README)
 
 ### 精读区论文标签
-1. [A Theory of Bootstrap Coverage Calibration for Generalized Posterior Credible Sets](/202606/27/2606.25729v1-a-theory-of-bootstrap-coverage-calibration-for-generalized-posterior-credible-sets)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：为使用bootstrap校准广义后验可信集提供理论，与贝叶斯不确定性量化相关
+- 本次无精读推荐。
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [Learning Dynamical Systems from Multiple Sparse Datasets: A Hierarchical Bayesian Modeling Approach](/202606/28/2606.24966v1-learning-dynamical-systems-from-multiple-sparse-datasets-a-hierarchical-bayesian-modeling-approach)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：基于梯度MCMC的层次贝叶斯建模进行近似推断
 
 
 <div class="dpr-home-promo-card">
