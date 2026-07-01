@@ -6,40 +6,28 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-30
-- 运行时间：2026-06-30 21:54:42 UTC
+- 最新运行日期：2026-07-01
+- 运行时间：2026-07-01 21:41:19 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：3
-- 速读区：3
+- 本次总论文数：2
+- 精读区：1
+- 速读区：1
 
 ### 今日简报（AI）
-今日精选6篇论文，揭示Transformer本质为完备贝叶斯过程，并推出贝叶斯自适应秩分配微调新方法。
-最值得精读的是《Transformer Architectures as Complete Bayes Processes》的形式化证明，以及《BaRA》中参数高效微调的贝叶斯秩分配。
-建议优先深入理解贝叶斯理论对深度学习核心架构的严格数学支撑，再关注其在有限数据场景下的微调与分割应用。
-- 详情：[/202606/30/README](/202606/30/README)
+今日精读一篇将贝叶斯滤波与拉格朗日动力学结合的高分论文，速读一篇用Transformer自适应估计平均处理效应的新思路。  
+最值得关注的是贝叶斯滤波处理噪声测量下的物理系统辨识，以及Transformer通过上下文学习实现平滑度自适应的因果推断。  
+建议下一步深入理解贝叶斯方法在物理建模和因果推断中的通用性，可尝试将两者思路迁移到自己的噪声数据处理任务中。
+- 详情：[/202607/01/README](/202607/01/README)
 
 ### 精读区论文标签
-1. [Transformer Architectures as Complete Bayes Processes: A Formal Proof in the Measure-Theoretic Kernel Framework](/202606/30/2606.30440v1-transformer-architectures-as-complete-bayes-processes-a-formal-proof-in-the-measure-theoretic-kernel-framework)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：证明Transformer实现精确贝叶斯后验推断
-2. [BaRA: Bayesian Adaptive Rank Allocation for Parameter-Efficient Fine-Tuning](/202606/30/2606.29184v1-bara-bayesian-adaptive-rank-allocation-for-parameter-efficient-fine-tuning)  
+1. [A Bayesian Filtering Approach for Learning Lagrangian Dynamics from Noisy Measurements](/202607/01/2606.31137v1-a-bayesian-filtering-approach-for-learning-lagrangian-dynamics-from-noisy-measurements)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：通过自适应秩分配进行贝叶斯LoRA不确定性估计
-3. [Using Variational Inference to Improve the Efficiency of MCMC Algorithms](/202606/30/2606.29205v1-using-variational-inference-to-improve-the-efficiency-of-mcmc-algorithms)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：结合变分推断与MCMC进行贝叶斯后验估计
+   evidence：使用贝叶斯滤波和神经网络学习拉格朗日动力学
 
 ### 速读区论文标签
-1. [Active Learning for Channel Knowledge Map Construction via Bayesian Inference Diffusion Models](/202606/30/2606.29862v1-active-learning-for-channel-knowledge-map-construction-via-bayesian-inference-diffusion-models)  
+1. [Transformers as Bayesian In-Context Experimenters: Smoothness-Adaptive Efficient ATE Estimation](/202607/01/2606.31184v1-transformers-as-bayesian-in-context-experimenters-smoothness-adaptive-efficient-ate-estimation)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：贝叶斯推理扩散模型用于信道知识地图构建中的主动学习
-2. [Set-Inclusive Uncertainty Modeling for Robust Brain Tumor Segmentation](/202606/30/2606.30374v1-set-inclusive-uncertainty-modeling-for-robust-brain-tumor-segmentation)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：使用高斯分布的概率表示对缺失模态引起的不确定性建模
-3. [Scalable Bayesian Spatial Mixture Modelling for Remote Sensing Image Segmentation](/202606/30/2606.29448v1-scalable-bayesian-spatial-mixture-modelling-for-remote-sensing-image-segmentation)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：贝叶斯空间混合模型用于图像分割中的不确定性量化
+   evidence：使用Transformer进行贝叶斯上下文学习，用于因果推断
 
 
 <div class="dpr-home-promo-card">
