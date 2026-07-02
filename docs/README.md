@@ -6,28 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-01
-- 运行时间：2026-07-01 21:41:19 UTC
+- 最新运行日期：2026-07-02
+- 运行时间：2026-07-02 20:49:26 UTC
 - 运行状态：成功
-- 本次总论文数：2
+- 本次总论文数：1
 - 精读区：1
-- 速读区：1
+- 速读区：0
 
 ### 今日简报（AI）
-今日精读一篇将贝叶斯滤波与拉格朗日动力学结合的高分论文，速读一篇用Transformer自适应估计平均处理效应的新思路。  
-最值得关注的是贝叶斯滤波处理噪声测量下的物理系统辨识，以及Transformer通过上下文学习实现平滑度自适应的因果推断。  
-建议下一步深入理解贝叶斯方法在物理建模和因果推断中的通用性，可尝试将两者思路迁移到自己的噪声数据处理任务中。
-- 详情：[/202607/01/README](/202607/01/README)
+今天精读了一篇关于Laplace贝叶斯神经网络中GLM预测估计量的综述，评分8.0/10。  
+最值得关注的是论文对比了多种估计量在预测不确定性和计算效率间的权衡，尤其聚焦Laplace近似方法。  
+建议普通读者从贝叶斯深度学习的近似推断入手，理解Laplace方法如何提升模型可靠性。
+- 详情：[/202607/02/README](/202607/02/README)
 
 ### 精读区论文标签
-1. [A Bayesian Filtering Approach for Learning Lagrangian Dynamics from Noisy Measurements](/202607/01/2606.31137v1-a-bayesian-filtering-approach-for-learning-lagrangian-dynamics-from-noisy-measurements)  
+1. [A Short Review of Estimators for the GLM predictive of Laplace Bayesian Neural Networks](/202607/02/2607.00214v1-a-short-review-of-estimators-for-the-glm-predictive-of-laplace-bayesian-neural-networks)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：使用贝叶斯滤波和神经网络学习拉格朗日动力学
+   evidence：拉普拉斯近似贝叶斯神经网络预测估计的综述，涵盖KFAC和蒙特卡洛方法
 
 ### 速读区论文标签
-1. [Transformers as Bayesian In-Context Experimenters: Smoothness-Adaptive Efficient ATE Estimation](/202607/01/2606.31184v1-transformers-as-bayesian-in-context-experimenters-smoothness-adaptive-efficient-ate-estimation)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：使用Transformer进行贝叶斯上下文学习，用于因果推断
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
