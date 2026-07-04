@@ -6,41 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-03
-- 运行时间：2026-07-03 21:20:33 UTC
+- 最新运行日期：2026-07-04
+- 运行时间：2026-07-04 20:11:39 UTC
 - 运行状态：成功
-- 本次总论文数：7
-- 精读区：1
-- 速读区：6
+- 本次总论文数：2
+- 精读区：0
+- 速读区：2
 
 ### 今日简报（AI）
-今日聚焦高分的“贝叶斯稀疏低秩适应”方法，为LLM不确定性估计提供新思路。最值得精读该9分论文，其结合参数高效微调与贝叶斯推断；速读中伴随法UQ与潜扩散超分同样值得关注。建议优先精读LLM不确定性方向，再根据应用偏好选读半导体成像或超分重构相关论文。
-- 详情：[/202607/03/README](/202607/03/README)
+今天速读了两篇论文，分别探讨浅层神经网络的变分平滑公式与分数阶随机神经网络。
+最值得关注的是《Born Discrete, Made Smooth》提出的变分建模思路（7.0分），以及《Fractional Stochastic Neural Networks》对随机噪声的数学刻画（6.0分）。
+建议普通读者后续聚焦物理信息网络或噪声鲁棒性方向，进一步验证这些理论与实际应用的结合点。
+- 详情：[/202607/04/README](/202607/04/README)
 
 ### 精读区论文标签
-1. [Bayesian Sparse Low-Rank Adaptation for Large Language Model Uncertainty Estimation](/202607/03/2607.02182v1-bayesian-sparse-low-rank-adaptation-for-large-language-model-uncertainty-estimation)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：通过低秩适应的变分贝叶斯稀疏框架用于大语言模型不确定性估计
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Adjoint-Based Bayesian Uncertainty Quantification for PDE-Constrained Inverse Problems with Application to Semiconductor Imaging](/202607/03/2606.30340v1-adjoint-based-bayesian-uncertainty-quantification-for-pde-constrained-inverse-problems-with-application-to-semiconductor-imaging)  
+1. [Born Discrete, Made Smooth: Variational Formulation of Shallow Neural Networks](/202607/04/2607.02003v1-born-discrete-made-smooth-variational-formulation-of-shallow-neural-networks)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：贝叶斯框架用于PDE约束反问题的不确定性量化
-2. [Patch-PODiff-ViT: Structured Latent Diffusion with Patchwise POD for Super-Resolution and Uncertainty Quantification](/202607/03/2606.31290v1-patch-podiff-vit-structured-latent-diffusion-with-patchwise-pod-for-super-resolution-and-uncertainty-quantification)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：扩散模型中的不确定性量化用于超分辨率
-3. [Multimodal Continuous Reasoning via Asymmetric Mutual Variational Learning](/202607/03/2607.00461v1-multimodal-continuous-reasoning-via-asymmetric-mutual-variational-learning)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：变分学习解决训练-推理不匹配
-4. [eXact-Prior Variational Autoencoder (X-VAE): Learning Data-Adaptive Gaussian Mixture Priors for Latent Distributions](/202607/03/2607.01275v1-exact-prior-variational-autoencoder-x-vae-learning-data-adaptive-gaussian-mixture-priors-for-latent-distributions)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：变分自编码器学习先验；涉及深度神经网络的变分推断
-5. [Full Bayesian Reinforcement Learning via LF-IBIS](/202607/03/2607.01741v1-full-bayesian-reinforcement-learning-via-lf-ibis)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：近似贝叶斯计算与重要性采样用于完全贝叶斯强化学习
-6. [Symbolic Discovery of Iterative Algorithms: A Continuous Latent Space Bayesian Optimization Framework](/202607/03/2607.01552v1-symbolic-discovery-of-iterative-algorithms-a-continuous-latent-space-bayesian-optimization-framework)  
+   evidence：提出浅层神经网络的变分公式化
+2. [Fractional Stochastic Neural Networks](/202607/04/2606.29438v1-fractional-stochastic-neural-networks)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：使用变分自编码器和贝叶斯优化进行算法发现
+   evidence：分数阶随机神经网络用于不确定性量化
 
 
 <div class="dpr-home-promo-card">
