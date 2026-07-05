@@ -6,29 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-04
-- 运行时间：2026-07-04 20:11:39 UTC
+- 最新运行日期：2026-07-05
+- 运行时间：2026-07-05 21:13:01 UTC
 - 运行状态：成功
 - 本次总论文数：2
-- 精读区：0
-- 速读区：2
+- 精读区：1
+- 速读区：1
 
 ### 今日简报（AI）
-今天速读了两篇论文，分别探讨浅层神经网络的变分平滑公式与分数阶随机神经网络。
-最值得关注的是《Born Discrete, Made Smooth》提出的变分建模思路（7.0分），以及《Fractional Stochastic Neural Networks》对随机噪声的数学刻画（6.0分）。
-建议普通读者后续聚焦物理信息网络或噪声鲁棒性方向，进一步验证这些理论与实际应用的结合点。
-- 详情：[/202607/04/README](/202607/04/README)
+今日聚焦噪声鲁棒的视听语音识别与层级结构能量学习。精读论文《VIB-AVSR》提出变分信息瓶颈提升LLM在噪声场景下的识别性能（8.0分）；速读论文探索吉布斯测度驱动的层级结构能量学习（7.0分）。建议关注VIB-AVSR的噪声鲁棒机制，或尝试将层级能量模型应用于非结构化数据。
+- 详情：[/202607/05/README](/202607/05/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [VIB-AVSR: Variational Information Bottleneck for Noise-Robust LLM-Based Audio-Visual Speech Recognition](/202607/05/2606.29632v1-vib-avsr-variational-information-bottleneck-for-noise-robust-llm-based-audio-visual-speech-recognition)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：用于鲁棒视听语音识别的变分信息瓶颈
 
 ### 速读区论文标签
-1. [Born Discrete, Made Smooth: Variational Formulation of Shallow Neural Networks](/202607/04/2607.02003v1-born-discrete-made-smooth-variational-formulation-of-shallow-neural-networks)  
+1. [Data-Driven Energy-Based Learning via Gibbs Measures on Hierarchical Structures](/202607/05/2606.30064v1-data-driven-energy-based-learning-via-gibbs-measures-on-hierarchical-structures)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：提出浅层神经网络的变分公式化
-2. [Fractional Stochastic Neural Networks](/202607/04/2606.29438v1-fractional-stochastic-neural-networks)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：分数阶随机神经网络用于不确定性量化
+   evidence：基于吉布斯测度的能量学习为层级模型提供贝叶斯视角
 
 
 <div class="dpr-home-promo-card">
