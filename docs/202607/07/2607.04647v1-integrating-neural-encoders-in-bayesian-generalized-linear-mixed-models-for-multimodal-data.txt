@@ -1,0 +1,992 @@
+Title: Integrating Neural Encoders in Bayesian Generalized Linear Mixed Models for Multimodal Data
+
+URL Source: https://arxiv.org/pdf/2607.04647v1
+
+Published Time: Tue, 07 Jul 2026 03:27:20 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Integrating Neural Encoders in Bayesian Generalized Linear Mixed Models for Multimodal Data 
+
+Yuankang Zhao 1, Youngsoo Baek 1, Felipe A. Medeiros 2,Samuel Berchuck 1, Matthew M. Engelhard 11Department of Biostatistics & Bioinformatics, Duke University 
+
+> 2
+
+Department of Ophthalmology, University of Miami 
+
+{yuankang.zhao, m.engelhard}@duke.edu 
+
+## Abstract 
+
+Scalable Bayesian inference for generalized linear mixed models (GLMMs) pro-vides uncertainty-aware analysis of correlated longitudinal data, but existing scal-able approaches largely assume low-dimensional tabular predictors and do not directly accommodate high-dimensional modalities such as images and text. We address this limitation by learning one or more modality-specific neural encoders jointly with a GLMM objective, then performing variance-corrected stochastic-gradient MCMC for the GLMM parameters conditional on the learned represen-tation. This conditional-Bayes design combines supervised representation learn-ing with posterior uncertainty quantification for population-level effects, subject-specific heterogeneity, and modality-level random slopes. The resulting model preserves interpretable fixed and random effects for structured covariates and learned modalities while scaling gracefully to large longitudinal datasets. In simu-lation studies, our method recovers posterior means and variance estimates from full-data MCMC benchmarks after covariance correction. We further evaluate uncertainty through parameter-level interval coverage in simulations and predictive calibration on held-out data. Applications to glaucoma progression and adolescent mental health demonstrate that the framework allows nuanced assessment of the relative importance of each modality on both individual and population levels without sacrificing predictive performance. 
+
+## 1 Introduction 
+
+Bayesian Generalized Linear Mixed Models (GLMMs) are commonly used to analyze clustered and longitudinal outcomes [Breslow and Clayton, 1993] in clinical medicine and other high-stakes settings requiring uncertainty quantification (UQ) for both model parameters and predictions [López et al., 2025]. However, traditional Bayesian GLMMs are designed for low-dimensional tabular data and cannot accommodate complex, multi-modal data ( e.g. , text, images) commonly encountered in healthcare [Lindstrom and Bates, 1990]. Thus, there is a need for methodologies that integrate multi-modal observations while accounting for within-subject correlations [Acosta et al., 2022] and providing principled uncertainty quantification. For example, in longitudinal glaucoma care, the information most predictive of future progression risk may differ substantially across patients. As illustrated in Figure 1, objective evidence from retina scans may dominate prediction for some patients, whereas patient-reported symptoms may be more informative for others, even when both patients are observed through the same set of modalities. A useful model should therefore not only combine heterogeneous inputs, including high-dimensional imaging and structured clinical covariates, but also quantify patient-specific variation in the importance of each modality. Because such individualized assessments may guide clinical interpretation, the model should further represent 
+
+> Preprint.
+> arXiv:2607.04647v1 [stat.ML] 6 Jul 2026
+
+Figure 1: Conceptual illustration of patient-specific modality importance in longitudinal glaucoma modeling. Different modalities may dominate prediction for different patients: retina imaging is most informative for Patient A, whereas patient-reported symptoms are most informative for Patient B. The framework aims to estimate these individual-level modality contributions, together with uncertainty in both modality importance and predicted progression risk. uncertainty in both modality-specific effects and predicted risk, rather than returning only point estimates. Addressing these needs presents two primary challenges. The first challenge is to integrate neural networks into the GLMM framework while retaining interpretability and accommodating heteroge-neous covariates. The ideal model for longitudinal multimodal data would employ modality-specific encoders (e.g., CNNs for imaging, Transformers for text) alongside a standard linear predictor for demographics and other tabular features [Gao et al., 2024]. This design allows us to quantify the importance of each modality on both population and subject-specific levels, facilitating interpre-tation. However, existing hybrid approaches often sacrifice this granularity, either by embedding neural networks solely as global fixed-effect predictors or by burying subject-specific effects within deep architectures, thereby obscuring the distinction between population-level trends and individual deviations [Simchoni and Rosset, 2023, Shi et al., 2022, Mandel et al., 2023]. The second challenge concerns the scalability of inference. Integrating neural networks into GLMMs results in a highly non-convex loss function and an intractable marginal likelihood, complicating parameter estimation. Existing strategies sacrifice rigorous UQ to obtain computational scalability. For example, point estimation methods ( e.g. , Maximum A Posteriori (MAP)), are computationally efficient but fail to capture epistemic uncertainty [Gal and Ghahramani, 2016]. Conversely, approxi-mate Bayesian methods like variational inference often rely on restrictive distributional assumptions (e.g., Gaussianity)[Blundell et al., 2015] that may ill-fit the complex posterior distributions of deep neural networks. Developing a fully Bayesian approach that scales to big data, extracts features from complex modalities, and accurately quantifies uncertainty remains an open problem. In this paper, we develop and rigorously analyze a method allowing scalable Bayesian inference in hierarchical settings where observations span multiple complex modalities. Our specific contributions are threefold: (1) Neural-encoder GLMM architecture: We integrate modality-specific Neural Net-work encoders into the GLMM framework, allowing representations of high-dimensional modalities to be learned jointly with corresponding population and subject-specific effects that quantify their importance. (2) Scalable Bayesian Inference via SGLD: We propose a Stochastic Gradient Langevin Dynamics (SGLD)-based learning procedure that supports scalable inference in high-dimensional settings. Our two-stage procedure first learns task-adapted representations jointly with the GLMM objective, then performs posterior sampling of GLMM parameters in the stabilized, learned feature space. (3) Empirical Validation and Performance: Through extensive simulation studies and real-world applications to glaucoma and mental health, we demonstrate that our method offers precise posterior approximations, allows us to interpret the importance of a given modality within and across subjects, and provides accurate UQ all without sacrificing predictive performance. 22 Related work 
+
+2.1 Neural networks in mixed models 
+
+Recent work seeks to combine the predictive power of neural networks with the structured dependence modeling of GLMMs. One approach is to embed a neural network as a global, population-level predictor while retaining traditional random effects. For instance, Shi et al. [2022] propose GDMix, replacing the linear fixed-effects component with a nonlinear model (e.g., a DNN). For scalability, they rely on MAP estimation , which does not yield posterior uncertainty; this can be a limitation when deploying the model in high-stakes domains such as clinical decision-making, where epistemic uncertainty is desirable. Other approaches attempt to integrate random effects more deeply into the neural architecture. Tschalzev et al. [2024] introduce Monte Carlo Generalized Mixed Effects Neural Networks (MC-GMENN), which combine NN outputs and subject-specific effects within an activation function. While improving flexibility, this deep integration can diminish interpretability, as the clear separation between population trends and subject-specific deviations is often lost. Similarly, Mandel et al. [2023] propose Neural Mixed Effects (NME) models, allowing subject-specific parameters to influence various layers of the neural architecture. Although this maximizes flexibility, it does not explicitly address the need for modality-specific encoding in multimodal EHR contexts, where preserving a standard linear component for structured covariates (e.g., age, sex) is often required for valid statistical inference. 
+
+2.2 Scalable Bayesian inference for GLMMs 
+
+The intractability of the marginal likelihood in GLMMs poses a significant hurdle for Bayesian inference. Tran et al. [2020] applied the Fisher identity to GLMMs within a Variational Inference (VI) framework, estimating gradients via backpropagation. However, this approach typically relies on a Gaussian variational family, often under a mean-field assumption. Such assumptions can be too restrictive for complex posterior landscapes, leading to underestimated uncertainty and limited posterior expressiveness [Blei et al., 2017]. This limitation becomes more pronounced when adding neural networks. Practical approximate Bayesian neural network methods can fail to preserve core Bayesian updating properties, especially when crude approximations are applied to high-dimensional neural-weight posteriors [Pituk et al., 2025]. This motivates a more cautious division of labor in our model: rather than making strong Bayesian claims about the full neural network weight posterior, we use the neural network primarily as a supervised encoder and perform Bayesian uncertainty quantification in the lower-dimensional GLMM layer, whose population-level and subject-level parameters remain directly interpretable. Stochastic Gradient MCMC (SG-MCMC) methods offer scalability without the bias introduced by fixed variational families. Berchuck et al. [2026] proposed a scalable Bayesian inference algorithm for standard GLMMs based on Stochastic Gradient Langevin Dynamics (SGLD) [Welling and Teh, 2011]. Their method combines a Fisher-identity-based Monte Carlo gradient estimator with an asymptotic variance correction, achieving accurate uncertainty quantification and substantial speedups over full-data MCMC. However, extending this to Neural GLMMs is nontrivial: the GLMM posterior is no longer defined over fixed low-dimensional covariates, but over representations learned by a neural encoder from high-dimensional and potentially multi-modal inputs. Our work addresses this issue by separating representation learning from Bayesian posterior sampling. The neural network is first used to learn predictive representations, after which the encoder is fixed and SG-MCMC is applied to the GLMM layer. This design ensures that the posterior target remains fixed during sampling, which is necessary for SG-MCMC diagnostics and covariance correction to be meaningful. It also aligns with our broader modeling goal: Bayesian uncertainty quantification is concentrated in the lower-dimensional, interpretable GLMM layer rather than in the full neural-weight posterior. Recent work on stochastic mirror Langevin dynamics further highlights the difficulty of sampling variance components in large-data GLMMs [Baek and Berchuck, 2026]; such constrained samplers could be incorporated into our framework as a future replacement for the variance-component update. 33 Method 
+
+3.1 Model architecture Problem Formulation and Feature Extraction. Let D = {(uij , xij , y ij )} denote the dataset, where 
+
+i = 1 , . . . , N indexes the subjects and j = 1 , . . . , n i indexes the observations for subject i. We distinguish between two types of inputs: uij represents high-dimensional unstructured data (e.g., images) requiring deep feature extraction, and xij ∈ RP represents standard structured covariates (e.g., clinical variables) modeled with fixed effects only. The outcome variable is denoted by yij .To capture high-level representations from the unstructured inputs uij , we employ a neural network encoder hϕ(·) parameterized by ϕ. For each input uij , the encoder produces a K-dimensional latent feature vector. To ensure numerical stability and consistent scaling, we standardize as follows: 
+
+˜hij = hϕ(uij ), zij,k = ˜hij,k − μh,k 
+
+σh,k 
+
+, (1) where k ∈ [K], zij,k represents the k-th standardized feature component, and μh,k , σ h,k are the batch-wise mean and standard deviation. We define the augmented latent feature vector as zij =[1 , z ij, 1, . . . , z ij,K ]⊤ to include an intercept term for the random effects modeling. 
+
+Multimodal Generalized Linear Mixed Model Framework. We integrate the deep feature rep-resentations into a probabilistic GLMM framework to account for both population-level trends and subject-specific heterogeneity. Assuming the conditional distribution of the response yij given the random effects belongs to the exponential family, the expected value μij = E[yij |γi, uij , xij ] is linked to a linear predictor ηij via a monotonic link function g(·), g(μij ) = ηij . The linear predic-tor ηij is composed of a fixed-effects component for the standard covariates and a mixed-effects component for the latent neural features: 
+
+ηij = x⊤ 
+
+> ij
+
+α
+
+| {z } 
+
+> Fixed Effects Only
+
++ z⊤ 
+
+> ij
+
+(β + γi)
+
+| {z }
+
+> Deep Mixed Effects
+
+. (2) Here, α ∈ RP denotes the fixed effects coefficients for the standard covariates xij . The vector 
+
+β ∈ RK+1 represents the fixed effects for the latent features (representing the population-average contribution of the deep features), while γi ∼ N (0, Σ) denotes the subject-specific random effects. This formulation allows the model to learn subject-specific deviations in both the baseline risk (via the intercept in zij ) and the sensitivity to specific neural features. 
+
+Application to Binary Classification. In this work, we focus on binary classification tasks where 
+
+yij ∈ { 0, 1}. Accordingly, we model the conditional probability using a Bernoulli distribution with the canonical Logit link function g(μ) = log( μ 
+
+> 1−μ
+
+). The probability pij = P (yij = 1 |γi, . . . ) is given by: pij = σ(ηij ) = 11+exp( −ηij ) . The log-likelihood for subject i, conditioned on the latent features and random effects, is: log p(yi|zi, xi, γi) = Pni
+
+> j=1
+
+h
+
+yij log( pij ) + (1 − yij ) log(1 − pij )
+
+i
+
+.
+
+3.2 Identifiability and Interpretable Estimands 
+
+Because the latent covariates are learned, their coordinate system is not intrinsic. For clarity, write the latent part of the linear predictor as η(z) 
+
+> ij
+
+= ˜ z⊤ 
+
+> ij
+
+(β + γi), where ˜zij = (1 , z ij, 1, . . . , z ij,K )⊤.For any nonsingular diagonal matrix A = diag(1 , a 1, . . . , a K ), the transformed representation and parameters ˜z′ 
+
+> ij
+
+= A˜zij , β′ = A−T β, γ′ 
+
+> i
+
+= A−T γi, and Σ′ = A−T ΣA−1 produce the same linear predictor and marginal likelihood after integrating over the subject-specific effects. Thus, without normalization, the scale and orientation of each learned latent coordinate are not identifiable. In our implementation, each scalar encoder output is centered and scaled to unit empirical variance before posterior sampling. This fixes the shift and positive scale conventions, but a sign ambiguity remains: replacing zij,k by −zij,k and (βk, γ ik ) by (−βk, −γik ) leaves the likelihood unchanged. Consequently, the raw sign of βk is not an intrinsic scientific estimand. We therefore focus on sign-invariant standardized summaries. Define the standardized population-effect magnitude and standardized heterogeneity magnitude by δpop  
+
+> k
+
+= |βk| and δhet  
+
+> k
+
+= √Σkk , and define their rela-tive contribution shares as ωpop  
+
+> k
+
+= δpop  
+
+> k
+
+/ PKℓ=1 δpop  
+
+> ℓ
+
+and ωhet  
+
+> k
+
+= δhet  
+
+> k
+
+/ PKℓ=1 δhet  
+
+> ℓ
+
+, whenever the denominators are nonzero. 4Proposition 3.1 (Identifiable standardized latent summaries) . After centering and scaling the learned latent coordinates to unit empirical variance, the summaries δpop  
+
+> k
+
+, δhet  
+
+> k
+
+, ωpop  
+
+> k
+
+, and ωhet  
+
+> k
+
+are invariant to the remaining latent sign ambiguity. Consequently, posterior comparisons such as 
+
+Pr  ωpop  
+
+> g
+
+> ω pop  
+
+> h
+
+| D  and Pr  ωhet  
+
+> g
+
+> ω het  
+
+> h
+
+| D 
+
+are identifiable, whereas the raw sign of βk is not. 
+
+The proof is given in Appendix A. This situation is analogous to a standard regression setting in which predictors are observed only up to an unknown scale factor: unstandardized coefficients cannot be interpreted absolutely without fixing the predictor scale, so inference is naturally based on standardized coefficients and relative effect sizes. In our setting, the learned latent features are standardized before posterior sampling, allowing us to compare standardized magnitudes across modalities. However, because the sign of a learned latent coordinate remains arbitrary, interpretation should focus on magnitude, relative importance, and posterior rankings. 
+
+3.3 Estimation Objective Function and Gradient Formulation. To perform Bayesian inference for the GLMM parameters Θ = {α, β, Σ}, where Σ represents the random effects covariance matrix, we aim to sample from the posterior distribution p(Θ |D ). This is equivalent to minimizing the negative log-posterior potential function f (Θ) , which decomposes into a prior component and a sum of subject-specific marginal likelihood contributions: f (Θ) = f0(Θ) + PNi=1 fi(Θ) , where f0(Θ) = 
+
+− log p(Θ) represents the negative log-prior. The term fi(Θ) denotes the negative marginal log-likelihood for subject i. In our deep probabilistic framework, the standardized latent features zi
+
+extracted by the neural network are treated as covariates during the gradient derivation for the GLMM parameters. Thus, fi(Θ) is defined as the integral over the random effects γi: fi(Θ) = 
+
+− log p(yi|zi, Θ) = − log R p(yi|zi, γi, α, β) p(γi|Σ) dγi. Directly optimizing or sampling based on fi(Θ) is computationally intractable due to the high-dimensional integral. To overcome this, we follow [Berchuck et al., 2026] and utilize Fisher’s Identity, which expresses the gradient of the marginal log-likelihood as an expectation over the conditional posterior of the random effects: gi(Θ) ≜ ∇fi(Θ) = Ep(γi|yi,zi,Θ) [−∇ Θ log p(yi, γi|zi, Θ)] . Based on this identity, we construct an unbiased Monte Carlo estimator ˆgi(Θ) . We then draw samples {γir }Rr=1 from the conditional posterior p(γi|yi, zi, Θ) via a Metropolis-Hastings (MH) step, yielding the estimator: 
+
+ˆgi(Θ) = − 1
+
+R
+
+> R
+
+X
+
+> r=1
+
+∇Θ (log p(yi|zi, γir , α, β) + log p(γir |Σ)) . (3) 
+
+Two-Stage Optimization Strategy. We separate supervised representation learning from Bayesian posterior sampling. The encoder ϕ is first trained together with the GLMM likelihood to learn a predictive latent representation. Posterior samples are then collected only after this representation is fixed, so that SGLD targets a stationary conditional posterior for the GLMM parameters rather than a moving target induced by continuously changing features. The full computational procedure is summarized in Algorithm 1 in Appendix C.2. 
+
+Phase 1: Supervised representation learning. During the first Kburn epochs, we update the encoder parameters ϕ using stochastic gradient methods, such as Adam, while updating Θ in parallel with SGLD-type stochastic-gradient steps. This stage learns a stable supervised feature map hϕ(·);samples generated during this stage are treated as burn-in and are not used for posterior summaries. 
+
+Phase 2: Frozen conditional posterior sampling. Let ˆϕ denote the encoder obtained after Phase 1, and let z ˆϕ,ij = Std {h ˆϕ(uij )} be the frozen and standardized latent representation for observation j
+
+from subject i. After freezing ˆϕ and locking the normalization statistics, the latent representation is treated as a fixed covariate in the GLMM. Equivalently, SGLD targets the conditional posterior 
+
+π ˆϕ(Θ | D ) ∝ p(Θ) QNi=1 mi(Θ; ˆϕ), where mi(Θ; ˆϕ) = R {Qni 
+
+> j=1
+
+p(yij | xij , z ˆϕ,ij , γ i, Θ) }p(γi |
+
+Σ) dγ i is the subject-specific marginal likelihood after integrating out the random effect γi. We then apply SGLD only to Θ and collect samples from this fixed conditional posterior. Thus, uncertainty quantification is Bayesian for the GLMM parameters conditional on the learned encoder ˆϕ; we do not claim to propagate posterior uncertainty over all neural-network weights. 5This two-stage procedure can therefore be viewed as conditional Bayesian inference after joint supervised representation learning. Theoretical work supports the use of trained feature maps in this role: mean-field analyses show that SGD-trained neural networks can be described by nonlinear feature-learning dynamics and can achieve near-ideal generalization in representative settings [Mei et al., 2018]; related works further distinguish the feature-learning/mean-field regime from linearized or fixed-feature regimes [Spiliopoulos et al., 2025, Ch. 20]. Conditioning on a jointly learned, high-quality representation for downstream Bayesian inference is therefore a principled practical compromise, analogous in spirit to empirical Bayes procedures in which nuisance or hyperparameters are estimated first and the parameters of interest are then given Bayesian treatment [Robbins, 1956, Efron, 2010]. In our setting, Appendix B provides a local perturbation argument showing that, once the learned representation is stable, the resulting conditional posterior mode and covariance are stable to small representation errors. As detailed in Appendix E, hyperparameter tuning in the simulation and real-data studies also considered non-iterative training variants and stage-1 learning-rate decay schedules ( lr_decay ). Neither alternative showed systematic empirical gains over the proposed two-stage procedure, supporting the robustness of separating representation learning from conditional posterior sampling in a stabilized feature space. 
+
+SGLD Update and Parameter Evolution. The global parameters Θ are updated using SGLD. At iteration t with a mini-batch Bt of size S, the update rule incorporates the gradient of the prior and the scaled sum of the stochastic gradients from the likelihood: 
+
+Θt+1 = Θ t − ϵt ∇f0(Θ t) + NS
+
+X
+
+> i∈B t
+
+ˆgi(Θ t)
+
+!
+
++ √2ϵtηt, (4) where ϵt is the step size, N is the total subject size, and ηt ∼ N (0 , I) injects Gaussian noise. 
+
+Post-hoc Variance Correction. Fixed-step SGLD produces samples with inflated variance because of minibatch subsampling, Monte Carlo gradient estimation, and injected Langevin noise [Berchuck et al., 2026]. To obtain calibrated uncertainty estimates, we apply a Lyapunov-equation-based post-hoc correction. In brief, the correction estimates the covariance of the injected stochastic noise, solves for the posterior precision matrix that would induce the observed SGLD covariance, and linearly rescales the unconstrained samples. The full correction equations and sample-rescaling map are given in Appendix C.1. 
+
+## 4 Simulation study 
+
+Here we evaluate the proposed framework through numerical simulations. Our goals are to (1) assess whether the neural encoder can recover complex nonlinear latent structures, and (2) validate posterior inference and variance correction when LMMs or GLMMs include neural-network-learned latent features. 
+
+4.1 LMM setting with random intercept 
+
+We first consider a semiparametric linear mixed model (LMM) with a random intercept and a neural latent feature: 
+
+yij = β0 + β1z(xij ) + β2x2,ij + γi + ϵij ,i = 1 , . . . , N, j = 1 , . . . , n i
+
+(5) The simulation includes three nonlinear latent structures: a complex one-dimensional function, a paraboloid, and a saddle surface. Full data-generating mechanisms, implementation details, and benchmark construction are provided in Appendix D.1. The top panel of Figure 2 visualizes the learned functions. It is important to note that the latent function in such semiparametric models is subject to scale and shift non-identifiability (i.e., h ≈ az + b). Therefore, we compare the standardized vectors of the true z and the learned h. In the 1D case (Fig. 2a), the learned curve almost perfectly overlaps with the true standardized function (correlation 0.9989). For the 2D cases (Fig. 2b-e), the model effectively captures the geometry of both shapes, with high correlations on standardized outputs (0.9986 and 0.9971), confirming that the network has identified the underlying mechanisms despite the complex likelihood function. Posterior means and corrected posterior variances also agree with the Gibbs benchmark; the full LMM posterior validation plot is shown in Figure 3 in Appendix D.2. 6Figure 2: Simulation results. Top: latent structure recovery for the LMM setting, with subpanel (a) comparing the true and learned 1D nonlinear functions and subpanels (b-e) showing ground-truth and learned latent manifolds. Bottom: posterior inference in the high-dimensional GLMM setting, comparing parameter estimates (left) and corrected posterior log-variances (right) against the MCMC benchmark. 
+
+4.2 GLMM setting with high-dimensional features and random slopes 
+
+We next consider a high-dimensional logistic GLMM with both random intercepts and random slopes. The binary response follows a Bernoulli distribution with logits 
+
+logit( pij ) = ( β0 + γ0i) + ( β1 + γ1i)z(xij ) + β2x2,ij . (6) Here xij ∈ R20 , and only 3 of the 20 input dimensions enter the true latent feature, with the remaining 17 dimensions serving as noise features. This makes the setting a joint test of nonlinear representation learning, implicit feature selection, and random-slope variance recovery. Full data-generating and implementation details are provided in Appendix D.3. 
+
+Results and analysis The bottom panel of Figure 2 presents the posterior inference results. The left side demonstrates that our method accurately recovers the posterior means for all fixed effects and variance components, with boxplot medians closely matching the benchmark. Importantly, the right side validates our variance correction in this complex setting. Despite the high-dimensional input and additional noise introduced by the random slope, the corrected log-variances show that benchmark posterior variances fall within the range of our estimates. The model retains the inherent sign and scale non-identifiability described in Section 3.2; therefore, the results presented here are evaluated after standardizing the learned latent representation to align with the ground truth scale, confirming that the structural relationships are correctly captured. 
+
+## 5 Real data experiments 
+
+We evaluated the framework in two longitudinal real-data settings: glaucoma progression from visual field images and adolescent mental health risk from multi-domain ABCD Study predictors. 
+
+5.1 Glaucoma longitudinal image data analysis 
+
+To demonstrate the practical utility of our framework in medical decision-making, we applied our method to forecast glaucoma progression using longitudinal visual field (VF) data. Early identification of eyes at high risk of rapid functional loss is critical for preserving vision [Berchuck et al., 2019]. We analyzed longitudinal standard automated perimetry (SAP) data from a glaucoma cohort. Full cohort construction, visual-field preprocessing, outcome definition, quality control, and split details are provided in Appendix F.1. 7Model framework and implementation We adapted our Multimodal GLMM framework to integrate a Convolutional Neural Network (CNN) encoder with a logistic mixed-effects component. The CNN extracts a scalar latent feature zij from the input image, and patient age is included as an explicit covariate. We model the progression probability pij as: logit (pij ) = ( β0 + γ0i) + ( β1 +
+
+γ1i)zij + βage · Age ij where Age ij is standardized. Random effects γ0i ∼ N (0 , σ 2 
+
+> γ
+
+) and γ1i ∼N (0 , σ 2 
+
+> b1
+
+) capture subject-specific baseline risk and sensitivity to visual field patterns, respectively. We estimated the posterior of Θ = {β0, β 1, β age , log σ2 
+
+> γ
+
+, log σ2 
+
+> b1
+
+} via two-stage SGLD with variance correction; hyperparameter tuning is described in Appendix E. 
+
+Results and interpretation Population-level Effects ( β). Posterior analysis confirms older age as a significant risk factor ( ˆβage ≈ 1.68 , 95% CI: [1 .45 , 1.95] ) [Berchuck et al., 2019]. The coefficient for the CNN-extracted latent feature is ˆβ1 ≈ − 4.66 (95% CI: [−5.10 , −4.20] ). Since the outcome represents deterioration, this strong negative magnitude implies that a 1-SD increase in the learned latent feature z corresponds to a substantial reduction in log-odds of progression. Our CNN learned a “health index” from raw visual fields, where higher values guard against functional loss. 
+
+Subject-specific Heterogeneity ( σ2). The full posterior distributions, including the variance compo-nents, are shown in Figure 4 in Appendix H. The large random intercept variance ( σ2 
+
+> γ
+
+≈ 38 ) reveals substantial baseline heterogeneity across patients (e.g., “rapid progressors” versus “stable” eyes) that is unexplained by age or image features alone. Additionally, the random slope variance ( σ2 
+
+> b1
+
+≈ 0.4)indicates that the predictive value of visual field patterns varies by individual. Finally, we compared our method against a baseline deterministic CNN trained without random effects. On the held-out test set, our Multimodal GLMM achieved an AUC of 0.764 , comparable to the baseline model (AUC: 0.761 ). These results show incorporating rigorous Bayesian UQ and random effects enhances interpretability and explicitly quantifies individual deviations without compromising predictive accuracy. 
+
+5.2 Adolescent mental health risk analysis (ABCD Study) 
+
+We then studied prediction of future mental health distress in the Adolescent Brain Cognitive Development (ABCD) Study. This challenges the model to integrate multi-domain developmental data while accounting for heterogeneity in how risk factors influence mental health trajectories. 
+
+Dataset and predictor domains We analyzed longitudinal observations from the ABCD Study [Karcher and Barch, 2021, Garavan et al., 2018], using next-visit high-risk p-factor status as the binary outcome [Hill et al., 2025]. Cohort construction, leakage control, preprocessing, and split details are provided in Appendix F.2. Predictors were organized according to clinical modifiability into eight neural-encoder domains: Screen Time & Technology Use , Sleep , Family Environment , Social & School Environment , Neighborhood & Socioeconomic Context , Neurobiology , Family Psychiatric History , and Fixed Biological/Demographic Characteristics . Additional grouping rules, including the treatment of total_core and excluded auxiliary variables, are also provided in Appendix F.2. 
+
+Model framework and implementation To disentangle domain-specific contributions, we em-ployed eight parallel Multi-Layer Perceptron (MLP) encoders. Let GNN denote the eight neural-encoder domains listed above. For each domain g ∈ G NN , an encoder fg (·) maps the correspond-ing predictor block Xg,ij to a scalar latent feature, zg,ij = ( fg (Xg,ij ) − ¯fg )/s g , where ¯fg and 
+
+sg are the training-set mean and standard deviation of the encoder output. This standardization makes the population-level coefficients comparable across domains. Let cij denote the standardized 
+
+total_core trauma/adversity summary. The linear predictor is formulated as 
+
+logit( pij ) = ( β0 + γ0i) + βccij + X
+
+> g∈G NN
+
+(βg + γg,i )zg,ij . (7) Here, βg represents the population-level association of domain g with next-visit high-risk status, while γg,i ∼ N (0 , σ 2 
+
+> g
+
+) captures subject-specific deviation in sensitivity to that domain. The random intercept γ0i ∼ N (0 , σ 20 ) captures residual baseline heterogeneity across subjects. This distinguishes domains that are predictive on average from those whose effects vary between individuals. 8Results and interpretation We focus the main interpretation on two quantities: the standardized population-level slopes βg , which measure average domain-level associations, and the random-slope variances σ2 
+
+> g
+
+, which measure between-subject heterogeneity in domain-specific effects. First, Sleep showed the strongest population-level association with next-visit high-risk status ( ˆβSleep ≈
+
+0.95 , 95% CI: [0 .91 , 0.99] ). This agrees with the ABCD-based analysis of Hill et al. [2025], which identified sleep disturbances as the most influential predictor of future high-risk psychopathology status, and with meta-analytic evidence linking shorter sleep duration to worse adolescent mood outcomes [Short et al., 2020]. Recovering this known dominant signal supports the face validity of the proposed framework: even with learned domain-specific encoders and Bayesian mixed-effects inference, the model identifies sleep as the leading population-level risk domain. Second, Neighborhood & Socioeconomic Context demonstrates why subject-specific effects matter. Its population-level association was relatively small ( ˆβNSES ≈ − 0.14 , 95% CI: [−0.18 , −0.10] ), but its random-slope variance was the single largest variance component in the model ( ˆσ2NSES ≈ 0.06 ,95% CI: [0 .05 , 0.07] ), exceeding even the random intercept by posterior mean. Thus, a weak average effect may mask strong effects in particular subpopulations. This interpretation aligns with Moving to Opportunity evidence that neighborhood changes produced subgroup-dependent youth outcomes, with benefits for female youth offset by adverse effects for male youth [Kling et al., 2007]. Our model therefore surfaces contextual effects that a single population-level coefficient could obscure. Additional domain-level rankings and interpretation are provided in Appendix G. As with other learned coefficients, the sign of ˆβNSES reflects the direction of the learned latent score rather than a direct monotone effect of neighborhood or socioeconomic variables. To validate predictive integrity, we compared the Multi-Group Deep GLMM against a baseline MLP trained without random effects. On the held-out test set, our probabilistic model achieved an AUC of 
+
+0.78 and Accuracy of 0.78 , performing comparably to the baseline model (AUC: 0.78 ; Accuracy: 
+
+0.79 ). This confirms that our framework successfully incorporates complex random effect structures to reveal subject-specific etiologies without sacrificing the high predictive performance characteristic of deep learning. 
+
+## 6 Conclusion and discussion 
+
+In this work, we presented a Multimodal Generalized Linear Mixed Model (GLMM) framework that enables scalable Bayesian inference for high-dimensional, longitudinal data. By integrating modality-specific neural network encoders with stochastic gradient MCMC (SGLD) inference, our approach overcomes computational bottlenecks of traditional Bayesian methods, yet preserves rigor-ous uncertainty quantification required for high-stakes applications. Through extensive simulations, we demonstrated that our method, augmented by a post-hoc variance correction, accurately recovers posterior distributions and avoids the variance underestimation typical of approximate inference. We then applied our framework to glaucoma progression and adolescent mental health, yielding interpretable insights into both population-level trends and subject-specific heterogeneity. Our architecture deploys multiple neural encoders to extract features from distinct data domains/modalities and quantify their relative importance. When comparing child behavioral history versus neuroimaging, for example, we found that subject-specific risks are driven by differential sensitivities to specific environmental or behavioral factors. By retaining a mixed model structure, our method offers clinicians a transparent view of how individual patient trajectories deviate from population norms. 
+
+Limitations and future work Our framework has limitations that suggest future research directions. First, as noted in the simulation study, semiparametric models involving latent neural features are subject to sign and scale non-identifiability between the linear coefficients and the encoder outputs. This is an inherent limitation that we addressed by standardizing our neural network outputs, which allows structural relationships and relative effects to be identified. Second, while our method quantifies the overall importance of each modality, it does not attribute this importance to specific raw input features. In glaucoma, for instance, we know visual fields are predictive but not which specific spatial defects are responsible. However, this is easily overcome by coupling our framework with established explainability methods, such as saliency maps [Simonyan et al., 2013] or concept bottleneck models [Koh et al., 2020], which we will explore in future work. 9References 
+
+Julián N Acosta, Guido J Falcone, Pranav Rajpurkar, and Eric J Topol. Multimodal biomedical ai. 
+
+Nature medicine , 28(9):1773–1784, 2022. Youngsoo Baek and Samuel I Berchuck. Safe, scalable, and accurate bayes posterior sampling for large-data generalized linear mixed models. arXiv preprint arXiv:2604.26029 , 2026. Samuel I Berchuck, Sayan Mukherjee, and Felipe A Medeiros. Estimating rates of progression and predicting future visual fields in glaucoma using a deep variational autoencoder. Scientific Reports ,9(1):18113, 2019. Samuel I. Berchuck, Youngsoo Baek, Felipe A. Medeiros, and Andrea Agazzi. Scalable bayesian inference for generalized linear mixed models via stochastic gradient mcmc, 2026. URL https: //arxiv.org/abs/2403.03007 .David M Blei, Alp Kucukelbir, and Jon D McAuliffe. Variational inference: A review for statisticians. 
+
+Journal of the American statistical Association , 112(518):859–877, 2017. Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in neural network. In International conference on machine learning , pages 1613–1622. PMLR, 2015. Norman E Breslow and David G Clayton. Approximate inference in generalized linear mixed models. 
+
+Journal of the American statistical Association , 88(421):9–25, 1993. Bradley Efron. Large-Scale Inference: Empirical Bayes Methods for Estimation, Testing, and Prediction , volume 1 of Institute of Mathematical Statistics Monographs . Cambridge University Press, 2010. doi: 10.1017/CBO9780511761362. Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. In international conference on machine learning , pages 1050–1059. PMLR, 2016. Yuan Gao, Sofia Ventura-Diaz, Xin Wang, Muzhen He, Zeyan Xu, Arlene Weir, Hong-Yu Zhou, Tianyu Zhang, Frederieke H van Duijnhoven, Luyi Han, et al. An explainable longitudinal multi-modal fusion model for predicting neoadjuvant therapy response in women with breast cancer. 
+
+Nature Communications , 15(1):9613, 2024. Hugh Garavan, Hauke Bartsch, K Conway, A Decastro, RZ Goldstein, S Heeringa, T Jernigan, A Potter, W Thompson, and D Zahs. Recruiting the abcd sample: Design considerations and procedures. Developmental cognitive neuroscience , 32:16–22, 2018. Elliot D Hill, Pratik Kashyap, Elizabeth Raffanello, Yun Wang, Terrie E Moffitt, Avshalom Caspi, Matthew Engelhard, and Jonathan Posner. Prediction of mental health risk in adolescents. Nature medicine , pages 1–7, 2025. Nicole R Karcher and Deanna M Barch. The abcd study: understanding the development of risk for mental and physical health outcomes. Neuropsychopharmacology , 46(1):131–142, 2021. Judi Kidger, Ricardo Araya, Jenny Donovan, and David Gunnell. The effect of the school environment on the emotional health of adolescents: A systematic review. Pediatrics , 129(5):925–949, 2012. doi: 10.1542/peds.2011-2248. Jeffrey R. Kling, Jeffrey B. Liebman, and Lawrence F. Katz. Experimental analysis of neighborhood effects. Econometrica , 75(1):83–119, 2007. doi: 10.1111/j.1468-0262.2007.00733.x. Pang Wei Koh, Thao Nguyen, Yew Siang Tang, Stephen Mussmann, Emma Pierson, Been Kim, and Percy Liang. Concept bottleneck models. In International conference on machine learning , pages 5338–5348. PMLR, 2020. Mary J Lindstrom and Douglas M Bates. Nonlinear mixed effects models for repeated measures data. 
+
+Biometrics , pages 673–687, 1990. 10 L López, Shaza Elsharief, Dhiyaa Al Jorf, Firas Darwish, Congbo Ma, and Farah E Shamout. Uncer-tainty quantification for machine learning in healthcare: A survey. arXiv preprint arXiv:2505.02874 ,2025. Francesca Mandel, Riddhi Pratim Ghosh, and Ian Barnett. Neural networks for clustered and longitudinal data using mixed effects models. Biometrics , 79(2):711–721, 2023. Song Mei, Andrea Montanari, and Phan-Minh Nguyen. A mean field view of the landscape of two-layer neural networks. Proceedings of the National Academy of Sciences , 115(33):E7665–E7671, 2018. doi: 10.1073/pnas.1806579115. Gábor Pituk, Vik Shirvaikar, and Tom Rainforth. Do bayesian neural networks actually behave like bayesian models? In Forty-second International Conference on Machine Learning , 2025. Franziska Reiss. Socioeconomic inequalities and mental health problems in children and adolescents: A systematic review. Social Science & Medicine , 90:24–31, 2013. doi: 10.1016/j.socscimed.2013. 04.026. Herbert E. Robbins. An empirical bayes approach to statistics. In Jerzy Neyman, editor, Proceedings of the Third Berkeley Symposium on Mathematical Statistics and Probability, Volume 1: Contri-butions to the Theory of Statistics , pages 157–164. University of California Press, Berkeley, CA, 1956. Jun Shi, Chengming Jiang, Aman Gupta, Mingzhou Zhou, Yunbo Ouyang, Qiang Charles Xiao, Qingquan Song, Yi Wu, Haichao Wei, and Huiji Gao. Generalized deep mixed models. In 
+
+Proceedings of the 28th ACM SIGKDD Conference on Knowledge Discovery and Data Mining ,pages 3869–3877, 2022. Michelle A. Short, Stephen A. Booth, Omar Omar, Linda Ostlundh, and Teresa Arora. The relationship between sleep duration and mood in adolescents: A systematic review and meta-analysis. Sleep Medicine Reviews , 52:101311, 2020. doi: 10.1016/j.smrv.2020.101311. Giora Simchoni and Saharon Rosset. Integrating random effects in deep neural networks. Journal of Machine Learning Research , 24(156):1–57, 2023. Karen Simonyan, Andrea Vedaldi, and Andrew Zisserman. Deep inside convolutional networks: Visualising image classification models and saliency maps. arXiv preprint arXiv:1312.6034 , 2013. Konstantinos Spiliopoulos, Richard B. Sowers, and Justin Sirignano. Mathematical Foundations of Deep Learning Models and Algorithms , volume 252 of Graduate Studies in Mathematics .American Mathematical Society, 2025. Chapter 20: Optimization in the Feature Learning Regime: Mean Field Scaling. M-N Tran, Nghia Nguyen, David Nott, and Robert Kohn. Bayesian deep net glm and glmm. Journal of Computational and Graphical Statistics , 29(1):97–113, 2020. Andrej Tschalzev, Paul Nitschke, Lukas Kirchdorfer, Stefan Lüdtke, Christian Bartelt, and Heiner Stuckenschmidt. Enabling mixed effects neural networks for diverse, clustered data using monte carlo methods. arXiv preprint arXiv:2407.01115 , 2024. Max Welling and Yee W Teh. Bayesian learning via stochastic gradient langevin dynamics. In 
+
+Proceedings of the 28th international conference on machine learning (ICML-11) , pages 681–688, 2011. Marie Bee Hui Yap, Pamela Doreen Pilkington, Siobhan Mary Ryan, and Anthony F. Jorm. Parental factors associated with depression and anxiety in young people: A systematic review and meta-analysis. Journal of Affective Disorders , 156:8–23, 2014. doi: 10.1016/j.jad.2013.11.007. 11 A Proof of Proposition 3.1 
+
+We first restate the proposition from Section 3.2. 
+
+Proposition A.1 (Identifiable standardized latent summaries, restated) . After centering and scaling the learned latent coordinates to unit empirical variance, the summaries δpop  
+
+> k
+
+, δhet  
+
+> k
+
+, ωpop  
+
+> k
+
+, and ωhet 
+
+> k
+
+are invariant to the remaining latent sign ambiguity. Consequently, posterior comparisons such as 
+
+Pr  ωpop  
+
+> g
+
+> ω pop  
+
+> h
+
+| D  and Pr  ωhet  
+
+> g
+
+> ω het  
+
+> h
+
+| D 
+
+are identifiable, whereas the raw sign of βk is not. Proof. We first establish the general latent-coordinate invariance. Consider the neural-GLMM linear predictor 
+
+ηij = x⊤ 
+
+> ij
+
+α + ˜ z⊤ 
+
+> ij
+
+(β + γi), γi ∼ N (0, Σ),
+
+where ˜zij = (1 , z ij, 1, . . . , z ij,K )⊤ includes the intercept coordinate. Let A be any nonsingular matrix acting on the latent coordinates, with the intercept coordinate fixed when present. Define 
+
+˜z′ 
+
+> ij
+
+= A˜zij , β′ = A−T β, γ′ 
+
+> i
+
+= A−T γi, Σ′ = A−T ΣA−1.
+
+Then, for every observation, 
+
+(˜ z′ 
+
+> ij
+
+)⊤(β′ + γ′
+
+> i
+
+) = ( A˜zij )⊤A−T (β + γi) = ˜ z⊤ 
+
+> ij
+
+(β + γi).
+
+Hence the conditional linear predictor, and therefore the conditional likelihood, is unchanged after the corresponding change of variables γ′ 
+
+> i
+
+= A−T γi. Moreover, if γi ∼ N (0, Σ), then 
+
+γ′ 
+
+> i
+
+∼ N (0, A −T ΣA−1) = N (0, Σ′).
+
+Therefore, 
+
+Z
+
+p(yi | Xi, ˜Zi, γi, α, β)p(γi | Σ) dγi =
+
+Z
+
+p(yi | Xi, ˜Z′
+
+> i
+
+, γ′
+
+> i
+
+, α, β′)p(γ′ 
+
+> i
+
+| Σ′) dγ′
+
+> i
+
+.
+
+Thus the marginal likelihood is unchanged under latent-coordinate transformations of this form. Now impose the empirical standardization convention used before posterior sampling. Each learned latent coordinate is centered and scaled to unit empirical variance. This removes arbitrary shifts and positive rescalings. The remaining ambiguity is a sign flip. In particular, under the transformation 
+
+z′ 
+
+> ij,k
+
+= −zij,k , β′ 
+
+> k
+
+= −βk, γ′ 
+
+> ik
+
+= −γik ,
+
+the linear predictor remains unchanged. The corresponding variance component is also unchanged: 
+
+Σ′ 
+
+> kk
+
+= Var( γ′
+
+> ik
+
+) = Var( −γik ) = Var( γik ) = Σ kk .
+
+Therefore, 
+
+δpop ′ 
+
+> k
+
+= |β′
+
+> k
+
+| = | − βk| = |βk| = δpop  
+
+> k
+
+,
+
+and 
+
+δhet ′ 
+
+> k
+
+=
+
+q
+
+Σ′ 
+
+> kk
+
+= pΣkk = δhet  
+
+> k
+
+.
+
+The same argument applies coordinate-wise to all latent dimensions. Hence the denominators in 
+
+ωpop  
+
+> k
+
+= δpop 
+
+> k
+
+PKℓ=1 δpop 
+
+> ℓ
+
+, ωhet  
+
+> k
+
+= δhet 
+
+> k
+
+PKℓ=1 δhet 
+
+> ℓ
+
+are also unchanged under latent sign flips. It follows that ωpop  
+
+> k
+
+and ωhet  
+
+> k
+
+are invariant whenever their denominators are nonzero. Consequently, posterior comparisons such as 
+
+Pr  ωpop  
+
+> g
+
+> ω pop  
+
+> h
+
+| D  and Pr  ωhet  
+
+> g
+
+> ω het  
+
+> h
+
+| D 
+
+depend only on sign-invariant summaries and are therefore identifiable. In contrast, sign( βk) changes under the same sign-flip transformation and is not identifiable without an external orientation conven-tion. 12 B Stability of Conditional Posterior Inference 
+
+Let 
+
+mϕ,N (Θ) = 1
+
+N
+
+"
+
+− log p(Θ) −
+
+> N
+
+X
+
+> i=1
+
+log 
+
+Z
+
+p(yi | xi, z ϕ,i , γ i, Θ) p(γi | Σ) dγ i
+
+#
+
+denote the average negative log-posterior potential induced by representation ϕ. Let ϕ⋆ be an oracle or limiting representation and ˆϕ be the learned representation after Phase 1. 
+
+Proposition B.1 (Posterior stability under representation perturbation) . Assume that in a neigh-borhood N of the oracle posterior mode Θ⋆: (i) mϕ⋆,N is twice continuously differentiable and 
+
+∇2mϕ⋆,N (Θ) ⪰ λI for some λ > 0; (ii) the representation perturbation induces bounded score and curvature errors, 
+
+sup 
+
+> Θ∈N
+
+∇m ˆϕ,N (Θ) − ∇ mϕ⋆,N (Θ) ≤ rN ,
+
+and 
+
+sup 
+
+> Θ∈N
+
+∇2m ˆϕ,N (Θ) − ∇ 2mϕ⋆,N (Θ) ≤ rN .
+
+If rN < λ/ 2 and both posterior modes lie in N , then 
+
+∥ ˆΘ ˆϕ − ˆΘϕ⋆ ∥ ≤ 2rN
+
+λ .
+
+Moreover, under the usual local Gaussian approximation, the conditional posterior covariance matrices satisfy 
+
+{N ∇2m ˆϕ,N ( ˆΘ ˆϕ)}−1 − { N ∇2mϕ⋆,N ( ˆΘϕ⋆ )}−1 = O
+
+ rN
+
+N
+
+
+
+.
+
+Proof. The first claim follows from strong convexity. Since ∇m ˆϕ,N ( ˆΘ ˆϕ) = 0 and ∇mϕ⋆,N ( ˆΘϕ⋆ ) = 0, a Taylor expansion of ∇m ˆϕ,N around ˆΘϕ⋆ gives 
+
+λmin {∇ 2m ˆϕ,N ( ¯Θ) }∥ ˆΘ ˆϕ − ˆΘϕ⋆ ∥ ≤ ∥∇ m ˆϕ,N ( ˆΘϕ⋆ )∥.
+
+By assumption, λmin {∇ 2m ˆϕ,N ( ¯Θ) } ≥ λ − rN ≥ λ/ 2, while ∥∇ m ˆϕ,N ( ˆΘϕ⋆ )∥ = ∥∇ m ˆϕ,N ( ˆΘϕ⋆ ) −∇mϕ⋆,N ( ˆΘϕ⋆ )∥ ≤ rN . This proves the mode bound. The covariance statement follows from the matrix identity A−1 − B−1 = A−1(B − A)B−1 applied to the two Hessians, together with the curvature perturbation bound and the fact that posterior covariance scales as N −1 under the local Gaussian approximation. 
+
+## C Estimation Algorithm and Variance Correction 
+
+C.1 Post-Hoc Variance Correction 
+
+Let θk denote the unconstrained vector representation of a collected sample Θk ∈ S Θ, and let θ⋆ and 
+
+ΣSGLD denote the empirical mean and covariance of these uncorrected samples. We first estimate the total noise covariance Γ injected by the stochastic gradient approximation: 
+
+Γ(θ⋆) = ϵN 2
+
+2S ˆΨ( θ⋆) + κI, (8) where ˆΨ( θ⋆) is the covariance of the stochastic gradients and κI represents the added Langevin diffusion noise. We relate the inflated covariance ΣSGLD to the true posterior precision matrix A in this unconstrained parameterization using the Lyapunov equation: 
+
+AΣSGLD + Σ SGLD A = 2 Γ(θ⋆). (9) We solve this linear equation for A and compute the corrected covariance as Σcorr = A−1. To rescale the posterior samples, define the Cholesky decompositions ΣSGLD = E⊤E and A = F⊤F. The corrected unconstrained samples are then given by 
+
+θcorr  
+
+> k
+
+= G(θk − θ⋆) + θ⋆, G = ( E⊤F)−1. (10) Finally, we map {θcorr  
+
+> k
+
+} back to the original parameter space to obtain Scorr  
+
+> Θ
+
+.13 Algorithm 1 Two-stage optimization for representation learning and SGLD with variance correction  
+
+> 1:
+
+Input: Dataset D, Burn-in Kburn , Total Ktotal , step sizes ϵt (sampling step ϵ), correction constant 
+
+κ. 
+
+> 2:
+
+Initialize: ϕ, Θ = {α, β, Σ}, {γi}, SΘ ← ∅ . 
+
+> 3:
+
+for epoch k = 1 to Ktotal do  
+
+> 4:
+
+Check Phase: If k > K burn , freeze ϕ and fix (μz , σ z ). 
+
+> 5:
+
+for mini-batch Bt ⊂ D of size S do  
+
+> 6:
+
+1) Feature Extraction:  
+
+> 7:
+
+zi ← [1 , Standardize (hϕ(ui))] for i ∈ B t. 
+
+> 8:
+
+2) Random Effects (MH Step):  
+
+> 9:
+
+Sample γir ∼ p(γi|yi, zi, xi, Θ) (Inner Loop).  
+
+> 10:
+
+3) Gradient Estimation:  
+
+> 11:
+
+Compute unbiased ˆgi(Θ) via Fisher’s Identity Eq. (3).  
+
+> 12:
+
+4) Parameter Updates:  
+
+> 13:
+
+if k ≤ Kburn then ▷ Phase 1: NN Learning  
+
+> 14:
+
+ϕ ← Adam (∇ϕLjoint ). 
+
+> 15:
+
+end if  
+
+> 16:
+
+SGLD Step:  
+
+> 17:
+
+∆Θ ← ∇ f0(Θ) + NS
+
+P 
+
+> i∈B t
+
+ˆgi(Θ)  
+
+> 18:
+
+Θ ← Θ − ϵt∆Θ + N (0 , 2ϵtI) 
+
+> 19:
+
+if k > K burn then ▷ Phase 2: Sampling  
+
+> 20:
+
+SΘ ← S Θ ∪ { Θ}. 
+
+> 21:
+
+end if  
+
+> 22:
+
+end for  
+
+> 23:
+
+end for Post-hoc Variance Correction:  
+
+> 24:
+
+Compute posterior mean of unconstrained samples in SΘ, named θ⋆. 
+
+> 25:
+
+Compute uncorrected posterior covariance, ΣSGLD . 
+
+> 26:
+
+Compute injected-noise covariance, Γ(θ⋆), using Eq. (8).  
+
+> 27:
+
+Solve the Lyapunov equation in Eq. (9) for posterior precision A. 
+
+> 28:
+
+Compute corrected posterior covariance, Σcorr ← A−1. 
+
+> 29:
+
+Obtain corrected samples, Scorr  
+
+> Θ
+
+, using Eq. (10). 
+
+C.2 Two-Stage SGLD Algorithm 
+
+## D Simulation Details 
+
+D.1 LMM Simulation Details 
+
+For the LMM simulation, N = 1000 subjects are generated with ni = 10 observations each. The random effects are drawn from γi ∼ N (0 , σ 2 
+
+> γ
+
+) and the measurement errors from ϵij ∼ N (0 , σ 2).The covariates xij and x2,ij are sampled from standardized normal distributions. The true parameters are β0 = 1 .5, β1 = −0.5, β2 = 0 .6, σ2 = 0 .5, and σ2 
+
+> γ
+
+= 1 .5.The latent function z(·) represents the nonlinear structure to be learned by the neural encoder hϕ(·).We consider three latent structures: Complex 1D: z(x) = 0 .07 x3 − 0.2x2 + 1 .5 sin(2 x)e−0.3x2
+
++ 0 .8I(x > 0) log(1 + x) − 0.8I(x ≤ 0) log(1 + |x|),
+
+(11) Paraboloid: z(x1, x 2) = x21 + x22, (12) Saddle: z(x1, x 2) = x21 − x22. (13) The neural network hϕ is implemented as a Multi-Layer Perceptron (MLP) with two hidden layers of 64 units each and GELU activation functions. We follow the two-stage training strategy described in Algorithm 1 in Appendix C.2. To account for the noise introduced by mini-batch subsampling (S = 50 ) and the correlation between SGLD samples, we apply the post-hoc variance correction described in Appendix C.1. 14 Figure 3: Posterior validation. Left: Posterior estimates of model parameters compared to ground truth benchmarks. Right: Comparison of posterior log-variances after applying variance correction against the Gibbs sampler benchmark. The corrected variances align with true posterior uncertainty. We validate posterior summaries against a Gibbs sampler benchmark that yields exact inference sufficient to constitute ground truth for this simulation. This benchmark does not scale to larger datasets and requires fixing the latent features rather than learning them. Therefore, we implement the benchmark on the full dataset assuming the true form of z is known. 
+
+D.2 LMM Posterior Validation D.3 GLMM Simulation Details 
+
+For the GLMM simulation, the input features satisfy xij ∈ R20 , but the true latent variable depends nonlinearly only on the first three dimensions: 
+
+z(xij ) = 0 .5x3 
+
+> ij, 1
+
+− 2x2 
+
+> ij, 2
+
+− 2xij, 3. (14) The remaining 17 dimensions are noise features. The binary response follows the logistic mixed model in the main text, with γ0i ∼ N (0 , σ 2
+
+> γ0
+
+) denoting the random intercept and γ1i ∼ N (0 , σ 2
+
+> γ1
+
+)
+
+denoting the random slope associated with the latent feature. The true parameters are β0 = 0 .5,
+
+β1 = −1.2, and β2 = 0 .8, with variance components σ2 
+
+> γ0
+
+= 1 .0 and σ2 
+
+> γ1
+
+= 0 .8.The neural network hϕ maps the 20-dimensional input to a scalar latent variable using two hidden layers of 64 units with GELU activations. We apply the same two-stage training protocol as in the LMM setting. The variance correction is applied to the full set of five statistical parameters: 
+
+θ = {β0, β 1, β 2, log σ2
+
+> γ0
+
+, log σ2
+
+> γ1
+
+}.
+
+We use an MCMC benchmark based on the ground-truth latent variables to evaluate posterior uncertainty. 
+
+## E Hyperparameter Tuning 
+
+We tuned hyperparameters separately for the simulation and real-data experiments because the selection target is different in the two settings. In simulations, a Gibbs sampler was available as a reference, so we selected hyperparameters by comparing SGLD posterior summaries with the Gibbs posterior, focusing on posterior means, posterior variances, and representation quality metrics such as feature correlation. The most important tuned quantities were the SGLD step-size scale, the Monte Carlo budget for the random-effects sampler, the epoch at which posterior sampling begins, and the neural-encoder learning rate and weight decay. We considered three training strategies for the neural mixed-model component. The first strategy, 
+
+iterative learning , is the main training procedure used in our primary experiments. In this setting, the neural encoder and the mixed-model parameters are updated jointly during the representation-learning phase, so that the learned latent features are repeatedly adapted to the current GLMM/LMM posterior 15 Table 1: Hyperparameter grids for the simulation experiments. Entries list the candidate set used in tuning. When a two-stage search was used, stage 1 denotes the broad screening grid and stage 2 denotes reruns of the top-ranked configurations.                                                                                                                                                                              
+
+> Model LMM GLMM Learning strategy Iterative LR decay Non-iterative Iterative LR decay Non-iterative Number of epochs Tuning: {160 }; fi-nal: 2000
+> Tuning: {160 }; fi-nal: 2000
+> Tuning: {160 }; fi-nal: 2000
+> Tuning: {160 }; fi-nal: 800
+> Tuning: {160 }; fi-nal: 800
+> Tuning: {160 }; fi-nal: 800
+> Sampling-start epoch
+> {70 ,90 ,110 }{70 ,90 ,110 }{70 ,90 ,110 }{90 ,110 ,130 }{90 ,110 ,130 }{90 ,110 ,130 }
+> Neural decay / stop epoch NA {50 ,70 ,90 }NA NA {50 ,70 ,90 }NA Training MH total steps
+> {1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }
+> Training MH burn-in / kept samples
+> 20% /80% of total steps
+> 20% /80% of total steps
+> 20% /80% of total steps
+> 20% /80% of total steps
+> 20% /80% of total steps
+> 20% /80% of total steps Training MH pro-posal sd
+> {0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}
+> Variance-correction MH total steps
+> {1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }{1000 ,2000 ,3000 }
+> Variance-correction MH proposal sd
+> {0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}{0.8,1.5,1.8}
+> SGLD step-size scale δ
+> {0.7,0.8,0.9,1.0} { 0.7,0.8,0.9,1.0} { 0.7,0.8,0.9,1.0} { 0.7,0.8,0.9,1.0} { 0.7,0.8,0.9,1.0} { 0.7,0.8,0.9,1.0}
+> Neural learning rate {5×10 −4,10 −3} { 10 −3}{10 −3}{3×
+> 10 −4,10 −3,3×
+> 10 −3}{3×
+> 10 −4,10 −3,3×
+> 10 −3}{3×
+> 10 −4,10 −3,3×
+> 10 −3}
+> Neural weight decay {0}{0}{0}{0,0.05 ,0.2,0.3} { 0,0.05 ,0.2,0.3} { 0,0.05 ,0.2,0.3}
+> Neural updates per batch
+> {2}{2}NA {1,2}{1,2}NA
+
+estimates. After the sampling-start epoch, the encoder is fixed and SGLD is used to collect posterior samples for the statistical parameters. The second strategy, lr-decay , keeps the same coupled training structure but linearly decays the neural learning rate to zero by a prespecified epoch, providing a smoother transition from representation learning to posterior sampling. The third strategy, non-iterative learning , separates representation learning from posterior inference: the encoder is trained before posterior sampling begins, and the learned representation is then treated as fixed when running SGLD for the mixed-model parameters. For all simulation experiments, stage 1 used 5 runs per configuration, stage 2 reran the top configura-tions with 15 runs, and the rank-1 configuration was rerun with 50 random seeds to estimate posterior means and posterior variances. For the real-data experiments, no exact posterior reference was available. We therefore used five-fold validation performance to choose hyperparameters, ranking configurations primarily by validation AUC. After selecting the top-ranked configuration, we refit the model with the selected setting for the final posterior analysis. The real-data search focused on the neural learning rate, SGLD step size, neural weight decay, Metropolis-Hastings budget, proposal scale, sampling-start epoch, and whether the neural learning rate was kept constant or linearly decayed to zero. All experiments were run on an internal SLURM-managed compute cluster. The reported simulation runs used CPU workers only; no GPU was requested. Individual simulation jobs were submitted with 4–8 CPU cores, 4–8GB memory, and a 48-hour wall-time limit, depending on the experiment. The final real-data runs were also CPU jobs: Glaucoma and ABCD used 12 CPU cores and 16GB memory per run. 
+
+## F Real-Data Cohort Construction and Preprocessing 
+
+F.1 Glaucoma Dataset and Preprocessing 
+
+We analyzed longitudinal standard automated perimetry (SAP) data from a XX cohort study. The dataset comprises Humphrey 24-2 SAP tests (52 test locations) with functional loss quantified by Total Deviation (TD) values. To ensure compatibility with the neural encoder, non-rectangular visual fields were zero-padded to a 12 × 12 grid and normalized. Strict quality control excluded tests with 16 Table 2: Hyperparameter grids for the real-data experiments. Both real-data analyses used the neural GLMM model. The selected configuration is the rank-1 setting from five-fold cross-validation.                                                                                          
+
+> Hyperparameter Glaucoma ABCD Selection criterion Five-fold validation AUC Five-fold validation AUC Number of CV folds 55
+> CV epochs / final epochs 125 /1000 125 /2000
+> Neural learning rate {10 −3,3×10 −3,3×10 −4}{10 −3,5×10 −3,3×10 −4}
+> SGLD step size ϵ{10 −4,3×10 −4,3×10 −5}{3×10 −4,3×10 −5}
+> Neural weight decay {10 −3,3×10 −3,10 −2}{10 −3,5×10 −3,1.5×10 −2,5×10 −2}
+> MH total steps {1000 ,2000 }{1000 ,2000 }
+> MH burn-in / kept samples 20% /80% of total steps 20% /80% of total steps MH proposal sd {0.8,1.8}{0.8,1.8}
+> Sampling-start epoch {40 ,70 ,100 }{40 ,70 ,100 }
+> Neural learning-rate schedule {constant ,lr_decay }{constant ,lr_decay }
+> Neural decay-end epoch {40 ,75 }for lr_decay ;NA for
+> constant
+> {25 ,50 ,75 }for lr_decay ;NA for
+> constant
+> Minibatch size 50 subjects 100 subjects
+
+artifacts or low reliability indices ( > 33% fixation losses or > 15% false positives), resulting in 29,161 usable fields from 3,832 eyes (mean follow-up: 4.95 years, 7.61 visits). The binary outcome yij , representing “progression,” was derived via Ordinary Least Squares (OLS) regression of the global visual field index over time. Progression was defined as a statistically significant negative slope at α = 0 .10 .We implemented a 5-fold cross-validation strategy with a hybrid subject-temporal split to mimic clinical forecasting: 70% of subjects were assigned to training, while the longitudinal visits of the remaining 30% were split temporally (first 40% history, middle 30% validation, final 30% future forecasting). 
+
+F.2 ABCD Study Cohort, Preprocessing, and Predictor Grouping 
+
+This subsection describes the cohort construction, preprocessing, and predictor grouping used in the ABCD Study analysis. The grouping was designed to preserve clinically interpretable domains while reflecting data availability after leakage control and missingness filtering. We utilized data from the ABCD Study, a large-scale longitudinal cohort of 11,880 children recruited across the United States [Karcher and Barch, 2021]. The dataset includes baseline assessments (ages 9–10) and annual follow-up visits collecting psychosocial, demographic, environmental, and neurobiological data [Garavan et al., 2018]. General psychopathology was characterized using the “p-factor,” a dimensional score derived from the Child Behavior Checklist (CBCL) syndrome scales [Hill et al., 2025]. In our analytic sample, after requiring a non-missing next-visit p-factor quartile, 26,787 observations from 7,447 participants were available. The binary outcome yij was defined as “High Risk” status, corresponding to the top quartile of the p-factor score at the subsequent visit. Consistent with the glaucoma analysis, we employed a hybrid subject-temporal split: 70% of subjects were assigned to training, while 30% were split temporally into history, validation, and future forecasting subsets. 
+
+Leakage control and preprocessing To avoid circular prediction, all variables beginning with 
+
+CBCL_ were removed from the predictor set before grouping. We also removed direct outcome and leakage columns, including current or next p-factor quartile variables, subject identifiers, and interview dates. Auxiliary columns such as eventname , interview_age , interview_year , and split indicators were assigned to an excluded “Others” category. For each training split, variables with more than 25% missingness in the training data were ex-cluded. Remaining variables were median-imputed and standardized using training-set statistics, with the same transformations applied to validation and held-out test observations. The final retained 17 Table 3: Final ABCD predictor grouping used in the real-data analysis.                                     
+
+> Final domain Modifiability Assignment rule / key variables Model role # Vars
+> Screen Time & Technology Use Highly modifiable Prefixes such as screen* ,
+> screentime* , and stq_*
+> MLP encoder 20 Sleep Highly modifiable Variables beginning with
+> sleepdisturb* or containing
+> sleep
+> MLP encoder 26 Family Environment Modifiable Prefixes such as fam_enviro* ,
+> fes_* ,parent_monitor* , and
+> parent_rules*
+> MLP encoder 32 Social & School Environment Modifiable Prefixes such as school_* and
+> prosocial_*
+> MLP encoder 18 Neighborhood & Socioeconomic Context Somewhat modifiable Neighborhood and built-environment variables such as neighborhood*
+> and adi_* ; crime, violence, safety, and deprivation variables; household income and parent education variables MLP encoder 7Neurobiology Minimally modifiable Neuroimaging and neurobiological prefixes including rsfmri_* ,
+> tfmri_* ,dmdtifp* ,dmri* ,smri* ,
+> mrisdp* ,fmri_* , and mri_*
+> MLP encoder 33 Family Psychiatric History Not modifiable Prefixes such as fam_history_* ,
+> famhx_* , and
+> family_mental_health*
+> MLP encoder 8Fixed Biological/Demographic Characteristics Not modifiable Race/ethnicity, sex at birth, gender, and related demographic prefixes such as demo_sex_* ,sex_* ,
+> race_* , and ethnicity_*
+> MLP encoder 4Trauma & Adversity Summary Minimally modifiable
+> total_core ; retained as the only trauma/adversity summary after preprocessing Linear covariate 1Others Excluded Auxiliary variables, split indicators, interview metadata, and variables not used in the GLMM-NN predictor set Excluded 8
+
+dimensions were 20 screen-time variables, 26 sleep variables, 32 family-environment variables, 18 social/school variables, 7 neighborhood/socioeconomic variables, 33 neurobiology variables, 8 family-psychiatric-history variables, 4 fixed biological/demographic variables, and one linear trauma/adversity summary variable. 
+
+Clinical modifiability principle Variables were organized by approximate clinical modifiability. The first four domains represent potentially modifiable behavioral and proximal environmental factors. Neighborhood and socioeconomic variables were treated as somewhat modifiable because they may be influenced by family, school, health-system, or policy interventions but are less directly modifiable at the individual clinical level. Neurobiology and trauma/adversity history were treated as minimally modifiable in the short term. Family psychiatric history and fixed biological/demographic characteristics were treated as not modifiable. 
+
+Modeling implications The final model uses neural encoders only for the eight multi-variable domains. The trauma/adversity summary total_core is modeled as a direct standardized linear covariate because it is a single retained summary variable rather than a high-dimensional predictor block. The neighborhood/built-environment and socioeconomic categories are merged into a single 
+
+Neighborhood & Socioeconomic Context encoder to improve statistical power and avoid fitting separate neural encoders to very small predictor groups. 
+
+## G Additional ABCD Results and Interpretation 
+
+This appendix provides the full domain-level interpretation for the ABCD Study analysis. Because all neural encoder outputs and the total_core covariate are standardized, coefficient magnitudes 18 are directly comparable across domains. The signs should be interpreted as effects of learned latent features rather than direct monotone effects of every raw variable in a group; for example, the positive coefficient for the family-environment encoder indicates that larger values of the learned family-environment summary are associated with higher risk. 
+
+Population-level domain ranking As described in the main text, the strongest population-level association was observed for Sleep ( ˆβSleep ≈ 0.95 , 95% CI: [0 .91 , 0.99] ). The next largest population-level associations were Social & School Environment ( ˆβSocialSchool ≈ 0.57 , 95% CI: [0 .53 , 0.60] ) and 
+
+Family Environment ( ˆβFamilyEnv ≈ 0.51 , 95% CI: [0 .47 , 0.55] ). Although these non-sleep domains are not emphasized in the main text, their ranking suggests that a substantial portion of predictive signal is concentrated in modifiable or proximal developmental contexts. Prior systematic reviews similarly identify modifiable parental factors, including lower warmth, conflict, over-involvement, and aversive parenting, as correlates of youth depression and anxiety [Yap et al., 2014], and school connectedness and teacher support as prospective markers of adolescent emotional health [Kidger et al., 2012]. Moderate positive associations were found for Family Psychiatric History ( ˆβFamPsych ≈ 0.25 , 95% CI: [0 .21 , 0.29] ), the total_core summary ( ˆβc ≈ 0.18 , 95% CI: [0 .14 , 0.22] ), and Screen Time & Technology Use ( ˆβScreen ≈ 0.13 , 95% CI: [0 .09 , 0.17] ). Two domains showed small negative associa-tions, Neurobiology ( ˆβNeuro ≈ − 0.15 , 95% CI: [−0.19 , −0.11] ) and Neighborhood & Socioeconomic Context ( ˆβNSES ≈ − 0.14 , 95% CI: [−0.18 , −0.10] ), while Fixed Biological/Demographic Charac-teristics had the smallest population-level effect ( ˆβBioDemo ≈ 0.08 , 95% CI: [0 .04 , 0.12] ). The small, near-null neurobiology effect is consistent with Hill et al. [2025], who found that adding neuroimaging did not improve predictive performance beyond psychosocial predictors. The socioeconomic-context finding should not be interpreted as absence of relevance; extensive evidence links lower socioeco-nomic status to higher child and adolescent mental health burden [Reiss, 2013], but in our model this domain contributes more strongly through subject-specific heterogeneity than through a single average population-level slope. 
+
+Subject-specific heterogeneity The full ABCD posterior distributions are shown in Figure 5 in Appendix I; these include the random-intercept and domain-specific random-slope variance compo-nents. In the ABCD Study, the largest variance component was the random slope for Neighborhood & Socioeconomic Context (ˆσ2NSES ≈ 0.06 , 95% CI: [0 .05 , 0.07] ), which exceeded even the random intercept ( ˆσ20 ≈ 0.04 , 95% CI: [0 .03 , 0.04] ); the random intercept still reflects residual between-subject baseline risk not fully explained by the observed domains. The remaining domain-specific random-slope variances were smaller and comparable to one another (all ˆσ2 ≲ 0.04 ), indicating that, apart from neighborhood context, between-subject heterogeneity in domain sensitivity was relatively modest. This pattern highlights a separation between two forms of importance: modifi-able domains such as Sleep , Family Environment , and Social & School Environment carry strong average population-level signals, whereas Neighborhood & Socioeconomic Context contributes disproportionately through subject-specific heterogeneity rather than through its population-level slope. 
+
+## H Posterior of all parameters in glaucoma study I Posterior of all parameters in ABCD study 
+
+19 Figure 4: Posterior distribution of all parameters 20 Figure 5: Posterior distribution of all parameters 21
