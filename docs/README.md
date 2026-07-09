@@ -6,32 +6,40 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-08
-- 运行时间：2026-07-08 20:53:01 UTC
+- 最新运行日期：2026-07-09
+- 运行时间：2026-07-09 21:58:04 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：2
-- 速读区：2
+- 本次总论文数：6
+- 精读区：5
+- 速读区：1
 
 ### 今日简报（AI）
-今日聚焦贝叶斯方法在AI与工程中的前沿应用，精读两篇高质量研究。最值得关注的是平均场贝叶斯神经网络的宽度鲁棒可学习性（9.0分）及凸近似框架求解贝叶斯反问题（8.0分），分别触及理论根基与实用算法。建议普通读者从速读中的不确定性感知车辆定位方案入手，快速理解贝叶斯思想在现实场景中的落地价值。
-- 详情：[/202607/08/README](/202607/08/README)
+今日共读6篇论文，精读5篇，重点聚焦贝叶斯深度集成与不确定性传播方法。  
+最值得关注的是《Efficient Bayesian Deep Ensembles via Analytic Predictive Inference》（9.0分）与《Bayesian Uncertainty Propagation for Agentic RAG Pipelines》（8.0分），分别提出解析推理高效集成方式和不确定性在多跳问答中的应用。  
+建议优先精读这两篇，掌握贝叶斯推理的新范式，并思考如何将不确定性度量引入实际RAG系统。
+- 详情：[/202607/09/README](/202607/09/README)
 
 ### 精读区论文标签
-1. [Width-Robust Learnability in Mean-Field Bayesian Neural Networks](/202607/08/2607.05735v1-width-robust-learnability-in-mean-field-bayesian-neural-networks)  
+1. [Efficient Bayesian Deep Ensembles via Analytic Predictive Inference](/202607/09/2607.06776v1-efficient-bayesian-deep-ensembles-via-analytic-predictive-inference)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：研究平均场尺度下的贝叶斯神经网络，证明了宽度鲁棒可学习性，涉及BNN训练和推断
-2. [A Convex Approximation Framework for Neural Likelihood-Based Bayesian Inverse Problems](/202607/08/2607.06252v1-a-convex-approximation-framework-for-neural-likelihood-based-bayesian-inverse-problems)  
+   evidence：高效的贝叶斯深度集成方法，结合解析预测推理提供校准的不确定性估计
+2. [Bayesian Uncertainty Propagation for Agentic RAG Pipelines: A Proof-of-Concept Study on Multi-Hop Question Answering](/202607/09/2607.00972v1-bayesian-uncertainty-propagation-for-agentic-rag-pipelines-a-proof-of-concept-study-on-multi-hop-question-answering)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：神经似然近似解决贝叶斯逆问题
+   evidence：使用贝叶斯网络进行检索增强生成管道中的不确定性传播
+3. [$\mathbfλ$-VAE: Variance Equalization for Posterior Collapse](/202607/09/2607.05531v1-mathbf-vae-variance-equalization-for-posterior-collapse)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：解决变分自编码器后验坍塌问题，属于变分推断核心
+4. [Uncertainty-Aware Cross-Modal Remote Sensing Image-Text Retrieval via Evidential Learning](/202607/09/2607.06032v1-uncertainty-aware-cross-modal-remote-sensing-image-text-retrieval-via-evidential-learning)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：使用证据学习实现不确定性感知检索
+5. [UBG-Net: An Uncertainty-aware Bayesian Gating Network for Robust Audio-Visual Speech Recognition](/202607/09/2607.06892v1-ubg-net-an-uncertainty-aware-bayesian-gating-network-for-robust-audio-visual-speech-recognition)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：不确定性感知的贝叶斯门控网络用于鲁棒视听语音识别
 
 ### 速读区论文标签
-1. [Bayesian Uncertainty Propagation for Agentic RAG Pipelines: A Proof-of-Concept Study on Multi-Hop Question Answering](/202607/08/2607.00972v1-bayesian-uncertainty-propagation-for-agentic-rag-pipelines-a-proof-of-concept-study-on-multi-hop-question-answering)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：在RAG管线中使用贝叶斯网络进行不确定性量化
-2. [Uncertainty-Aware Velocity Correction for Proprioceptive Vehicle Localization using Evidential Mamba](/202607/08/2607.05669v1-uncertainty-aware-velocity-correction-for-proprioceptive-vehicle-localization-using-evidential-mamba)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：证据深度学习用于定位的不确定性估计
+1. [Hypergraph Neural Stochastic Diffusion: An SDE Framework for Uncertainty Estimation](/202607/09/2607.07330v1-hypergraph-neural-stochastic-diffusion-an-sde-framework-for-uncertainty-estimation)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：基于随机微分方程的超图不确定性估计，替代贝叶斯推断方法
 
 
 <div class="dpr-home-promo-card">

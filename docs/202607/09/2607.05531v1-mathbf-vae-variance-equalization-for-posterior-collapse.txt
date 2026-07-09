@@ -1,0 +1,1390 @@
+Title: λ-VAE: Variance Equalization for Posterior Collapse
+
+URL Source: https://arxiv.org/pdf/2607.05531v1
+
+Published Time: Wed, 08 Jul 2026 00:04:57 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# λ-VAE: Variance Equalization for Posterior Collapse 
+
+Girum Demisse girumdemisse@microsoft.com Microsoft African Development Center Nairobi Kenya 
+
+Abstract 
+
+Variational Autoencoders (VAEs) frequently suffer from posterior collapse, a failure mode in which the approximate posterior converges to the prior, rendering the latent code uninfor-mative. Despite extensive research, a unified account of why collapse occurs has remained an open question. We identify and formalize two logically independent but coupled causes. 
+
+Gradient imbalance occurs when the decoder’s reconstruction signal vanishes faster than the KL regularization pressure as the posterior widens. Information gap occurs when the stochastic sampling step discards a substantial fraction of the encoder’s computed represen-tation, attenuating decoder sensitivity and making collapse inexpensive. Both causes share the same collapse trajectory, and we show that the information gap is algebraically equiva-lent to mismatch between the aggregate posterior and the prior, unifying two pathologies. Subsequently, we introduce λ-VAE, which resolves both causes through a single modifica-tion to the reparameterization step: the sampling noise is scaled by per-dimension exponent, while the KL penalty retains the original posterior variance. This asymmetry shifts the sta-ble training attractor away from the degenerate collapsed state, driving all latent dimensions toward the same equilibrium – a mechanism we term variance equalization . A closed-form optimal exponent per dimension follows from a net information gain objective, with a single hyperparameter controlling the reconstruction–generation tradeoff. We validate on standard benchmarks (Binary MNIST, Binary Omniglot, CIFAR-10, CelebA-64), showing consistent reductions in collapsed dimensions, information capacity gains of up to 2.8× nats, and reconstruction quality improvements of up to +0 .33 BPD. 
+
+1 Introduction 
+
+Variational Autoencoders (VAEs) Kingma & Welling (2013); Rezende et al. (2014) have become a founda-tional tool for learning latent representations, with applications in image generation Razavi et al. (2019b), natural language processing Bowman et al. (2015), multimodal modelling Shi et al. (2019), and semi-supervised learning Kingma et al. (2014). VAE is one of many variational inference frameworks that use approximate posterior for maximizing data likelihood Neal & Hinton (1998); McLachlan & Krishnan (2007); Minka (2013); Jordan et al. (1999). It is, however, one of the first to use amortization to estimate ap-proximate posterior; an encoder learns to map each input to a posterior distribution over a latent space, and a decoder reconstructs the input from a sample. This is a highly efficient and scalable approach, but it is prone to a well-documented failure mode called posterior collapse Bowman et al. (2015); Chen et al. (2016); Lucas et al. (2019), in which the learned approximate posterior converges to the prior partially or fully. When collapse occurs, the decoder learns to reconstruct data from the prior. In its extreme form, the mutual information between data and latent variables goes to zero ( I(X; Z) ≈ 0), and the latent space loses all its representational value. This failure is most severe with high-capacity decoders Bowman et al. (2015); Razavi et al. (2019b), such as those with autoregressive or deep convolutional architectures, but it occurs to varying degrees in most practical VAE training runs. Extensive research has proposed different solutions for posterior collapse; re-weighting the Kullback-Leibler (KL ) divergence term Higgins et al. (2016); Fu et al. (2019), imposing minimum KL floors Chen et al. (2016); Razavi et al. (2019a), matching the aggregate posterior explicitly Zhao et al. (2019); Tolstikhin et al. (2017), enriching the posterior family Rezende & Mohamed (2015); Kingma et al. (2016), and adjusting training 1arXiv:2607.05531v1 [cs.LG] 6 Jul 2026 dynamics He et al. (2019). These methods target different manifestations of the problem and share a common limitation: they act on the training objective and propose a global solution, while lacking a unified account on the causes of collapse. In this paper, we provide a formal account of why posterior collapse occurs and build a targeted solution on top of it. Our starting observation is simple: in a standard VAE, the KL term selectively pushes low-signal dimensions toward σi = 1 while leaving high-signal dimensions active, producing a polarized distribution of posterior variances. This polarization is both the signature of emerging collapse and a driver of further collapse. Hence, the right intervention is not to globally modify the training objective but to counteract the polarization directly per dimension, which we formalize and validate in subsequent sections. 
+
+Summary of Contributions: 
+
+1. We prove that posterior collapse has two logically independent but coupled causes: gradient imbal-ance (Proposition 1), in which the reconstruction gradient vanishes before the KL restoring force as the posterior widens, and information gap (Proposition 2), in which the stochastic bottleneck discards encoder signal, making collapse inexpensive. We further show that the information gap is algebraically equivalent to marginal mismatch (difference between the aggregate posterior and the prior) (Eq. 8). 2. We propose λ-VAE, replacing the reparameterization noise σϵ with σλϵ while retaining the KL 
+
+penalty on the original σ2 resolving both causes simultaneously. The asymmetry drives all latent dimensions toward the same equilibrium – variance equalization – without modifying the train-ing objective or adding parameters. A closed-form optimal per-dimension exponent follows from a net information gain objective (Proposition 3), with a single hyperparameter δ controlling the reconstruction–generation tradeoff. 3. We show that on binarized benchmarks, λ-VAE reduces collapsed dimensions from 16 to 1 on Binary MNIST and 13 to 0 on Binary Omniglot while improving reconstruction quality. On RGB images, information capacity grows by up to 2.8× and BPD improves by +0 .33 on CIFAR-10. A PixelCNN experiment reveals a fundamental limitation of BPD as a collapse diagnostic: two models with near-identical BPD (3.518 vs. 3.494) differ by 6.2× in the decoder capacity allocated to the latent code. 
+
+2 Variational Autoencoders 
+
+VAE Kingma & Welling (2013); Rezende et al. (2014) is one of the earlier approaches to use amortization 
+
+and stochastic gradient estimation in large-scale datasets via the Evidence Lower Bound (ELBO), written as 
+
+L = Eqψ (z|x)[log pθ (x|z)] − KL (qψ (z|x) ∥ p(z)) , (1) with qψ (z|x) = N (μ(x), diag( σ2(x))) , p(z) = N (0 , I), and sampling via z = μ(x) + σ(x)ϵ, ϵ ∼ N (0 , I).The Gaussian assumption on the posterior and prior makes the KL term computable in a closed form; 
+
+KL i = 12 (μ2 
+
+> i
+
++ σ2 
+
+> i
+
+− log σ2 
+
+> i
+
+− 1) , henceforth we work per latent dimension i and suppress the subscript where unambiguous. In Hoffman & Johnson (2016), the KL term in ELBO is decomposed and the overall loss is written as 
+
+L = E[log pθ (x|z)] − Iq (X; Z) − KL (qψ (z)∥p(z)) , (2) where Iq (X; Z) is the mutual information, and KL (qψ (z)∥p(z)) is the marginal mismatch. Hence, minimizing the KL term in Eq. 1 reduces both Iq (X; Z) and the marginal mismatch; the optimizer cannot distinguish between them, which is why collapse is an unintended consequence. That is, at KL ≈ 0 in Eq. 1, the latent code z becomes statistically independent of the input x, rendering the encoder information useless in the signal reconstruction. In general, ELBO creates an information bottleneck that encourages encoding the least amount of information subject to reconstruction error Tishby et al. (2000). Posterior collapse, however, is an extreme case in which 20.2 0.4 0.6 0.8
+
+σi             
+
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> ρi
+> α < 1: ρ→ ∞ (no collapse)
+> α > 1: ρ→0 (collapse)
+> ρ= 1 threshold
+> α= 0 .5
+> α= 1 .0
+> α= 1 .5
+> α= 2 .0
+
+(a) Gradient imbalance ( ρi vs σi)0.2 0.4 0.6 0.8
+
+Posterior std σi    
+
+> 0
+> 1
+> 2
+> 3
+> 4
+> Information (nats)  I(X;φ) = H[φ]∆I(σi)
+> I(X;Z)
+> c(σi)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> Attenuation factor  c
+
+(b) Information gap ( ∆I, I(X; Z), c vs σi)
+
+Figure 1: Posterior collapse causes. (a) Gradient ratio ρi under the decay model gσi = g0(1 − σi)α,
+
+g0 = 2 . For α > 1 (Proposition 1), ρi → 0 as σi → 1: the reconstruction signal vanishes faster than the KL 
+
+restoring force, making the collapsed state the only stable fixed point. For α < 1, ρi is no longer a reliable indicator: it stays above 1 even when the dimension has collapsed, because the reconstruction gradient from the decoder decays much more slowly in this regime. (b) Mutual information I(X; Z), information gap 
+
+∆I, and attenuation factor c = I(X; Z)/I (X; ϕ) using the Gaussian channel model with Si = 1 .5. As σi
+
+increases towards 1: I(X; Z) falls, ∆I grows toward I(X; ϕ), and c → 0. Hence, collapse becomes much cheaper (Proposition 2). the model achieves sufficient reconstruction accuracy while ignoring all input signal, Iq (X; Z) ≈ 0 – often observed and measured per latent dimension. In Section 3, we will expand on both data and model specific conditions that enable VAE training to find solutions that fail to encode details about the input while achieving high reconstruction accuracy. 
+
+3 Posterior Collapse: Two Causes 
+
+Posterior collapse in trained models manifests as near-zero per-dimension KL , a low count of active latent dimensions, and Iq (X; Z) ≈ 0. In the subsequent sections, we present two principal causes for posterior collapse and show their relationship to KL and mutual information. 
+
+3.1 Gradient Imbalance 
+
+Differentiating Eq. 1 with respect to σi via the reparameterisation zi = μi + σiϵi, we have 
+
+∂L
+
+∂σ i
+
+= Ep(x), ϵ i
+
+[∇zi log pθ (x|z) · ϵi
+
+] + 1
+
+σi
+
+− σi. (3) The KL restoring force (second term) is positive for σi < 1, zero at σi = 1 , and negative for σi > 1. As such, it always drives σi toward 1 while looking for a stable solution in Eq. 3. When the first term, the reconstruction gradient which we denote by gσi , vanishes then σi = 1 is the sole equilibrium. Hence, the dynamics between gσi and the KL restoring force determine whether a dimension remains active or collapses during training. We define the gradient ratio ρi = |gσi |/|1/σ i − σi| as the primary indicator of collapse. That is, when 
+
+ρi ≪ 1, the KL term dominates and the dimension collapses. The following proposition formalizes this understanding. 
+
+Proposition 1 (Gradient Imbalance) . Suppose the asymptotic decay condition for the reconstruction gradient is |gσi | = O((1 − σi)α) as σi → 1− with α > 1. Then dimension i collapses to the prior if and only if 
+
+lim inf t→∞ ρi(t) < ρ crit for some finite ρcrit > 0.1            
+
+> 1The idealized gradient-balance value is ρcrit = 1 (any non-collapsed equilibrium of ∂L/∂σ isatisfies ρi≥1). In practice, joint encoder–decoder optimization shifts the effective threshold; on CIFAR-10, for instance, the empirical ρcrit ≈0.006 separates
+
+3Under this condition, ρi → 0 as σi → 1, making σi = 1 the sole stable fixed point. The decay exponent 
+
+α characterizes the decoder’s sensitivity to the latent code near collapse. The condition α > 1 identifies decoders for which ρi is a necessary and sufficient collapse signal. Autoregressive decoders satisfy this with 
+
+α ≫ 1, explaining their high collapse rate Bowman et al. (2015) and empirically confirmed by the PixelCNN experiment in Section 6.4. The collapsed fixed point σ∗ 
+
+> i
+
+= 1 is locally stable with linearization rate −2; by contrast, μ∗ 
+
+> i
+
+= 0 has rate −1, which is why σi → 1 is the more reliable leading indicator of collapse. Full proof and details are in Appendix A, while illustration of the dynamics is shown in Figure 1a. 
+
+3.2 Information Gap 
+
+The encoder in a VAE, which estimates the posterior parameters, is a deterministic learned map ϕ(x) = (μ(x), log σ(x)) , while the latent Z is obtained by stochastic reparameterization. This defines a Markov chain 
+
+X → ϕ(X) → Z, for which the data processing inequality Cover (1999) gives: 
+
+H[X] ≥ I(X; ϕ) ≥ I(X; Z) ≥ 0, (4) where H(·) denotes entropy of a random variable. Since I(X; ϕ) = H[ϕ] (encoder is deterministic), the 
+
+information gap is the information capacity that the sampling step loses, captured as 
+
+∆I = H[ϕ] − I(X; Z) ≥ 0. (5) The information gap widens if the dataset has low signal power (low variance in μi(X)), which reduces 
+
+I(X; Z) as σ → 1. More importantly, a large gap implies an attenuation factor that dampens decoder sensitivity to encoder change, facilitating collapse. The following proposition formalizes this. 
+
+Proposition 2 (Information Gap) . Let R = f (I(X; Z)) be reconstruction quality measure for monotonically increasing f . The sensitivity of reconstruction quality to encoder capacity is attenuated as 
+
+∂R
+
+∂I (X; ϕ) = ∂R
+
+∂I (X; Z) ·
+
+(
+
+1 − ∂∆I∂I (X; ϕ)
+
+)
+
+. (6) The attenuation factor c = 1 − ∂∆I/∂I (X; ϕ) ≈ I(X; Z)/I (X; ϕ) (under the approximation that the two move proportionally during training) measures how much of the encoder’s signal the decoder can access. The Gaussian channel model makes the information gap view concrete by treating zi = μi(X) + σiϵi as transmitting signal μi through noise σiϵi, giving 
+
+I(X; Zi) ≈ 12 log 
+
+(
+
+1 + Si
+
+σ2
+
+> i
+
+)
+
+, (7) where Si = Var[ μi(X)] is the signal power. High SNR (signal-to-noise ratio) gives c ≈ 1, making collapse costly; low SNR gives c → 0 and collapse exerts zero pressure on the decoder – it is free (Figure 1b). More importantly, under marginal matching where q(z) ≈ N (0 , I) the signal power Si ≈ 1 − σ2 
+
+> i
+
+, this reduces to 
+
+I(X; Zi) ≈ − log σi as a bound to the accessible information which goes to zero as σ → 1; result is further discussed in Appendix A. Overall, the information gap decomposes into a reducible and an irreducible part. The irreducible floor is set by the data’s intrinsic dimensionality: dimensions where the data provides no signal which contribute an unavoidable gap regardless of encoder quality. For instance, in binarized MNIST and Omniglot, corner pixels carry no information; when encoded into a high-dimensional latent space, the corresponding dimensions will naturally collapse. The reducible part is KL -induced; since KL forces Si ≈ 1 − σ2 
+
+> i
+
+, any rise in σi under regularization pressure directly suppresses Si, creating an information gap a higher-SNR encoder could avoid. Intuitively, a lower information gap implies a more distributed representation – all dimensions carry useful signal, ideally independent rather than redundant – whereas a sparse representation concentrates signal in few overloaded dimensions and leaves the rest high-noise, see Hinton (1986); Bengio et al. (2013).  
+
+> active from collapsed dimensions with 99.8% accuracy. The value 1 therefore bounds the theoretical regime; the operative threshold is model and dataset specific.
+
+4A direct consequence follows from the ELBO decomposition Hoffman & Johnson (2016). Substituting 
+
+I(X; Z) = I(X; ϕ) − ∆I into Eq. 2: 
+
+KL (qψ (z)∥p(z)) = KL (qψ (z|x)∥p(z)) − I(X; ϕ) + ∆ I. (8) This identity holds at every training snapshot. Any increase in ∆I that is not compensated by a decrease in KL (q(z|x)∥p(z)) − I(X; ϕ) manifests directly as growing marginal mismatch. Encoder attenuation and aggregate posterior misalignment are therefore algebraically equivalent: two descriptions of the same quan-tity, one from the sampling bottleneck and one from the aggregate distribution. Hence, the information gap serves as a cheap, per-batch proxy for marginal mismatch. 
+
+3.3 Coupling Between the Two Causes 
+
+The two causes are logically independent; gradient imbalance depends on decoder architecture ( α, and decoder capacity); the information gap depends on data complexity ( Si) and posterior width ( σi). Either can occur without the other. However, both are driven by σi → 1: gradient imbalance makes this trajectory dynamically inevitable once ρi < ρ crit under the asymptotic condition α > 1; the information gap makes reaching σi = 1 less costly before that point. Once gradient imbalance pushes ρi below the critical point, σi begins to rise. For data with low latent complexity Si, the rising σi opens a substantial information gap, lowers the attenuation factor c, and weakens the reconstruction gradient gσi which reduces ρi further and accelerates the rise in σi. The feedback cycle is closed and positive; gradient imbalance provides the initial push, and the information gap amplifies it when the encoder has high capacity. On complex data, the information gap remains shallow and the attenuation is weak; collapse is then driven primarily by gradient imbalance alone. In both cases, however, the polarization of σ is the signature of the trajectory toward collapse, and the key point of intervention. In Section 4, we present an approach that actively counteracts this polarization, addressing both causes simultaneously. 
+
+4 λ-VAE: Variance Equalization 
+
+Consider the modification of the latent sampling step in ELBO as 
+
+z = μ(x) + σ(x)λ · ϵ, λ ≥ 1, (9) while computing the KL term using the original variance σ(x)2. Subsequently, the objective will be modified as 
+
+Lλ = Eqλ(z|x)[log pθ (x|z)] − KL (qψ (z|x) ∥ p(z)) , (10) where qλ(z|x) = N (μ(x), diag( σ(x)2λ)) is the sampling distribution but the KL penalty uses σ(x)2 and not 
+
+σ(x)2λ; this is λ-VAE. 
+
+λ-VAE introduces an asymmetry between the sampling and penalty terms. The decoder receives noise σλi ϵ
+
+(reduced relative to σiϵ for σi < 1, λ > 1) while the KL penalty evaluates the original σ2 
+
+> i
+
+. This decoupling allows more information to flow through the bottleneck without inflating the KL penalty. 
+
+4.1 Gradient Rebalancing 
+
+The ELBO gradient with respect to σi under λ-scaling is 
+
+∂Lλ
+
+∂σ i
+
+= λ σ λ−1 
+
+> i
+
+· gσi + 1
+
+σi
+
+− σi. (11) Hence, the reconstruction term is amplified by λσ λ−1 
+
+> i
+
+. As a result, the effective gradient ratio becomes 
+
+ρλi = λσ λ−1 
+
+> i
+
+ρi. As σi → 1, ρλi → λρ i. A dimension with ρi < ρ crit (which would collapse under λ = 1 ) is protected once λ > ρ crit /ρ i.5Furthermore, a given λi defines an attractor σi at which point the amplification vanishes. The mechanism drives σ above or below the stable point towards it; see Figure 2a and Appendix A. This behaviour leads to variance equalization across dimensions, which is the key mechanism of λ-VAE to counteract polarization 
+
+and hence posterior collapse. 
+
+4.2 Information Gain 
+
+Under λ-scaling, using H[Z] ≈ H[Zλ] (valid for moderate λ; Appendix A), we have the following information gain 
+
+I(X; Zλ) − I(X; Z1) = λ − 12
+
+> d
+
+∑
+
+> i=1
+
+E[− log σ2
+
+> i
+
+] ≥ 0. (12) All terms are positive for σi < 1, giving a residual information gap ∆Iλ = ∆ I1 · (2 − λ). As such, for a given training snapshot, at λ = 2 the gap is eliminated, and for λ ∈ (1 , 2) it is partially closed. The information gain per dimension is proportional to E[− log σ2 
+
+> i
+
+], and thus confident dimensions (small σi) yield larger information gains than dimensions with wide posterior. 
+
+4.3 Variance Equalization and the Equilibrium Target 
+
+Consider the gradient correction introduced by λ-scaling, except this time with respect to log σi; written as 
+
+∇i = ( λσ λi − σi) · gσi . Setting the gradient ∇i = 0 , gives the equilibrium condition λσ λ−1 
+
+> i
+
+= 1 which is solved by 
+
+σ∗ 
+
+> i
+
+= λ−1/(λ−1) . (13) Full derivation and stability proof in Appendix A. This value is the same regardless of starting initial posterior variance. Hence, every dimension, whether near-collapsed or over-sharp, is drawn toward the same 
+
+σ∗, provided they share the same λ. This is the content of variance equalization . In addition, the attractor defined by Eq. 13 is stable. That is, for σi > σ ∗, ∇i < 0 (system pushes σi down); for σi < σ ∗, ∇i > 0
+
+(system pushes σi up). The correction is a bidirectional stable restoring force. Furthermore, the linearization rate is 1 − λ for λ > 1, so convergence is exponentially fast with rate |λ − 1|. Figure 2a illustrates the target 
+
+σ∗(λ) and convergence from multiple starting points. Hence, the polarized σ distribution that characterizes emergent collapse is corrected simultaneously across all dimensions. Similarly, the variance equalization leads to emergent distributed representation as opposed to sparse where entropy of the approximate posterior is maximized Hinton (1986); Bengio et al. (2013). 
+
+4.4 Optimal λ∗ per Dimension 
+
+Increasing λ improves both gradient ratios and information gain but risks divergence from the prior, which is critical for random generation. The KL divergence from N (0 , I) under the λ-scaling is 
+
+KL (λi) = 12
+
+(
+
+σ2λi 
+
+> i
+
+− σ2 
+
+> i
+
+− log σ2λi 
+
+> i
+
++ log σ2
+
+> i
+
+)
+
+> 0 for λi > 1, σ i < 1. (14) As a result, we define an objective that can be used to calculate optimal λ such that the information gain is balanced with the KL divergence, as follows 
+
+J (λi, σ i) = ( λi − 1) |log σi| − δ KL (λi), δ > 1. (15) The first term is the per-dimension gain from Eq. 12; the second term is used to penalize the additional KL 
+
+divergence due to λi; it is weighted by a hyperparameter δ > 1 controlling the tradeoff. The objective is strictly concave in λi and has a unique maximum, which is given by the following proposition. 60 1 2 3 4 5
+
+time (t)          
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Posterior std  σi
+> σ0= 0 .90 (near-collapsed)
+> σ0= 0 .80
+> σ0= 0 .65
+> σ0= 0 .35
+> σ0= 0 .20
+> σ0= 0 .10 (sharp)
+> σ∗= 0 .50 (equilibrium, λ= 2 .0)
+
+(a) Convergence to σ∗0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+
+Posterior std σi         
+
+> 1
+> 2
+> 3
+> 4
+> Optimal  λ∗
+> i
+> δ= 1 .5 ( σc= 0 .58)
+> δ= 2 .0 ( σc= 0 .71)
+> δ= 3 .0 ( σc= 0 .82)
+> δ= 5 .0 ( σc= 0 .89)
+
+(b) Optimal λ∗ 
+
+> i
+
+(σi, δ )
+
+Figure 2: Variance equalization in λ-VAE. (a) Convergence dynamics for λ = 2 (σ∗ = 0 .5): six dimen-sions starting at σ0 ∈ { 0.10 , 0.20 , 0.35 , 0.65 , 0.80 , 0.90 } all converge to σ∗ = 0 .5. Trajectories are solutions of 
+
+dσ/dt = σ − λσ λ (the gradient correction term with fixed reconstruction signal), isolating the equalization mechanism. (b) Optimal scaling exponent λ∗ 
+
+> i
+
+(σi, δ ) for δ ∈ { 2, 3, 5, 10 }. Below σc = √1 − 1/δ , λ∗ = 1 ; above it, λ∗ increases with σi, allocating larger corrections to the most uncertain dimensions. 
+
+Proposition 3 (Optimal λ∗). The objective J is strictly concave in λi. Its unconstrained maximum, subject to λi ≥ 1, is: 
+
+λ∗ 
+
+> i
+
+= max 
+
+(
+
+1, log(1 − 1/δ )2 log σi
+
+)
+
+. (16) 
+
+Full derivation in Appendix A. 
+
+The optimal solution provided by the above proposition has a direct interpretation as optimal resource allocation . The estimate λ∗ 
+
+> i
+
+∝ 1/| log σi|, hence uncertain dimensions (large σi, small | log σi|) receive larger corrections, while confident dimensions receive smaller ones or none at all. Meanwhile, the hyperparameter δ plays a key role in determining the aggressiveness of correction regime. Importantly, it determines a critical threshold σc as 
+
+σc := √1 − 1/δ (17) For any σi < σ c, λ∗ = 1 , the KL divergence outweighs the gains, hence the max in Eq. 16 passes one. The larger δ, the less tolerant the system is of KL divergence. In the extreme case, as δ → ∞ then λ∗ 
+
+> i
+
+→ 1 for all dimensions, recovering the standard VAE. On the contrary, as δ → 1+, the system grows more tolerant to disparity in KL ; approaching a deterministic autoencoder, see Figure 2b for this mechanism. 
+
+5 Related Works 
+
+Posterior collapse in VAEs has motivated research along three lines: modifying the KL term or constraining decoder capacity to address gradient imbalance; isolating and minimizing marginal mismatch to improve aggregate posterior alignment; and enriching the prior or posterior family. We discuss how each relates to 
+
+λ-VAE. In β-VAE Higgins et al. (2016); Burgess et al. (2018) ELBO is modified by weighting the KL term. Large 
+
+β > 1 encourages disentanglement but can encourage the decoder not to use latent information early in training, leading to posterior collapse. In Fu et al. (2019), cyclical annealing of β is introduced between near zero and its maximum value. In both cases, the training objective is modified globally, affecting both reconstruction and KL gradients symmetrically, while offering no per-dimension adaptivity. Free Bits Chen et al. (2016) imposes a per-dimension minimum KL floor, introducing discontinuous gradients but guaran-teeing minimum information usage. δ-VAE Razavi et al. (2019a) enforces a similar constraint differentiably, leaving the threshold per dimension to be tuned. None of the above approaches introduce adaptive control 7over information flow conditioned on local encoder confidence σi as is done in λ-VAE. Regardless, since 
+
+λ-VAE modifies the sampling step rather than the training objective, it is fully compatible with β-VAE, cyclical annealing, and other KL -weighting schedules and can be composed freely. Normalising flows Rezende & Mohamed (2015); Kingma et al. (2016) enrich the posterior family through invertible transformations, reducing the approximation gap at the cost of significant parameter overhead. Rosca et al. Rosca et al. (2018) show that even expressive posteriors do not guarantee good aggregate matching, consistent with our finding that the information gap and marginal mismatch can be tracked to the same underlying issue. Lagging inference He et al. (2019) updates the encoder more aggressively than the decoder to prevent early collapse, targeting gradient imbalance but not the information gap or marginal mismatch. Linear VAE analyses Lucas et al. (2019); Ichikawa & Hukushima (2024) formalize collapse as a phase transition, while Ichikawa et al. Ichikawa & Hukushima (2024) derive a closed-form collapse threshold as a function of data covariance and KL weight. Alternatively, using the ELBO decomposition Hoffman & Johnson (2016), InfoVAE Zhao et al. (2019) introduces separate weights for Iq (X; Z) and the marginal, enforcing aggregate matching via maximum mean discrepancy (MMD). Wasserstein autoencoders Tolstikhin et al. (2017) match the aggregate using optimal transport; adversarial approaches Makhzani et al. (2015); Mescheder et al. (2017) use discriminator training. All require integration over the dataset to estimate q(z), adding compute cost and training complexity. VampPrior Tomczak & Welling (2018) learns a flexible prior as a mixture of posteriors, reducing structural mismatch but requiring Monte Carlo KL estimation. Our duality result Eq. 8 shows that λ-VAE addresses marginal mismatch implicitly through the information gap, without aggregate estimation. Furthermore, we can explicity tradeoff genaration-reconstruction quality using δ in Eq 16. 
+
+6 Experiments 
+
+In this section we empirically validate λ-VAE on synthetic and real datasets, demonstrating its effect on posterior collapse, variance equalization, information flow, and generation quality. 
+
+6.1 Dataset and Setup 
+
+Datasets: We use a combination of synthetic and collected datasets. The synthetic dataset is drawn from a mixture of Gaussians p(x) = ∑ 
+
+> k
+
+πkN (x; μk, σ kI), with k=2 and k=4 components, generating two-dimensional data. For binary tasks we use Binarized MNIST Salakhutdinov & Murray (2008); Burda et al. (2015) and Binarized OMNIGLOT Lake et al. (2015); Burda et al. (2015); pixels are binarized stochastically as described in Burda et al. (2015). For RGB tasks we use CIFAR-10 Krizhevsky et al. (2009) ( 32 ×32 , 10 classes) and CelebA-64 Liu et al. (2015) (face images center-cropped and resized to 64 ×64 ). All datasets use standard train–test splits and all results are reported on the test set. 
+
+Models: For synthetic and binarized datasets we use a 3-layer MLP with 300 hidden units per layer for both encoder and decoder. For RGB datasets we use an asymmetric ResNet: a weak encoder (base channels 16, 1 residual block per stage, 3 downsampling stages, channel multipliers [1 , 2, 4] ) paired with a strong decoder (base channels 64, 2 residual blocks per stage, 3 upsampling stages). The latent dimension is 
+
+K=2 (synthetic), K=30 (MNIST and OMNIGLOT), K=512 (CIFAR-10), and K=1024 (CelebA-64). We use Bernoulli likelihood for binarized datasets and discretized logistic mixture (10 components) for RGB datasets. All likelihoods model pixels as statistically independent except in the cases where PixelCNN decoder Gulrajani et al. (2016) is used– we explicitly state it in such a case. 
+
+Training: Binary models are trained for 200 epochs with Adam Kingma & Ba (2014) (lr = 0 .001 ). Models on Natural Images are trained for 400 epochs on 8 GPUs using Distributed Data Parallelism (DDP) with linear learning rate scaling (effective lr = 8 ×10 −4) Goyal et al. (2017), cosine decay to lr min = 10 −5, and gradient clipping at 1.0, with 100 batch size. For optimal λ∗, the per-dimension values are updated every 5 epochs using an exponential moving average (EMA) of σ (decay 0.9) and Eq. 16; a linear ramp of 150 epochs is applied to prevent premature compression before the encoder stabilizes. Meanwhile, the optimal 82 0 2       
+
+> x1
+> 1
+> 0
+> 1
+> x2
+> Overlayed
+> original
+> reconstructed
+> 101
+> z0
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> z1
+> Latent Codes (colored by x2)
+> 050
+> Epoch
+> 10 7
+> 10 4
+> 10 1
+> 10 2
+> ratio (log scale)
+> Ratio Evolution
+> 0
+> 1
+> 0.10
+> 0.05
+> 0.00
+> 0.05
+> 0.10
+
+(a) Gradient imbalance ( k=2 ): standard VAE. 2 0 2       
+
+> x1
+> 1
+> 0
+> 1
+> x2
+> Overlayed
+> original
+> reconstructed
+> 0.5 0.0
+> z0
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> z1
+> Latent Codes (colored by x2)
+> 050
+> Epoch
+> 10 7
+> 10 4
+> 10 1
+> ratio (log scale)
+> Ratio Evolution
+> 0
+> 1
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+
+(b) Gradient imbalance ( k=2 ): λ-VAE ( δ=1 .001 ). 5 0 5       
+
+> x1
+> 4
+> 2
+> 0
+> 2
+> 4
+> x2
+> Overlayed
+> original
+> reconstructed
+> 101
+> z0
+> 1
+> 0
+> 1
+> z1
+> Latent Codes (colored by x2)
+> 050
+> Epoch
+> 0
+> 1
+> 2
+> Information (nats)
+> I(X;Z)Evolution
+> Info Gap
+> I(X;Z)
+> 1
+> 0
+> 1
+
+(c) Information gap ( k=4 ): standard VAE. 5 0 5        
+
+> x1
+> 4
+> 2
+> 0
+> 2
+> 4
+> x2
+> Overlayed
+> original
+> reconstructed
+> 0.25 0.00 0.25
+> z0
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> z1
+> Latent Codes (colored by x2)
+> 050
+> Epoch
+> 0
+> 1
+> 2
+> Information (nats)
+> I(X;Z)Evolution
+> Info Gap
+> I(X;Z)
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+
+(d) Information gap ( k=4 ): λ-VAE ( δ=1 .001 ). 
+
+Figure 3: Gradient imbalance and information gap on synthetic Gaussian mixtures. Each panel tracks the gradient ratio ρi and mutual information I(X; Z) over training, alongside the latent space. Top row 
+
+(k=2 , clusters stretched along one axis), isolating gradient imbalance. In the standard VAE the reconstruc-tion gradient gσi collapses to zero for the low-variance dimension before σi → 1, confirming Proposition 1; the latent space shows complete information loss as well. λ-VAE amplifies the gradient by λσ λ−1
+
+i , keeping 
+
+ρi elevated and the dimension active throughout training. Bottom row (k=4 , equal inter-cluster separation along each axis): the standard VAE exhibits a fluctuating non-zero information gap, resulting in variation loss in both the latent and reconstruction spaces. Under λ-VAE with λ∗>2 for all dimensions the gap is driven to zero and the four-cluster structure is recovered, consistent with Section 4.2. 
+
+λ in both binary and synthetic dataset is updated every 2 epochs. We set δ=1 .01 for binary datasets and 
+
+δ=1 .001 for image datasets, unless we are reporting an ablation study on the hyperparameter. The baseline is an identical-architecture VAE with fixed λ=1 throughout training. Hence, the online difference between optimal λ-VAE and Standard VAE, is the per-dimension λ update according to Eq. 16. 
+
+Metrics: We report NLL (nats) and bits per dimension BPD = NLL / (D ln 2) computed as the ELBO on the full test set 2. Active units (AU) count dimensions with Azi = Cov x(E[zi|x]) > 0.01 Burda et al. (2015). For binary and image datasets we estimate I(X; Z) via the SNR-based information capacity derived directly from the Gaussian channel model of Section 4.2 (Eq. 7). For synthetic data the true I(X; Z) is bounded by the K=2 latent space and remains well below log N for any practical N ; we therefore use the Monte Carlo mixture marginalisation estimator ˆI = H(Z) − H(Z|X), where H(Z) is approximated by the N -component posterior mixture and H(Z|X) is evaluated in closed form. We report C as Capacity in Tables 1 and 2, and the information gap I(X; ϕ) − C to track how much encoder capacity reaches the decoder. We additionally report decoder capacity ∑
+
+i Cdec 
+
+i , where 
+
+Cdec 
+
+i =
+
+√√√√ Ex
+
+[( ∂ log p(x|z)
+
+∂z i
+
+)2]
+
+(18) is the RMS decoder gradient per latent dimension (Tables 2 and 3); a dimension with Cdec 
+
+i ≈ 0 contributes nothing to the reconstruction regardless of σi.
+
+6.2 Collapse Prevention, Information Recovery, and Reconstruction Quality 
+
+We validate λ-VAE along three axes, suppression of gradient imbalance, reduction of the information gap, and downstream reconstruction quality. 
+
+> 2
+
+IWAE Burda et al. (2015) is systematically biased for λ-VAE models: when σλd ≪ 1 all importance samples cluster near 
+
+μ, collapsing the effective sample size and overestimating NLL. Hence, we report ELBO-BPD as the primary metric. 
+
+9Table 1: Comparison on binarized benchmarks (MNIST and Omniglot, K=30 ). λ-VAE and the ablations shown ( β-VAE, standard VAE) use a three-layer MLP encoder–decoder; most published baselines use deeper convolutional architectures, making these comparisons indicative rather than directly controlled. VampPrior is an exception, using a comparable MLP architecture. NLL and BPD measure reconstruction quality; AU counts active latent dimensions; Capacity is the SNR information capacity, measuring how much information reaches the decoder. Results for external baselines are taken from original papers. 
+
+Dataset Model NLL ↓ BPD ↓ AU ↑ Capacity (nats) ↑
+
+MNIST 
+
+Free Bits Kingma et al. (2016) 79.10 0.145 – –AVB Mescheder et al. (2017) 80.24 0.147 – –VampPrior Tomczak & Welling (2018) 85.57 0.157 – –InfoVAE Zhao et al. (2019) 80.76 0.148 – –
+
+β-VAE ( β = 0 .5) Higgins et al. (2016) 102.94 0.189 18 / 30 34.2 
+
+β-VAE ( β = 2 .0) 96.73 0.178 11 / 30 16.2 Standard VAE ( λ = 1 .0) 97.17 0.178 14 / 30 23.2 
+
+λ-VAE (δ = 1 .19 ) 93.80 0.172 21 / 30 29.5 
+
+λ-VAE (δ = 1 .10 ) 94.44 0.173 23 / 30 37.2 
+
+λ-VAE (δ = 1 .01 ) 78.43 0.144 29 / 30 69.4 OMNIGLOT 
+
+VampPrior 104.75 0.192 – –
+
+β-VAE ( β = 0 .5) 131.65 0.242 21 / 30 38.4 
+
+β-VAE ( β = 2 .0) 119.86 0.220 13 / 30 15.0 Standard VAE ( λ = 1 .0) 123.11 0.226 17 / 30 25.6 
+
+λ-VAE (δ = 1 .19 ) 111.14 0.204 29 / 30 32.4 
+
+λ-VAE (δ = 1 .10 ) 110.54 0.203 30 / 30 37.4 
+
+λ-VAE (δ = 1 .01 ) 103.03 0.189 30 / 30 67.7 0 10 20 30         
+
+> Dimension
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Mean
+> Posterior per Dim
+> Collapse threshold
+> 050 100 150 200
+> Epoch
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Mean ±Std
+> Mean
+> ±1 std
+
+(a) Standard VAE: σ histogram and trajectory. 0 10 20 30          
+
+> Dimension
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Mean
+> Posterior per Dim
+> Collapse threshold
+> 050 100 150 200
+> Epoch
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Mean ±Std
+> Mean
+> ±1 std
+
+(b) β-VAE ( β=0 .5): σ histogram and trajectory. 0 10 20 30         
+
+> Dimension
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Mean
+> Posterior per Dim
+> Collapse threshold
+> 050 100 150 200
+> Epoch
+> 0.4
+> 0.6
+> 0.8
+> Mean ±Std
+> Mean
+> ±1 std
+
+(c) λ-VAE ( δ = 1 .001 ): variance equalization. 0 25 50 75 100 125 150 175 200     
+
+> Epoch
+> 0
+> 10
+> 20
+> 30
+> Mean ±Std
+> Mean
+> ±1 std
+
+(d) ¯λ∗ trajectory (mean ± std over dimensions) 
+
+Figure 4: Variance equalisation on Binary-MNIST ( K=30 ). Panels (a)–(c) each show the per-dimension σ histogram alongside the mean ± std trajectory over training epochs. (a) Standard VAE: the distribution becomes bimodal; collapsed dimensions accumulate near σ=1 while active dimensions cluster at lower values. (b) β-VAE ( β=0 .5): the mode shifts downward but a tail near σ=1 persists. (c) λ-VAE (δ=1 .001 ): all dimensions converge to a tight band around σ∗; the across-dimension std collapses to near zero, realising variance equalization (Section 4.3). (d) Corresponding ¯λ trajectory (mean ± std over dimen-sions): ¯λ stabilises at ≈ 5.3, confirming joint σ∗–λ∗ convergence. 
+
+Synthetic data: We ran a standard VAE and λ-VAE on two synthetic k-component Gaussian mixtures with K=2 latent dimensions and δ=1 .001 , designed to simulate the two causes of collapse independently (Figure 3). For k=2 , the reconstruction gradient norm of the standard VAE’s first dimension collapses 10 to zero before σ1 → 1, matching Proposition 1; the latent space and reconstructions confirm complete information loss from that dimension. λ-VAE amplifies the gradient by λσ λ−1, keeping the dimension active throughout training; compare Figure 3a vs 3b. For k=4 , the standard VAE exhibits a fluctuating yet non-zero information gap that suppresses variation in both latent and data clusters, while introducing high reconstruction error per dimension leading to noisy data recovery. Under λ-VAE, however, since λ∗ > 2 for all dimensions the gap is driven to zero, consistent with Section 4.2, while both latent and reconstruction spaces preserve the four-cluster structure relatively well. 
+
+Binary data: On Binarized MNIST and Binarized OMNIGLOT ( K=30 , three-layer MLP), the standard VAE collapses 16 of 30 dimensions on MNIST (AU = 14 ) and 13 of 30 on OMNIGLOT (AU = 17 ). λ-VAE (δ=1 .01 ) reduces this to one on MNIST (AU = 29 /30 ) and zero on OMNIGLOT (AU = 30 /30 ), as reported in Table 1. In Figure 4, the mechanism is illustrated via σ distributions. The standard VAE is bimodal with a mass near σ=1 , while β-VAE shifts the distribution but does not eliminate the tail. The λ-VAE, however, concentrates all mass in a narrow band around σ ≈ 0.4, realizing the variance equalization of Section 4.3. The average per-dimension estimate stabilizes at ¯λ ≈ 5.3 on MNIST and ¯λ ≈ 2.5 on OMNIGLOT at δ=1 .01 ,reflecting their different active-dimension σ distributions; Section 6.3 confirms the theoretical predictive curve Eq. 16 aligns with empirical data. The Capacity column in Table 1 separates two mechanisms for increasing information throughput, computed as Eq. 7. β-VAE ( β=0 .5) achieves comparable capacity to λ-VAE ( δ=1 .1) on both datasets (34.2 vs. 37.2 nats on MNIST; 38.4 vs. 37.4 on OMNIGLOT), but does so by loosening the KL coefficient, inflating Var x[μd]
+
+across active dimensions at the expense of prior matching. The consequence is substantially worse BPD (0.242 vs. 0.203 on OMNIGLOT), while the aggregate posterior drifts from N (0 , I). Provided a calibrated 
+
+δ is chosen, λ-VAE instead reduces the effective noise σλd 
+
+> d
+
+per dimension without weakening the prior. At 
+
+δ=1 .01 , stronger per-dimension compression (avg. ¯λ≈5.3 on MNIST) drives Capacity to 69.4 nats (nearly 
+
+3× the standard VAE), while simultaneously achieving the best BPD. Meanwhile, δ = 1 .19 achieves a comparable AU, despite a significantly lower information throughput – see Section 6.3 for discussion on effects of δ.
+
+Natural images: On RGB images, the fixed-λ model on CIFAR-10 leaves 173 of 512 dimensions (AU=339), i.e., dimensions where the optimal schedule would assign λ∗ 
+
+> d
+
+≫ 1 but fixed λ=1 provides no correction. The SNR information capacity Eq. 7 (Table 2) sits at 628 nats. On the contrary under optimal λ, all 512 dimensions are driven below σ=0 .9 and the effective noise σλd 
+
+> d
+
+is equalized across the full latent code; CSNR 
+
+grows to 1760 nats ( 2.8× improvement), as shown in Figure 6a. Decoder capacity rises in parallel from 169 to 361 nats ( 2.1×, Figure 6b) as a consequence of gradient rebalancing. On CelebA-64 ( K=1024 ), CSNR grows from 2198 to 3646 nats ( 1.7×) and decoder capacity from 3283 to 6596 nats ( 2.0×). These gains translate directly into reconstruction quality. ELBO-BPD improves by +0 .33 
+
+on CIFAR-10 (7.1% relative) and +0 .24 on CelebA-64 (6.2% relative), see Table 2. 
+
+6.3 Optimal λ and Its Sensitivity to δλ∗ estimate alignment with theory: Figure 7 plots the per-dimension (σ, λ ∗) scatter for all latent dimensions in CIFAR-10 and CelebA-64 at epoch 400. Every dimension lies exactly on the theoretical curve defined in Proposition 3, confirming that the EMA-based update converges to the analytic optimum derived in Appendix A. The fixed model’s dimensions form a horizontal line at λ=1 across the full σ range; the 173 dimensions with σ > 0.9 would receive λ∗ ≫ 1 under the optimal schedule, representing a systematic under-utilisation that fixed λ cannot correct. The same alignment holds for CelebA-64 ( K=1024 ; ¯λ=1 .99 ,
+
+λmax =10 .4 at convergence). The convergence of λ∗ and σ∗ is also shown in Figure 4 for Binary MNIST dataset. 
+
+Effect of δ: The parameter δ drives the equilibrium σ∗ via optimal estimate Eq. 16. It controls the aggressiveness of compression (how close sample z is to μ). Smaller δ induces larger λ∗, compressing more dimensions more tightly. Table 1 illustrates this particularly on binary MNIST dataset; reducing δ from 1.19 to 1.01 increases AU from 21/30 to 29/30 and improves ELBO-BPD from 0.172 to 0.144. The AU ceiling, however, is reached at δ=1 .1 for OMNIGLOT. 11 Original Standard = 0.5 = 2.0 = 1.25 = 1.19 = 1.01       
+
+> Prior
+> (0, I)
+> Standard = 0.5 = 2.0 = 1.25 = 1.19 = 1.01
+
+(a) Reconstruction vs Random sampling Standard  
+
+> = 0.5
+> = 2.0
+> = 1.25
+> = 1.19
+> = 1.01
+> 2000
+> 1500
+> 1000
+> 500
+> 0
+> ELBO (nats)
+> -1880.140
+> -2038.470
+> -1784.632
+> -1948.114
+> -1776.732
+> -2167.102
+> higher = more realistic
+> ELBO on prior samples
+
+(b) Prior samples ELBO 
+
+Figure 5: Reconstruction vs Random sampling. Reconstruction and prior sampling on Omniglot; figures best viewed zoomed. (a) Top: test reconstructions ( z=μ); bottom: samples from z ∼ N (0 , I ) displayed as decoder probabilities as pixel intensity for prob > 0.5 (greedy sampling of Bernoulli). Random samples are shared across models for the decoding. (b) ELBO on 256 prior samples per model variant. The figures show that δ=1 .19 retains reconstruction fidelity while producing coherent prior samples; δ=1 .01 achieves sharp reconstructions but loses generative quality as the aggregate posterior drifts from N (0 , I ), confirming that 
+
+δ can be calibrated to close the information gap without over-compressing the latent code. 0 100 200 300 400             
+
+> Epoch
+> 0
+> 500
+> 1000
+> 1500
+> Nats
+> CIFAR-10
+> Fixed =1 CSNR
+> Optimal *CSNR
+> 0100 200 300 400
+> Epoch
+> 1000
+> 2000
+> 3000
+> Nats
+> CelebA-64
+> Fixed =1 CSNR
+> Optimal *CSNR
+
+(a) SNR information capacity CSNR 0 10 20 30 40 50 60            
+
+> Dim rank (top 64, sorted desc)
+> 10 0
+> 10 1
+> Decoder capacity
+> CIFAR-10
+> Fixed =1
+> Optimal *
+> 010 20 30 40 50 60
+> Dim rank (top 64, sorted desc)
+> 10 1
+> 10 2
+> Decoder capacity
+> CelebA-64
+> Fixed =1
+> Optimal *
+
+(b) Decoder capacity. 
+
+Figure 6: SNR information capacity and decoder capacity over training. (a) Under optimal λ,
+
+CSNR grows from 628 to 1760 nats on CIFAR-10 ( 2.8×) and from 2198 to 3646 nats on CelebA-64 ( 1.7×). (b) Decoder capacity rises in parallel: 169 →361 nats ( 2.1×) on CIFAR-10 and 3283 →6596 nats ( 2.0×) on CelebA-64, confirming that the increased encoder throughput is actively utilised by the decoder. As discussed in Section 4.4, the tradeoff here is increased marginal divergence for improved information flow, which consequently affects the quality of sampling from a prior. This can be calibrated as required. Figure 5 shows that δ=1 .19 navigates this tradeoff effectively – it improves reconstruction, BPD 0.204 vs. 0.226 for the standard VAE on OMNIGLOT, while achieving better prior sample quality than all compared methods (Standard VAE, β-VAE and different δ values) with −1776 ELBO, estimated on 256 prior sam-ples. Meanwhile, δ=1 .01 , while minimising BPD (0.189), substantially degrades generative quality ( −2167 
+
+ELBO). Consequently, choosing the right δ leads to maximized net information gain Eq. 15, with little or no compromise on the generative quality. 
+
+6.4 Qualitative Comparison 
+
+In this section, we show the impact of increased information flow and minimized posterior collapse on reconstruction quality. In Figure 8, we compare reconstructions between the standard and optimal-λ VAE. λ-VAE produces sharper images with more coherent pixel values on both CIFAR-10 and CelebA-64. This qualitative improvement follows directly from the 2.8× gain in SNR information capacity and the 2.1× gain in decoder capacity shown in Figure 6 and Table 2. Reconstruction quality degradation due to posterior collapse, however, is much more prominently observed in a case where the modelling is primarily absorbed by the decoder. A sufficiently powerful decoder trained with standard VAE causes significant gradient imbalance that can render most of the latent code uninformative and wasted. This phenomenon is more apparent in autoregressive models like pixelCNN decoders Gulrajani et al. (2016) where the decoder is trained with teacher forcing and can 12 Table 2: Controlled comparison on CIFAR-10 and CelebA-64. Fixed and optimal λ share the same asymmetric ResNet architecture. SNR capacity information throughput; decoder capacity (Figure 6b) measures the information each latent dimension actively contributes to the decoder output.                                                              
+
+> Dataset Model BPD ↓SNR cap. ↑Dec. cap. ↑¯λAU ↑
+> CIFAR-10 Vanilla VAE 4.645 628 169 1.00 339 / 512
+> λ-VAE (δ=1 .001 )4.314 1760 361 3.14 512 / 512 CelebA-64 Vanilla VAE 3.896 2198 3283 1.00 985 / 1024
+> λ-VAE (δ=1 .001 )3.655 3646 6596 1.99 1024 / 1024 0.0 0.2 0.4 0.6 0.8 1.0
+> Posterior d(per dim, final epoch)
+> 0
+> 25
+> 50
+> 75
+> 100
+> d
+> CIFAR-10
+> Fixed =1
+> Optimal *
+> Theory *()(=1.001)
+> 0.0 0.2 0.4 0.6 0.8
+> Posterior d(per dim, final epoch)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> d
+> CelebA-64
+> Fixed =1
+> Optimal *
+> Theory *()(=1.001)
+
+Figure 7: Empirical alignment with the optimal λ∗ schedule. All 512 CIFAR-10 and 1024 CelebA-64 dimensions lie exactly on the theoretical curve Eq. 16 at convergence (Pearson r = 1 .00 ). Points near σ ≈ 0
+
+have λ∗ → λmax = 20 (clamped); points near σ = 1 are dimensions the vanilla VAE model leaves dead. quickly learn to ignore most of the latent codes, especially pixel level information when it is conditioned on the ground-truth of previous pixel. Hence, leading to a significant posterior collapse and poor sample quality during inference , despite a comparably good BPD during training. In contrast, the optimal λ keeps 
+
+zi close to μi with high SNR throughout training with reasonable variance (depending on δ), ensuring the decoder cannot bypass the latent code regardless of decoder capacity. We show this contrast by using the same architecture as before only replacing the decoder with a PixelCNN decoder. Both models achieve comparable ELBO-BPD at evaluation (3.518 standard vs. 3.494 optimal; Table 3), yet 378 of 512 latent dimensions are effectively collapsed in the standard VAE versus none in the optimal λ model. Decoder capacity further confirms this; the standard VAE’s PixelCNN allocates only 12.1 nats to the latent code while 
+
+λ-VAE allocates 75.0 nats ( 6.2× more), meaning the autoregressive decoder has learned to model CIFAR-10 almost entirely from its own context. The collapse is exposed when sampling from the model in both greedy 
+
+mode (argmax at each pixel conditioned on z and all previous pixels) and ancestral sampling ( p(xi|x<i , z )
+
+drawn sequentially per pixel), as shown in Figure 9. This is primarily due to preserved information flow under optimal λ-VAE even though teacher forcing was used in both cases for training. 
+
+7 Conclusion 
+
+Posterior collapse is commonly attributed to the KL term overwhelming reconstruction, but this framing misses the mechanism. The KL term does not suppress all dimensions uniformly – it drives specific dimensions toward σi = 1 through two coupled pathways. At σi = 1 , both pathways converge: it is simultaneously a stable fixed point of the training dynamics where the reconstruction gradient vanishes (Proposition 1), and the regime in which injected noise overwhelms the encoded signal, reducing per-channel SNR and decoupling the decoder from the latent code (Proposition 2). λ-VAE corrects both by shifting the stable attractor from σi = 1 to σ∗ = λ−1/(λ−1) < 1, simultaneously restoring the reconstruction gradient and calibrating per-channel noise to signal strength. The per-dimension optimal λ estimation (Proposition 3) follows from 13 Original Optimal * Standard VAE (a) CelebA-64 Original Optimal * Standard VAE  
+
+> (b) CIFAR10
+
+Figure 8: Qualitative Comparison On Reconstructions . Optimal λ produces sharper, more detailed reconstructions, consistent with the 2.1 × capacity recovery in Table 2. Differences in quality are best observed zoomed in. a net information gain objective that balances information throughput against marginal-prior divergence, with δ as the only hyperparameter. Empirically, λ-VAE consistently reduces collapsed dimensions, recovers information throughput, and improves reconstruction quality across all tested scales – synthetic, binarized, and large-scale RGB – with the PixelCNN experiment providing the sharpest demonstration with near-identical BPD (3.518 vs. 3.494) yet 6.2× more decoder capacity allocated to the latent code. The broader implications for general training principles can be summarized as follows: a stochastic bottleneck trained end-to-end with a sufficiently powerful downstream module will be bypassed when the injected noise exceeds the signal capacity. This is not because the model cannot learn, but because bypassing is the lower-cost solution under a uniform noise budget. λ-VAE instantiates a targeted correction for Gaussian posteriors, but the same principle is expected to apply wherever the noise level at a stochastic layer is set globally rather than calibrated to per-channel signal strength. Three directions are left for future work. Hierarchical VAEs: 
+
+collapse at early latent levels propagates through the hierarchy; per-level λ∗ schedules may provide targeted repair without the careful KL balancing that hierarchical training currently requires. Adaptive δ: the current approach sets δ once per experiment; learning δ or scheduling it based on the evolving σ distribution could 14 Original Optimal * Standard VAE (a) Greedy decoding (argmax at each pixel step). Original Optimal * Standard VAE (b) Ancestral sampling from p(xi|x<i , z ).
+
+Figure 9: Reconstruction with PixelCNN decoder on CIFAR-10. Each panel shows ground-truth (left), Standard VAE (middle), and λ-VAE (right) for the same test images. Despite near-identical ELBO-BPD (3.518 vs. 3.494, Table 3), the standard VAE has 378/512 collapsed latent dimensions and decoder capacity of only 12.1 nats: the PixelCNN has learned to model the image from pixel context alone and ignores 
+
+z. This collapse is visible in both sampling modes (greedy and ancestral) where λ-VAE reconstructions retain input-specific detail even without teacher forcing. Table 3: PixelCNN decoder comparison on CIFAR-10. BPD evaluated via the test-set ELBO. Decoder capacity sums per-dimension contributions from the training history (a proxy for how much the decoder relies on z).             
+
+> Model BPD ↓AU ↑Dec. cap. (nats) ↑¯λ
+> Standard VAE 3.518 134 / 512 12.1 1.00
+> λ-VAE ( δ=1 .001 )3.494 512 / 512 75.0 6.37
+
+recover the reconstruction, generation tradeoff automatically, and reduce per-dataset tuning. Beyond VAEs: 
+
+the information gap–marginal mismatch duality (Eq. 8) provides a cheap, dataset-free proxy for aggregate posterior quality that avoids the integration cost of InfoVAE or Wasserstein objectives; whether this proxy can guide training in discrete bottleneck models or diffusion-based posteriors is an open question. 
+
+References 
+
+Yoshua Bengio, Aaron Courville, and Pascal Vincent. Representation learning: A review and new perspec-tives. IEEE transactions on pattern analysis and machine intelligence , 35(8):1798–1828, 2013. Samuel R Bowman, Luke Vilnis, Oriol Vinyals, Andrew M Dai, Rafal Jozefowicz, and Samy Bengio. Gener-ating sentences from a continuous space. arXiv preprint arXiv:1511.06349 , 2015. Yuri Burda, Roger Grosse, and Ruslan Salakhutdinov. Importance weighted autoencoders. arXiv preprint arXiv:1509.00519 , 2015. Christopher P Burgess, Irina Higgins, Arka Pal, Loic Matthey, Nick Watters, Guillaume Desjardins, and Alexander Lerchner. Understanding disentangling in beta-vae. arXiv preprint arXiv:1804.03599 , 2018. Xi Chen, Diederik P Kingma, Tim Salimans, Yan Duan, Prafulla Dhariwal, John Schulman, Ilya Sutskever, and Pieter Abbeel. Variational lossy autoencoder. arXiv preprint arXiv:1611.02731 , 2016. Thomas M Cover. Elements of information theory . John Wiley & Sons, 1999. Hao Fu, Chunyuan Li, Xiaodong Liu, Jianfeng Gao, Asli Celikyilmaz, and Lawrence Carin. Cyclical annealing schedule: A simple approach to mitigating kl vanishing. arXiv preprint arXiv:1903.10145 , 2019. Priya Goyal, Piotr Dollár, Ross Girshick, Pieter Noordhuis, Lukasz Wesolowski, Aapo Kyrola, Andrew Tulloch, Yangqing Jia, and Kaiming He. Accurate, large minibatch sgd: Training imagenet in 1 hour. 
+
+arXiv preprint arXiv:1706.02677 , 2017. Ishaan Gulrajani, Kundan Kumar, Faruk Ahmed, Adrien Ali Taiga, Francesco Visin, David Vazquez, and Aaron Courville. Pixelvae: A latent variable model for natural images. arXiv preprint arXiv:1611.05013 ,2016. 15 Junxian He, Daniel Spokoyny, Graham Neubig, and Taylor Berg-Kirkpatrick. Lagging inference networks and posterior collapse in variational autoencoders. arXiv preprint arXiv:1901.05534 , 2019. Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick, Shakir Mohamed, and Alexander Lerchner. beta-vae: Learning basic visual concepts with a constrained variational framework. In International conference on learning representations , 2016. Geoffrey E Hinton. Learning distributed representations of concepts. In Proceedings of the Annual Meeting of the Cognitive Science Society , volume 8, 1986. Matthew D Hoffman and Matthew J Johnson. Elbo surgery: yet another way to carve up the variational evidence lower bound. In Workshop in Advances in Approximate Bayesian Inference, NIPS , volume 1, 2016. Yuma Ichikawa and Koji Hukushima. Learning dynamics in linear vae: Posterior collapse threshold, su-perfluous latent space pitfalls, and speedup with kl annealing. In International Conference on Artificial Intelligence and Statistics , pp. 1936–1944. PMLR, 2024. Michael I Jordan, Zoubin Ghahramani, Tommi S Jaakkola, and Lawrence K Saul. An introduction to variational methods for graphical models. Machine learning , 37:183–233, 1999. Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980 , 2014. Diederik P Kingma and Max Welling. Auto-encoding variational bayes. arXiv preprint arXiv:1312.6114 ,2013. Diederik P Kingma, Danilo J Rezende, Shakir Mohamed, and Max Welling. Semi-supervised learning with deep generative models. Advances in neural information processing systems , 27, 2014. Durk P Kingma, Tim Salimans, Rafal Jozefowicz, Xi Chen, Ilya Sutskever, and Max Welling. Improved variational inference with inverse autoregressive flow. Advances in neural information processing systems ,29, 2016. Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images. 2009. Brenden M Lake, Ruslan Salakhutdinov, and Joshua B Tenenbaum. Human-level concept learning through probabilistic program induction. Science , 350(6266):1332–1338, 2015. Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep learning face attributes in the wild. In 
+
+Proceedings of the IEEE international conference on computer vision , pp. 3730–3738, 2015. James Lucas, George Tucker, Roger B Grosse, and Mohammad Norouzi. Don’t blame the elbo! a linear vae perspective on posterior collapse. Advances in Neural Information Processing Systems , 32, 2019. Alireza Makhzani, Jonathon Shlens, Navdeep Jaitly, Ian Goodfellow, and Brendan Frey. Adversarial autoen-coders. arXiv preprint arXiv:1511.05644 , 2015. Geoffrey J McLachlan and Thriyambakam Krishnan. The EM algorithm and extensions . John Wiley & Sons, 2007. Lars Mescheder, Sebastian Nowozin, and Andreas Geiger. Adversarial variational bayes: Unifying variational autoencoders and generative adversarial networks. In International conference on machine learning , pp. 2391–2400. PMLR, 2017. Thomas P Minka. Expectation propagation for approximate bayesian inference. arXiv preprint arXiv:1301.2294 , 2013. Radford M Neal and Geoffrey E Hinton. A view of the em algorithm that justifies incremental, sparse, and other variants. In Learning in graphical models , pp. 355–368. Springer, 1998. 16 Ali Razavi, Aäron van den Oord, Ben Poole, and Oriol Vinyals. Preventing posterior collapse with delta-vaes. 
+
+arXiv preprint arXiv:1901.03416 , 2019a. Ali Razavi, Aaron Van den Oord, and Oriol Vinyals. Generating diverse high-fidelity images with vq-vae-2. 
+
+Advances in neural information processing systems , 32, 2019b. Danilo Rezende and Shakir Mohamed. Variational inference with normalizing flows. In International con-ference on machine learning , pp. 1530–1538. PMLR, 2015. Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and approximate inference in deep generative models. In International conference on machine learning , pp. 1278–1286. PMLR, 2014. Mihaela Rosca, Balaji Lakshminarayanan, and Shakir Mohamed. Distribution matching in variational infer-ence. arXiv preprint arXiv:1802.06847 , 2018. Ruslan Salakhutdinov and Iain Murray. On the quantitative analysis of deep belief networks. In Proceedings of the 25th international conference on Machine learning , pp. 872–879, 2008. Yuge Shi, Brooks Paige, Philip Torr, et al. Variational mixture-of-experts autoencoders for multi-modal deep generative models. Advances in neural information processing systems , 32, 2019. Naftali Tishby, Fernando C Pereira, and William Bialek. The information bottleneck method. arXiv preprint physics/0004057 , 2000. Ilya Tolstikhin, Olivier Bousquet, Sylvain Gelly, and Bernhard Schoelkopf. Wasserstein auto-encoders. arXiv preprint arXiv:1711.01558 , 2017. Jakub Tomczak and Max Welling. Vae with a vampprior. In International Conference on Artificial Intelli-gence and Statistics , pp. 1214–1223. PMLR, 2018. Shengjia Zhao, Jiaming Song, and Stefano Ermon. Infovae: Balancing learning and inference in variational autoencoders. In Proceedings of the aaai conference on artificial intelligence , volume 33, pp. 5885–5892, 2019. 
+
+A Appendix 
+
+A.1 Gradient Imbalance (Proposition 1) 
+
+The reconstruction gradient w.r.t. σi is defined as 
+
+gσi := ∂R ∂σ i
+
+= Ep(x), ϵ i [∇zi log pθ (x|z) · ϵi] , (19) while the KL gradient is ∂KL i/∂σ i = σi − 1/σ i. Combining, the ELBO gradient is 
+
+∂L
+
+∂σ i
+
+= gσi + 1
+
+σi
+
+− σi. (A.1) From the above, we see the KL restoring force 1/σ i − σi is positive for σi < 1, and negative for σi > 1. It drives σi → 1 whenever it dominates the reconstruction gradient gσi .
+
+Gradient ratio and fixed points: Setting the ELBO gradient Eq. A.1 to zero gives the following equi-librium condition: 
+
+σ∗ 
+
+> i
+
+= −gσi + √(gσi )2 + 4 2 ∈ (0 , 1) , (A.2) When gσi = 0 , this gives the unique positive root σ∗ 
+
+> i
+
+= 1 . Linearising around σi = 1 + δ and simplifying 
+
+∂L/∂σ i yields 1/σ i − σi ≈ − 2δ + O(δ2), so ∂L/∂σ i ≈ − 2δ. Thus, the collapse fixed point σ∗ 
+
+> i
+
+= 1 is a locally 
+
+17 asymptotically stable point with linearisation rate −2. For gσi > 0, the gradient ratio is the necessary and sufficient collapse indicator stated in Proposition 1. 
+
+ρi = |gσi ||1/σ i − σi| . (A.3) 
+
+Proof of sufficiency: Assume ρi(t) < 1 for all t ≥ T0. Then |gσi | < |1/σ i − σi|, so ∂L/∂σ i > 0 whenever 
+
+σi < 1. The sequence {σi(t)}t≥T0 is monotonically non-decreasing and bounded above by 1. By the Monotone Convergence Theorem it converges to a limit σ∞ 
+
+> i
+
+≤ 1. If σ∞ 
+
+> i
+
+< 1, then 1/σ ∞ 
+
+> i
+
+− σ∞ 
+
+> i
+
+> 0, and Eq. A.1 requires 
+
+gσi (σ∞ 
+
+> i
+
+) = 0 at a fixed point, which forces σ∞ 
+
+> i
+
+= 1 , which is a contradiction. Hence σ∞ 
+
+> i
+
+= 1 . ■
+
+Proof of necessity: Under the decay condition provided in the proposition, near σi = 1 the KL part is written as ∣∣∣∣
+
+1
+
+σi
+
+− σi
+
+∣∣∣∣ = (1 − σi)(1 + σi)
+
+σi
+
+∼ 2(1 − σi) as σi → 1−, (A.4) while the decay bound |gσi | = O((1 − σi)α) gives the ratio bounded by 
+
+ρi = O((1 − σi)α)2(1 − σi) = O((1 − σi)α−1) . (A.5) 
+
+• α > 1: (1 − σi)α−1 → 0 as σi → 1−, so ρi → 0. Collapse implies ρi → 0. Hence, The ratio is a 
+
+necessary and sufficient collapse signal for dimension i. ■
+
+• α = 1 : ρi → g0/2 > 0 as σi → 1: the ratio stays bounded away from zero regardless of whether collapse occurs, giving a potential false negative . The condition α > 1 in the proposition is therefore not a restriction but a regime identifier ; it characterises the decoders for which ρi is an informative diagnostic. 
+
+• α < 1: ρi → ∞ ; the decoder resists collapse. No collapse occurs. 
+
+A.2 Information Gap (Proposition 2) 
+
+We derive the gap ∆I = I(X; ϕ) − I(X; Z) ≥ 0 under Gaussian posteriors and show it attenuates change in the encoder. By the Data Processing Inequality Cover (1999), we have 
+
+I(X; Z) ≤ I(X; ϕ) =⇒ ∆I = I(X; ϕ) − I(X; Z) ≥ 0. (20) Since zi = μi + σiϵi with σi > 0 is not invertible (given zi = z, we cannot recover ϵi without μi, σ i), the map is strictly lossy: ∆I > 0 for all σi > 0. Equivalently, by the chain rule for mutual information, the gap satisfies 
+
+∆I = I(X; ϕ | Z) ≥ 0, (A.6) the conditional mutual information between X and the encoder parameters given Z.
+
+Information gap under Gaussian posteriors: Consider an approximate posterior estimate q(zi|x) = 
+
+N (μi(x), σ 2 
+
+> i
+
+(x)) , and its conditional entropy 
+
+H[Zi|X] = 12 log(2 πe ) + 12 Ep(x)
+
+[log σ2 
+
+> i
+
+(x)] . (A.7) Since I(X; ϕ) = H[ϕ] is fixed by the encoder weights (encoder is deterministic), changes in the gap ∆I are driven by changes in I(X; Z). Under approximate marginal matching q(z) ≈ N (0, I) (valid under optimized 
+
+KL regularization), the accessible mutual information reduces to 
+
+I(X; Z) ≈ 12
+
+> d
+
+∑
+
+> i=1
+
+Ep(x)
+
+[− log σ2 
+
+> i
+
+(x)] ≥ 0. (A.8) The gap grows monotonically: ∂(∆ I)/∂σ i = 1 /σ i > 0. At collapse ( σi → 1), dimension i’s gap reaches its maximum I(X; ϕi) while I(X; Zi) ≈ − 12 log σ2 
+
+> i
+
+→ 0, reflecting complete information loss. 18 Derivation of the sensitivity equation: From the definition, we have the identity 
+
+I(X; Z) = I(X; ϕ) − ∆I. (A.9) Treating ∆I as a function of I(X; ϕ) and differentiating Eq. A.9 along the training trajectory 
+
+∂ I (X; Z)
+
+∂ I (X; ϕ) = 1 − ∂ ∆I∂ I (X; ϕ) . (A.10) Since R = f (I(X; Z)) for monotonically increasing f , the chain rule gives 
+
+∂R
+
+∂ I (X; ϕ) = ∂R
+
+∂ I (X; Z) ·
+
+(
+
+1 − ∂ ∆I∂ I (X; ϕ)
+
+)
+
+. (A.11) This is equation Eq. 6 in the main text. 
+
+Duality with marginal mismatch: From the standard ELBO decomposition (Hoffman & Johnson, 2016), 
+
+KL (q(z|x)∥p(z)) = I(X; Z) + KL (q(z)∥p(z)) . (A.12) Substituting Eq. A.9: 
+
+KL (q(z)∥p(z)) = KL (q(z|x)∥p(z)) − I(X; ϕ) + ∆ I. (A.13) 
+
+Appendix B 
+
+B.1 Equilibrium Variance Target σ∗ = λ−1/(λ−1) 
+
+Under λ-scaling, the reparameterization is zi = μi +σλi ϵi. Differentiating the ELBO objective with respect to 
+
+log σi, the modification introduced by λ-scaling relative to standard sampling produces the following scaling term 
+
+∆∇i := ∂Lλ
+
+∂ log σi
+
+− ∂L1
+
+∂ log σi
+
+= (λ σ λi − σi
+
+) · gσi , (21) where gσi := Eϵi [∇zi log pθ (x|z) · ϵi] is the reconstruction gradient. The derivation follows from the chain rule through σλi : ∂(σλi ϵi)/∂ log σi = λσ λi , compared to ∂(σiϵi)/∂ log σi = σi in the standard case. The scaling term in Eq. 21 is zero iff λσ λi = σi, which gives the equilibrium condition for σi:
+
+λ σ λ−1 
+
+> i
+
+= 1 
+
+σ∗ 
+
+> i
+
+= λ−1/(λ−1) . (22) The above is valid for λ > 1.
+
+σ∗ is a stable attractor: The scaling term Eq. 21 acts as a restoring force. For gσi > 0, the following conditions hold 
+
+• σi < σ ∗: then σλ−1 
+
+> i
+
+< 1/λ , so λσ λi < σ i, giving ∆∇i < 0. The gradient on log σi is negative: σi is pushed upward toward σ∗.
+
+• σi > σ ∗: then σλ−1 
+
+> i
+
+> 1/λ , so λσ λi > σ i, giving ∆∇i > 0. The gradient on log σi is positive: σi is pushed downward toward σ∗.The force is bidirectional and vanishes only at σ∗: σ∗ is a stable fixed point. Every dimension, regardless of its initial value, is driven toward the same target. See Figure 2a and Figure 4 for illustrative and empirical data of this behaviour. 19 B.2 Optimal Per-Dimension λ∗
+
+> i
+
+Objective: For a single latent dimension i with encoder variance σi ∈ (0 , 1) , the per-dimension net infor-mation gain objective (Eq. 15 in the main text) is: 
+
+J (λi, σ i) = ( λi − 1) |log σi| − δ KL (λi), δ > 1, (23) where | log σi| = − log σi > 0 for σi ∈ (0 , 1) , and the marginal KL cost (Eq. 14 in the main text) is: 
+
+KL (λi) = 12
+
+(
+
+σ2λi 
+
+> i
+
+− σ2 
+
+> i
+
+− log σ2λi 
+
+> i
+
++ log σ2
+
+> i
+
+)
+
+. (24) 
+
+Derivative of J with respect to λi: The information gain term contributes | log σi|, which is constant in λi. For the marginal cost, the only λi-dependent terms in Eq. 24 are σ2λi 
+
+> i
+
+and log σ2λi 
+
+> i
+
+= 2 λi log σi. Hence, 
+
+∂KL 
+
+∂λ i
+
+= 12
+
+(
+
+2σ2λi 
+
+> i
+
+log σi − 2 log σi
+
+)
+
+= log σi
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)
+
+. (25) For σi ∈ (0 , 1) : log σi < 0 and σ2λi 
+
+> i
+
+< 1, so σ2λi 
+
+> i
+
+− 1 < 0. Therefore ∂KL /∂λ i = log σi(σ2λi 
+
+> i
+
+− 1) > 0: the marginal cost is strictly increasing in λi. The full derivative of the objective is 
+
+∂J
+
+∂λ i
+
+= | log σi| − δ log σi
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)
+
+. (26) 
+
+Stationary-point condition: Setting Eq. 26 to zero, 
+
+| log σi| = δ log σi
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)
+
+. (27) Substituting | log σi| = − log σi (since σi < 1): 
+
+− log σi = δ log σi
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)
+
+. (28) Dividing both sides by log σi̸ = 0 :
+
+−1 = δ
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)
+
+. (29) Rearranging, 
+
+σ2λi 
+
+> i
+
+= 1 − 1
+
+δ . (30) 
+
+Solving for λ∗ 
+
+> i
+
+: Taking the natural logarithm of both sides of Eq. 30: 
+
+2λ∗ 
+
+> i
+
+log σi = log 
+
+(
+
+1 − 1
+
+δ
+
+)
+
+. (31) Solving for λ∗ 
+
+> i
+
+:
+
+λ∗ 
+
+> i
+
+= log(1 − 1/δ )2 log σi
+
+. (32) For σi ∈ (0 , 1) : log σi < 0. For δ > 1: 1 − 1/δ ∈ (0 , 1) , so log(1 − 1/δ ) < 0. Therefore λ∗ 
+
+> i
+
+> 0. Enforcing the constraint λi ≥ 1:
+
+λ∗ 
+
+> i
+
+= max 
+
+(
+
+1, log(1 − 1/δ )2 log σi
+
+)
+
+. (33) 20 The stationary point is a global maximum: The second derivative of Eq. 23: 
+
+∂2J
+
+∂λ 2
+
+> i
+
+= −δ ∂2KL 
+
+∂λ 2
+
+> i
+
+. (34) From Eq. 25: 
+
+∂2KL 
+
+∂λ 2
+
+> i
+
+= ∂∂λ i
+
+[
+
+log σi
+
+(
+
+σ2λi 
+
+> i
+
+− 1
+
+)] 
+
+= 2 (log σi)2 σ2λi 
+
+> i
+
+> 0. (35) Therefore: ∂2J
+
+∂λ 2
+
+> i
+
+= −2δ (log σi)2 σ2λi 
+
+> i
+
+< 0. (36) The objective is strictly concave in λi, confirming that the stationary point Eq. 33 is a global maximum. Hence, maximizing the net information gain for a given δ hyperparameter. 21
