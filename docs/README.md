@@ -6,40 +6,39 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-09
-- 运行时间：2026-07-09 21:58:04 UTC
+- 最新运行日期：2026-07-10
+- 运行时间：2026-07-10 20:33:06 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：5
+- 本次总论文数：5
+- 精读区：4
 - 速读区：1
 
 ### 今日简报（AI）
-今日共读6篇论文，精读5篇，重点聚焦贝叶斯深度集成与不确定性传播方法。  
-最值得关注的是《Efficient Bayesian Deep Ensembles via Analytic Predictive Inference》（9.0分）与《Bayesian Uncertainty Propagation for Agentic RAG Pipelines》（8.0分），分别提出解析推理高效集成方式和不确定性在多跳问答中的应用。  
-建议优先精读这两篇，掌握贝叶斯推理的新范式，并思考如何将不确定性度量引入实际RAG系统。
-- 详情：[/202607/09/README](/202607/09/README)
+今日精读两篇高分论文与一篇速读，聚焦贝叶斯扩散模型泛化相变理论、多兴趣双塔检索及后验退化检测。
+
+最值得关注的是《An exact information theory of generalization phase transitions in Bayesian diffusion models》（9.0/10）揭示相变信息理论，以及《BACH: A Bayesian Admixture of Contrastive Heads for Multi-Interest Two-Tower Retrieval》（8.0/10）提供新的多兴趣检索框架。
+
+建议普通读者优先精读上述两篇，深入理解贝叶斯方法在生成与检索场景中的前沿应用；速读论文可作为补充理解后验退化的工具。
+- 详情：[/202607/10/README](/202607/10/README)
 
 ### 精读区论文标签
-1. [Efficient Bayesian Deep Ensembles via Analytic Predictive Inference](/202607/09/2607.06776v1-efficient-bayesian-deep-ensembles-via-analytic-predictive-inference)  
+1. [An exact information theory of generalization phase transitions in Bayesian diffusion models](/202607/10/2607.08041v1-an-exact-information-theory-of-generalization-phase-transitions-in-bayesian-diffusion-models)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：高效的贝叶斯深度集成方法，结合解析预测推理提供校准的不确定性估计
-2. [Bayesian Uncertainty Propagation for Agentic RAG Pipelines: A Proof-of-Concept Study on Multi-Hop Question Answering](/202607/09/2607.00972v1-bayesian-uncertainty-propagation-for-agentic-rag-pipelines-a-proof-of-concept-study-on-multi-hop-question-answering)  
+   evidence：贝叶斯扩散模型用于深度生成学习，精确后验推断
+2. [BACH: A Bayesian Admixture of Contrastive Heads for Multi-Interest Two-Tower Retrieval](/202607/10/2607.08107v1-bach-a-bayesian-admixture-of-contrastive-heads-for-multi-interest-two-tower-retrieval)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：使用贝叶斯网络进行检索增强生成管道中的不确定性传播
-3. [$\mathbfλ$-VAE: Variance Equalization for Posterior Collapse](/202607/09/2607.05531v1-mathbf-vae-variance-equalization-for-posterior-collapse)  
+   evidence：使用变分推理拟合贝叶斯混合模型用于深度检索
+3. [CASL-VAE: Learning Structured Latent Variables from Unpaired Data for Semi-supervised Clustering and Paired Sample Generation](/202607/10/2607.08254v1-casl-vae-learning-structured-latent-variables-from-unpaired-data-for-semi-supervised-clustering-and-paired-sample-generation)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：解决变分自编码器后验坍塌问题，属于变分推断核心
-4. [Uncertainty-Aware Cross-Modal Remote Sensing Image-Text Retrieval via Evidential Learning](/202607/09/2607.06032v1-uncertainty-aware-cross-modal-remote-sensing-image-text-retrieval-via-evidential-learning)  
+   evidence：面向结构化潜在变量的变分自编码器方法
+4. [Bayesian Experimental Design via Score Matching](/202607/10/2607.08335v1-bayesian-experimental-design-via-score-matching)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：使用证据学习实现不确定性感知检索
-5. [UBG-Net: An Uncertainty-aware Bayesian Gating Network for Robust Audio-Visual Speech Recognition](/202607/09/2607.06892v1-ubg-net-an-uncertainty-aware-bayesian-gating-network-for-robust-audio-visual-speech-recognition)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：不确定性感知的贝叶斯门控网络用于鲁棒视听语音识别
+   evidence：基于分数匹配的贝叶斯实验设计深度学习方法
 
 ### 速读区论文标签
-1. [Hypergraph Neural Stochastic Diffusion: An SDE Framework for Uncertainty Estimation](/202607/09/2607.07330v1-hypergraph-neural-stochastic-diffusion-an-sde-framework-for-uncertainty-estimation)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：基于随机微分方程的超图不确定性估计，替代贝叶斯推断方法
+1. [DegenDetector: Symbolic Recovery of Parameter Degeneracies in Bayesian Posteriors](/202607/10/2607.08755v1-degendetector-symbolic-recovery-of-parameter-degeneracies-in-bayesian-posteriors)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：自动发现贝叶斯后验中的参数退化
 
 
 <div class="dpr-home-promo-card">
