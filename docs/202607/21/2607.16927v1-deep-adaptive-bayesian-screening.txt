@@ -1,0 +1,1317 @@
+Title: Deep Adaptive Bayesian Screening
+
+URL Source: https://arxiv.org/pdf/2607.16927v1
+
+Published Time: Tue, 21 Jul 2026 00:46:14 GMT
+
+Number of Pages: 33
+
+Markdown Content:
+# Deep Adaptive Bayesian Screening 
+
+Jade Lejeune Herman Mechatronics, Biostatistics and Sensors (MeBioS) KU Leuven Kasteelpark Arenberg 30, B-3001 Leuven (Heverlee) 
+
+jade.lejeuneherman@kuleuven.be 
+
+Arno Strouwen Strouwen Statistics, Hasselt, Belgium Mechatronics, Biostatistics and Sensors (MeBioS) KU Leuven Kasteelpark Arenberg 30, B-3001 Leuven (Heverlee) 
+
+contact@arnostrouwen.com 
+
+Johan A.K. Suykens ESAT-Stadius KU Leuven Kasteelpark Arenberg 10, B-3001 Leuven (Heverlee) 
+
+johan.suykens@kuleuven.be 
+
+Peter Goos Mechatronics, Biostatistics and Sensors (MeBioS) KU Leuven Kasteelpark Arenberg 30, B-3001 Leuven (Heverlee) 
+
+peter.goos@kuleuven.be 
+
+# Abstract 
+
+We introduce Deep Adaptive Bayesian Screening (DABS), a method for performing adap-tive factorial screening in high-dimensional discrete design spaces. DABS learns a policy network offline to sequentially select informative experiments, amortizing Bayesian Optimal Experimental Design. It handles binary designs, incorporates sparsity and interactions via a spike-and-slab prior with strong heredity. The model is trained using a contrastive lower bound on information about factor activity with nuisance effect sizes and noise variance analytically integrated out. Unlike prior amortized Bayesian design approaches, DABS also integrates Gibbs posterior inference at deployment, yielding posterior probabilities of factor activity and credible intervals on effect sizes. We demonstrate DABS on screening problems calibrated to real-world benchmarks and show it achieves superior accuracy and scalability over classical and Bayesian baselines under tight experimental budgets. 
+
+# 1 Introduction 
+
+Designing experiments to efficiently explore high-dimensional input spaces is a central challenge in many areas of science and engineering. In particular, screening designs aim to identify the subset of most influential factors among a large number of candidates while minimizing the number of required experimental runs. For instance, in early-stage drug development, researchers must determine which formulation and process variables most strongly affect key quality attributes such as dissolution or stability. When many factors are 1arXiv:2607.16927v1 [stat.ML] 18 Jul 2026 potentially relevant (say, 12 factors at 2 levels), exploring all possible combinations would require 212 = 4096 
+
+experimental runs, which is prohibitively expensive in practice. This combinatorial explosion motivates the use of screening strategies to reduce experimental cost while focusing attention on the variables that drive system performance. Classical screening designs are typically non-adaptive and specified a priori (e.g. Plackett-Burman (Plackett & J.P., 1946), fractional factorial (Montgomery, 2017; Box et al., 2005) or D-optimal designs (Mitchell, 1974)). Factor significance is then assessed post hoc using frequentist tools such as t-tests or ANOVA. These designs are derived to minimise parameter-estimation variance under a fixed assumed model, rather than to directly target the binary active/inactive decision that screening ultimately requires, and they neither incorporate prior knowledge nor adapt to observed data. To overcome these limitations, Bayesian optimal experimental design (BOED) (Chaloner & Verdinelli, 1995) offers a way to incorporate prior knowledge about factor importance and to select configurations adaptively that maximise the expected information gain about the active factors. In the sequential setting, this corresponds to selecting each new experiment to maximise the mutual infor-mation between its outcome and the set of active factors, conditioned on the history of past experiments and responses. However, this requires repeated posterior inference and optimization of an acquisition func-tion (i.e., an information-based utility used to select the next experiment), which is often computationally prohibitive in real-time screening campaigns (Ryan et al., 2016). Deep Adaptive Design (DAD) (Foster et al., 2021) and related extensions (Ivanova et al., 2021; Poole et al., 2019) remove this computational burden by training a neural policy network offline on thousands of simulated experimental trajectories. At deployment time, the policy produces the next configuration via a single forward pass, amortizing all optimization. However, these methods target parameter inference rather than active-set recovery and provide no mechanism for posterior inference over factor activity or effect-size credible intervals once the experiments are complete. They are also formulated for continuous design spaces, which requires an additional adaptation step for discrete factorial settings. To address this gap, we introduce DABS (Deep Adaptive Bayesian Screening). DABS trains a deep policy network entirely offline using simulated trajectories from a discrete design space and complements it with a Gibbs sampler for posterior inference over active factors and effect sizes, leveraging closed-form Student-t full conditionals derived from the conjugate spike-and-slab model. The contributions of this paper are threefold. (i) We derive a screening-specific training objective that targets the mutual information between the experi-mental history and the active-set indicators, with the continuous effect sizes and noise variance marginalised out analytically. This focuses the policy on the screening decision. Effect sizes for the retained factors are recovered analytically at deployment. (ii) We embed screening structure directly into the amortized design framework via a spike-and-slab prior with strong heredity on two-way interactions, so that the offline-trained policy produces designs calibrated to the sparsity and hierarchy of real screening problems. (iii) We couple the amortized policy with a closed-form Gibbs sampler at deployment that exploits the same Student-t full conditionals, yielding posterior probabilities of factor activity and credible intervals on effect sizes from a single pass through the data, a capability absent from standard policy-based BOED pipelines. 
+
+# 2 Background 
+
+2.1 Sequential Bayesian Experimental Design 
+
+Let θ denote an unknown parameter vector with prior p(θ). In a sequential experiment, at step t, a single new design ξt is selected based on the history ht−1 = {(ξs, y s)}t−1
+
+> s=1
+
+, and a scalar response yt is observed. The informativeness of a candidate design is quantified by the conditional mutual information between θ and the observation yt (Lindley, 1955): 
+
+I(θ; yt | ht−1, ξ t) = Eθ∼p(θ|ht−1), y t∼p(yt|θ,ξ t)
+
+[
+
+log p(yt | θ, ξ t)
+
+p(yt | ht−1, ξ t)
+
+]
+
+. (1) The ratio inside the logarithm compares the likelihood under a specific parameter realization θ with the marginal likelihood averaged over all possible parameter values. This quantity corresponds to the expected 2reduction in posterior entropy about θ after observing yt. Higher values indicate more informative experi-ments. A design policy πϕ, parametrized by a neural network with parameters ϕ, selects experiments adaptively via ξt ∼ πϕ(· | ht−1). Following Foster et al. (2021), the cumulative expected information gain over an experimental sequence decomposes as 
+
+J (ϕ) = Eθ∼p(θ),h T ∼p(hT |θ,π ϕ)
+
+[ T∑
+
+> t=1
+
+I(θ; yt | ht−1, ξ t)
+
+]
+
+. (2) Maximizing cumulative information gain rather than a single-step criterion encourages globally informative experimental sequences and enables the design policy to account for long-term effects of sequential decisions. 
+
+2.2 Contrastive Estimation of Information Gain 
+
+Direct maximisation of J (ϕ) is intractable because evaluating the marginal likelihood 
+
+p(yt | ht−1, ξ t) = 
+
+∫
+
+p(yt | θ, ξ t) p(θ | ht−1) dθ (3) requires integration over the parameter posterior p(θ | ht−1) at every step. Foster et al. (2021) address this with a Monte Carlo lower bound that replaces the intractable marginal p(hT | πϕ) = ∫ p(hT | θ, π ϕ) p(θ) dθ by an empirical average over L contrastive samples drawn from the prior, building on earlier stochastic-gradient BOED (Foster et al., 2019b). Let θ0 ∼ p(θ) denote the parameter sample that generates the trajectory hT , and let θ1, . . . , θ L ∼ p(θ)
+
+denote L independent contrastive samples from the prior. The sequential Prior Contrastive Estimation (sPCE) bound is sPCE L(ϕ) = Eθ0∼p(θ), h T ∼p(hT |θ0,π ϕ), θ 1: L∼p(θ)
+
+[
+
+log p(hT | θ0)
+
+> 1
+> L+1
+
+∑Li=0 p(hT | θi)
+
+]
+
+≤ J (ϕ), (4) where the expectation is over θ0 ∼ p(θ), the trajectory hT ∼ p(hT | θ0, π ϕ), and the contrastive draws 
+
+θ1: L ∼ p(θ). A corresponding upper bound yields the sandwich relation (Rainforth et al., 2018) sPCE L(ϕ) ≤ J (ϕ) ≤ sNMC L(ϕ), (5) with both bounds converging to J (ϕ) as L → ∞ . The sPCE bound serves as the training objective. The sequential Nested Monte Carlo (sNMC) bound is used at evaluation time to verify tightness of the trained policy. 
+
+# 3 Deep Adaptive Bayesian Screening 
+
+3.1 Problem Setup and Factorial Screening Model 
+
+Consider a screening experiment with p factors, each set to a high or low level at every experimental run (Montgomery, 2017). The objective is to identify the active set from as few experiments as possible, together with credible intervals on the magnitudes of the corresponding effects. At step t = 1 , . . . , T , a design vector 
+
+ξt = ( ξt, 1, ..., ξ t,p ) ∈ {− 1, +1 }p is selected where ξt,k = +1 (resp. −1) indicates that factor k is set to its high (resp. low) level and a scalar response is observed: 
+
+yt = f (ξt, θ ) + εt, εt ∼ N (0 , σ 2), σ2 ∼ Inv -Gamma( α0, β 0), α0, β 0 > 0, (6) with the conjugate inverse-gamma prior on σ2 enabling the analytical marginalization described in Section 3.2. The parameter vector θ = ( z, β, σ 2) combines binary activity indicators z ∈ { 0, 1}p, continuous effect sizes β ∈ Rp and the noise variance. An indicator zk = 1 (resp. 0) denotes that factor k is active (resp. 3inactive) and βk determines the magnitude of its contribution. While we restrict attention to binary designs 
+
+ξt ∈ {− 1, +1 }p, this is not a limitation. For models that are linear in the inputs ξ, optimal designs over the hypercube [−1, 1] p are attained at the vertices. 
+
+Proposition 1. Consider a linearGaussian model with design space ξ ∈ [−1, 1] p. For information-theoretic design criteria that depend on ξ through quadratic forms, there exists an optimal design in {− 1, +1 }p. Aproof is provided in Appendix A. Screening experiments rely on the factor sparsity principle (Box & Meyer, 1986), which posits that generally only a small subset of factors significantly influence the response. This assumption is encoded through a spike-and-slab prior on the effect sizes, which is a standard approach for Bayesian variable selection (Ishwaran & Rao, 2005): 
+
+ρ ∼ Beta( a, b ), zk | ρ ∼ Bernoulli( ρ), βk | zk, σ 2 ∼
+
+{
+
+N (0 , σ 2 τ 2
+
+> active
+
+), zk = 1 ,
+
+N (0 , σ 2τ 2
+
+> inactive
+
+), zk = 0 . (7) where ρ ∈ (0 , 1) is the prior probability that a factor is active, drawn from a Beta( a, b ) hyperprior with prior mean E[ρ] = a/ (a + b), τ 2 
+
+> active
+
+is the variance for active effects, and τ 2 
+
+> inactive
+
+ τ 2 
+
+> active
+
+shrinks inactive effects toward zero. Besides main effects, pairwise interactions between factors, which capture joint effects beyond individual contributions, are also considered. Each interaction between factors i and j is associated with an effect size βij and an activity indicator zij . To reflect the structure typically assumed in screening experiments, we impose the strong heredity principle (Hamada & Wu, 1992; Wu & Hamada, 2009; Chipman, 1996), meaning that an interaction between factors i and j can only be active if both parent main effects are active. The hyperparameter πint ∈ (0 , 1] is the conditional probability that a heredity-allowed interaction is active: 
+
+zij | zi, z j ∼ Bernoulli( πint · zizj ), βij | zij , σ 2 ∼
+
+{
+
+N (0 , σ 2τ 2
+
+> active
+
+), zij = 1 ,
+
+N (0 , σ 2τ 2
+
+> inactive
+
+), zij = 0 . (8) Strong heredity is a modelling assumption. Appendix B reports an ablation that relaxes it and quantifies the sensitivity of the recovered active set. The expected response is modeled as a linear combination of all active effects: 
+
+f (ξt, θ ) = 
+
+> p
+
+∑
+
+> k=1
+
+zkβkξt,k + ∑
+
+> i<j
+
+zij βij ξt,i ξt,j . (9) The formulation captures two key properties of screening experiments: the sparsity of active factors and structured interactions through the heredity constraint. Under heredity, the space of admissible activity patterns reduces from {0, 1}p+p(p−1) /2 to at most {0, 1}p. For instance, when p = 15 , this is a reduction from 2120 to at most 215 distinct configurations, a reduction of at least 31 orders of magnitude. This reduction, induced by the strong heredity assumption, is critical for scalability as it renders the contrastive sPCE objective tractable: contrastive samples need only be drawn from at most {0, 1}p rather than the full joint space. 
+
+3.2 Analytical Marginalisation 
+
+The screening model of Section 3.1 decomposes the parameter vector as θ = (z, β, σ 2), where z =(( zk)pk=1 , (zij )i<j ) denotes the joint activity indicators, β the continuous effect sizes for main effects and heredity-constrained interactions, and σ2 the observation noise variance. Under the Gaussian likelihood of Eq. 6 and the conjugate normal–inverse-gamma prior on (β, σ 2) induced by the spike-and-slab specifica-tion in Eq. 7 together with the inverse-gamma prior on σ2, the continuous parameters admit closed-form integration. Conditioned on z, the joint distribution of the history hT = {(ξt, y t)}Tt=1 follows a multivariate Student-t distribution 
+
+p(hT | z) = 
+
+∫ ∫ 
+
+p(hT | z, β, σ 2) p(β | z, σ 2) p(σ2) dβ dσ 2, (10) whose scale matrix and degrees of freedom are determined by the active set z, the design matrix induced by the history, and the prior hyperparameters (α0, β 0, τ 2active , τ 2inactive , π int ). The full derivation is provided in Appendix C. 4This analytical marginalization has two consequences for training. First, the sPCE objective (Eq. 4) special-izes naturally: contrastive samples need only be drawn from p(z) over the discrete activity indicators, with each trajectory likelihood p(hT | zi) evaluated via the closed-form Student-t marginal. Second, because β
+
+and σ2 never appear in the contrastive draws, the Monte Carlo variance of the estimator does not inflate with the dimension of the continuous parameters, keeping the training signal stable as p increases. The resulting estimator therefore targets the cumulative mutual information I(z; hT | πϕ) between the activity indicators and the trajectory under the policy, rather than the full I(θ; hT | πϕ) = J (ϕ) used in DAD-style methods. This concentrates the training signal on the discrete screening decision. The continuous parameters (β, σ 2)
+
+are integrated out analytically during training and recovered exactly at deployment via the closed-form Gibbs sampler. 
+
+3.3 Learning the Adaptive Design Policy 
+
+The conjugate linearGaussian structure yields a closed-form marginal likelihood, eliminating the need for variational bounds or nested Monte Carlo estimators typically required in Bayesian optimal experimental design. As a result, policy learning reduces to direct maximization of the sPCE objective using standard gradient-based methods. However, the designs ξt ∈ {− 1, +1 }p are discrete. Therefore, pathwise gradient estimators cannot be applied directly. To enable end-to-end training while preserving discrete designs at evaluation, we employ a straight-through GumbelSoftmax relaxation (Jang et al., 2017; Maddison et al., 2017). At each step, the policy network outputs logits ℓt = πϕ(ht−1) ∈ Rp, and a design is sampled as 
+
+ξt = sign( ℓt + gt), gt ∼ Gumbel(0 , τ ), (11) with temperature τ annealed from τstart to τend during training. The forward pass uses the discrete {− 1, +1 }
+
+designs for likelihood evaluation, while the backward pass propagates gradients through the continuous relaxation (Tucker et al., 2017). At evaluation time, Gumbel noise is removed and logits are thresholded at zero, yielding deterministic {− 1, +1 } designs. Because the history ht−1 grows with t, we compress it into fixed-dimensional sufficient statistics before passing it to the policy. Specifically, we map (X>
+
+> t−1
+
+Xt−1, X >
+
+> t−1
+
+yt−1, y >
+
+> t−1
+
+yt−1), which fully determine the Student-t posterior under the conjugate prior, through a two-hidden-layer multilayer perceptron (MLP) that outputs the logits ℓt. This representation is exactly sufficient for Bayesian inference under the linearGaussian likelihood and yields a more sample-efficient policy than set-equivariant encoders applied directly to the raw 
+
+(ξs, y s) pairs. The encoder architecture and a formal sufficiency argument are given in Appendix D. A practical failure mode in sequential design policies is collapse, where the policy repeatedly selects identical or highly similar designs across steps, effectively ignoring the adaptive nature of the task (Crombecq et al., 2011). In screening, this is particularly problematic: repeating the same design provides no additional information, as observations are conditionally independent given θ. Empirically, optimizing sPCE alone does not prevent collapse, since increasing logit magnitudes drive the softmax toward a degenerate deterministic policy long before exploration has resolved the posterior over z.To mitigate this, we add a squared-ℓ2 penalty on the policy logits (Fanuel et al., 2021; Schreurs et al., 2022): 
+
+LL2(ϕ) = 1
+
+> T
+
+∑Tt=1 ‖ℓt‖22, which keeps logits bounded and preserves Gumbel-induced exploration throughout training. The full objective is 
+
+L(ϕ) = −̂ sPCE L(ϕ) + μ LL2 (ϕ), (12) where μ controls the trade-off between information gain and policy regularization. We minimize L(ϕ) via stochastic gradient descent, which is equivalent to maximizing the sPCE lower bound subject to an ℓ2
+
+penalty on the policy logits. Adding the penalty does shift the stationary points of the combined objective, but its strength grows with the logit magnitude, so it acts primarily in the runaway-logit regime that leads to collapse. Because identical designs carry no additional information under conditional independence, a policy that maximizes J (ϕ) naturally produces diverse designs with moderate logit magnitudes, for which the penalty is negligible. Its role is therefore to prevent the large-logit collapse to which Gumbel-Softmax training is prone, rather than to trade off information gain. The full training procedure is summarized in the pseudo code in Appendix E. 53.4 Policy Network Architecture 
+
+Having defined the policy optimization procedure, we now describe the parametrization of the design policy 
+
+πϕ(ξt | ht−1). The policy must map a variable-length history of experiment-outcome pairs to the next design, with two structural requirements: (i) invariance to the order of past experiments and (ii) accommodation of histories of growing length. In the screening setting, observations are conditionally independent given the true parameters, yt ⊥ ht−1 |
+
+θ, ξ t. As shown by Foster et al. (2021), this implies that the optimal policy depends only on the multiset of past (ξs, y s) pairs, not their order. We exploit this structure by basing πϕ on the sufficient statistics of the linearGaussian likelihood, which are permutation-invariant by construction. Given history ht−1 with expanded design matrix Xt−1 ∈ R(t−1) ×dfull (main-effect columns plus two-factor interaction columns) and response vector yt−1 ∈ Rt−1, we compute 
+
+st−1 = (vec( X>
+
+> t−1
+
+Xt−1), X >
+
+> t−1
+
+yt−1, y >
+
+> t−1
+
+yt−1
+
+) ∈ R dfull (dfull +1) 2 +dfull +1 (13) where dfull = p + p(p − 1) /2 and vec( ·) extracts the upper-triangular entries of the symmetric matrix 
+
+X>
+
+> t−1
+
+Xt−1. These statistics are exactly sufficient for the Student-t posterior over (β, σ 2) under the conjugate NormalInverse-Gamma prior (Section 3.2), and their dimension is constant in T .The policy logits are produced by a single MLP: ℓt = μϕ(st−1, t ) ∈ Rp, where t is a scalar positional index appended to the input. The MLP μϕ has two hidden layers with Softplus activations and applies dropout during training to prevent logit saturation. From ℓt, the design ξt ∈ {− 1, +1 }p is produced via the straight-through Gumbel-Softmax mechanism described in Section 3.3. This design has two key properties. Permutation invariance over past experiments holds by construction, since the statistics in Eq. 13 are symmetric functions of the (ξs, y s) pairs. Moreover, πϕ is the only trainable component of the system: leveraging the closed-form Student-t marginal, the contrastive objective (Eq. 4) can be evaluated analytically, without requiring a separate utility or critic network. As a result, training reduces to backpropagating a single likelihood-based loss through a single MLP, avoiding the instabilities often associated with multi-network adversarial training. Figure 1(a) provides a visual overview. 
+
+3.5 Posterior Inference and Deployment 
+
+Following the completion of T adaptive experiments, the collected history hT is used to identify the active factors and estimate their effects via the posterior distribution p(z, β | hT ). Unlike prior policy-based BOED methods, which focus solely on design, DABS integrates posterior inference into deployment, enabling both variable selection and posterior uncertainty quantification. Direct posterior computation is intractable due to the discrete nature of z ∈ { 0, 1}p. We therefore employ a Gibbs sampler (George & McCulloch, 1993; Geman & Geman, 1984; George & McCulloch, 1997) that alternates between sampling (β, σ 2) | z, h T and z | β, σ 2, h T , all available in closed form under the conjugate NormalInverse-Gamma g-prior and Gaussian likelihood (see Algorithm 2 in Appendix F for the full deploy-ment pipeline, and Appendix G for the Gibbs step-by-step details). The primary outputs are the posterior activity probabilities and effect size estimates: 
+
+ˆP (zk = 1 | hT ) = 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+z(g) 
+
+> k
+
+, ˆβk = 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+β(g) 
+
+> k
+
+. (14) with analogous expressions for the interaction indicators zij and effects βij . A factor (or interaction) is declared active if ˆP (zk = 1 | hT ) > 0.5, and uncertainty is quantified via posterior credible intervals. The full inference procedure is summarized in Figure 1(b). 6(a) Policy network πϕ                 
+
+> History ht−1
+> (ξ1, y 1), ..., (ξt−1, y t−1)
+> Sufficient Statistics
+> X>X, X >y, y >y
+> MLP μϕ
+> (Dropout)
+> Gumbel-Softmax
+> ξt∈ {− 1,+1 }p
+> Eq. 13
+> +step index t
+> Eq. 11
+> (b) Deployment &posterior inference
+> Run πϕ
+> Tsteps hT
+> Gibbs sampler
+> P(zk= 1 |hT)ˆβk,95 % CI
+> T forward passes
+> Eqs. 36, 37
+
+Figure 1: (a) DABS policy network πϕ and (b) deployment with Gibbs posterior inference. 
+
+3.6 When Does Adaptivity Help 
+
+The screening model of Sections 3.1–3.2 decomposes θ = ( z, β, σ 2) into discrete activity indicators, continuous effect sizes, and the noise variance. This decomposition determines which component of θ carries the adaptive gain and which does not. By the chain rule of mutual information, the total information the experimental history hT carries about θ
+
+factorises as 
+
+I(θ; hT ) = I(z; hT ) + Ez
+
+[I(β, σ 2; hT | z)] . (15) The first term measures information about the discrete active-set indicators. The second measures infor-mation about the effect sizes and noise variance conditional on the active set. The sPCE objective used by DABS (Eq. 4) targets the first term via the analytical Student-t marginalisation of Section 3.2, integrating out β and σ2.A classical result on Bayesian experimental design in linear-Gaussian likelihoods (Lindley, 1955; Chaloner & Verdinelli, 1995) establishes that the posterior covariance of (β, σ 2) given z depends only on the design matrix and not on the observed responses. The conditional information gain I(β, σ 2; hT | z) is therefore a function of the design matrix alone: an optimal non-adaptive design achieves the same conditional information gain as any adaptive policy at equal budget. All adaptive leverage in Eq. 15 flows through the first term, I(z; hT ).         
+
+> p
+> TT=p
+> static ≈DABS (identifiable)
+> DABS advantage
+> §5.2
+> §5.3
+> §5.4
+> 510 15 20 25
+> 5
+> 10
+> 15
+> 20
+> 25
+
+Figure 2: The wedge prediction: below the boundary 
+
+T = p, DABS opens an advantage over the optimal static design, with arrows marking each case study’s sweep. The adaptive term I(z; hT ) is bounded above by the identifiability dimension of z. When the bud-get T is large relative to this dimension, the de-sign has enough capacity to span the coordinate directions required to resolve z, and no fixed-versus-adaptive gap remains. Below this identi-fiability boundary, DABS can use early observa-tions to identify candidate actives and steer sub-sequent queries into the relevant subspace, while a static policy must commit to a T -dimensional measurement subspace before any data are ob-served. This predicts a wedge in the (p, T ) plane, illustrated in Figure 2. The experiments of Sec-tion 5 test this prediction along complementary axes: sweeping T at fixed p (Section 5.2), sweep-ing p at fixed T (Section 5.3), and sweeping T at three problem sizes under strong-heredity inter-action recovery (Section 5.4). 74 Related work 
+
+Screening designs are a core component of design of experiments for efficiently identifying active factors with few runs. Traditional methods (Guptha et al., 2025) (fractional factorial (Box et al., 2005), Plackett-Burman (Plackett & J.P., 1946) and supersaturated designs (Wang, 1967)) focus on estimating main effects and, when resolution permits, interactions under sparsity assumptions. These methods are non-adaptive by construction: the experimental plan is fixed before any observations are collected. When the goal is to identify active factors under a tight budget, this static structure can be inefficient, as it allocates runs uniformly without exploiting the sparsity of the active set (Ravi et al., 2016), and ignores information that early observations provide about uninformative directions. Bayesian screening methods instead quantify uncertainty over the active-factor set and model sparsity explicitly through priors such as spike-and-slab (Mitchell & Beauchamp, 1986; George & McCulloch, 1997) or horseshoe (O’Hara & Sillanpää, 2009). These methods focus on posterior inference and variable selection but typically assume a fixed experimental design. Recent work extends these ideas to ultra-high-dimensional regression (Run et al., 2025) or double-robust variable selection (Linhan et al., 2026). The foundational framework for sequential experiment selection is provided by Bayesian Optimal Experimental Design formalized by Chaloner & Verdinelli (1995), which selects experiments by maximizing an information theoretic utility. However, in practice, these methods are not amortized: each new experiment requires an expensive optimization step at decision time (Poole et al., 2019; Butakov et al., 2024; Wang et al., 2024; Guo et al., 2021), limiting use in sequential settings. A widely used simplification of classical BOED is greedy one-step lookahead (Jones et al., 1998; Foster et al., 2019a), which we use as the Myopic baseline in Section 5.1. Amortized policy-based Bayesian experimental design was introduced with Deep Adaptive Design (DAD) (Foster et al., 2021) and its likelihood-free extension iDAD (Ivanova et al., 2021) (we do not adopt this variant, see Appendix I), which learn a policy offline to map past observations to new experimental de-signs. This avoids the expensive per-step optimization required by classical Bayesian optimal experimental design (Chaloner & Verdinelli, 1995). Subsequent work extends this framework to continuous dynamical sys-tems (Strouwen & Micluta-Câmpeanu, 2026). These methods optimize cumulative information gain during training. Posterior inference at deployment is typically delegated to a separate mechanism (Huang et al., 2024). Recent work has explored targeted experimental design objectives that focus on specific functionals of the parameters rather than total information (e.g., contextual optimization in CO-BED (Ivanova et al., 2023), predictive information gain in EPIG (Bickford Smith et al., 2023)). In contrast, we target informa-tion about the support indicators of active factors. However, existing amortized approaches were developed for continuous-parameter estimation and do not incorporate the sparsity or heredity structure of screening problems. Adapting them to the discrete factorial regime with binary designs {− 1, +1 }, strong-heredity interactions, and tight experimental budgets T  p is the gap we address. 
+
+# 5 Results 
+
+5.1 Experimental Setup 
+
+We evaluate DABS on three published screening benchmarks calibrated to real-world experimental settings and compare it against four baselines spanning Bayesian design, classical DoE, and adaptive sensing. The benchmarks are chosen to test the wedge prediction of Section 3 across complementary directions. We first describe the evaluation protocol before introducing the case studies and baselines. Every experiment reports F1, true positive rate (TPR) and false discovery rate (FDR) computed from the Gibbs decoder at posterior inclusion threshold 0.5. Metrics are reported separately for main effects and two-factor interactions. Error bars denote 95% confidence intervals over five independent random seeds for each (p, T ) setting. Section 3 predicts that adaptivity is beneficial only when the experimental budget T is insufficient to identify the active set z. Once this identifiability boundary is crossed, adaptive and optimal fixed designs should perform similarly because, under the linear-Gaussian model, adaptation cannot improve estimation of ef-8fect sizes conditional on z (Lindley, 1955; Chaloner & Verdinelli, 1995). The experiments below test this prediction by varying either the experimental budget or the problem size. We consider three published screening benchmarks. For each benchmark, we simulate responses under the model of Section 3 with hyperparameters calibrated to the published problem. Case Study 1 uses the biotechnological benchmark of inulinase production by A. niger (Poorna & Kulkarni, 1995), with p = 15 
+
+candidate factors and three active main effects, while varying T from 4 to 16. Case Study 2 uses the biomedical benchmark of hematopoietic stem-cell expansion in cord blood (Yao et al., 2004), fixing T = 16 
+
+and increasing p from 10 to 26, causing the expected number of active factors to grow from roughly four to ten. Case Study 3 uses the metallurgical benchmark of electrochemical dissolution of GH4738 nickel-based superalloy scrap (Liu et al., 2025), containing four active main effects and three two-factor interactions under strong heredity. Here we vary T for p ∈ { 4, 6, 8}.We compare DABS with four baselines. The static design is the optimal fixed design under the same Bayesian model and sPCE objective, isolating the benefit of adaptivity. The Plackett–Burman design (Plackett & J.P., 1946) provides the standard orthogonal fractional-factorial baseline. The myopic baseline greedily maximises one-step expected information gain under the same Bayesian model, isolating the value of the learned policy. Finally, the multi-stage adaptive baseline from compressed sensing (Haupt et al., 2011) iteratively prunes candidate factors using marginal-effect estimates. The static and myopic methods therefore serve as matched Bayesian controls, while the latter two compare DABS against established approaches from neighbouring literatures. Code, model checkpoints and evaluation scripts are available from the author. 
+
+5.2 Main effects screening (biotechnology benchmark) 
+
+This first case study considers the biotechnological benchmark of inulinase production by A. niger (Poorna & Kulkarni, 1995). The experiment involves p = 15 controllable factors: four carbon sources (glucose 
+
+X1, fructose X2, inulin X3, sucrose X4), eight nitrogen sources ( X5, . . . , X 12 , including yeast extract X5
+
+and peptone X6), medium pH ( X13 ), inoculum level ( X14 ), and trace element concentration ( X15 ). The published analysis identifies X3, X5, and X13 as the three factors with a statistically significant effect on inulinase activity. We simulate data from the spike-and-slab model of Section 3 with ρ ∼ Beta(2 , 8) , τactive = 1 .0, τinactive =0.01 , and σ = 0 .5 (SNR = τ 2
+
+> active
+
+/σ 2 = 4 ). The budget is swept over T ∈ { 4, 6, 8, 10 , 12 , 14 , 16 }, spanning the under-identified regime T < p and reaching the identifiability boundary T = p = 15 . For each (T, seed ) cell, we train one DABS policy, evaluated over 100 rollouts on main-effect F1 and TPR. FDR curves are reported in Appendix H.1. 
+
+Figure 3: Main-effect F1 (left) and TPR (right) versus budget T at p = 15 . Bands are 95% CIs over 5 seeds. Figure 3 shows main-effect F1 (left) and TPR (right) versus the budget T . In the deep-screening regime at T ≤ 6, all adaptive methods dominate the static design. At T = 4 , static F1 is 0.03 against 0.16 for DABS, 0.24 for the myopic baseline and 0.26 for the multi-stage adaptive baseline. Three of five static 9seeds collapse to F1 below 0.05 : the sPCE-optimised batch cannot commit to an informative measurement direction without observed responses. Notably, DABS does not lead the adaptive methods. At the smallest budgets, per-instance greedy selection exploits the available observations faster than the amortised policy. At T = 8 , DABS pulls ahead of every baseline for the first time, reaching F1 = 0 .45 against 0.42 (myopic), 
+
+0.41 (static), and 0.36 (multi-stage adaptive). This is the crossover where the amortised policy’s ability to plan ahead more than one step becomes decisive. From T = 10 onward, DABS and the static design are statistically indistinguishable: at T = 16 they reach 0.78 and 0.80 respectively with overlapping CIs, matching the wedge prediction that no adaptive gain remains once T clears the identifiability boundary. The two Bayesian arms then jointly dominate the non-Bayesian baselines: myopic F1 flattens at approximately 
+
+0.62 , Plackett-Burman reaches 0.48 at its native T = 16 , and multi-stage adaptive plateaus at approximately 
+
+0.36 from T = 8 onwards. The comparison with Plackett–Burman and the multi-stage adaptive baseline measures the value of the Bayesian modelling framework, whereas the comparison with the myopic baseline isolates the additional benefit of amortised long-horizon planning over greedy one-step experimental selection. This convergence matches the wedge prediction of Section 5.1 (formally derived in Section 3.6): once T
+
+clears the identifiability dimension of z, static and adaptive designs achieve the same expected information gain and DABS’ advantage collapses. Once trained, DABS produces each design in a single forward pass, at the marginal cost of a precomputed static design. Timing is reported in Appendix J and a single-rollout visualisation in Appendix K. The same pattern of adaptive dominance below the identifiability boundary and convergence above it appears in the next two case studies (Sections 5.3 and 5.4). 
+
+5.3 Scaling with the number of factors (HSC expansion benchmark) 
+
+This second case study considers the ex vivo expansion of human hematopoietic stem cells (HSCs) from umbilical cord blood (Yao et al., 2004), a clinically important process bottlenecked by cord-blood availability. The yield depends on the composition of the culture medium, which combines serum substitutes (bovine serum albumin, insulin, transferrin) with ten candidate cytokines including stem cell factor (SCF), Flt-3 ligand (FL), interleukin-3 (IL-3), and thrombopoietin (TPO). Cytokines are expensive to procure and biologically active, so both false positives and false negatives carry real cost. Yao et al. (2004) used a 210 −6
+
+fractional factorial design with T = 16 runs to screen all ten candidates and identified four cytokines (SCF, FL, IL-3, TPO) as the dominant drivers of expansion, later confirmed by follow-up optimisation studies. Full simulation details are in Appendix J. We simulate data from the spike-and-slab model of Section 3 with τactive = 1 .0, τinactive = 0 .01 , σ = 0 .5
+
+(SNR = 4 ), and ρ ∼ Beta(4 , 6) (prior mean 0.4). At the fixed budget T = 16 of the original Yao et al. design, we vary p ∈ { 10 , 12 , 14 , 15 , 16 , 18 , 20 , 22 , 24 , 26 }. The expected number of active main effects grows from 4 at p = 10 to 10.4 at p = 26 , and the budget crosses the number of candidate factors at p = T = 16 ,the boundary between the identifiable and under-identified regimes. The sweep stops at p = 26 because the sufficient-statistics encoder, whose input dimension grows as O(p4), exceeds our GPU memory budget beyond this point. Each policy is evaluated over 100 rollouts on main-effect F1 and FDR. TPR curves are reported in Appendix H.2. The four baselines are as defined in Section 5.1. The 16-run Plackett-Burman (PB) design is only applicable for p ≤ 15 since a T -run PB design requires T ≥ p + 1 . Consequently, no PB results are reported for p ≥ 16 .The static, DABS, myopic and multi-stage adaptive methods remain applicable across the full sweep. Figure 4 (left) shows main-effect F1 as a function of p. Below the boundary p ≤ 16 , DABS and the static design are statistically indistinguishable, matching the wedge prediction that no adaptive gain remains when 
+
+T ≥ p. The myopic baseline reaches a slightly higher F1 in this regime (0.62 to 0.72), Plackett-Burman trails at 0.48 to 0.62 and multi-stage adaptive plateaus around 0.35 to 0.43. From p = 18 onwards the picture changes: DABS sits above every baseline, reaching F1 = 0 .52 at p = 26 against 0.47 (static), 0.43 
+
+(myopic), and 0.39 (multi-stage adaptive), with non-overlapping confidence intervals against the static design. Plackett-Burman is inapplicable above p = 15 . Multi-stage adaptive stays flat throughout, unable to convert additional budget into wider active-set search. The pattern mirrors the wedge from Case Study 1: the adaptive gain of DABS opens when the design is structurally information-starved, which here corresponds to p > T .10 Figure 4: Main-effect F1 (left) and FDR (right) versus p at T = 16 . Bands are 95% CIs over 5 seeds. Figure 4 (right) shows main-effect FDR. In the identifiable regime p ≤ 15 , the myopic baseline achieves the lowest FDR (0.16 to 0.27), followed by DABS (0.18 to 0.29), the static design (0.20 to 0.34), multi-stage adaptive (0.27 to 0.33), and Plackett-Burman (0.29 to 0.42). From p = 16 onwards the ordering shifts. DABS’ FDR flattens around 0.32 to 0.35, the static baseline climbs from 0.35 to 0.44, and the myopic baseline degrades from 0.29 to 0.40. At p = 26 DABS achieves an FDR of 0.35 against 0.44 for the static design, a nine-percentage-point improvement. Multi-stage adaptive drifts in the opposite direction, dropping to about 0.30 in the middle of the sweep. The mechanism is asymmetric. The static design must distribute its budget uniformly across all p candidates because it has no information about which ones are active. As p grows, each coordinate receives less measurement effort and the posterior becomes weakly informative for a larger fraction of candidates. The Gibbs decoder, applied with threshold 0.5, then commits to false positives among the uncertain inactives. DABS instead uses early observations to suppress probing on coordinates that show no evidence of activity, and concentrates the remaining budget on the suspected active subset. The FDR gap over the static baseline drives the F1 gap of Figure 4 (left). Together, Sections 5.2 and 5.3 characterize the screening-regime advantage of DABS along two complemen-tary axes. Section 5.2 varied the budget T at fixed p = 15 and showed adaptive gains that are largest at small T and close as T approaches p. Section 5.3 fixed the budget at T = 16 and varied p, showing gains that open at p ≥ T and grow with the over-parameterization ratio. Both axes confirm that DABS dominates when the design is structurally information-starved. Section 5.4 turns to a different question: whether the same adaptive advantage extends to two-factor interaction recovery under a strict experimental budget. 
+
+5.4 Two-factor interaction screening (metallurgical benchmark) 
+
+This third case study considers the electrochemical dissolution of GH4738 nickel-based superalloy scrap (Liu et al., 2025). The process is governed by p = 8 parameters, of which four are the active main effects: current density ( X1), H 2SO 4 concentration ( X2), NiCl 2 concentration ( X4) and electrolysis time ( X6). Prior analysis (Liu et al., 2025) identifies three significant two-factor interactions, X1X6, X2X4, and X2X6, all satisfying strong heredity. The original study used a 12-run Plackett-Burman design. Even at T = 16 , the interaction-recovery problem is under-identified: a Resolution V fractional factorial requires 28−2 = 64 runs to estimate the p + (p
+
+> 2
+
+) = 36 terms without aliasing and a modern D-optimal design requires 37 runs (Goos & Jones, 2011). We simulate data from the spike-and-slab model of Section 3 with τactive = 1.0, τinactive = 0.01 ,
+
+σ = 0 .25 , and ρ ∼ Beta(5 , 5) (prior mean 0.5). Strong heredity is enforced on the interaction indica-tors. We sweep the budget T at three problem sizes: T ∈ { 3, 4, 5, 6, 8, 10 , 12 , 16 , 18 , 20 } at p = 4 and 
+
+T ∈ { 6, 8, 10 , 12 , 14 , 16 , 18 , 20 , 24 } at p ∈ { 6, 8}. The largest budgets remain well below the Resolution-V threshold noted above. Each policy is evaluated over 100 rollouts on main-effect F1 and interaction F1. TPR and FDR curves for both main effects and interactions are reported in Appendix H.3. 11 The four baselines are as defined in Section 5.1. Two are omitted from this case study. Plackett-Burman is a main-effects-only design whose interaction columns are fully aliased and cannot resolve two-factor inter-actions. The multi-stage adaptive baseline is likewise main-effects-only. This case study therefore compares DABS against the two baselines whose designs can resolve two-factor interactions: the static sPCE-optimised design and the myopic baseline. 
+
+Figure 5: Main-effect F1 versus budget T across problem sizes p ∈ { 4, 6, 8}. Bands are 95% CIs over 5 seeds. Figure 5 shows main-effect F1 across the budget sweep. At every problem size p ∈ { 4, 6, 8}, DABS and the static design track each other closely, with differences of at most 2 to 3 percentage points across most of the range. Both climb monotonically with T and approach a common ceiling (F1 ≈ 0.83 at p = 4 , 0.90 
+
+at p = 6 , 0.93 at p = 8 ). At the smallest budgets, where the design is briefly under-identified for main effects, DABS opens a small edge over the static design (for example at p = 4 , T = 3 : DABS 0.59 against static 0.55 ), consistent with the wedge prediction from the previous case studies. The myopic baseline lags behind both amortised policies across the sweep, by 10 to 20 percentage points at small budgets and by 5 to 10 percentage points at high budgets. Main-effect recovery is largely a ceiling story here. The budgets 
+
+Figure 6: Two-factor interaction F1 versus budget T across problem sizes p ∈ { 4, 6, 8}. Bands are 95% CIs over 5 seeds. tested cover the identifiable regime for main effects, so DABS and the static design achieve nearly the same expected information gain on z and their F1 curves converge. What separates the two amortised policies from the myopic baseline is that both allocate budget with a global view of the sPCE objective, while myopic selects greedily one step at a time. Figure 6 tells a different story. At every problem size, DABS and the static design climb from near-zero interaction F1 at small budgets toward a shared plateau at high T : interaction F1 of approximately 0.37 at 
+
+p = 4 (T = 20 ), 0.57 at p = 6 (T = 24 ), and 0.70 at p = 8 (T = 24 ). The myopic baseline converges to a substantially lower plateau at each p (0.22 , 0.36 , 0.46 respectively). The gap between the amortised policies and myopic is large and persistent across the full sweep. 12 The three-way ordering DABS > Static > Myopic emerges most clearly at p = 6 in the mid-budget window. At T = 16 , DABS reaches interaction F1 = 0 .53 against 0.49 (static) and 0.28 (myopic), and at T = 18 the values are 0.56 , 0.51 , and 0.39 . Adaptivity alone (myopic) does not close the gap with the well-balanced static design and the static design does not match the DABS target of I(z; hT ). What delivers the interaction-recovery gain is a two-phase strategy: DABS uses early experiments to identify candidate active main effects and later experiments to probe the heredity-consistent ξiξj pairs among them. Under strong heredity, DABS can prune the interaction search space only after the active parents have been identified, so its advantage sits in the narrow budget window where mains have just been resolved but the candidate interaction set is not yet saturated. Neither greedy adaptivity nor a fixed balanced design can implement this within a single budget. The interaction-recovery results confirm that the wedge prediction extends beyond main-effect screening: under strong heredity, the adaptive gain of DABS opens in the mid-budget window where the main-effect subset has just been resolved and the interaction search space has not yet saturated. Beyond these accuracy patterns, DABS is trained offline once and generates each design at deployment in a single forward pass, at the marginal cost of a precomputed static design. Sequential adaptive baselines like the myopic method or multi-stage adaptive procedures require solving a fresh optimisation at every experimental step, which limits their use in time-sensitive workflows. 
+
+5.5 Ablations & Robustness 
+
+We assess the main design choices in DABS and its robustness to misspecification. We ablate the logit-ℓ2
+
+penalty that prevents policy collapse, the sufficient-statistics encoder against a permutation-invariant MLP encoder, the policy initialisation, the reward structure, and the training objective I(z; hT ) against the total-information target I(θ; hT ) used by DAD-style methods. We further evaluate robustness to the observation noise level, to a misspecified sparsity prior, and to a heredity mismatch in which a policy trained under strong heredity is evaluated under weak heredity. A broader hyperparameter sensitivity analysis completes the study. Results and discussion are provided in Appendix B. 
+
+5.6 Limitations 
+
+Training the DABS policy requires substantial upfront computation, particularly for large p and T where the Student-t covariance scales as T 2 per contrastive sample. This cost is amortised: once trained, a single policy is reused across new experiment instances under the same prior, and the cost-performance trade-off is controlled through the number of training steps and contrastive samples. A second limitation is that the closed-form Student-t marginal relies on conjugacy between the spike-and-slab prior and the Gaussian likelihood. Extending DABS to non-conjugate priors or non-Gaussian responses would require likelihood-free contrastive estimators or auxiliary-variable augmentations. Finally, the method assumes a strong-heredity structure for interactions. Its scaling to large p is further limited by both network capacity and the cost of training. 
+
+# 6 Conclusions 
+
+In this paper we introduced DABS, a policy-based adaptive Bayesian experimental design method for discrete factorial screening under spike-and-slab priors. By exploiting conjugacy between the prior and likelihood, DABS trains a single policy via Prior Contrastive Estimation on an analytical Student-t marginal and recovers the active factor set through Gibbs posterior inference at deployment. In our experiments, DABS matches or outperforms the strongest non-adaptive Bayesian baseline on a biotechnological screening benchmark, a scaling study with varying dimensionality, and an interaction-recovery benchmark under strong heredity. The largest gains arise precisely where classical orthogonal designs fall short. DABS thereby bridges the gap between modern amortised BOED methods and classical screening practice, enabling efficient adaptive design that directly targets mutual information through a closed-form marginal over the support variables. 13 References 
+
+Freddie Bickford Smith, Andreas Kirsch, Sebastian Farquhar, Yarin Gal, Adam Foster, and Tom Rainforth. Prediction-Oriented Bayesian Active Learning. In International Conference on Artificial Intelligence and Statistics , volume 206, pp. 7331–7348, 25–27 Apr 2023. George E.P. Box and R. Daniel Meyer. An analysis for Unreplicated Fractional Factorials. Technometrics ,28(1):11–18, 1986. George E.P. Box, J. Stuart Hunter, and William G. Hunter. Statistics for experimenters: Design, Innovation, and Discovery . Wiley, 2005. Ivan Butakov, Alexander Tolmachev, Sofia Malanchuk, Anna Neopryatnaya, and Alexey Frolov. Mutual information estimation via normalizing flows. In Advances in Neural Information Processing Systems ,volume 37, pp. 3027–3057, 2024. Kathryn Chaloner and Isabella Verdinelli. Bayesian Experimental Design: A Review. Statistical Science , 10 (3):273–304, 1995. Hugh Chipman. Bayesian variable selection with related predictors. The Canadian Journal of Statistics , 24 (1):17–36, 1996. Hugh Chipman, Edward I. George, and Robert E. McCulloch. The practical implementation of Bayesian Model Selection. Lecture Notes-Monograph Series , 38:65–116, 1997. K. Crombecq, E. Laermans, and T. Dhaene. Efficient space-filling and non-collapsing sequential design strategies for simulation-based modeling. European Journal of Operational Research , 214:683–696, 2011. Michaël Fanuel, Joachim Schreurs, and Johan A.K. Suykens. Diversity sampling is an implicit regularization for kernel methods. SIAM Journal on Mathematics of Data Science , 3(1):280–297, 2021. Adam Foster, Martin Jankowiak, Eli Bingham, Paul Horsfall, Yee Whye Teh, Tom Rainforth, and Noah Goodman. Variational Bayesian Optimal Experimental Design. In Advances in Neural Information Pro-cessing Systems , volume 32, 2019a. Adam Foster, Martin Jankowiak, Matthew J. O’Meara, Yee Whye Teh, and Tom Rainforth. AUnified Stochastic Gradient Approach to Designing Bayesian-Optimal Experiments. In International Conference on Artificial Intelligence and Statistics , pp. 2959–2968, 2019b. Adam Foster, Desi R Ivanova, Ilyas Malik, and Tom Rainforth. Deep Adaptive Design: Amortizing Sequential Bayesian Experimental Design. In International Conference on Machine Learning , pp. 3384– 3395, 2021. Stuart Geman and Donald Geman. Stochastic relaxation, Gibbs Distributions, and the Bayesian Restoration of images. IEEE Transactions on Pattern Analysis and Machine Intelligence , PAMI-6(6), 1984. Edward I. George and Robert E. McCulloch. Variable Selection Via Gibbs Sampling. Journal of the Amer-ican Statistical Association , 88(423):881–889, 1993. Edward I. George and Robert E. McCulloch. Approaches for Bayesian Variable Selection. Statistica Sinica ,7:339–373, 1997. Peter Goos and Bradley Jones. Optimum Design of Experiments: A Case Study Approach . Wiley, 2011. Dan Guo, Xilu Wang, Kailai Gao, Yaochu Jin, J.L. Ding, and Tianyou Chai. Evolutionary Optimization of High-Dimensional Multiobjective and Many-Objective Expensive Problems assisted by a Dropout Neural Network. IEEE Transactions on Systems, Man, and Cybernetics: Systems , PP:1–14, 2021. 14 Prathap Madeswara Guptha, Vijayaraj Surendran, and Raghavendra Kumar Gunda. Casting a spotlight on factorial design: Exploring the power of DoE for experiment screening and optimization: A review. Indian Journal of Pharmaceutical Education and Research , 59(2):406–416, 2025. M. Hamada and C. F. Jeff Wu. Analysis of designed experiments with complex aliasing. Journal of Quality Technology , 24(3), 1992. Jarvis Haupt, Rui M. Castro, and Robert Nowak. Distilled sensing: Adaptive sampling for sparse detection and estimation. IEEE Transactions on Information Theory , 57(9), 2011. Daolang Huang, Yujia Guo, Luigi Acerbi, and Samuel Kaski. Amortized Bayesian Experimental Design for Decision-Making. arXiv preprint arXiv:2411.02064 , 2024. Hemant Ishwaran and J. Rao. Spike and Slab Variable Selection: Frequentist and Bayesian strategies. The Annals of Statistics , 33:730–773, 2005. Desi R Ivanova, Adam Foster, Steven Kleinegesse, Michael U. Gutmann, and Tom Rainforth. Implicit Deep Adaptive Design: Policy-Based Experimental Design without likelihoods. In Advances in Neural Information Processing Systems , pp. 25785–25798, 2021. Desi R. Ivanova, Joel Jennings, Tom Rainforth, Cheng Zhang, and Adam Foster. CO-BED: Information-theoretic contextual optimization via Bayesian experimental design. In International Conference on Ma-chine Learning , volume 202, pp. 14445–14464, 23–29 Jul 2023. Eric Jang, Shixiang Gu, and Ben Poole. Categorical Reparameterization with Gumbel-Softmax. In Inter-national Conference on Learning Representations , 2017. Donald R. Jones, Matthias Schonlau, and William J. Welch. Efficient global optimization of expensive black-box functions. Journal of Global Optimization , 13(4):455–492, 1998. J Kiefer. General equivalence theory for optimum designs (approximate theory). Annals of Statistics. , 2(5): 849–879, 1974. D.V. Lindley. On a measure of the information provided by an experiment. The Annals of Mathematical Statistics , 27(4):986–1005, 1955. Ouyang Linhan, Yan Ling, Sun Minghe, and Wang Min. Double-robust Bayesian variable selection and model prediction with spherically symmetric error. IISE Transactions , 58(2):181–294, 2026. Guiqun Liu, Xinyu Fang, Xiaoli Zhang, and Guanglei Lv. Optimization of dissolution parameters for gh4738 scrap via response surface methodology. Materials , 18(4), 2025. Chris J. Maddison, Andriy Mnih, and Whye Teh Yee. The concrete distribution: A continuous relaxation of discrete random variables. In International Conference on Learning Representations , 2017. T.J. Mitchell and J.J. Beauchamp. Bayesian variable selection in linear regression. Journal of the American Statistical Association , 83:1023–1032, 1986. Toby J. Mitchell. An algorithm for the construction of D-Optimal experimental designs. Technometrics , 16 (2):203–210, 1974. Douglas C. Montgomery. Design and Analysis of Experiments . Wiley, 2017. R.B. O’Hara and M.J. Sillanpää. A review of bayesian variable selection methods: what, how and which. 
+
+Bayesian Analysis , 4:85–117, 2009. R.L. Plackett and Burman J.P. The design of optimum multifactorial experiments. Biometrika , 33(4): 305–325, 1946. 15 Ben Poole, Aäron van den Oord, and Tucker George Alemi, Alexander A. On Variational Bounds of Mutual Information. In International Conference on Machine Learning ,volume 97, pp. 5171–5180, 2019. V. Poorna and P.R. Kulkarni. A study of inulinase production in Aspergillus niger using fractional factorial design. Bioresource Technology , 54(3):315–320, 1995. Friedrich Pukelsheim. Optimal Design of Experiments . Wiley, 1993. Tom Rainforth, Robert Cornish, Hongseok Yang, Andrew Warrington, and Frank Wood. On Nesting Monte Carlo Estimators. In International Conference on Machine Learning , pp. 4267– 4276, 2018. Sathya Narayanan Ravi, Vamsi Ithapu, Sterling Johnson, and Vikas Singh. Experimental Design on a Budget for Sparse Linear Models and Applications. In International Confer-ence on Machine Learning , volume 48, pp. 583–592, 2016. Wand Run, Dutta Somak, and Roy Vivekananda. Bayesian iterative screening in ultra-high dimensional linear regressions. Bayesian Analysis Advance Publication , pp. 1–26, 2025. Elizabeth G. Ryan, Christopher C. Drovandi, James M. McGree, and Anthony N. Pettitt. A review of Modern Computational Algorithms for Bayesian Optimal Design. International Statistical Review , 84(1): 128–154, 2016. Joachim Schreurs, Hannes De Meulemeester, Michaël Fanuel, Bart De Moor, and Johan A. K. Suykens. Leverage Score Sampling for Complete Mode Coverage in Generative Adversarial Networks. In Machine Learning, Optimization, and Data Science , pp. 466–480, 2022. Arno Strouwen and Sebastian Micluta-Câmpeanu. Deep Adaptive Model-Based Design of Experiments. 
+
+arXiv preprint arXiv:2603.16146 , 2026. George Tucker, Andriy Mnih, Chris J. Maddison, Dietrich Lawson, and Jascha Sohl-Dickstein. REBAR: low-variance, unbiased gradient estimates for discrete latent variable models. In Advances in Neural Information Processing Systems , pp. 2624–2633, 2017. Ying Y. Wang. A comparison of several variance component estimators. Biometrika , 54(2):301–305, 1967. Zi Wang, George E Dahl, Kevin Swersky, Chansoo Lee, Zachary Nado, Justin Gilmer, Jasper Snoek, and Zoubin Ghahramani. Pre-trained Gaussian processes for Bayesian optimization. Journal of Machine Learning Research , 25:1–83, 2024. C.F. Jeff Wu and Michael S. Hamada. Experiments: Planning, Analysis, and Optimization . Wiley, 2009. Chao-Ling Yao, I-Ming Chu, Tzu-Bou Hsieh, and Shiaw-Min Hwang. A systematic strategy to optimize ex vivo expansion medium for human hematopoietic stem cells derived from umbilical cord blood mononuclear cells. Experimental Hematology , 32(8):720–727, 2004. 16 A Proof of Proposition 1 
+
+Proposition 1 follows from classical convexity arguments in optimal design (Pukelsheim, 1993; Kiefer, 1974), but we include a proof for completeness and to explicitly adapt the argument to our setting. The design space X = [ −1, 1] p is a convex polytope whose extreme points are the vertices {− 1, +1 }p. In the linear–Gaussian setting, the mutual information objective can be written as 
+
+f (ξ) = 12 log 
+
+(
+
+1 + ξ>Σξσ2
+
+)
+
+, (16) where Σ  0. Since t 7 → 12 log(1+ t/σ 2) is strictly increasing, maximising f over X is equivalent to maximising the quadratic form q(ξ) := ξ>Σξ.We now show that q(ξ) is maximised over X at a vertex. Fix all coordinates of ξ except ξi. The restriction of q to ξi is 
+
+q(ξi) = a ξ 2 
+
+> i
+
++ b ξ i + c, (17) where a = Σ ii ≥ 0, b = 2 ∑  
+
+> j6=i
+
+Σij ξj , and c is independent of ξi. This is a convex quadratic function of ξi
+
+over the interval [−1, 1] , so its maximum is attained at the boundary ξi ∈ {− 1, +1 }.Applying this argument sequentially to each coordinate shows that any maximiser of ξ>Σξ over [−1, 1] p lies in {− 1, +1 }p. Since f (ξ) is a monotone increasing function of ξ>Σξ, the same holds for f (ξ).17 B Ablations and robustness 
+
+B.1 Experimental Setup 
+
+All ablations in this appendix are anchored on a shared problem class so that effects are directly comparable. We consider p = 10 candidate factors, budget T = 8 , observation noise σ = 0 .5 and sparsity prior ρ ∼
+
+Beta(2 , 8) (prior mean 0.2). Strong heredity is enforced on the interaction indicators. Each policy uses the sufficient-statistics encoder of Section 3.4 and warm-starts from a static sPCE-optimised checkpoint before adaptive fine-tuning. Training runs for 30,000 steps with the recipe of Section 5.3. Each ablation cell is trained with 5 seeds. At evaluation, each policy is rolled out 50 times, decoded by a Gibbs sampler with 200 draws after 100 burn-in steps, with posterior inclusion threshold 0.5. We report main-effect F1 as the primary metric. Interaction F1 is near zero at this problem class because strong heredity combined with the Beta(2, 8) prior yields very few active interactions per instance. The interaction-recovery story is treated in Section 5.4 at a problem class where interactions are prevalent. 
+
+B.2 Hyperparameter Sensitivity Analysis 
+
+This subsection sweeps every real-valued hyperparameter of the training recipe one at a time around the baseline configuration and reports the resulting main-effect F1. Table 1 aggregates the 25 off-baseline cells into three blocks. The optimisation block covers the learning rate, total number of training steps, exponential learning-rate decay and Adam weight decay. The capacity block covers the encoder hidden dimension and the encoding output dimension. The regularisation and Gumbel-Softmax block covers the logit-ℓ2 penalty, the diversity bonus, and the three Gumbel-Softmax annealing parameters τstart , τend , and the anneal fraction. We report main-effect F1 with the standard error over seeds. Across all 25 off-baseline settings in Table 1, main-effect F1 varies by at most 0.06 relative to the baseline of F1 = 0 .303 ±0.017 . Only two settings drop F1 by more than 1.96 baseline standard errors: an over-aggressive learning rate at 5×10 −3 (F1 = 0 .246 ±0.018 ) and a small diversity penalty at 0.01 (F1 = 0 .247 ±0.018 ). The remaining 23 settings sit within the noise band of the baseline. Notably, network capacity is not a bottleneck across the ranges tested (hidden dim from 32 to 128, encoding dim from 16 to 64), and the logit-ℓ2 coefficient can be varied over two orders of magnitude ( 0.001 to 0.1) without measurable impact. Doubling the training budget from 30,000 to 60,000 steps yields a +0 .013 F1 gain, well within one standard error of the baseline, indicating that 30,000 steps is close to the training-time ceiling for this problem class. 
+
+B.3 Method Ablations and Prior-Mismatch Robustness 
+
+This subsection reports two families of ablations that keep the training recipe fixed while varying either the method or the deployment prior. The first (Table 2) varies eleven categorical design choices covering encoder architecture, initialisation, reward structure, regularisation, mutual-information target, observation noise, and heredity assumption at evaluation, and quantifies each choice’s contribution to the baseline F1 of 
+
+0.303 ± 0.017 . The second (Table 3) evaluates the trained DABS policy on ground-truth data drawn from a mismatched prior, and compares its degradation to that of the static baseline. The largest effect in Table 2 is regularisation. Removing the logit-ℓ2 penalty collapses F1 from 0.303 to 0.080 ,a 74% drop. Without the penalty, the Gumbel-Softmax logits saturate early in training and the policy emits a near-constant design, confirming the collapse failure mode described in Section 3.3. Replacing the logit-ℓ2
+
+penalty with a cosine-similarity penalty on consecutive designs does not prevent collapse (F1 = 0 .147 ), and combining both recovers most but not all of the baseline (F1 = 0 .247 ). The logit-ℓ2 penalty is therefore the load-bearing regularisation choice. The training-objective ablation confirms the chain-rule prediction of Section 3.6. Targeting the total mutual information I(θ; hT ) as in DAD-style methods yields F1 = 0 .243 , a reduction of 0.060 from the screening-specific target I(z; hT ). Because I(θ; hT ) = I(z; hT ) + Ez [I(β, σ 2; hT | z)] and the conditional term admits no adaptive gain under the linear-Gaussian likelihood, resources spent estimating β and σ2 during training are wasted from the screening perspective. The sufficient-statistics encoder also matters: replacing it with the permutation-invariant MLP encoder of DAD reduces F1 by 0.050 . Warm-starting the policy from the 18 Hyperparameter Value Main F1 
+
+Learning rate 
+
+1 × 10 −4 0.257 ± 0.020 5 × 10 −4 0.252 ± 0.026 
+
+1 × 10 −3 0.303 ± 0.017 
+
+2 × 10 −3 0.295 ± 0.013 5 × 10 −3 0.246 ± 0.018 
+
+Training steps 15,000 0.265 ± 0.023 
+
+30,000 0.303 ± 0.017 
+
+60,000 0.316 ± 0.021 
+
+LR decay γ
+
+0.90 0.288 ± 0.029 
+
+0.95 0.303 ± 0.017 
+
+0.98 0.271 ± 0.025 
+
+Adam weight decay 
+
+0 0.303 ± 0.017 
+
+1 × 10 −4 0.287 ± 0.014 1 × 10 −3 0.291 ± 0.019 
+
+Hidden dim 
+
+32 0.313 ± 0.031 
+
+64 0.303 ± 0.017 
+
+128 0.298 ± 0.013 
+
+Encoding dim 
+
+16 0.285 ± 0.028 
+
+32 0.303 ± 0.017 
+
+64 0.298 ± 0.015 
+
+Logit-ℓ2 weight λ
+
+0.001 0.298 ± 0.011 
+
+0.01 0.303 ± 0.017 
+
+0.05 0.289 ± 0.024 0.1 0.279 ± 0.022 
+
+Diversity penalty 
+
+0 0.303 ± 0.017 
+
+0.01 0.247 ± 0.018 0.1 0.287 ± 0.015 
+
+τstart 
+
+0.5 0.314 ± 0.028 
+
+1.0 0.303 ± 0.017 
+
+2.0 0.272 ± 0.010 
+
+τend 
+
+0.1 0.287 ± 0.034 
+
+0.3 0.303 ± 0.017 
+
+0.5 0.287 ± 0.015 
+
+Anneal fraction 
+
+0.3 0.275 ± 0.031 
+
+0.5 0.303 ± 0.017 
+
+0.8 0.251 ± 0.026 
+
+Table 1: Hyperparameter sensitivity at p = 10 , T = 8 , σ = 0 .5, ρ ∼ Beta(2 , 8) 
+
+static sPCE-optimised checkpoint adds a further 0.041 over random initialisation. Reward structure (terminal versus dense sPCE) and noise level ( ±0.017 across σ ∈ { 0.25 , 1.0, 2.0}) contribute little, and under a heredity mismatch (training under strong heredity, evaluating under weak heredity) F1 drops by only 0.026 , showing that DABS is not brittle to a moderate violation of the training assumption. Under sparsity mismatch, DABS beats the static baseline at every evaluation π except π = 0 .2 (which matches the training-prior mean and yields a tie). The absolute F1 of both arms grows with π, because a higher active-factor base rate inflates F1 for any competent policy. The gap over the static baseline stays positive and grows at high π: at π = 0 .5, DABS reaches F1 = 0 .410 against 0.343 for the static design. This concentration advantage does not require the sparsity of the training prior to match that of the evaluation. 19 Component Setting Main F1 
+
+Encoder Sufficient statistics 0.303 ± 0.017 
+
+Permutation-invariant MLP 0.253 ± 0.022 
+
+Initialisation Warm-start from static 0.303 ± 0.017 
+
+Random 0.262 ± 0.002 
+
+Reward structure Terminal sPCE 0.303 ± 0.017 
+
+Dense per-step 0.295 ± 0.018 
+
+Regularisation 
+
+Logit-ℓ2 only 0.303 ± 0.017 
+
+None 0.080 ± 0.028 
+
+Cosine similarity only 0.147 ± 0.021 
+
+Logit-ℓ2 + cosine 0.247 ± 0.018 
+
+Training objective I(z; hT) (screening MI) 0.303 ± 0.017 
+
+I(θ; hT ) (total MI) 0.243 ± 0.026 
+
+Noise level σ
+
+0.25 0.297 ± 0.030 
+
+0.5 0.303 ± 0.017 
+
+1.0 0.318 ± 0.032 2.0 0.320 ± 0.023 
+
+Heredity at evaluation Strong (matched) 0.303 ± 0.017 
+
+Weak ( zij unconstrained) 0.278 ± 0.033 
+
+Table 2: Method ablations at p = 10 , T = 8 
+
+Study Evaluation prior DABS F1 Static F1 
+
+Sparsity mismatch 
+
+π = 0 .1 0.234 ± 0.015 0.184 
+
+π = 0 .2 (matched mean) 0.304 ± 0.018 0.315 
+
+π = 0 .3 0.362 ± 0.012 0.296 
+
+π = 0 .4 0.373 ± 0.007 0.330 
+
+π = 0 .5 0.410 ± 0.014 0.343 
+
+Beta hyperprior 
+
+Beta(2 , 8) (matched) 0.303 ± 0.028 0.249 Beta(4 , 6) 0.381 ± 0.020 0.352 Beta(6 , 4) 0.423 ± 0.004 0.332 
+
+Table 3: Prior-mismatch robustness at p = 10 , T = 8 
+
+The Beta hyperprior mismatch tells a similar story. Under the matched Beta (2 , 8) prior, DABS beats the static design by 0.054 . Under Beta (4 , 6) the gap narrows to 0.029 . Under Beta (6 , 4) , which biases the prior toward many-active configurations, the gap widens to 0.090 . Note that absolute F1 grows in both arms as the evaluation prior shifts toward denser configurations, because a higher base rate of actives inflates F1 for any competent policy. What matters for robustness is that DABS’ advantage over the static baseline is preserved (and actually widens at Beta (6 , 4) ) across the tested mismatches. DABS is therefore robust to a misspecified sparsity prior. 20 C Derivation of the joint distribution of the history 
+
+We derive the closed form of the integral introduced in Eq. 10, 
+
+p(hT | z) = 
+
+∫ ∫ 
+
+p(hT | z, β, σ 2) p(β | z) p(σ2) dβ dσ 2, (18) where the parameter vector θ = ( z, β, σ 2) is decomposed into the discrete activity indicators z, the continuous effect sizes β, and the noise variance σ2. Conditioning on z, we integrate out (β, σ 2) analytically by exploiting the conjugate normal–inverse-gamma structure of the prior. 
+
+Model specification 
+
+Let y = ( y1, . . . , y T )> ∈ RT collect the observed responses in history hT = {(ξt, y t)}Tt=1 , and let X ∈ RT ×p
+
+be the design matrix with rows ξ> 
+
+> t
+
+. Given the activity pattern z, let Xz ∈ RT ×pz denote the submatrix of active columns, where pz = ∑ 
+
+> k
+
+zk is the number of active factors. The hierarchical model conditioned on z
+
+is: 
+
+y | βz , σ 2, z ∼ N (Xz βz , σ 2IT ), (19) 
+
+βz | σ2, z ∼ N (0 , σ 2τ 2 
+
+> z
+
+Ipz ), (20) 
+
+σ2 ∼ IG( α0, β 0), (21) where (α0, β 0) are the inverse-gamma hyperparameters introduced in Section 3.1. This normal–inverse-gamma specification is the conjugate prior for the Gaussian likelihood, enabling both integrals to be computed in closed form. 
+
+Step 1: Integrating out βz
+
+Since the likelihood equation 19 and the prior equation 20 are both Gaussian conditionally on σ2, standard Gaussian identities give 
+
+y | σ2, z ∼ N 
+
+(
+
+0, σ 2 (IT + τ 2 
+
+> z
+
+Xz X> 
+
+> z
+
+)
+
+︸ ︷︷ ︸
+
+Σz
+
+)
+
+, (22) where Σz := IT + τ 2 
+
+> z
+
+Xz X> 
+
+> z
+
+encodes the covariance structure induced by the active set z through Xz .Explicitly: 
+
+p(y | σ2, z ) = (2 πσ 2)−T / 2 |Σz |−1/2 exp 
+
+(
+
+− y>Σ−1 
+
+> z
+
+y
+
+2σ2
+
+)
+
+. (23) 
+
+Step 2: Integrating out σ2
+
+We now integrate equation 23 against the IG( α0, β 0) prior on σ2. Collecting powers of σ2:
+
+p(y | z) = 
+
+∫ ∞
+
+> 0
+
+p(y | σ2, z ) p(σ2) dσ 2
+
+= βα0 
+
+> 0
+
+|Σz |−1/2
+
+(2 π)T / 2 Γ( α0)
+
+∫ ∞
+
+> 0
+
+(σ2)−(α0+T / 2+1) exp 
+
+(
+
+− β0 + 12 y>Σ−1 
+
+> z
+
+y
+
+σ2
+
+)
+
+dσ 2. (24) The integrand is an inverse-gamma kernel with updated parameters 
+
+αT := α0 + T
+
+2 , βT := β0 + 12 y>Σ−1 
+
+> z
+
+y, (25) so the integral evaluates to Γ( αT )/β αT 
+
+> T
+
+, yielding 
+
+p(y | z) = βα0 
+
+> 0
+
+Γ(α0 + T
+
+> 2
+
+)
+
+(2 π)T / 2 Γ( α0) |Σz |1/2
+
+(
+
+β0 + 12 y>Σ−1 
+
+> z
+
+y
+
+)−(α0+ T 
+
+> 2
+
+)
+
+. (26) 21 Step 3: Identifying the Student-t form 
+
+Setting ν := 2 α0 (so the degrees of freedom are determined by α0 alone) and defining the scale matrix 
+
+Sz := β0
+
+α0
+
+(IT + τ 2 
+
+> z
+
+Xz X>
+
+> z
+
+) , (27) expression equation 26 is exactly the density of the multivariate Student-t stated in Section 3.1: 
+
+p(hT | z) = Γ( ν+T
+
+> 2
+
+)
+
+Γ( ν
+
+> 2
+
+) (νπ )T / 2 |Sz |1/2
+
+(
+
+1 + 1
+
+ν y>S−1 
+
+> z
+
+y
+
+)− ν+T
+
+> 2
+
+, (28) confirming that hT | z ∼ St ν (0 , S z ).As stated in Section 3.2, the degrees of freedom ν = 2 α0 and the scale matrix Sz are jointly determined by the active set z (through Xz ), the design matrix induced by the history, and the three prior hyperparameters 
+
+(α0, β 0, τ 2active ), together with the active-column selection induced by z.22 D Encoder details 
+
+The policy πϕ(ξt | ht−1) converts a variable-length history ht−1 = {(ξs, y s)}t−1 
+
+> s=1
+
+into per-factor design logits 
+
+ℓt ∈ Rp, subject to two structural requirements: invariance to the order of past experiments and a fixed-dimensional output independent of t.All encoders we consider share the same two-stage pipeline: 
+
+• an encoder first summarises the history into a fixed-length vector ct−1 ∈ Rdenc ;
+
+• an emitter MLP μϕ then maps this summary to the logits ℓt ∈ Rp. The emitter is a two-hidden-layer MLP with Softplus activations. At step t = 0 , the encoder returns a learnable empty-history vector 
+
+c0 initialised to zero. We first describe the sufficient-statistics encoder used in the main experiments, followed by a permutation-invariant set encoder used as an ablation baseline. 
+
+Sufficient-statistics encoder (default). Let d = p + (p
+
+> 2
+
+) denote the number of main-effect plus two-way-interaction columns, let Xt−1 ∈ R(t−1) ×d stack the past designs expanded with those columns, and let yt−1 ∈ Rt−1 collect the responses. Under the linear–Gaussian likelihood with conjugate Normal–Inverse-Gamma prior, the Student-t posterior over (β, σ 2) depends on the history only through the sufficient statistics 
+
+(X>
+
+> t−1
+
+Xt−1, X >
+
+> t−1
+
+yt−1, y >
+
+> t−1
+
+yt−1). We assemble these statistics into the vector 
+
+st−1 =
+
+(
+
+vec 4
+
+( X>
+
+> t−1Xt−1
+> T
+
+)
+
+, X> 
+
+> t−1yt−1
+> T
+
+, y>
+
+> t−1yt−1
+> T
+
+)
+
+∈ R d(d+1) 2 +d+1 , (29) where vec 4(·) extracts the upper-triangular entries of the symmetric matrix. The normalisation by T produces dimensionless inputs. For ±1 designs it maps diagonal entries of X>X/T 
+
+to 1 and off-diagonals to [−1, 1] . The statistic vector is then mapped to the encoding by a projection head 
+
+μproj = Linear ◦ Softplus ◦ Linear ◦ LayerNorm 
+
+with encoding width denc .Permutation invariance over past experiments holds by construction since each statistic is a symmetric function of the pairs (ξs, y s), and the output dimension is constant in T . The statistic dimension grows as 
+
+O(d2) = O(p4), which is tractable for the problem sizes considered here but not immediately scalable to very high-dimensional screening. 
+
+Set encoder (ablation baseline). For comparison we also implement the set-equivariant encoder used by DAD (Foster et al., 2021). Each pair (ξs, y s) is concatenated with sinusoidal positional features of the step index s and mapped through a shared single-hidden-layer MLP ψϕ to a per-step embedding. The embeddings are then summed: 
+
+es = ψϕ
+
+([ξs; ys; PE( s)] ), ct−1 =
+
+> t−1
+
+∑
+
+> s=1
+
+es. (30) We use Softplus activation, a LayerNorm on the output to bound each contribution to a fixed magnitude, and sinusoidal positional features over dpe frequency scales. Permutation invariance over the multiset holds because the summation is commutative. In principle this encoder is fully general as it does not assume sufficiency, but the per-pair MLP must learn to approximate the sufficient statistics from data, which we find is less sample-efficient in our experiments than computing the statistics directly. 23 E Pseudo-code of the training procedure 
+
+Algorithm 1 summarises the full training procedure. 
+
+Algorithm 1 Training DABS 
+
+Require: Prior p(θ), forward model f , factors p, budget T , contrastive samples L, batch size B, logit-ℓ2
+
+weight μ, temperature schedule τstart → τend , steps S, learning rate η
+
+Ensure: Policy parameters ϕ
+
+Initialise policy πϕ
+
+for s = 1 , . . . , S do 
+
+Update temperature τ via annealing schedule 
+
+Batched rollout: Sample {(z(b), β (b), σ 2( b))}Bb=1 ∼ p(θ). Initialise h(b)0 ← ∅ for b = 1 , . . . , B .
+
+for t = 1 , . . . , T do for b = 1 , . . . , B do 
+
+ℓ(b) 
+
+> t
+
+← πϕ(h(b)
+
+> t−1
+
+)
+
+ξ(b) 
+
+> t
+
+← GumbelSoftmax( ℓ(b) 
+
+> t
+
+, τ )
+
+y(b) 
+
+> t
+
+∼ N (f (ξ(b) 
+
+> t
+
+, β (b)), σ 2( b))
+
+h(b) 
+
+> t
+
+← h(b) 
+
+> t−1
+
+∪ { (ξ(b) 
+
+> t
+
+, y (b) 
+
+> t
+
+)}
+
+end for end for 
+
+Contrastive sampling: Sample {z(b) 
+
+> i
+
+}i=1 ,...,L, b =1 ,...,B ∼ p(z)
+
+Loss: Compute p(h(b) 
+
+> T
+
+| z(b) 
+
+> i
+
+) for all b, i 
+
+L(ϕ) ← 1
+
+> B
+
+∑Bb=1 
+
+[
+
+−̂ sPCE (b) 
+
+> L
+
+(ϕ)
+
+]
+
++ μ LL2 (ϕ)
+
+Update: ϕ ← ϕ − η∇ϕL(ϕ)
+
+end for 
+
+24 F Pseudo-code of the full deployment and inference pipeline 
+
+Algorithm 2 summarises the full deployment and inference pipeline. 
+
+Algorithm 2 Adaptive Experimentation and Posterior Inference 
+
+Require: Trained policy πϕ, budget T , Gibbs samples G, burn-in Nburn 
+
+Ensure: P (zk = 1 | hT ), effect sizes ˆβk with 95% CI  
+
+> 1:
+
+Phase 1: Run adaptive experiments  
+
+> 2:
+
+h0 ← ∅  
+
+> 3:
+
+for t = 1 , . . . , T do  
+
+> 4:
+
+ξt ← sign( πϕ(ht−1))  
+
+> 5:
+
+Observe yt from experiment  
+
+> 6:
+
+ht ← ht−1 ∪ { (ξt, y t)} 
+
+> 7:
+
+end for  
+
+> 8:
+
+Phase 2: Gibbs posterior inference  
+
+> 9:
+
+Initialise z(0) ∼ Bernoulli( ρ)p 
+
+> 10:
+
+Initialise σ2(0) ← β0/(α0 − 1)  
+
+> 11:
+
+for g = 1 , . . . , G + Nburn do  
+
+> 12:
+
+Step B (update z): Sample z(g) 
+
+> k
+
+| z(g−1)  
+
+> −k
+
+, h T for k = 1 , . . . , p ▷ Student-t marginal, Eq. 36  
+
+> 13:
+
+Step A (update β): Sample β(g) | z(g), σ 2( g−1) , h T analytically ▷ Eq. 35  
+
+> 14:
+
+Step C (update σ2): Sample σ2( g) | β(g), z (g), h T 
+
+> 15:
+
+end for  
+
+> 16:
+
+return P (zk = 1 | hT ) and ˆβk averaged over post-burn-in samples. 25 G Posterior inference details 
+
+We provide details of the Gibbs sampler used to approximate the posterior distribution p(z, β | hT ) under the spike-and-slab prior and Gaussian likelihood. Let X ∈ RT ×d denote the design matrix including main effects and interaction terms, where d = p + (p
+
+> 2
+
+), and let y ∈ RT collect the observed responses. The likelihood is 
+
+y | β, σ 2 ∼ N (Xβ, σ 2I). (31) The prior over coefficients is given by a spike-and-slab distribution: 
+
+βk | zk, σ 2 ∼ N (0 , σ 2 τ 2 
+
+> zk
+
+), zk ∼ Bernoulli( ρ), (32) where τ 2 
+
+> zk
+
+= τ 2active when zk = 1 and τ 2 
+
+> zk
+
+= τ 2inactive when zk = 0 . Interaction indicators follow the strong-heredity constraint of Section 3.1, zij | zi, z j ∼ Bernoulli( πint zizj ), which reduces to zij = zizj in the deterministic limit πint = 1 . The prior variance vector τ 2 
+
+> z
+
+concatenates the main-effect variances and the heredity-derived interaction variances. Direct posterior computation is intractable due to the combinatorial structure of z ∈ { 0, 1}p. We therefore employ a Gibbs sampler that alternates between sampling z, β, and σ2 from their conditional distributions. The primary inferential targets are the posterior activity probability for each factor k and the corresponding effect-size estimate, computed from G post-burn-in Gibbs samples as 
+
+ˆP (zk = 1 | hT ) = 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+z(g) 
+
+> k
+
+, ˆβk = 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+β(g) 
+
+> k
+
+, (33) where z(g) 
+
+> k
+
+∈ { 0, 1} and β(g) 
+
+> k
+
+∈ R are the samples at Gibbs iteration g. A factor k is declared active if 
+
+ˆP (zk = 1 | hT ) > 0.5, (34) and 95% credible intervals are obtained from the empirical quantiles of {β(g) 
+
+> k
+
+}Gg=1 (Chipman et al., 1997). 
+
+Step A: sampling β | z, σ 2, h T . Let τ −2 
+
+> z
+
+denote the prior precision vector under activity pattern z. Given the current σ2 sample from Step C, and conditioned on z, the prior on β is a diagonal Gaussian and the likelihood is linear–Gaussian. By Normal–Normal conjugacy the posterior is 
+
+β | z, σ 2, h T ∼ N (μpost , Σpost ), Σpost =
+
+( X>Xσ2 + diag( τ −2 
+
+> z
+
+)
+
+)−1
+
+, μpost = 1
+
+σ2 Σpost X>y. (35) 
+
+Step B: sampling zk | z−k, h T . For each factor k, where z−k denotes all activity indicators except zk, the conditional posterior is a Bernoulli whose probability is obtained by marginalising β analytically: 
+
+P (zk = 1 | z−k, h T ) = p(hT | zk = 1 , z −k) ρp(hT | zk = 1 , z −k) ρ + p(hT | zk = 0 , z −k) (1 − ρ) , (36) where ρ ∈ (0 , 1) is the prior activity probability defined in Eq. 7 and the marginal likelihood is available in closed form: 
+
+log p(hT | z) = log t2α0
+
+(
+
+y ; 0 , β0
+
+α0
+
+(X diag( τ 2 
+
+> z
+
+) X> + I))
+
+. (37) This closed-form Student-t marginal arises under the conjugate g-prior coupling β | σ2, z ∼ N (0 , σ 2 diag( τ 2 
+
+> z
+
+)) ,which we adopt throughout as a tight approximation of the exact marginal under the independent-normal prior of Section 3.1 (see Section 3.2). 
+
+Step C: sampling σ2 | β, z, h T . Conditional on β and z, the noise variance has an inverse-gamma condi-tional posterior: 
+
+σ2 | β, z, h T ∼ InvGamma (α0 + T 
+
+> 2
+
+, β 0 + 12 ‖y − Xβ ‖22
+
+) . (38) The current σ2 sample is required in Step A. The z-update of Step B uses the Student-t marginal of Eq. 37, which already integrates σ2 out analytically and therefore does not require the current σ2 value. 26 H Extended case study results 
+
+This appendix reports the metric curves that did not appear in the main text for each of the three case studies of Section 5. In each subsection, the figures use the same DABS and baseline colour scheme as the corresponding main-text figures and share the same random-seed protocol (five seeds per (p, T ) cell, 95% confidence intervals). 
+
+H.1 Case Study 1: biotechnology benchmark (main effects, T sweep at p = 15 )
+
+Section 5.2 reports F1 and TPR versus the budget T at p = 15 . Figure 7 completes the picture with the corresponding FDR curves. 
+
+Figure 7: Main-effect FDR versus budget T at p = 15 for the biotechnology benchmark Figure 7 shows main-effect FDR versus the budget T . The two Bayesian arms (DABS and the static design) achieve substantially lower FDR than the non-Bayesian baselines across the sweep. Multi-stage adaptive maintains an FDR between 0.27 and 0.49 , and Plackett-Burman reaches 0.42 at its native T = 16 . Between the two Bayesian arms, the static design achieves lower FDR at the smallest budgets, but this reflects its very low recall in that regime (recall F1 = 0 .03 at T = 4 from Section 5.2): the static design predicts almost no actives at all, so its false-positive rate is low by default. Above the identifiability boundary, DABS and the static design converge to comparable FDR values around 0.10 at T = 16 , consistent with the wedge prediction of Section 3.6. 
+
+H.2 Case Study 2: HSC benchmark (main effects, p sweep at T = 16 )
+
+Section 5.3 reports F1 and FDR versus p at fixed T = 16 . Figure 8 completes the picture with the true positive rate for the same sweep. TPR declines for every method as p grows, as the fixed budget T = 16 
+
+is spread over an increasing number of candidate factors. In the identifiable regime p ≤ 15 , all methods except multi-stage adaptive achieve TPR between 0.5 and 0.7, with Plackett-Burman competitive up to its native p = 15 . From p = 18 onward, DABS and the static design track each other closely (TPR between 0.51 and 0.60) and both stay above the myopic baseline, which degrades faster with p (0.41 at p = 26 ). Multi-stage adaptive stays near 0.30 throughout, well below the other methods. Its multi-stage pruning discards candidates aggressively at each stage, so recall on the active set remains low regardless of p.27 Figure 8: Main-effect TPR versus number of candidate factors p at T = 16 for the HSC benchmark. Bands are 95% CIs over 5 seeds. 
+
+H.3 Case Study 3: metallurgical benchmark (main effects + interactions, T sweep at p ∈ { 4, 6, 8})
+
+Section 5.4 reports F1 for main effects and two-factor interactions across the three problem sizes. Figures 9– 12 complete the picture with the corresponding TPR and FDR curves. 
+
+Figure 9: Main-effect TPR versus budget T across p ∈ { 4, 6, 8}
+
+Figure 10: Two-factor interaction TPR versus budget T across p ∈ { 4, 6, 8}
+
+28 Figure 11: Main-effect FDR versus budget T across p ∈ { 4, 6, 8}
+
+Figure 12: Two-factor interaction FDR versus budget T across p ∈ { 4, 6, 8}
+
+Main-effect TPR and FDR behave as ceiling metrics for the two amortised policies, mirroring the F1 story of Section 5.4: DABS and the static design track each other closely, both above the myopic baseline. The interaction TPR and FDR curves show a clearer three-way separation at p = 6 in the mid-budget window, again matching the F1 pattern. At p = 8 , DABS and the static design maintain their advantage over the myopic baseline on both interaction metrics, while their own curves converge at the high-budget end of the sweep as the interaction problem approaches its own identifiability ceiling. 29 I On the use of implicit DAD (iDAD) 
+
+Recent work has proposed implicit Deep Adaptive Design (iDAD) (Ivanova et al., 2021), which replaces explicit likelihood evaluation in the expected information gain objective with a learned critic network and enables amortized design optimization in simulator-based settings with intractable likelihoods. In our setting, however, the model admits a conjugate Normal–Inverse-Gamma prior with a linear Gaussian likelihood, yielding a closed-form Student-t marginal likelihood. This quantity can therefore be evaluated exactly within the prior-contrastive estimator. As a result, adopting iDAD would replace an exact computation with a learned approximation, introducing additional estimator variance and potential bias without a compensating benefit. We therefore retain an explicit likelihood formulation throughout. 30 J Result details and discussion 
+
+This appendix collects the exact hyperparameters, architectures, and evaluation settings used across the three case studies of Section 5. Unless stated otherwise, all DABS runs use the sufficient-statistics encoder (Appendix D) with a two-hidden-layer MLP emitter, and all training uses stochastic gradient descent on the combined objective L(ϕ) = −̂sPCE L(ϕ) + μ LL2 (ϕ) defined in Section 3.2. Table 4 summarises the model priors, training schedule, and evaluation protocol for each case study. 
+
+Case Study 1 Case Study 2 Case Study 3 (biotech, ğ5.2) (HSC, ğ5.3) (GH4738, ğ5.4) 
+
+Model priors 
+
+Number of factors p 15 {10 , 12 , . . . , 26 } {4, 6, 8}
+
+Experimental budget T {4, 6, . . . , 16 } 16 sweep, see ğ5.4 Sparsity hyperprior ρ ∼ Beta(2 , 8) ρ ∼ Beta(4 , 6) ρ ∼ Beta(5 , 5) 
+
+Active slab std τactive 1.0 1.0 1.0
+
+Inactive slab std τinactive 0.01 0.01 0.01 
+
+Noise std σ 0.5 0.5 0.25 
+
+InvGamma shape α0 3.0 3.0 3.0
+
+InvGamma scale β0 1.0 1.0 0.25 
+
+Strong heredity yes yes yes 
+
+DABS training 
+
+Optimisation steps S 5,000 5,000 5,000 
+
+Learning rate 10 −3 10 −3 10 −3
+
+Adam β1, β 2 0.9, 0.999 0.9, 0.999 0.9, 0.999 
+
+Outer samples (rollout batch) 6000 2000 –6000 6000 
+
+Contrastive samples L 512 256 –512 512 
+
+Logit-ℓ2 weight μ 0.01 0.01 0.01 
+
+Gumbel temperature schedule τstart = 1 .0 → τend = 0 .5 over 80% of training 
+
+Static sPCE baseline 
+
+Optimisation steps 2000 2000 2000 
+
+Learning rate 5 × 10 −3 5 × 10 −3 5 × 10 −3
+
+Contrastive samples L 6000 1500 –6000 6000 
+
+Architecture 
+
+Encoder suff. stats suff. stats suff. stats Encoding dimension denc 32 32 32 
+
+MLP hidden dimension 64 64 64 
+
+Hidden layers (emitter) 2 2 2
+
+Activation Softplus Softplus Softplus 
+
+Evaluation 
+
+Rollouts per policy 50 50 50 
+
+Training seeds 5 5 5
+
+Gibbs samples 200 200 200 
+
+Gibbs burn-in 100 100 100 
+
+Classification threshold 0.5 0.5 0.5
+
+Table 4: Hyperparameters and evaluation protocol for the three case studies. The Plackett-Burman baseline uses the native run counts T ∈ { 8, 12 , 16 , 20 , 24 } for its 12-, 16-, 20-, and 24-run constructions. The myopic baseline shares the same Bayesian model and Gibbs decoder as DABS. At each step it evaluates the one-step expected information gain over a candidate set of enumerated (small 
+
+p) or randomly sampled ( p ≥ 10 ) designs and selects the maximiser. The multi-stage adaptive baseline runs 
+
+K = 3 stages with keep-fraction 0.5, using ridge-regularised linear estimates of marginal effects to prune inactive candidates between stages. 31 All experiments were run on NVIDIA H100 80GB GPUs on a university HPC cluster. A typical DABS training run takes approximately 10 minutes at p = 8 , T = 8 , and roughly 45 minutes at p = 20 , T = 16 .Evaluation with the Gibbs sampler takes approximately 5 minutes per checkpoint on CPU. Each reported F1, TPR, and FDR value is the mean over 50 rollouts computed independently for each of the 5 training seeds. 32 K Visualisation of adaptive behaviour 
+
+To illustrate the behaviour of the learned policy, Figure 13 shows a single rollout of the sequential design process. Panel (a) displays the sequence of selected designs ξt,k ∈ {− 1, +1 }, where rows correspond to experiments and columns to factors. The early designs exhibit substantial variability across factors, reflecting an exploratory phase. As data are collected, the designs become more structured, with repeated interventions on a subset of factors, indicating a shift toward exploiting informative directions. Panel (b) shows the evolution of the posterior inclusion probabilities P (zk = 1 |ht). Starting from a diffuse prior, the posterior progressively concentrates, with one factor emerging as clearly active while the others are shrunk toward low inclusion probabilities. Panel (c) presents the posterior distribution of the effect sizes at the final step t = T , including posterior means and 95% credible intervals. The active factor is accurately identified, while inactive effects are effectively shrunk toward zero. Together, these panels illustrate how the policy adapts over time, transitioning from broad exploration to targeted experimentation, and enabling reliable recovery of the sparse active set. 
+
+Figure 13: Illustration of adaptive behavior in a single rollout 33
