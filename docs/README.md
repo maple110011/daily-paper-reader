@@ -6,32 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-22
-- 运行时间：2026-07-22 20:42:32 UTC
+- 最新运行日期：2026-07-23
+- 运行时间：2026-07-23 21:38:17 UTC
 - 运行状态：成功
-- 本次总论文数：4
+- 本次总论文数：3
 - 精读区：2
-- 速读区：2
+- 速读区：1
 
 ### 今日简报（AI）
-今日推荐4篇论文，精读聚焦模型行为调控与低维神经系统识别。最值得关注的是无反向传播的潜在后验优化方法及变分元学习推断，两者均获8.0高分。建议读者优先精读这两篇，深入理解先验与后验的优化思路，并尝试将方法迁移至自身研究场景。
-- 详情：[/202607/22/README](/202607/22/README)
+今日精读2篇高分论文与1篇速读，聚焦自适应贝叶斯在线学习与非凸随机梯度朗之万方法。最值得关注的是《Adaptive Bayesian Online Learning via Expert Aggregation》（9.0/10）中专家聚合的在线适应机制，以及《RELTA-SGLD》（8.0/10）对非凸优化的局部梯度驯化策略。建议普通读者优先精读这两篇，理解如何将贝叶斯理论与在线学习、非凸优化中的稳定性增强技巧结合。
+- 详情：[/202607/23/README](/202607/23/README)
 
 ### 精读区论文标签
-1. [Elicitation without Backpropagation: Steering Model Behavior by Optimizing the Latent Posterior](/202607/22/2607.18804v1-elicitation-without-backpropagation-steering-model-behavior-by-optimizing-the-latent-posterior)  
+1. [Adaptive Bayesian Online Learning via Expert Aggregation](/202607/23/2607.20239v1-adaptive-bayesian-online-learning-via-expert-aggregation)  
+   标签：评分：9.0/10、query:bayes-dl
+   evidence：贝叶斯在线学习、专家聚合、高斯过程回归
+2. [RELTA-SGLD: Relative-Growth Localized Taming for Nonconvex Stochastic-Gradient Langevin Learning](/202607/23/2607.19544v1-relta-sgld-relative-growth-localized-taming-for-nonconvex-stochastic-gradient-langevin-learning)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：利用贝叶斯后验优化变压器行为引出
-2. [Variational meta-learning inference for low dimensional neural system identification](/202607/22/2607.18965v1-variational-meta-learning-inference-for-low-dimensional-neural-system-identification)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：用于元学习的摊销变分推理
+   evidence：用于非凸优化的随机梯度朗之万动力学
 
 ### 速读区论文标签
-1. [An Epistemic Position-Based Click Model: From Interactions to Epistemic Distributions of Relevance and Bias](/202607/22/2607.18712v1-an-epistemic-position-based-click-model-from-interactions-to-epistemic-distributions-of-relevance-and-bias)  
-   标签：评分：7.0/10、query:bayes-dl
-   evidence：基于证据深度学习的点击模型认知不确定性估计
-2. [RAMP: Recognition parametrisation by Amortised Message Passing](/202607/22/2607.18883v1-ramp-recognition-parametrisation-by-amortised-message-passing)  
+1. [Parallel Noising in Neural Markov Logic Networks](/202607/23/2607.19126v1-parallel-noising-in-neural-markov-logic-networks)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：用于潜变量模型的摊销消息传递
+   evidence：针对神经马尔科夫逻辑网络的基于MCMC的并行噪声推理算法
 
 
 <div class="dpr-home-promo-card">
