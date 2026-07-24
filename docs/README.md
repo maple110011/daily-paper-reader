@@ -6,29 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-23
-- 运行时间：2026-07-23 21:38:17 UTC
+- 最新运行日期：2026-07-24
+- 运行时间：2026-07-24 20:26:34 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：2
-- 速读区：1
+- 本次总论文数：6
+- 精读区：3
+- 速读区：3
 
 ### 今日简报（AI）
-今日精读2篇高分论文与1篇速读，聚焦自适应贝叶斯在线学习与非凸随机梯度朗之万方法。最值得关注的是《Adaptive Bayesian Online Learning via Expert Aggregation》（9.0/10）中专家聚合的在线适应机制，以及《RELTA-SGLD》（8.0/10）对非凸优化的局部梯度驯化策略。建议普通读者优先精读这两篇，理解如何将贝叶斯理论与在线学习、非凸优化中的稳定性增强技巧结合。
-- 详情：[/202607/23/README](/202607/23/README)
+今日推荐6篇论文，精读3篇聚焦贝叶斯不确定性估计在医疗AI和在线推荐中的应用。最值得关注的是《Bayesian uncertainty estimation improves clinical decision making in medical AI agents》（9.0分）和《Probabilistic Residual Learning for Online Recommendations》（8.0分），分别揭示了贝叶斯方法提升临床决策可靠性与推荐系统鲁棒性。建议深入阅读这两篇论文，重点理解其不确定性量化机制在实际场景中的落地方式。
+- 详情：[/202607/24/README](/202607/24/README)
 
 ### 精读区论文标签
-1. [Adaptive Bayesian Online Learning via Expert Aggregation](/202607/23/2607.20239v1-adaptive-bayesian-online-learning-via-expert-aggregation)  
+1. [Bayesian uncertainty estimation improves clinical decision making in medical AI agents](/202607/24/2607.20582v1-bayesian-uncertainty-estimation-improves-clinical-decision-making-in-medical-ai-agents)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：贝叶斯在线学习、专家聚合、高斯过程回归
-2. [RELTA-SGLD: Relative-Growth Localized Taming for Nonconvex Stochastic-Gradient Langevin Learning](/202607/23/2607.19544v1-relta-sgld-relative-growth-localized-taming-for-nonconvex-stochastic-gradient-langevin-learning)  
+   evidence：蒙特卡洛dropout用于医学AI中的贝叶斯不确定性
+2. [Probabilistic Residual Learning for Online Recommendations](/202607/24/2607.20863v1-probabilistic-residual-learning-for-online-recommendations)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：用于非凸优化的随机梯度朗之万动力学
+   evidence：基于深度学习的因果贝叶斯推荐模型
+3. [3D Uncertainty Quantification for the Photo-Acoustic Tomography](/202607/24/2607.21373v1-3d-uncertainty-quantification-for-the-photo-acoustic-tomography)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：贝叶斯不确定性量化框架用于三维光声断层扫描
 
 ### 速读区论文标签
-1. [Parallel Noising in Neural Markov Logic Networks](/202607/23/2607.19126v1-parallel-noising-in-neural-markov-logic-networks)  
+1. [Program Synthesis for Simulation-Based Inference: Joint Model Selection and Parameter Estimation](/202607/24/2607.17540v1-program-synthesis-for-simulation-based-inference-joint-model-selection-and-parameter-estimation)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：结合程序合成的神经模拟推断
+2. [A Bayesian Framework for Built-in Input Dimension Reduction for Gaussian Process Modeling](/202607/24/2607.19498v1-a-bayesian-framework-for-built-in-input-dimension-reduction-for-gaussian-process-modeling)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：针对神经马尔科夫逻辑网络的基于MCMC的并行噪声推理算法
+   evidence：贝叶斯框架用于高斯过程建模，可用于不确定性量化
+3. [Factor-Informed Uncertainty Distillation for Gaze Estimation](/202607/24/2607.20072v1-factor-informed-uncertainty-distillation-for-gaze-estimation)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：不确定性蒸馏方法与不确定性估计相关但非贝叶斯
 
 
 <div class="dpr-home-promo-card">

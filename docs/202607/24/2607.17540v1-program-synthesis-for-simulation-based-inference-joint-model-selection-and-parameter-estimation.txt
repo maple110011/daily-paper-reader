@@ -1,0 +1,578 @@
+Title: Program Synthesis for Simulation-Based Inference: Joint Model Selection and Parameter Estimation
+
+URL Source: https://arxiv.org/pdf/2607.17540v1
+
+Published Time: Tue, 21 Jul 2026 01:28:01 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Program Synthesis for Simulation-Based Inference: Joint Model Selection and Parameter Estimation 
+
+Siddharth Mishra-Sharma ∗
+
+Faculty of Computing & Data Sciences Boston University 
+
+smishras@bu.edu 
+
+## Abstract 
+
+Neural simulation-based inference enables parameter estimation for complex mod-els, but typically requires the user to specify a simulator encoding a fixed model structure. We present a framework for joint model selection and parameter esti-mation that combines large language models for program synthesis with neural simulation-based inference. Given a natural language description of the system and data under investigation, an LLM proposes candidate simulator programs which are iteratively refined via feedback-driven mutation and evaluated using neural density estimation. The approach enables simulation-based inference over a pool of models, not just parameters within a fixed model. On benchmarks spanning deterministic dynamics, stochastic epidemic models, and dark matter substructure inference from gravitational-lensing images, the method identifies plausible model families from open-ended prompts, with accuracy that reflects the information content of the data and identifiability of candidate models. 
+
+## 1 Introduction 
+
+A central challenge in scientific modeling is navigating the vast space of possible descriptions of an underlying system. Traditionally, researchers manually propose candidate models based on domain expertise, sometimes comparing these models using statistical criteria such as Bayes factors. This manual process is labor-intensive, potentially overlooking alternative, well-motivated model structures that better explain the data. The space of scientific models is the space of possible compatible simulator programs, which is challenging to explore systematically. The capabilities of large language models (LLMs) have been improving rapidly [Google DeepMind, 2025, Anthropic, 2025, Singh et al., 2025, Guo et al., 2025, Kimi Team et al., 2025], and LLMs today can reliably produce executable programs that implement differential equations, stochastic simulations, and other mechanistic models. This suggests using LLMs as an implicit prior over the space of scientific simulators: draw candidate programs from this prior, then filter them through Bayesian model comparison. Separately, simulation-based inference (SBI) methods have emerged as powerful tools for Bayesian inference when likelihoods are intractable but forward simulations are available [Cranmer et al., 2020, Deistler et al., 2025]. As broad classes, neural posterior estimation (NPE) methods learn the posterior directly [Papamakarios and Murray, 2016, Lueckmann et al., 2017, Greenberg et al., 2019], neural likelihood estimation (NLE) methods learn the likelihood function [Papamakarios et al., 2019], and neural ratio estimation (NRE) methods learn likelihood ratios or likelihood-to-evidence ratios [Cranmer et al., 2015, Hermans et al., 2020, Miller et al., 2021]. These methods have found widespread application in physics, cosmology, neuroscience, ecology, and other fields where 
+
+> ∗Also at Anthropic. Work done at Boston University. Preprint. arXiv:2607.17540v1 [cs.LG] 20 Jul 2026
+
+mechanistic simulators are available but likelihood functions are intractable [see Mishra-Sharma, 2023, for a curated collection of applications]. In this work, we unify these advances into a framework for joint model selection and parameter esti-mation. Given a natural language description of a scientific problem and a dataset under consideration, the method proceeds by first using an LLM to synthesize multiple candidate simulator programs as executable code, each with specified parameter priors that reflect domain-appropriate ranges. It then generates simulations from all candidate models under their respective priors, trains neural classifiers to estimate log Bayes factors for model comparison, and fits neural posterior estimators for each model to enable parameter inference. Iterating over several rounds, the final output is a joint posterior 
+
+p(M, θ | x) over both the discrete model space within the generated candidate pool and continuous parameter space associated with each model. The framework handles a growing candidate pool via pairwise ratio estimation without retraining a joint model over all candidates, implements an Occam-style complexity penalty relative to the LLM-specified priors, and produces per-model parameter posteriors. We validate on controlled benchmarks with known ground truth, spanning deterministic function-fitting, stochastic compartmental dynamics, and gravitational-lensing images. 
+
+## 2 Related Work 
+
+Simulation-Based Inference Simulation-based inference methods enable inference in settings where the likelihood function is intractable or unavailable, but forward simulation from a mechanistic model is possible. These approaches, also known as likelihood-free inference, have a long history in statistics under the umbrella of approximate Bayesian computation (ABC), which accepts parameter proposals based on the similarity between simulated and observed data [Rubin, 1984, Sisson et al., 2018], with ABC-SMC methods (ABC combined with sequential Monte Carlo, SMC) extending to model comparison [Toni et al., 2009]. Neural approaches have substantially improved the ef-ficiency and accuracy of SBI by training density estimators or classifiers to directly approximate posteriors, likelihoods, or likelihood ratios without necessarily relying on summary descriptions of high-dimensional data [Papamakarios and Murray, 2016, Lueckmann et al., 2017, Greenberg et al., 2019, Papamakarios et al., 2019, Hermans et al., 2020, Miller et al., 2021, Deistler et al., 2022, Cranmer et al., 2020]. Our work extends SBI to settings where the model space itself is generated rather than pre-specified. 
+
+Program Synthesis and LLM-Based Discovery Program synthesis aims to automatically generate programs satisfying a given specification [Gulwani et al., 2017]. LLMs have achieved strong results on synthesis benchmarks [Chen et al., 2021, Austin et al., 2021]. Most relevant to our work are evolutionary approaches that use LLMs for scientific and algorithmic discovery. FunSearch [Romera-Paredes et al., 2024] pairs an LLM with an evaluator in an evolutionary loop and AlphaEvolve [Novikov et al., 2025] extends this to evolve entire codebases. LLM-SR [Shojaee et al., 2024] combines LLMs with evolutionary search for symbolic equation discovery. Our work shares the evolutionary LLM framework but differs in two key ways: we target scientific simulators rather than algorithms, and we perform Bayesian inference over the generated programs rather than optimizing a single objective. 
+
+LLM-Based Probabilistic Model Discovery The most closely related concurrent work is Mod-elSMC [Wahl et al., 2026], which independently casts LLM-based mechanistic model discovery as SMC with executable programs as particles, iteratively proposed and refined by an LLM. Both methods marginalize parameters and produce model posteriors at the SMC step, with per-model pa-rameter posteriors obtained downstream via neural posterior estimation. The substantive differences are in how the marginal likelihood is estimated and how pairwise comparisons are aggregated. First, ModelSMC weights particles using neural likelihood estimation, specifically a pretrained tabular density estimator (TabPFN) applied to the per-model marginal p(x | m) = R p(θ) pϕ(x | m, θ ) d θ,whereas we use neural ratio estimation [Jeffrey and Wandelt, 2024]: pairwise classifiers trained with the exponential loss target log Bayes factors directly without estimating either likelihood. Second, we aggregate the resulting pairwise log Bayes factors by projecting them onto a globally consistent log-evidence vector via least squares (Eq. (7)), which removes order-dependence and the implicit inverse-temperature distortion of naive averaging. ModelSMC additionally validates on real-world 2pharmacology and neuroscience recordings, whereas all our experiments use synthetic ground truth. Other recent probabilistic-LLM approaches include Large Language Bayes [Domke, 2025], which generates probabilistic programs and performs likelihood-weighted model averaging on tractable likelihoods. 
+
+## 3 Method 
+
+We present the framework for joint inference over model space M and parameter space Θ. The goal is to compute the joint posterior distribution over both discrete model indices and continuous model parameters associated with each model given observed data x:
+
+p(M, θ | x) = p(θ | x, M ) · p(M | x), (1) where M ∈ M = {M1, . . . , M K } is a discrete model index, θ ∈ ΘM are the continuous parameters specific to model M , and x is the observed data. The factorization in Eq. (1) separates the problem into model selection, computing p(M | x), and parameter inference conditional on each model, computing p(θ | x, M ). We address both components using neural density estimation. 
+
+3.1 LLM-Based Program Synthesis 
+
+The first stage uses a large language model to generate plausible candidate simulator programs from a natural language problem description. Given a problem description P specifying the phenomenon to be modeled, the observable quantities, and any relevant domain constraints, we prompt the LLM to generate K diverse candidate models: 
+
+{(Mk, π k)}Kk=1 ∼ pLLM (· | P ), (2) where each Mk is executable code defining a simulator function and πk specifies the prior distribution over the parameters of that model. Each simulator accepts a parameter dictionary, simulates forward (numerical integration, stochastic sampling, etc.), and returns the observables as a numerical array. The LLM is prompted to generate diverse candidates exploring different modeling assumptions; we provide the full prompt template in Appendix A. Before inference we validate each program by parsing its code and executing it on random parameter draws, checking that the output is finite; failing programs are discarded and the round proceeds with the surviving candidates (simulations with unexpected shape are additionally dropped when training data is generated). For the subhalo benchmark the LLM emits parameter configurations for a fixed simulator rather than code, so this validation step does not apply. 
+
+3.2 Sequential Model Refinement 
+
+Rather than treating program synthesis as a one-shot generation, we employ an iterative refinement strategy inspired by SMC that progressively focuses on promising regions of model space. This refinement approach draws inspiration from sequential NPE methods [Greenberg et al., 2019], but operates over the discrete space of programs rather than continuous parameters. In round 1, we generate K diverse candidates from the LLM prior pLLM (· | P ) and compute impor-tance weights wk ∝ p(x | Mk) via ratio estimation (Section 3.3). In subsequent rounds, we resample models proportional to their weights (with replacement), then use the LLM as a mutation kernel to generate variations of the selected models: 
+
+M ′ 
+
+> k
+
+∼ pLLM (· | Mk, P, feedback ), (3) where the mutation prompt includes the code and description of the parent model, encouraging the LLM to propose structurally related variants. The feedback term summarises the parent’s standing in the current pool: its posterior weight together with the names and weights of the top- and bottom-ranked models in the round. This grounds the proposal in the competitive landscape rather than in the parent alone; in the subhalo benchmark, parents with low weight are additionally nudged toward more substantial structural changes, while high-weight parents are pointed toward nearby variations of the currently dominant region of model space. Benchmark-specific feedback augmentations are noted in Section 4 when discussing the respective experiments. 3Resampling concentrates computational resources on promising regions of program space, while the mutation kernel lets the LLM propose structurally related variants unlikely under independent sampling. The effective sample size (ESS) of the weight vector provides a natural diagnostic: low ESS means weight has concentrated on a single model, while high ESS means competitive alternatives remain. The loop terminates at the earlier of a fixed budget of R rounds or when a single model reaches posterior weight > 0.9; in practice, clear-signal benchmarks converge in 1–5 rounds and ambiguous ones run to the budget while retaining competitive alternative models. 
+
+Theoretical Considerations This procedure is best understood as population-based evolutionary search guided by evidence estimates, not a rigorous SMC sampler targeting p(M | x). Standard SMC requires either that the mutation kernel satisfy detailed balance, or that importance weights correct for the proposal density q(M ′ | M ); the LLM mutation kernel is neither symmetric nor tractable to evaluate, precluding either correction. Instead, resampling concentrates computational resources on promising models while LLM mutation explores structurally related variants analogous to adaptive importance sampling, where the proposal is iteratively refined but the final weights are computed from a fresh evaluation rather than from the proposal trajectory. The refinement rounds thus serve to improve the candidate pool; the final evaluation pool is subject to Bayesian model comparison. Accordingly, the final model weights, derived from ratio estimation at the last round, are Bayesian posterior probabilities conditional on the final evaluation pool : they reflect the relative marginal likelihoods (up to ratio-estimation error) of the models actually compared in the last round, rather than a posterior over the full space of programs. 
+
+3.3 Neural Ratio Estimation for Model Comparison 
+
+The Bayes factor between two models Mi and Mj is the ratio of their marginal likelihoods: BF ij = p(x | Mi)
+
+p(x | Mj ) =
+
+R p(x | θ, M i) p(θ | Mi) d θ
+
+R p(x | θ, M j ) p(θ | Mj ) d θ . (4) Computing these integrals directly is intractable, but they encode the desirable property of Bayesian Occam’s razor , i.e. models with more parameters or wider priors must “spread” their prior probability mass over a larger volume of parameter space, reducing their marginal likelihood even if they can achieve the same peak likelihood as a simpler model. This automatic complexity penalty is essential for principled model comparison. 
+
+Evidence Networks Standard cross-entropy classification learns a density ratio that, with balanced training and equal model priors, can in principle yield the Bayes factor [Cranmer et al., 2015, Hermans et al., 2020]. However, this requires careful calibration, and cross-entropy classifiers tend to saturate for extreme likelihood ratios. We instead employ evidence networks [Jeffrey and Wandelt, 2024], whose exponential loss is designed to target log BF more directly and empirically provides better-behaved estimates across a wide range of evidence strengths. For each pair of models (Mi, M j ), we generate simulations from both models under their respective priors and train a neural network fϕ : x 7 → R using the exponential loss: 
+
+L(f ) = Em,x [exp ((0 .5 − m) · f (x))] , (5) where m ∈ { 0, 1} indicates which model generated the simulation ( m = 0 for Mi, m = 1 for Mj ), and the expectation is over balanced samples from both models. Taking the functional derivative of Eq. (5) with respect to f and setting it to zero gives 
+
+p(x|Mi)e0.5f ∗
+
+= p(x|Mj )e−0.5f ∗
+
+. (6) Solving for f ∗ yields f ∗(x) = log( p(x|Mj )/p (x|Mi)) ≡ log BF ji .Training samples are generated by first drawing θ ∼ πk and then simulating x ∼ p(·| θ, M k), so they follow the prior-marginalized distribution p(x|Mk) = R p(x|θ, M k)πk(θ) d θ; the optimum f ∗
+
+is therefore the log ratio of marginal likelihoods, the log Bayes factor, read directly from the network output. When log Bayes factors are large, exp((0 .5−m)f ) overflows numerically. Following Jeffrey and Wandelt [2024], we train with the ℓ-POP transform J2(f ) = f (1+ |f |), replacing f in Eq. (5) by 
+
+J2(f ). The resulting optimum satisfies J2(f ∗) = log BF ji , so the log Bayes factor is recovered by applying J2 to the trained network’s output. 4Model Posterior from Pairwise Comparisons We train  K
+
+> 2
+
+ pairwise ratio estimators, yielding estimates ˆsij ≈ log BF ij . A natural way to turn these into a model posterior is to average the pairwise comparisons for each model, log p(Mk | x) ∝ 1
+
+> K−1
+
+P  
+
+> j̸=k
+
+ˆskj . This is subtly incorrect, because the average compares each model against a baseline that excludes the model itself. With exact estimates ˆskj = ℓk − ℓj , the average equals ℓk − ¯ℓ\k, where ¯ℓ\k is the mean log-evidence of the other 
+
+K−1 models; rewriting gives KK−1 (ℓk − ¯ℓ), so the self-excluding baseline inflates every centered log-evidence by K/ (K−1) . After the softmax that defines the posterior, this factor acts as an inverse temperature β > 1 and the resulting distribution over models is sharper than the true Bayesian posterior. Averaging therefore systematically overstates the evidence for the leading model; we derive this in Appendix C. A second problem is non-transitivity. Because each pairwise estimator is trained independently on a finite simulation budget, the collection of estimates need not be consistent with any single log-evidence vector: it is possible to observe ˆsAB > 0 and ˆsBC > 0 while ˆsAC < 0.Averaging doesn’t account for this, so cyclic disagreement among the estimators is silently folded into the posterior. We instead seek log-evidences ℓk ≈ log p(x | Mk) that best explain all  K
+
+> 2
+
+ pairwise observations simultaneously in a least-squares sense: 
+
+min 
+
+> ℓ
+
+X
+
+> i<j
+
+(ˆ sij − (ℓi − ℓj )) 2 , subject to P 
+
+> k
+
+ℓk = 0 . (7) This is the maximum-likelihood estimate of the log-evidences under i.i.d. Gaussian noise on the pairwise estimates; Appendix C gives the closed-form solution and shows that the fit residual serves as a diagnostic for cyclic disagreement among the estimators. The model posterior is then 
+
+p(Mk | x) ∝ exp( ℓk) p(Mk).
+
+3.4 Neural Posterior Estimation for Parameters 
+
+For each candidate model Mk, we train a neural posterior estimator to approximate the conditional pa-rameter posterior p(θ | x, M k). We use masked autoregressive flows (MAFs) as the density estimator [Papamakarios et al., 2017]. Training proceeds by generating simulation pairs {(θ(n), x (n))}Nsim  
+
+> n=1
+
+where parameters are sam-pled from the prior θ(n) ∼ πk and observations are generated by running the simulator x(n) ∼
+
+p(· | θ(n), M k). The flow parameters ψ are optimized to maximize the log-likelihood of the training parameters under the flow: L(ψ) = 1
+
+> Nsim
+
+PNsim  
+
+> n=1
+
+log qψ (θ(n) | x(n)). At inference time, given the actual observed data xobs , we can sample from the approximate posterior qψ (θ | xobs ) or evaluate its density at any parameter value. 
+
+3.5 Joint Posterior and Inference 
+
+Given p(M | x) from ratio estimation and NPE posteriors qψk (θ | x) for the top-ranked surviving models, samples from the joint posterior are obtained by ancestral sampling: draw M ∼ p(M | x),then θ ∼ qψM (θ | x). This supports standard downstream operations like model-averaged predictions and maximum a posteriori (MAP) model identification along with its parameter posterior. Algorithm 1 summarizes the procedure. 5Algorithm 1 Evolutionary Search over Program Space 
+
+Require: Problem description P, observation x, particles K, rounds R 
+
+> 1:
+
+// Round 1: Generate from LLM prior  
+
+> 2:
+
+{Mk}Kk=1 ← LLM (P); validate programs  
+
+> 3:
+
+Generate simulations, train classifiers, compute weights wk 
+
+> 4:
+
+for r = 2 to R do  
+
+> 5:
+
+// Resample proportional to weights  
+
+> 6:
+
+{parent k}Kk=1 ← Multinomial ({wk}) 
+
+> 7:
+
+// Mutate via LLM  
+
+> 8:
+
+for k = 1 to K do  
+
+> 9:
+
+Mk ← LLM (parent k, P, “generate variation” ) 
+
+> 10:
+
+end for  
+
+> 11:
+
+Validate, simulate, compute new weights wk 
+
+> 12:
+
+Compute ESS = 1 / P 
+
+> k
+
+¯w2 
+
+> k
+
+(normalized weights); check convergence  
+
+> 13:
+
+end for  
+
+> 14:
+
+// Final inference  
+
+> 15:
+
+Normalize weights to get p(Mk | x) within explored pool  
+
+> 16:
+
+Train NPE flows qψk (θ | x) for the top-ranked surviving models by final weight (with wk > 0.01 ) 
+
+> 17:
+
+return p(M | x), {qψk }
+
+## 4 Experiments 
+
+We evaluate on three controlled benchmarks with known ground truth: a damped harmonic oscillator (essentially function fitting), SIR compartmental dynamics with three ground-truth variants (stochastic latent structure; related-family discrimination), and dark matter subhalo population models inferred from simulated gravitational-lensing images. 
+
+4.1 Experimental Setup 
+
+For program synthesis, we use Claude Opus 4.6 as the proposal model, with temperature T = 0 .7.The prompt specifies the problem domain and observable quantities and requests diverse modeling approaches, but does not name specific model families or specify which models to generate. It also asks for a range of candidate complexities, including at least one minimal model, with a stated preference for simplicity; this biases which programs are proposed , not how they are scored (full template in Appendix A). The LLM also specifies parameter priors based on the problem description. Coupling the prior to the simulator is natural in our setting: the simulator definition and the parameterization it induces are inseparable, so a candidate model is really a (program, prior) pair drawn jointly from pLLM . Poor priors are penalised by the marginal-likelihood machinery: priors that are too narrow miss parameter regions that fit the data, while priors that are too wide spread mass over implausible regions. A model whose prior is badly mis-specified therefore loses weight to competitors with better-matched priors, and the refinement loop has the opportunity to propose revised priors alongside revised structure. The prompt requires simulators to include observational noise matching the data-generating process, as the ratio estimator compares the full generative model including the noise process. We use 
+
+K = 8 candidates per round with up to R = 10 refinement rounds for ordinary differential equation (ODE) benchmarks (four of the ten SIR seeds ran with a five-round budget) and R = 15 for the subhalo benchmark. All experiments use 10 random seeds for ODE benchmarks and 3 seeds for the subhalo benchmark. For the ODE benchmarks, whose observations are 1D time series, the mutation feedback (Section 3) additionally includes each candidate’s root-mean-square error (RMSE) against the observation and the sign of its residual trend over time, together with a directive to revise the parent in the indicated direction (e.g. a candidate whose residuals trend upward is told to “consider adding terms that increase predictions at larger values”). For ratio estimation towards evidence computation, we train ensembles of 5 evidence networks per model pair, each a 4-layer multi-layer perceptron (MLP) with 256 hidden units and Gaussian error linear unit (GELU) activations, with 80/20 train/validation split and early stopping. Training uses the 60 2 4 6 8 10         
+
+> Time
+> −2
+> −1012
+> x(t)
+> (a) Posterior predictive
+> Observations Truth Power Law Cosine (posterior predictive)
+> 0.00.5123456
+> Rank
+> Round 1 (ESS=2.3)
+> 0.00.2123456Round 3 (ESS=7.1)
+> 0.00.2123456Round 5 (ESS=4.5)
+> 0.00 0.25 123456Round 7 (ESS=5.0)
+> 0.00.5123456Round 10 (ESS=3.5)
+> Posterior weight
+> (b) Model evolution Power Law Cosine Damped Cosine Gaussian Envelope Cosine
+
+Figure 1: Damped oscillator benchmark: the method recovers a damped, oscillating model and concentrates the posterior on it over successive SMC rounds. (a) Posterior-predictive check of the winning LLM-generated program (a power-law-decay cosine variant): parameter-posterior draws (blue cloud) tightly track the red observations and the dashed ground truth. The posterior is computed by exact-likelihood MCMC on the stored program under the known Gaussian noise model, conditioned on the run’s observation. (b) Evolution of the model population across rounds, showing the top-6 models by posterior weight each round (bar color = LLM-proposed base family; ESS in the column title; gray arrows trace mutation lineage). Two families share the weight in round 1 and compete through the middle rounds; by round 10 the posterior has collapsed onto mutation variants of the winning power-law-decay cosine family. exponential loss with ℓ-POP transform described in Section 3.3 and the Adam optimizer [Kingma and Ba, 2015] with learning rate 10 −3. Pairwise log Bayes factors are aggregated via least-squares projection onto globally consistent log-evidences (Eq. (7)). For neural posterior estimation, we use MAFs implemented in the sbi package [Tejero-Cantero et al., 2020] to estimate p(θ | x, M ) for the top-ranked surviving models. The ODE benchmarks use 2,000 simulations per model per round; the subhalo benchmark uses 320 four-image datasets per model and four-image set-level evaluation. ODE-benchmark runs take ∼2–30 minutes on a single GPU; subhalo-benchmark runs take ∼45–70 minutes per ground-truth/seed pair, dominated by per-round retraining of the set embedder. 
+
+4.2 Benchmark 1: Damped Harmonic Oscillator 
+
+As a warm-up, we generate observations from a damped cosine x(t) = Ae −γt cos( ωt ) + ϵ, ϵ ∼N (0 , σ 2), with A = 2 .0, γ = 0 .3, ω = 3 .0, sampled at 50 uniform time points over t ∈ [0 , 10] 
+
+with σ = 0 .1. This is essentially a function-fitting / symbolic regression exercise. The LLM prompt describes qualitative behavior (oscillation with decay) and the observation time span, without naming specific functional forms. Typical candidates include damped sinusoids, Gaussian envelopes, power-law/algebraic decay, chirped oscillators, and two-mode beating models. Across 10 random seeds, the method identifies a model with both damping and oscillation in 10/10 cases. The winning family varies across seeds (damped cosine, Gaussian-envelope cosine, and power-law-decay cosine each win in a comparable number of seeds), reflecting the diversity of the initial LLM-generated candidate pool (example generated programs in Appendix D); all correctly capture oscillation with decay. Five seeds converge in round 1 and five run all 10 rounds, with ESS fluctuating between ∼1 and 8 as within-family variants are injected and winnowed. Figure 1 (a) 
+
+shows posterior-predictive samples under the winning program closely tracking the ground truth, while Fig. 1 (b) visualizes the model-pool evolution across SMC rounds; the NPE machinery used for per-model parameter posteriors is approximately calibrated in the well-specified case of this benchmark’s base model, within calibration uncertainty (see Appendix E). 7SIR SEIR SIS Other 0246810           
+
+> Count (out of 10)
+> SIR ground truth
+> SIR SEIR SIS Other 0246810
+> SEIR ground truth
+> SIR SEIR SIS Other 0246810
+> SIS ground truth
+> 135710
+> SMC round
+> 02468
+> ESS
+> ESS (SIR ground truth)
+> Median / interquartile range
+
+Figure 2: SIR epidemic model selection: the method recovers the correct compartmental family when the dynamics are distinctive, and otherwise spreads weight across indistinguishable variants. Panels 1–3: one per ground truth (SIR, SEIR, SIS); bar height is the number of seeds (of 10) whose MAP model falls in each family (SIR, SEIR, SIS, or Other), with the true family outlined in magenta. SIR is recovered in 8/10 seeds and SIS in 9/10; SEIR succeeds in only 5/10, because at this noise level it is observationally close to SIR and the Occam-style penalty favors the simpler family. Rightmost panel: ESS of the K=8 pool across SMC rounds for the SIR ground truth (median and interquartile band over 10 seeds). The median ESS climbs to ∼7.7 by round 2 and stays in the ∼6–7.5 range thereafter: the posterior keeps mass on the various compartmental variants the data cannot separate. 
+
+4.3 Benchmark 2: SIR Epidemic Dynamics 
+
+This benchmark tests the method on a stochastic simulator with latent dynamics, and on multiple ground-truth variants within the same family. We generate observations via Gillespie simulation of a susceptible–infected–recovered (SIR) population of size Npop = 1000 : infection events S → I occur at rate βSI/N pop and recovery events I → R at rate γI , with true parameters β = 0 .4, γ = 0 .1 and initial state (S0, I 0, R 0) = ( Npop −10 , 10 , 0) . The observation is the infected count I(t) evaluated at 10 uniformly spaced times over t ∈ [0 , 100] with additive Gaussian noise of standard deviation 
+
+σobs = 5 (clipped to be non-negative for the SIR ground truth). Ground truths are SIR (standard), SEIR (added exposed compartment), and SIS (no immunity, endemic equilibrium); the prompt asks for diverse mechanistic epidemic simulators and lets the LLM choose the structure (compartments, differential equations, stochastic jump processes, or hybrids), without naming specific formulations. Figure 2 shows model selection results across the three SIR ground truths (10 seeds each). Per expectation, model selection accuracy is highest for qualitatively distinct dynamics: SIS achieves 9/10 because its endemic equilibrium (no decline phase) is unmistakable, and SIR achieves 8/10. SEIR is hardest at 5/10: in the 5 successful seeds SEIR wins with the posterior placing all of its mass on the SEIR family, while in the other 5 seeds SIR variants dominate instead. SEIR candidates are present in every initial pool, so the failure is not a proposal-diversity issue: SEIR and SIR produce qualitatively similar epidemic curves at these parameter values (the exposed compartment adds only a short time lag), and with 10 noisy observations the ratio estimator often cannot distinguish them, preferring the simpler SIR family via the implicit complexity penalty (Section 3.3). The ESS of the model-weight vector is a natural diagnostic for whether the data distinguishes the candidates: it tends to 1 when a single model dominates and to K when weights spread uniformly. The rightmost panel of Fig. 2 shows ESS trajectories across 10 SIR seeds: the median climbs to ∼7.7
+
+by round 2 and remains between ∼6 and 7.5 thereafter, meaning the posterior consistently spreads across near-equivalent compartmental variants that the data cannot distinguish. 
+
+4.4 Benchmark 3: Dark Matter Subhalo Populations 
+
+Strong gravitational lensing of distant galaxies is an active observational probe of dark-matter sub-structure [Vegetti et al., 2024]: when a foreground galaxy lenses a background source into arcs around its Einstein ring, each ∼ 10 7–10 M⊙ subhalo in the lens adds a small perturbation to the deflection field, imprinting localized brightness anomalies on the arcs. Different dark-matter theories predict qualitatively different subhalo populations: cold dark matter (CDM) predicts abundant substruc-ture with centrally concentrated (“cuspy”) Navarro–Frenk–White (NFW) density profiles [Navarro et al., 1997], while warm and self-interacting dark matter (WDM, SIDM) predict fewer subhalos with flattened central densities (“cored” profiles). Inferring subhalo populations from samples of lensing images is an established target for simulation-based inference [e.g., Brehmer et al., 2019, 8Wagner-Carena et al., 2024]. Given N lensing systems hypothesized to share a common substructure population, we would like the inference machinery to identify the underlying family and, when the data permits, constrain its population-level parameters from a handful of noisy images, using a prompt that does not name any of the candidate theories. We render 64 ×64 pixel images ( ∼0.1 arcsec pixel scale) of a main lens populated with a Poisson realization of subhalos drawn from a power-law mass function over [10 7, 10 10 ] M⊙; the abundance, mass-function slope, spatial scale, concentration, and density profile are population-level parameters (dN/ dM ∝ M −1.9 for the CDM ground truth). Per image we vary the main-lens ellipticity (q ∈ [0 .7, 0.95] ), Einstein radius ( θE ∈ [1 .3, 1.8] arcsec ), and source offset; images are normalized to unit peak surface brightness, and per-pixel Gaussian noise σ = 0 .005 (peak signal-to-noise ∼200 ) is then added. Each evaluation presents a set of N = 4 images sharing one population-level parameter vector θ∗, treated hierarchically as described below. The LLM prompt describes only the physics and the simulator’s parameter interface (subhalo count, mass-function slope, spatial scale, concentration, profile, core fraction) and emits K = 8 candidate (description, prior) pairs per round, anchored by one force-included smooth-null candidate. This benchmark is thus structured family selection over a fixed simulator interface, rather than open-ended synthesis of simulator code. The convolutional neural network (CNN) sees two channels per image. Channel 1 is the noisy observed image. Channel 2 is a noise-free residual map: the full image minus a smooth-lens-only rendering at the same (ground-truth) main-lens and source nuisance parameters, isolating the subhalo-induced perturbation. Supplying the ground-truth smooth model is an oracle simplification of a real analysis, in which the smooth lens would be inferred jointly and the subtraction would carry additional uncertainty into the residual channel. 
+
+Set-Level Evidence Network Each lens in a set is drawn from a common population-level parame-ter θ∗ but has per-system nuisance parameters (the main-lens and source geometry above), and the population is what we care about. Marginalizing over the shared θ gives 
+
+p(x1: N | M ) = 
+
+Z NY
+
+> i=1
+
+p(xi | θ, M ) π(θ | M ) d θ, (8) which is not the product of per-system marginals; treating the N observations as independent (summing per-image log BFs) would overstate evidence, while averaging would undercount it by a factor N . Both heuristics give wrong answers. We handle this by training a single set-level evidence network on the joint distribution over N -tuples. Training samples are drawn hierarchically: θ ∼ π(θ | M ), then xi ∼ p(· | θ, M ) independently for 
+
+i = 1 , . . . , N . A permutation-invariant DeepSets [Zaheer et al., 2017] encoder maps the N -tuple to a single set embedding: a per-image feature network (a ResNet-18 [He et al., 2016] on 2-channel image+residual input) produces per-image features, a shared MLP ϕ lifts them into the set-encoder representation, a mean-pool across the N elements provides permutation invariance, and a post-pooling MLP ρ (with log N concatenated as input, so the network can condition on dataset size) produces the final 128-dimensional set embedding. The pairwise evidence networks of Section 3.3 then operate on these set embeddings unchanged, preserving the exponential-loss/ ℓ-POP machinery and targeting the hierarchical marginal likelihood. The set embedder is retrained at each SMC round so its feature space tracks the current candidate pool; the loop runs up to R = 15 rounds. 
+
+Substructure Family Identification The primary question is whether the framework can identify the underlying dark-matter profile family. We test six physically motivated ground truths spanning abundant-cuspy to sparse-cored populations, at three seeds each: CDM (NFW, nmean =35 ), CDM-low (NFW, 12 ), WDM-high (cored, 8), Mixed (50/50 NFW/cored, 15 ), SIDM (cored, 20 ), and WDM (cored, 3). The framework recovers the correct family in 14/18 runs (Fig. 3, right margin): CDM, CDM-low, WDM-high, and Mixed at all seeds; SIDM at 2/3; WDM at 0/3, all three seeds converging on a mixed -profile candidate rather than pure cored , a near-degenerate but wrong call that we count as a failure. (With three seeds per ground truth the per-family rates carry wide uncertainties; the aggregate 14/18 has a 95% Wilson interval of [0 .55 , 0.91] .) The subhalo count nmean is a different story: at N = 4 images it is only weakly identified. Count posteriors are broad (standard deviations up to ∼13 subhalos), and their means land closer to the interior of the candidates’ prior ranges than to the truth: CDM undershoots (ˆnmean ∈ [4 , 17] vs. true 35 ), while the sparse truths overshoot 
+
+(WDM-high: [22 , 31] vs. true 8; WDM: [18 , 32] vs. true 3). The rest of this subsection traces both 90 10 20 30 40 50 60              
+
+> Posterior subhalo count ˆ nmean (mixture mean ±std)
+> CDM (true n=35) CDM-low (true n=12) WDM-high (true n=8) Mixed (true n=15) WDM (true n=3) SIDM (true n=20)
+> 3/3 3/3 3/3 3/3 0/3 2/3
+> family correct
+> NFW Cored Mixed True nmean
+
+Figure 3: Subhalo benchmark (4-lens set-level inference, 3 seeds per ground truth): the profile family is identified reliably (right margin: correct-family tally per ground truth, 14/18 overall), while the subhalo count is only weakly constrained at N = 4 . Each point is one seed’s posterior mean subhalo count ˆnmean (error bar: posterior standard deviation), colored by the family of its MAP model (NFW, cored, mixed); black ticks mark the true nmean . Count estimates regress toward the interior of the candidate priors: CDM undershoots its true nmean = 35 and the sparse truths (WDM-high, WDM) overshoot, an information-content effect dissected in Fig. 4. biases to a single cause, namely that four images at this resolution pin down the profile family but carry little information about the count, and then verifies that explanation by increasing N .
+
+Origin of the Count Biases and Family Misidentification Both count biases follow from how much subhalo signal survives at the chosen image resolution. The flux perturbation from an NFW subhalo of mass M has angular scale set by its Einstein radius, θsub ≈ 0.03 arcsec ( M/ 10 7 M⊙)1/2.Subhalos below 10 8 M⊙ therefore subtend less than the ∼0.1 arcsec pixel, and their imprint on the residual channel sits far below the image channel’s per-pixel noise σ. With a M −1.9 mass function, only ∼12% of CDM’s 35 subhalos clear this threshold. Cored profiles behave differently: their flat centers spread each perturbation over many pixels. Direct measurement confirms the resulting asymmetry. Over 200 matched-geometry renderings per model, CDM ( n = 35 , NFW) leaves a mean root-mean-square (RMS) residual of only ∼0.5 σ relative to the smooth reference, whereas WDM (n = 3 , cored) leaves ∼55 σ.This asymmetry predicts both directions of the count bias. On NFW truths, candidates with very different nmean priors are likelihood-tied, so prior volume arbitrates and Occam selects the narrowest, sparsest candidate: CDM undershoots. (Minimal candidates are guaranteed present in every pool by the generation prompt; Appendix A.) On cored truths, the family is unambiguous, but four images say little about how the perturbation splits between subhalo count and per-subhalo structure (core radius, concentration, mass-function slope). The count posterior therefore stays broad and prior-driven, consistent with the prior-like widths in Fig. 3: the sparse truths overshoot. If this explanation is right, the CDM undershoot should disappear when the data is made more informative. We test this directly by rerunning a single CDM run with N = 20 lensing systems per evaluation, all other settings fixed (Fig. 4). The smooth-null share of the Round-1 posterior collapses from 96% at N = 4 to 4% at N = 20 ; the truth-covering abundant-NFW candidate rises from 0.2% 
+
+to 44% ; and the final count posterior moves from ˆnmean = 4 ± 2 to 36 ± 10 , bracketing the true 35 .Note that the Round-1 null share measures information content rather than the final verdict: even at N = 4 , SMC refinement eventually displaces the null with near-degenerate ultra-sparse NFW variants, which is what yields ˆnmean = 4 ± 2 rather than a smooth-lens call. The family misidentifications are analogous. At nmean = 3 , a sparse cored population and a cored/NFW mixture produce nearly identical four-image statistics, so the narrower-prior mixed 10 0.00 0.25 0.50 0.75 1.00             
+
+> Round-1 posterior weight
+> N= 4
+> N= 20
+> 96% 4% 44% 31% 20%
+> ︸︷︷︸
+> abundant NFW: 0.2%
+> Round-1 model posterior
+> smooth / null abundant NFW (covers truth) sparse NFW other NFW
+> N= 4 N= 20
+> lensing systems per evaluation
+> 010 20 30 40 50
+> ˆnmean  (mixture posterior)
+> ground truth nmean =35
+> 4±2
+> 36 ±10
+> Final count posterior
+
+Figure 4: The CDM count bias is a limit of data information content: adding lensing systems removes it. Left: Round-1 posterior weight by candidate class as the number of lensing systems per evaluation 
+
+N grows. At N = 4 the data cannot resolve the NFW substructure, so nearly all weight sits on the smooth-null candidate; at N = 20 the weight shifts to the candidate covering the true abundant-NFW population. Wrong-family (cored/mixed) candidates receive negligible weight throughout and are omitted. Right: the final posterior on the subhalo count correspondingly moves from a strong undershoot at N = 4 to bracketing the true value (dashed line) at N = 20 .candidate wins by Occam on all three WDM seeds; the single SIDM miss likewise selects a mixed-profile candidate via the same cored/mixed near-degeneracy. For an end-user the take-away is operational, i.e. the posterior is honest relative to the proposed candidate pool and the information content of the data, with the failure modes themselves being a diagnostic. An application of this framework to a CDM-like system at N = 4 should read the narrow-prior preference and the prior-hugging count estimate as a signal that more lenses or higher-resolution imaging are needed, not as a confident claim of a sparse or smooth system. 
+
+## 5 Discussion and Conclusion 
+
+We cast scientific model discovery as Bayesian inference in program/simulator space: an LLM supplies an implicit prior over simulators, and neural ratio estimation filters its samples into a joint posterior over models and parameters. The two components have complementary failure modes: LLMs generate plausible but sometimes physically incorrect models, while simulation-based inference provides rigorous comparison but needs candidates to compare. Because the ratio estimators target marginal likelihoods, complexity is penalized automatically: simpler models win ties by spreading their prior mass less thinly. Across our benchmarks the method recovers plausible model families from open-ended prompts. A secondary property of this framework is that the posterior spreads across models when the data cannot distinguish candidates, rather than collapsing to a confident wrong answer. The lensing benchmark makes this concrete: the apparent CDM undershoot at N =4 is a genuine information-content limit, and in the single-seed rerun of Fig. 4, increasing the number of lensing systems per evaluation to N =20 eliminates the bias and recovers the truth. A corollary worth emphasizing is that the same Occam penalty that automatically rewards simpler models can, at low signal-to-noise, become the dominant factor in selection. This is Bayes-correct behavior in an information-limited setting, but practitioners should read it as a diagnostic of data uninformativeness rather than as evidence against broader or more complex models. Several limitations remain. LLM-generated programs can pass validation while implementing incorrect physics, so domain expertise remains essential for sanity-checking outputs. The LLM also specifies each candidate’s prior alongside its program, so downstream model comparison conflates “which program fits the data” with “which prior matches the data”, a property we exploit (narrower well-placed priors are rewarded via marginal-likelihood Occam) but which means a user testing a specific scientific hypothesis should verify that the LLM-proposed priors actually bracket it. The NPE stage can also be loose for heavily mutated candidates with many weakly identified parameters (an intermediate N =10 subhalo rerun’s parameter stage did not converge on its long-tailed within-NFW 11 parameter space; the posterior-predictive check in Fig. 1 therefore uses the exact-likelihood posterior available under the known noise model); model selection is unaffected, since it rests on the evidence networks rather than the NPE. All benchmarks here are “in-distribution” for the LLM; genuinely out-of-distribution problems, where training data provides no relevant priors, remain to be explored. Finally, pairwise ratio estimation scales as  K
+
+> 2
+
+, so amortized ratio estimation that generalizes across models is a promising direction for larger candidate pools. Treating model discovery as a probabilistic primitive alongside parameter inference expands the scope of simulation-based science from fitting a fixed model to finding which models the data supports. Because the inference stage is agnostic to the source of candidates, it evaluates whatever models are proposed, and as frontier LLMs continue to advance in code generation, hypothesis generation, and scientific reasoning, the proposal prior sharpens and the framework should inherit those gains directly, without methodological changes. Scientific model discovery in this framework can therefore ride the same capability curve as general-purpose LLM progress. 
+
+## Acknowledgments 
+
+We thank Carolina Cuesta-L ´azaro, Lukas Heinrich, and Michael Kagan for helpful conversations. This research was supported by the Munich Institute for Astro-, Particle and BioPhysics (MIAPbP), which is funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) under Germany’s Excellence Strategy – EXC-2094 – 390783311. The authors are pleased to acknowledge that the computational work reported on in this paper was performed on the Shared Computing Cluster which is administered by Boston University’s Research Computing Services (www.bu.edu/tech/support/research/ ). This work used PSC Bridges-2 GPU at the Pittsburgh Supercomputing Center through allocation PHY230064 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program, which is supported by U.S. National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296. 
+
+Software This work made use of NumPy [Harris et al., 2020], SciPy [Virtanen et al., 2020], 
+
+PyTorch [Paszke et al., 2019], Matplotlib [Hunter, 2007], and the sbi package [Tejero-Cantero et al., 2020]. 
+
+Use of Large Language Models Beyond its central role as the proposal model studied in the experiments, Claude Opus (versions 4.5–4.7) was used extensively throughout the preparation of this work: for ideation and discussion of methodology, for setting up and running experiments and analyses, and for drafting and revising the manuscript. Claude Fable 5 assisted with final revisions. The author takes full responsibility for the contents of the paper. 
+
+## References 
+
+Anthropic. Claude system card. https://www.anthropic.com/system-cards , 2025. Accessed: 2025. Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. Johann Brehmer, Siddharth Mishra-Sharma, Joeri Hermans, Gilles Louppe, and Kyle Cranmer. Mining for dark matter substructure: Inferring subhalo population properties from strong lenses with machine learning. The Astrophysical Journal , 886(1):49, 2019. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. Kyle Cranmer, Juan Pavez, and Gilles Louppe. Approximating likelihood ratios with calibrated discriminative classifiers. arXiv preprint arXiv:1506.02169 , 2015. Kyle Cranmer, Johann Brehmer, and Gilles Louppe. The frontier of simulation-based inference. 
+
+Proceedings of the National Academy of Sciences , 117(48):30055–30062, 2020. 12 Michael Deistler, Pedro J Gon c¸ alves, and Jakob H Macke. Truncated proposals for scalable and hassle-free simulation-based inference. Advances in Neural Information Processing Systems , 35: 23135–23149, 2022. Michael Deistler, Jan Boelts, Peter Steinbach, Guy Moss, Thomas Moreau, Manuel Gloeckler, Pedro LC Rodrigues, Julia Linhart, Janne K Lappalainen, Benjamin Kurt Miller, et al. Simulation-based inference: A practical guide. arXiv preprint arXiv:2508.12939 , 2025. Justin Domke. Large language Bayes. arXiv preprint arXiv:2504.14025 , 2025. Google DeepMind. Gemini 3 Pro model card. Technical report, Google DeepMind, 2025. November 2025. David Greenberg, Marcel Nonnenmacher, and Jakob Macke. Automatic posterior transformation for likelihood-free inference. International Conference on Machine Learning , pages 2404–2414, 2019. Sumit Gulwani, Oleksandr Polozov, and Rishabh Singh. Program synthesis. Foundations and Trends in Programming Languages , 4(1-2):1–119, 2017. Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Charles R. Harris, K. Jarrod Millman, St ´efan J. van der Walt, Ralf Gommers, Pauli Virtanen, David Cournapeau, Eric Wieser, Julian Taylor, Sebastian Berg, Nathaniel J. Smith, Robert Kern, Matti Picus, Stephan Hoyer, Marten H. van Kerkwijk, Matthew Brett, Allan Haldane, Jaime Fern ´andez del R ´ıo, Mark Wiebe, Pearu Peterson, Pierre G ´erard-Marchant, Kevin Sheppard, Tyler Reddy, Warren Weckesser, Hameer Abbasi, Christoph Gohlke, and Travis E. Oliphant. Array programming with NumPy. Nature , 585(7825):357–362, September 2020. doi: 10.1038/s41586-020-2649-2. URL https://doi.org/10.1038/s41586-020-2649-2 .Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 770–778, 2016. Joeri Hermans, Volodimir Begy, and Gilles Louppe. Likelihood-free MCMC with amortized ap-proximate ratio estimators. International Conference on Machine Learning , pages 4239–4248, 2020. J. D. Hunter. Matplotlib: A 2D graphics environment. Computing in Science & Engineering , 9(3): 90–95, 2007. doi: 10.1109/MCSE.2007.55. Niall Jeffrey and Benjamin D Wandelt. Evidence networks: simple losses for fast, amortized, neural Bayesian model comparison. Machine Learning: Science and Technology , 5(1):015008, 2024. Xiaoye Jiang, Lek-Heng Lim, Yuan Yao, and Yinyu Ye. Statistical ranking and combinatorial Hodge theory. Mathematical Programming , 127(1):203–244, 2011. Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen, Yanru Chen, Yuankun Chen, Yutian Chen, et al. Kimi K2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 , 2025. Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In International Conference on Learning Representations (ICLR) , 2015. URL http://arxiv.org/abs/1412. 6980 .Jan-Matthis Lueckmann, Pedro J Gon c¸ alves, Giacomo Bassetto, Kaan ¨Ocal, Marcel Nonnenmacher, and Jakob H Macke. Flexible statistical inference for mechanistic models of neural dynamics. 
+
+Advances in Neural Information Processing Systems , 30, 2017. Benjamin Kurt Miller, Alex Cole, Patrick Forr ´e, Gilles Louppe, and Christoph Weniger. Truncated marginal neural ratio estimation. Advances in Neural Information Processing Systems , 34:129–143, 2021. 13 Siddharth Mishra-Sharma. Awesome Neural SBI, January 2023. URL https://github.com/ smsharma/awesome-neural-sbi .Julio F Navarro, Carlos S Frenk, and Simon DM White. A universal density profile from hierarchical clustering. The Astrophysical Journal , 490(2):493–508, 1997. Alexander Novikov, Ng ˆan V ˜u, Marvin Eisenberger, et al. AlphaEvolve: A coding agent for scientific and algorithmic discovery. arXiv preprint arXiv:2506.13131 , 2025. George Papamakarios and Iain Murray. Fast ϵ-free inference of simulation models with Bayesian conditional density estimation. Advances in Neural Information Processing Systems , 29, 2016. George Papamakarios, Theo Pavlakou, and Iain Murray. Masked autoregressive flow for density estimation. Advances in Neural Information Processing Systems , 30, 2017. George Papamakarios, David Sterratt, and Iain Murray. Sequential neural likelihood: Fast likelihood-free inference with autoregressive flows. The 22nd International Conference on Artificial Intelli-gence and Statistics , pages 837–848, 2019. Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas K ¨opf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: An imperative style, high-performance deep learning library. In Advances in Neural Information Processing Systems , volume 32, 2019. Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Matej Balog, M Pawan Kumar, Emilien Dupont, Francisco JR Ruiz, Jordan S Ellenberg, Pengming Wang, Omar Fawzi, et al. Mathematical discoveries from program search with large language models. 
+
+Nature , 625(7995):468–475, 2024. Donald B Rubin. Bayesianly justifiable and relevant frequency calculations for the applied statistician. 
+
+The Annals of Statistics , 12(4):1151–1172, 1984. Parshin Shojaee, Kazem Meidani, Shashank Gupta, Amir Barati Farimani, and Chandan K Reddy. LLM-SR: Scientific equation discovery via programming with large language models. arXiv preprint arXiv:2404.18400 , 2024. Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan McLaughlin, Aiden Low, AJ Ostrow, Akhila Ananthram, et al. OpenAI GPT-5 system card. arXiv preprint arXiv:2601.03267 , 2025. Scott A Sisson, Yanan Fan, and Mark Beaumont. Handbook of approximate Bayesian computation .CRC Press, 2018. Sean Talts, Michael Betancourt, Daniel Simpson, Aki Vehtari, and Andrew Gelman. Validating Bayesian inference algorithms with simulation-based calibration. arXiv preprint arXiv:1804.06788 ,2018. Alvaro Tejero-Cantero, Jan Boelts, Michael Deistler, Jan-Matthis Lueckmann, Conor Durkan, Pedro J Gon c¸ alves, David S Greenberg, and Jakob H Macke. sbi: A toolkit for simulation-based inference. 
+
+Journal of Open Source Software , 5(52):2505, 2020. Tina Toni, David Welch, Natascha Strelkowa, Andreas Ipsen, and Michael PH Stumpf. Approximate Bayesian computation scheme for parameter inference and model selection in dynamical systems. 
+
+Journal of the Royal Society Interface , 6(31):187–202, 2009. Simona Vegetti, Simon Birrer, Giulia Despali, Christopher D Fassnacht, Daniel Gilman, Yashar Hezaveh, Laurence Perreault Levasseur, John P McKean, Devon M Powell, Conor M O’Riordan, and Georgios Vernardos. Strong gravitational lensing as a probe of dark matter. Space Science Reviews , 220(5):58, 2024. 14 Pauli Virtanen, Ralf Gommers, Travis E. Oliphant, Matt Haberland, Tyler Reddy, David Cournapeau, Evgeni Burovski, Pearu Peterson, Warren Weckesser, Jonathan Bright, St ´efan J. van der Walt, Matthew Brett, Joshua Wilson, K. Jarrod Millman, Nikolay Mayorov, Andrew R. J. Nelson, Eric Jones, Robert Kern, Eric Larson, C J Carey, ˙Ilhan Polat, Yu Feng, Eric W. Moore, Jake VanderPlas, Denis Laxalde, Josef Perktold, Robert Cimrman, Ian Henriksen, E. A. Quintero, Charles R. Harris, Anne M. Archibald, Ant ˆonio H. Ribeiro, Fabian Pedregosa, Paul van Mulbregt, and SciPy 1.0 Contributors. SciPy 1.0: Fundamental algorithms for scientific computing in Python. Nature Methods , 17:261–272, 2020. doi: 10.1038/s41592-019-0686-2. Sebastian Wagner-Carena, Jaehoon Lee, Jeffrey Pennington, Jelle Aalbers, Simon Birrer, and Risa H Wechsler. A strong gravitational lens is worth a thousand dark matter halos: Inference on small-scale structure using sequential methods. The Astrophysical Journal , 975(2):297, 2024. Stefan Wahl, Raphaela Schenk, Ali Farnoud, Jakob H. Macke, and Daniel Gedon. A probabilistic framework for LLM-based model discovery. arXiv preprint arXiv:2602.18266 , 2026. Manzil Zaheer, Satwik Kottur, Siamak Ravanbakhsh, Barnab ´as P ´oczos, Ruslan Salakhutdinov, and Alexander J. Smola. Deep sets. Advances in Neural Information Processing Systems , 30, 2017. 15 A Prompt Templates 
+
+The generation prompt template is shown below; placeholders in braces are filled at run time with the benchmark’s problem description, optional domain context, and constraints. The prompt is structured to elicit diverse candidates while ensuring consistent output format. 
+
+You are a scientific modeling expert . Generate { n } candidate mathematical models for the following problem . ## Problem Description { problem_description } ## Domain Context { domain_context } ## Constraints { constraints_text } ## Output Format For each candidate model , provide : 1. A descriptive name 2. A brief description of the physical / mathematical motivation 3. Python code implementing a ‘ simulate ‘ function 4. Parameter specifications with suggested prior ranges Use this exact JSON format ( output ONLY valid JSON , no markdown ) : ‘‘‘ json [{" name ": " model_name " , " description ": " Brief description of the model and its motivation " , " code ": " def simulate ( params , ** kwargs ) :\ n # Implementation \ n return observations " , " parameters ": {" param1 ": {" type ": " float " , " prior_type ": " uniform " , "prior_min ": 0.0 , " prior_max ": 1.0 , " description ": " Description "} , " param2 ": {" type ": " float " , " prior_type ": " loguniform " , "prior_min ": 1e -3 , " prior_max ": 1 e3 , " description ": " Description "} }}]‘‘‘ CRITICAL Requirements for the ‘ simulate ‘ function : - Takes a dict ‘ params ‘ containing parameter values - May take additional kwargs ( e . g . , ‘t ‘ for time points , ‘ n_obs ‘ for number of observations ) - Returns numpy array of simulated observations - numpy is ALREADY imported as ‘np ‘ - DO NOT include any import statements - DO NOT use ‘ import numpy ‘ or ‘ from scipy ‘ or any imports - just use ‘np ‘ directly - Should be numerically stable - Use only numpy functions ( np . exp , np . sin , np . cos , np . sqrt , etc .) IMPORTANT : Simulators must include OBSERVATIONAL NOISE ! - Get noise level from kwargs : ‘ noise = kwargs . get ( ’ noise_std ’ , 0.1) ‘ 
+
+16 - Add Gaussian noise to the output : ‘ return signal + noise * np . random . randn ( len ( signal ) ) ‘ - This is critical for proper Bayesian model comparison - the simulator must match the data - generating process Generate { n } diverse candidates that explore different modeling assumptions . IMPORTANT : Include a range of model complexities : - At least one MINIMAL model with only 2 -3 parameters ( the simplest plausible explanation ) - Some intermediate complexity models (3 -4 parameters ) - At most one complex model (5+ parameters ) if truly justified Simpler models are preferred if they can explain the data . Start simple . 
+
+When the optional fields are empty, the literal fallbacks “No additional context provided.” and “No specific constraints.” are substituted for {domain context } and {constraints text }. Note that the template’s closing block explicitly requests a range of candidate complexities, including at least one minimal model, and states a preference for simpler models. This shapes the proposal distribution 
+
+pLLM , i.e. which programs enter the pool; the complexity penalty applied during model comparison 
+
+remains the marginal-likelihood Occam mechanism of Section 3.3 alone. 
+
+## B Additional Experimental Details 
+
+Neural Network Architectures For ratio estimation, we use 4-layer MLPs with 256 hidden units and GELU activations. Each evidence network is trained with the exponential loss L(f, m ) = exp((0 .5 − m) · J2(f )) (with ℓ-POP transform J2(f ) = f (1 + |f |)), Adam optimizer (learning rate 10 −3), 80/20 train/validation split, and early stopping after four epochs without validation improvement. For the ODE benchmarks the evidence networks operate on 32-dimensional learned summary statistics produced by a summary network trained per round, rather than on the raw time series. We train ensembles of 5 networks per model pair to reduce variance. For the subhalo benchmark, the evidence networks operate on 128-dimensional set embeddings produced by a ResNet-18 image encoder followed by a DeepSets permutation-invariant pool (Section 4.4). The set embedder is trained to classify the current K-model pool and is retrained once per SMC round so its feature space tracks mutated models. For neural posterior estimation, we use masked autoregressive flows (MAFs) from the sbi package, trained on (parameter, observation) pairs drawn from each surviving model’s prior; flows are trained for the top three surviving models in the subhalo benchmark and for the top-ranked model in the ODE benchmarks. Training uses the Adam optimizer at the sbi default learning rate ( 5 × 10 −4) for up to 200 epochs; the SBC and parameter-recovery studies in Appendix E use a learning rate of 10 −4.
+
+Simulation Parameters Damped oscillator: 50 uniformly spaced time points over t ∈ [0 , 10] ;observation noise σ = 0 .1; priors A ∼ Uniform (0 .5, 5) , γ ∼ Uniform (0 .1, 1.5) , ω ∼ Uniform (1 , 6) .
+
+SIR: Gillespie simulation with β = 0 .4, γ = 0 .1, population N = 1000 , initial infected I0 = 10 ; 10 observations over t ∈ [0 , 100] with noise σobs = 5 ; priors are LLM-specified per candidate, centered on physically plausible rates. 
+
+Subhalo: 64 ×64 pixel images with field of view ±3 arcsec; main singular-isothermal-ellipsoid (SIE) lens with θE ∈ [1 .3, 1.8] arcsec, q ∈ [0 .7, 0.95] , source offset ∼ N (0 , 0.05) arcsec (all varied per image); subhalo masses drawn from a power-law mass function in the range [10 7, 10 10 ]M⊙; density profiles NFW (cuspy), cored, or a 50/50 mixture; 2-channel input (image + residual); ResNet-18 image encoder + DeepSets set pool producing a single 128-dimensional embedding per 4-image set; ensembles of 5 evidence networks per model pair with ℓ-POP exponential loss; 320 training datasets per candidate model, each dataset containing N = 4 images sharing one population-parameter vector; 4-image hierarchical set-level evaluation at test time; set embedder retrained at each SMC round; force-inclusion of a smooth-null model in the Round-1 pool; a minimum of 3 SMC rounds before the weight-based termination can trigger; final-round model weights computed on a held-out scoring split, 17 disjoint from the images used during search; 3 random seeds per ground truth across 6 ground truths (CDM, CDM-low, WDM, WDM-high, SIDM, Mixed); up to R = 15 refinement rounds; open-ended prompts; LLM: Claude Opus 4.6 ( claude-opus-4-6 ). 
+
+Computational Resources All experiments were run on a heterogeneous pool of NVIDIA GPUs (predominantly L40S, plus A100 and RTX PRO 6000; one GPU per run) via a shared scheduler. Wall-clock times: ODE benchmarks ∼2–30 minutes per run; subhalo runs ∼45–70 minutes per ground-truth/seed pair (median ∼53), dominated by per-round retraining of the 200-epoch set embedder (ResNet-18 + DeepSets) across up to 15 SMC rounds. The full subhalo experiment is 6 ground truths × 3 seeds = 18 runs, totalling ∼16 GPU-hours of compute, run in parallel across several GPUs via the shared scheduler. Per-round work breaks down as: set-embedder training (ResNet-18 + DeepSets, 200 epochs), pairwise evidence-network training (  K
+
+> 2
+
+ pairs × 5 ensemble members), and a single MAF training per surviving top-ranked model for parameter inference. 
+
+## C Least-Squares Aggregation: Derivations 
+
+This appendix gives the two derivations referenced in Section 3.3: the implicit inverse temperature of naive averaging, and the closed-form solution of the least-squares aggregation problem. 
+
+Naive averaging has implicit inverse temperature K/ (K−1) . Assume exact pairwise estimates 
+
+ˆsij = ℓi − ℓj for true log-evidences ℓ1, . . . , ℓ K . The naive aggregator computes, for each model k,
+
+¯sk ≡ 1
+
+K − 1
+
+X 
+
+> j̸=k
+
+ˆskj = 1
+
+K − 1
+
+X 
+
+> j̸=k
+
+(ℓk − ℓj ) = KK − 1 ℓk − 1
+
+K − 1
+
+> K
+
+X
+
+> j=1
+
+ℓj . (9) The second term is the same constant for every k, so it drops out under softmax. The first term, however, scales the true log-evidences by K/ (K−1) . The softmax-induced posterior is therefore 
+
+pnaive (Mk | x) ∝ exp 
+
+ KK−1 ℓk
+
+
+
+, (10) which is the true Bayesian posterior raised to the inverse temperature β = K/ (K−1) > 1. At our 
+
+K=8 this is β = 8 /7 ≈ 1.14 , so the largest posterior weight is artificially inflated and the smallest weights artificially suppressed (see Fig. 5 for the numerical consequence). The bias does not vanish in any limit of the data: it is a property of the aggregation rule, present whenever the naive average is composed with a softmax to define the model posterior. 
+
+Least-squares aggregation as a Laplacian solve. Stack the n =  K
+
+> 2
+
+ observations into a vector 
+
+b ∈ Rn with entries b(i,j ) = ˆ sij for i < j . Let A ∈ {− 1, 0, +1 }n×K be the corresponding pairwise design matrix, with row (i, j ) containing +1 at column i, −1 at column j, and zeros elsewhere. The objective in Eq. (7) is ∥Aℓ − b∥22, whose normal equations are 
+
+A⊤A ℓ = A⊤b. (11) Direct computation gives A⊤A = K I − 11 ⊤, which is the unnormalized graph Laplacian of the complete graph on K vertices. This matrix has eigenvalues K with multiplicity K − 1 and 0 with multiplicity 1 (eigenvector 1, reflecting that ℓ is only identified up to an additive constant). The Moore–Penrose pseudoinverse is 
+
+(A⊤A)+ = 1
+
+> K
+
+ I − 1 
+
+> K
+
+11 ⊤ , (12) which directly enforces the gauge P 
+
+> k
+
+ℓk = 0 . The solution is ℓ ∗ = ( A⊤A)+ A⊤b, which we compute equivalently via a singular value decomposition (SVD) of A using scipy.linalg.lstsq 
+
+(our implementation uses the alternative gauge ℓ0 = 0 by removing model 0 from the design matrix; both gauges give the same posterior and differ only by an additive constant in ℓ). On the complete comparison graph the solution has a simple closed form, ℓ∗ 
+
+> k
+
+= 1
+
+> K
+
+P 
+
+> j
+
+ˆskj with ˆskk = 0 : the row mean over all K entries, including the trivially consistent self-comparison. This makes the relationship to naive averaging transparent: least squares produces the same ranking of models but removes the self-exclusion bias responsible for the K/ (K−1) temperature, and additionally exposes the cyclic residual below. 18 M1 M2 M3 M4 M5 M6 M7 M8         
+
+> 0.00.10.20.30.40.5
+> Posterior probability Exact pairwise estimates, K=8
+> True p∗
+> Least squares Naive averaging
+> 0.25 0.5 124
+> Pairwise estimate noise σˆs(log Bayes-factor units)
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> KL( p∗ ‖ ˆp)
+> naive σ=0 bias
+> Noisy pairwise estimates (1000 trials/ σ)
+> Least squares Naive averaging
+
+Figure 5: Aggregating pairwise log Bayes factors: least squares recovers the true posterior where naive averaging sharpens it. Synthetic data: K=8 models with hand-chosen true log-evidences ℓ ∗.
+
+(a) Exact pairwise estimates ˆsij = ℓ∗ 
+
+> i
+
+− ℓ∗ 
+
+> j
+
+: Least squares recovers the true posterior p∗ 
+
+> k
+
+∝ exp( ℓ∗
+
+> k
+
+)
+
+to machine precision; naive averaging produces softmax of KK−1 ℓ ∗ exactly, a sharpened posterior with the leading-model weight inflated by ∼11% (relative). (b) Independent Gaussian noise of std σˆs
+
+added to each pairwise estimate (1000 trials per σ); curve is the median, band is 16–84 percentile. Least squares is strictly better than naive averaging at every noise level tested, and at small noise it is far better: naive is bounded below by the σ=0 temperature-distortion floor (dotted line) while least squares scales smoothly from 0.Two properties follow from this construction. First, when b is consistent (i.e. b(i,j ) = ℓ∗ 
+
+> i
+
+−ℓ∗ 
+
+> j
+
+for some 
+
+ℓ ∗), the least-squares solution recovers ℓ ∗ exactly up to the gauge; there is no implicit temperature distortion. Second, when b is inconsistent (cyclic), the solution is the orthogonal projection of b onto the image of A in L2: geometrically, the closest consistent comparison matrix to the observed one. The residual ∥Aℓ ∗ − b∥2 is a directly computable measure of how non-transitive the ensemble of pairwise classifiers is on the test observation; it is available as a diagnostic but is not propagated into the posterior. This perspective is the Hodge decomposition of pairwise comparison data: the image of A is the “gradient” subspace (consistent with a global potential ℓ), its orthogonal complement is the “curl” subspace of purely cyclic residuals (on the complete comparison graph the harmonic component of the Hodge decomposition vanishes), and least squares cleanly separates the two [Jiang et al., 2011]. 
+
+Synthetic illustration. Figure 5 verifies both derivations directly. We fix K=8 models with hand-chosen true log-evidences ℓ ∗ and compare three quantities: the true posterior p∗ 
+
+> k
+
+∝ exp( ℓ∗
+
+> k
+
+), the least-squares posterior, and the naive-averaged posterior. With exact pairwise estimates ˆsij = ℓ∗ 
+
+> i
+
+− ℓ∗
+
+> j
+
+(panel a), the least-squares posterior reproduces p∗ to machine precision, while the naive posterior matches the predicted softmax of β ℓ ∗ with β = K/ (K−1) ≈ 1.14 : the leading model’s weight is inflated from 0.52 to 0.58 , with compensating suppression of the tail. With Gaussian noise added independently to each pairwise estimate (panel b), the least-squares posterior’s Kullback–Leibler (KL) divergence from p∗ rises smoothly from zero with σˆs, while the naive posterior is bounded below by its σ=0 temperature-distortion floor (dotted line) and only catches up to least squares at large noise where both methods degrade. The simulation involves no LLM, GPU, or benchmark data; it isolates the aggregation step. 
+
+## D Generated Model Examples 
+
+Below are the winning LLM-generated simulator programs from three damped-oscillator runs that converged in Round 1. 
+
+def simulate ( params , ** kwargs ) : t = kwargs . get ( ’t ’ , np . linspace (0 , 10 , 50) ) noise = kwargs . get ( ’ noise_std ’ , 0.1) seed = kwargs . get ( ’ seed ’ , None ) 
+
+19 if seed is not None : np . random . seed ( seed ) A = params [ ’A ’] gamma = params [ ’ gamma ’] omega = params [ ’ omega ’] signal = A * np . exp ( - gamma * t ) * np . cos ( omega * t ) return signal + noise * np . random . randn ( len ( t ) ) def simulate ( params , ** kwargs ) : t = kwargs . get ( ’t ’ , np . linspace (0 , 10 , 50) ) noise = kwargs . get ( ’ noise_std ’ , 0.1) seed = kwargs . get ( ’ seed ’ , None ) if seed is not None : np . random . seed ( seed ) A = params [ ’A ’] sigma = params [ ’ sigma ’] omega = params [ ’ omega ’] signal = A * np . exp ( -( t / sigma ) ** 2) * np . cos ( omega * t ) return signal + noise * np . random . randn ( len ( t ) ) def simulate ( params , ** kwargs ) : t = kwargs . get ( ’t ’ , np . linspace (0 , 10 , 50) ) noise = kwargs . get ( ’ noise_std ’ , 0.1) seed = kwargs . get ( ’ seed ’ , None ) if seed is not None : np . random . seed ( seed ) A = params [ ’A ’] alpha = params [ ’ alpha ’] omega = params [ ’ omega ’] envelope = A / (1.0 + t ) ** alpha signal = envelope * np . cos ( omega * t ) return signal + noise * np . random . randn ( len ( t ) ) 
+
+The LLM produces syntactically correct code with a common keyword-argument interface (time grid, noise level, seed) supplied by the harness. The three programs implement distinct envelope hypotheses (exponential, Gaussian, and power-law decay), enabling meaningful model comparison. 
+
+## E Simulation-Based Calibration 
+
+We assess posterior calibration using simulation-based calibration (SBC) [Talts et al., 2018]. The SBC targets the NPE machinery on the damped-cosine simulator x(t) = Ae −γt cos( ωt ) with uniform priors A ∈ [0 .5, 5] , γ ∈ [0 .05 , 1.5] , ω ∈ [1 , 6] , observation noise σ = 0 .15 , and the same MAF architecture and training configuration as the main experiments. For each of 200 test cases, we: (1) sample true parameters θ∗ from the prior, (2) generate synthetic observation x∗ ∼ p(·| θ∗, M ),(3) draw 1000 posterior samples {θ(i)} from qψ (θ|x∗), and (4) compute the rank of θ∗ among the posterior samples for each parameter dimension. For well-calibrated posteriors, ranks should be uniformly distributed over {1, . . . , 1001 }. Systematic biases appear as non-uniform histograms: under-coverage (overconfident posteriors) produces U-shaped histograms, while over-coverage (overly conservative posteriors) produces peaked histograms. 20 Coverage Statistics Figure 6 shows the coverage calibration for the damped oscillator benchmark computed from 200 SBC test cases, plotting empirical coverage against nominal confidence level for each of the three parameters ( A, γ, ω). A well-calibrated posterior tracks the diagonal; points above indicate conservative posteriors (wider than necessary), while points below indicate overconfidence. 0.0 0.2 0.4 0.6 0.8 1.0
+
+Nominal confidence level 
+
+> 0.00.20.40.60.81.0
+> Empirical coverage
+> Conservative Overconfident
+> Aγω
+
+Figure 6: Coverage calibration for the damped oscillator benchmark (200 SBC test cases): the NPE posteriors are approximately calibrated, with mild under-coverage. x-axis: nominal confidence level 
+
+α; y-axis: empirical coverage, the fraction of test cases where the true parameter falls within the 
+
+α-credible interval of the NPE posterior. Curves for the three parameters ( A, γ, ω) sit slightly below the diagonal, indicating mild under-coverage (the NPE posteriors are slightly tighter than nominal). Shaded bands are 95% binomial confidence intervals on the empirical coverage estimates. Empirical coverage sits slightly below nominal across the range tested, consistent across all three parameters. This indicates mildly overconfident posteriors (the NPE assigns somewhat tighter credible intervals than the true rate implies), but the effect is modest and the ranking of inferred parameters is unaffected. This SBC certifies the NPE machinery in the well-specified setting, where training and test data come from the same simulator; it does not certify posteriors under the pipeline’s LLM-generated, possibly misspecified candidates. 
+
+Point-Estimate Recovery (Representative Run) For a concrete illustration of the posterior’s width and location, Table 1 lists the marginal mean, standard deviation, and 90% credible interval of each parameter for the stretched-exponential oscillator candidate, a recurring LLM proposal across runs that nests the ground truth, using an NPE trained at the benchmark settings ( σ = 0 .1, 5,000 simulations). All 90% intervals cover the ground truth, consistent with the SBC result; the envelope parameters τ and β are weakly identified from a single observation and correspondingly broad. Coverage of all four parameters is stable across repeated NPE retrainings and across observation seeds, though the interval widths vary between retrainings (the weakly identified τ most of all); the table reports the committed, seeded run. 21 Table 1: Parameter recovery for the stretched-exponential oscillator candidate 
+
+A exp( −(t/τ )β ) cos( ωt ), a recurring LLM-proposed family that nests the ground truth 
+
+x(t) = A exp( −γt ) cos( ωt ) (A=2 .0, γ=0 .3, ω=3 .0) at β=1 , τ =1 /γ =3 .33 . NPE trained on 5,000 simulations at the benchmark noise σ = 0 .1; posterior for one observation generated at the ground truth. All 90% credible intervals cover the truth; the envelope parameters τ and β trade off against each other and are weakly identified from a single observation, reflected in their broad intervals. Parameter True Mean Std 90% CI Amplitude A 2.00 2.07 0.10 [1.92, 2.25] Decay τ 3.33 3.87 1.52 [1.40, 6.49] Stretch β 1.00 1.66 0.62 [0.60, 2.70] Frequency ω 3.00 3.02 0.03 [2.97, 3.07] 22
