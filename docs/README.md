@@ -6,30 +6,40 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-27
-- 运行时间：2026-07-27 20:44:33 UTC
+- 最新运行日期：2026-07-28
+- 运行时间：2026-07-28 21:31:30 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：3
-- 速读区：0
+- 本次总论文数：6
+- 精读区：4
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读2篇高影响力论文：贝叶斯与频率派模拟推理的ML综述（9.0分）及神经特征治理新方向（8.0分）。最值得关注的是结合贝叶斯/频率派方法的机器学习推理框架及特征流行度的治理机制。建议优先阅读第一篇，深入了解模拟推断与机器学习的融合前沿。
-- 详情：[/202607/27/README](/202607/27/README)
+今日推荐6篇论文，精读4篇、速读2篇，聚焦统计学习与不确定性量化前沿。
+最值得关注PAC-Bayesian扩散策略学习（9.0分）与贝叶斯/频率学派模拟推理入门（8.0分），前者为决策提供了理论稳健保证。
+普通读者可优先精读这两篇，理解概率建模在强化学习与推断中的核心作用，再速读变分自编码器的潜空间约束与协方差集成方法。
+- 详情：[/202607/28/README](/202607/28/README)
 
 ### 精读区论文标签
-1. [An Introduction to Bayesian and Frequentist Simulation-Based Inference with Machine Learning](/202607/27/2607.21702v1-an-introduction-to-bayesian-and-frequentist-simulation-based-inference-with-machine-learning)  
+1. [PAC-DP: PAC-Bayesian Diffusion Policy Learning](/202607/28/2607.24296v1-pac-dp-pac-bayesian-diffusion-policy-learning)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：贝叶斯与频率派基于机器学习的仿真推断教程
-2. [Neural Feature Governance: Extending Atom Prevalence](/202607/27/2607.21671v1-neural-feature-governance-extending-atom-prevalence)  
+   evidence：将扩散策略建模为贝叶斯神经网络并使用PAC-Bayes界
+2. [An Introduction to Bayesian and Frequentist Simulation-Based Inference with Machine Learning](/202607/28/2607.21702v1-an-introduction-to-bayesian-and-frequentist-simulation-based-inference-with-machine-learning)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：使用尖峰-板变分训练进行贝叶斯神经网络选择
-3. [Class-Balanced Softmax: A Bayes Theory-Based Method for Long-Tailed Recognition](/202607/27/2607.22258v1-class-balanced-softmax-a-bayes-theory-based-method-for-long-tailed-recognition)  
+   evidence：综述神经后验估计和神经似然估计作为深度模型的变分推断方法
+3. [Verbalized Particle Posterior: Bayesian Inference over Natural Language Hypotheses](/202607/28/2607.22961v1-verbalized-particle-posterior-bayesian-inference-over-natural-language-hypotheses)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：基于贝叶斯理论的长尾识别方法，应用于深度学习
+   evidence：用粒子方法进行贝叶斯推断，适用于LLM假设
+4. [DP-IVON-Gradsq: Differentially Private Squared-Gradient Improved Variational Online Newton](/202607/28/2607.23649v1-dp-ivon-gradsq-differentially-private-squared-gradient-improved-variational-online-newton)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：通过IVON优化器的差分隐私变分贝叶斯学习
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [Soft-Constrained Optimization of Latent Space in Variational Autoencoders](/202607/28/2607.23751v1-soft-constrained-optimization-of-latent-space-in-variational-autoencoders)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：基于熵约束的变分自编码器训练
+2. [Covariance Last-Layer Ensembles: Function-Space Diversity for Efficient Uncertainty Quantification](/202607/28/2607.23856v1-covariance-last-layer-ensembles-function-space-diversity-for-efficient-uncertainty-quantification)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：通过最后一层集成进行不确定性量化用于分布外检测
 
 
 <div class="dpr-home-promo-card">
