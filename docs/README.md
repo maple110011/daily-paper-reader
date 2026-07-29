@@ -6,40 +6,40 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-28
-- 运行时间：2026-07-28 21:31:30 UTC
+- 最新运行日期：2026-07-29
+- 运行时间：2026-07-29 21:32:13 UTC
 - 运行状态：成功
 - 本次总论文数：6
 - 精读区：4
 - 速读区：2
 
 ### 今日简报（AI）
-今日推荐6篇论文，精读4篇、速读2篇，聚焦统计学习与不确定性量化前沿。
-最值得关注PAC-Bayesian扩散策略学习（9.0分）与贝叶斯/频率学派模拟推理入门（8.0分），前者为决策提供了理论稳健保证。
-普通读者可优先精读这两篇，理解概率建模在强化学习与推断中的核心作用，再速读变分自编码器的潜空间约束与协方差集成方法。
-- 详情：[/202607/28/README](/202607/28/README)
+1) 今日日报精选6篇推荐，4篇精读聚焦优化器引导后验探索与变分注意力机制，高分工作直击科学计算与概率建模痛点。  
+2) 最值得精读《Guiding Posterior Exploration with Optimizer-Derived Geometry》（9.0分），用优化器几何结构高效引导后验采样；以及《Variational-Ising-Attention》（8.0分），为科学领域定制注意力机制。  
+3) 建议普通读者优先研读这两篇精读，再速读软max温度调制控制多样性（7.0分）与概率策略传播的机器人学习（7.0分），可快速把握当前优化与注意力前沿。
+- 详情：[/202607/29/README](/202607/29/README)
 
 ### 精读区论文标签
-1. [PAC-DP: PAC-Bayesian Diffusion Policy Learning](/202607/28/2607.24296v1-pac-dp-pac-bayesian-diffusion-policy-learning)  
+1. [Guiding Posterior Exploration with Optimizer-Derived Geometry](/202607/29/2607.25312v1-guiding-posterior-exploration-with-optimizer-derived-geometry)  
    标签：评分：9.0/10、query:bayes-dl
-   evidence：将扩散策略建模为贝叶斯神经网络并使用PAC-Bayes界
-2. [An Introduction to Bayesian and Frequentist Simulation-Based Inference with Machine Learning](/202607/28/2607.21702v1-an-introduction-to-bayesian-and-frequentist-simulation-based-inference-with-machine-learning)  
+   evidence：利用优化器曲率估计为贝叶斯神经网络采样提供预条件
+2. [Variational-Ising-Attention (VIA):TailoredAttentionMattersfor Science](/202607/29/2607.23634v1-variational-ising-attention-viatailoredattentionmattersfor-science)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：综述神经后验估计和神经似然估计作为深度模型的变分推断方法
-3. [Verbalized Particle Posterior: Bayesian Inference over Natural Language Hypotheses](/202607/28/2607.22961v1-verbalized-particle-posterior-bayesian-inference-over-natural-language-hypotheses)  
+   evidence：使用变分平均场推断机制增强注意力
+3. [Laplace-PSN-IRT: Uncertainty Quantification for Neural Item Response Theory Models of LLM Benchmarks](/202607/29/2607.25257v1-laplace-psn-irt-uncertainty-quantification-for-neural-item-response-theory-models-of-llm-benchmarks)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：用粒子方法进行贝叶斯推断，适用于LLM假设
-4. [DP-IVON-Gradsq: Differentially Private Squared-Gradient Improved Variational Online Newton](/202607/28/2607.23649v1-dp-ivon-gradsq-differentially-private-squared-gradient-improved-variational-online-newton)  
+   evidence：拉普拉斯近似对神经IRT模型进行不确定性量化
+4. [Rethinking Likelihood distributions: Student's t Likelihood Boosts Bayesian Neural Network Performance](/202607/29/2607.25376v1-rethinking-likelihood-distributions-students-t-likelihood-boosts-bayesian-neural-network-performance)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：通过IVON优化器的差分隐私变分贝叶斯学习
+   evidence：提出使用Student's t似然改进BNN的变分推断
 
 ### 速读区论文标签
-1. [Soft-Constrained Optimization of Latent Space in Variational Autoencoders](/202607/28/2607.23751v1-soft-constrained-optimization-of-latent-space-in-variational-autoencoders)  
+1. [Controllable Diversity in Normalization-Based Implicit Ensembles via Softmax-Temperature Modulation](/202607/29/2607.23860v1-controllable-diversity-in-normalization-based-implicit-ensembles-via-softmax-temperature-modulation)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：基于熵约束的变分自编码器训练
-2. [Covariance Last-Layer Ensembles: Function-Space Diversity for Efficient Uncertainty Quantification](/202607/28/2607.23856v1-covariance-last-layer-ensembles-function-space-diversity-for-efficient-uncertainty-quantification)  
+   evidence：用于不确定性估计的可控多样性隐式集成
+2. [P3: Probabilistic Policy Propagation for Stable VAE-Based Robot Learning](/202607/29/2607.25541v1-p3-probabilistic-policy-propagation-for-stable-vae-based-robot-learning)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：通过最后一层集成进行不确定性量化用于分布外检测
+   evidence：变分自编码器与深度神经策略的分布感知优化
 
 
 <div class="dpr-home-promo-card">

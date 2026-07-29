@@ -1,0 +1,741 @@
+Title: Controllable Diversity in Normalization-Based Implicit Ensembles via Softmax-Temperature Modulation
+
+URL Source: https://arxiv.org/pdf/2607.23860v1
+
+Published Time: Tue, 28 Jul 2026 01:20:59 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+# Controllable Diversity in Normalization-Based Implicit Ensembles via Softmax-Temperature Modulation 
+
+Mihai S , uteu m.suteu16@imperial.ac.uk Data Science Institute, Imperial College London 
+
+Ovidiu S , erban o.serban@imperial.ac.uk Data Science Institute, Imperial College London 
+
+## Abstract 
+
+Deep ensembles provide the most reliable uncertainty estimates in deep learning, but their cost grows linearly with the number of members. Implicit ensembles lower this cost by sharing a single backbone across members. Member diversity is a primary determinant of ensemble quality, yet no implicit ensemble can shape it during training; existing methods fix it at initialisation or build it into the architecture. We introduce σN-Ens, a normalisation-based implicit ensemble that treats each member as a task in a multi-task architecture and modulates the shared backbone through sigmoid-bounded scalers. We also introduce a softmax-temperature regulariser, which shapes the equilibrium level of sharing between members and traces the accuracy-calibration frontier. Because only normalisation layers are replicated, the mechanism can wrap convolutional and transformer backbones alike, also allowing pretrained models to be adapted through a short fine-tune. We frame the epistemic uncertainty such an ensemble expresses as modulation uncertainty, and explain why its calibration holds under input corruption, and why its out-of-distribution detection is weaker. Our method is evaluated across ResNets and transformers on CIFAR-10/100, ImageNet and SST-2. σN-Ens matches or outperforms deep ensembles at a fraction of their parameter cost, scales with ensemble size where partitioning methods collapse, and maintains calibration under distribution shift. 
+
+## 1 Introduction 
+
+Uncertainty quantification is a prerequisite for deploying deep learning in risk-sensitive domains (Gawlikowski et al., 2023; He et al., 2026). Deep ensembles (Lakshminarayanan et al., 2017) remain the strongest general-purpose approach, as independently trained members converge to distinct modes of the loss landscape (Fort et al., 2019), and their disagreement on novel inputs provides a calibrated epistemic signal. Their cost scales linearly with the number of members, which becomes prohibitive as model size grows. Implicit ensembles (e.g. Wen et al., 2020; Laurent et al., 2023) address this by sharing a single backbone across members and introducing per-member modulation or partitioning, producing ensemble-like behaviour in a single training run. They now approach deep ensembles on standard benchmarks at a fraction of the parameter cost. Within an ensemble, a primary determinant of quality is member diversity. Wood et al. (2023) show that for any Bregman loss, the expected ensemble loss decomposes into member bias, member variance, and diversity. Diversity is a tradeoff rather than a quantity to maximise and Abe et al. (2024) confirms that at high capacity, forcing members apart harms performance. The right level of diversity is therefore something to navigate, yet no method in the implicit ensemble family exposes a control variable to do so. In adapter-based methods (Wen et al., 2020; Turkoglu et al., 2022) diversity is set at initialisation and drifts freely thereafter; in partitioning-based methods (Laurent et al., 2023; Durasov et al., 2021) it is built in structurally, at the expense of individual member capacity. In neither case can member disagreement be shaped during training. 1arXiv:2607.23860v1 [cs.LG] 26 Jul 2026 Navigating diversity calls for a setting in which members can be treated as distinct objectives sharing a back-bone. We reinterpret implicit ensembles through the multi-task learning paradigm, which concerns capacity allocation when resources are shared. We adopt TS σBN (Suteu & Serban, 2026), an MTL architecture that confines modulation to the normalisation layers and leaves the full feature extractor available to every member. Its modulation primitive is σBN (Suteu & Guo, 2022), which only uses sigmoid-bounded scalers that can be interpreted as the feature importances; we use it in the general σNorm form that applies to any normalisation layer. These per-feature importances make member diversity directly measurable as the cosine similarity between members’ importance vectors, and are cleanly addressable by a regulariser. Members are thereby modulated independently, allowing them to predict the same thing for different reasons (Ramé & Cord, 2021). We introduce a softmax-temperature regulariser applied to the σNorm importance vectors across members, per feature. A single temperature τ sets the equilibrium to which the importances settle, controlling how much each feature is shared across members. Unlike a conventional regularisation strength, which tunes how hard the network is pushed toward one fixed target, τ selects among a family of equilibria, and the regulariser holds diversity at the chosen level throughout training. Diversity is thus controlled during training rather than through initialisation or fixed by construction as in existing methods. The resulting method is competitive with deep ensembles across our benchmarks and exceeds them as capacity grows, while using a fraction of the parameter count. It also scales gracefully with ensemble size, where partitioning methods degrade and collapse. This behaviour follows the bias-variance-diversity tradeoff: sweeping τ traces an accuracy-calibration frontier, along which our parameter-space diversity metric tracks an output-space diversity measure (§3.3). Because diversity is induced by ubiquitous normalisation layers, it applies to convolutional and transformer backbones as well as to training regimes. In addition, it can turn an existing pretrained model into a calibrated ensemble with a short fine-tune, rather than retraining members from scratch. Our contributions: 
+
+• Controllable diversity. We introduce a softmax-temperature regulariser on σNorm importance vectors that prescribes the equilibrium level of member diversity. A single hyperparameter τ traces the accuracy-calibration Pareto frontier. To our knowledge, this is the first mechanism in the implicit ensemble family to shape member diversity during training, rather than fixing it at construction or initialisation. 
+
+• Modulation uncertainty. We split the ensemble’s epistemic term and identify modulation uncer-tainty: the component a shared-backbone ensemble expresses by reweighting shared features. We establish that calibration holds under input corruption alongside weaker out-of-distribution detec-tion. 
+
+• Competitiveness across architectures and regimes. Because the mechanism only swaps nor-malisation layers, σNorm wraps any standard backbone without invasive redesign. And by adding diversity during training, it can convert single pretrained models into well-calibrated implicit en-sembles. Across ResNets and transformers on CIFAR-10/100, ImageNet, and SST-2, σN-Ens is competitive with or exceeds deep ensembles at a fraction of the parameter cost; improves with ensemble size where partitioning methods collapse; and maintains calibration under distribution shift. 
+
+## 2 Related Work 
+
+Uncertainty quantification in deep learning spans three families: Bayesian approaches (Blundell et al., 2015; Ritter et al., 2018; Welling & Teh, 2011), single-model deterministic methods (Liu et al., 2020; Sensoy et al., 2018; Osband et al., 2023), and deep ensembles (Lakshminarayanan et al., 2017). Deep ensembles remain the strongest under distribution shift, but scale linearly in the number of members. Post-hoc cal-ibration, such as temperature scaling (Guo et al., 2017), is orthogonal and cheaper but improves neither 2accuracy nor epistemic coverage and relies on a single scale whose calibration degrades under distribution shift (Ovadia et al., 2019). 
+
+Implicit ensembles reduce this cost by sharing a single backbone and adding per-member modulation or partitioning, producing ensemble-like behaviour in a single training run at a fraction of the parameter count; our method belongs to this family. We organise the family by whether its members arise from architectural partitioning or from modulation of a shared backbone. Partitioning methods carve the architecture into near-independent sub-models: Packed Ensembles (Laurent et al., 2023) hard-partition the channel space, Masksembles (Durasov et al., 2021) mask features, and MIMO (Havasi et al., 2021) splits the input and output projections. Because the partition is built into the architecture, these methods require a bespoke redesign for each model family and cannot be applied to a pretrained backbone. Modulation methods instead keep the full backbone and inject per-member adapters: BatchEnsemble (Wen et al., 2020) uses rank-1 perturbations and LoRA-Ensemble (Mühlematter et al., 2026) low-rank attention adapters. However, BatchEnsemble’s functional diversity is near zero at moderate scale (Zamyatin et al., 2026). FiLM-Ensemble (Turkoglu et al., 2022) is our closest neighbour, modulating a shared backbone with per-member BatchNorm parameters. Still, its diversity is fixed by an initialisation-variance parameter, thereby confining it to training from scratch. Across both branches, diversity is a byproduct of the design, not a managed property: no method sets or controls member disagreement during training. A more detailed comparison to related models can be found in Appendix A.2. 
+
+Learned diversity mechanisms have been developed at three levels of the network: output-space regularisers on member predictions (Liu & Yao, 1999; Pang et al., 2019; Mehrtens et al., 2022), feature-space objectives on member representations (Ramé & Cord, 2021; Sinha et al., 2021), and parameter-space repulsion on member weights (D’Angelo & Fortuin, 2021; Steger et al., 2024). Abe et al. (2024) show the output-space variety harms performance at high capacity, though their analysis excludes the other two levels. All three have been built exclusively for explicit or branch-based ensembles; none has been brought into the implicit ensemble family, leaving the parameter-modulation route unexplored there. Separately, the aleatoric-epistemic decomposition of predictive uncertainty is increasingly contested: the components are hard to measure, and the estimators meant to isolate them turn out strongly conflated (Mucsányi et al., 2024; Bickford Smith et al., 2025). We broadly agree, and rather than claim to recover a “true” epistemic quantity, we offer a more granular lens: an operational signal defined by what the modulation mechanism can express, a position we make precise in §3.3. 
+
+Softmax temperature is applied through our regulariser over static weight parameters, a use distinct from its normal role in deep learning. Its established uses sit over other objects: it controls the entropy of an output distribution, as in distillation, entropy-regularised policies, and confidence penalties (Hinton et al., 2015; Haarnoja et al., 2018; Pereyra et al., 2017); it gates over activations recomputed each forward pass, as in attention and mixtures of experts (Vaswani et al., 2017; Shazeer et al., 2017; Fedus et al., 2022); and it relaxes discrete architectural choices that resolve by argmax at the end of training (Liu et al., 2019; Jang et al., 2017; Maddison et al., 2017; Sun et al., 2020). In every case, the controlled distribution lives over outputs, activations, or latent choices that collapse to a discrete selection. To our knowledge, softmax temperature has not otherwise been used as a regulariser on the weights themselves. 
+
+Normalisation layers have also been used as lightweight sites for uncertainty: sampling BatchNorm statis-tics for Bayesian-flavoured uncertainty (Atanov et al., 2018), and post-hoc Bayesian adaptation through them (Franchi et al., 2024). FiLM-Ensemble (Turkoglu et al., 2022) is the most direct precedent, per-member BatchNorm modulation of a shared backbone drawn from the multi-task treatment of normalisation. We build on σBN (Suteu & Guo, 2022), a bounded, sigmoid-scaled primitive trained with differential learning rates, used for capacity allocation in MTL (Suteu & Serban, 2026) and amenable to regularisation, properties we exploit to shape diversity across members independently of initialisation. 
+
+Pretrained transformers being converted to implicit ensembles is a recent direction the field has taken. LoRA-Ensemble (Mühlematter et al., 2026) adds per-member low-rank attention adapters with diversity from random initialisation, and Hydra Ensembles (Gabetni et al., 2025) duplicates and fuses heads under a pruning protocol; both are transformer-specific and neither controls diversity: LoRA-Ensemble keeps the backbone frozen and diversifies through adapter initialisation, while Hydra fine-tunes its duplicated heads. 3Our mechanism is neither: σNorm replaces the normalisation layers of either architecture family, with diversity shaped through training rather than inherited from initialisation. 
+
+## 3 Method 
+
+3.1 Architecture 
+
+We adopt the multi-normalisation construction of TS σBN (Suteu & Serban, 2026), which replaces each shared normalisation layer with a separate layer per task. We restate it for general normalisation, since the same construction was shown to work over both BatchNorm and LayerNorm: 
+
+σNorm t(x) = σ(γt) ⊙ norm t(x), σ(γt) = 11 + e−γt , (1) where norm t is task t’s own normalisation step and γt its scale logits. The primitive σNorm bounds the scaler to (0 , 1) and admits a differential learning rate on γ for which we adopt the TS σBN default. Since the focus is on the affine transformation, it can wrap existing normalisation layers: σBN over BatchNorm, 
+
+σLN over LayerNorm. We treat each task as an ensemble member: M members share every convolution or attention weight, differ only in their σNorm scales, and each carries its own freshly initialised head. Members take a forward pass each; these passes are independent and can be vectorised into a single batched pass, as promoted by BatchEnsemble (Wen et al., 2020). Treating each member as a task imports the MTL toolkit of Suteu & Serban (2026). The sigmoid is what makes this concrete: it bounds each scale to a readable per-feature importance so that member disagreement can be measured directly as the cosine similarity between importance vectors, a label-free diversity metric computed from the parameters alone. Because diversity is induced by swapping normalisation layers, a single primitive patches any backbone, without the architecture-specific redesign that partitioning methods or CNN-specific adapters require (§2). While the MTL framing provides the tools, the training dynamics and tension are inverted here. In MTL tasks, distinct objectives have conflicting gradients, and the machinery exists to reduce interference (Yu et al., 2020). In our construction, every member optimises the same objective on the same data, so the loss creates no pressure to differentiate; diversity must be supplied externally. Seeding it through initialisation alone, as prior modulation ensembles do, fixes it at the start with no control over it thereafter as members drift. A mechanism that enforces diversity during training can control the level regardless initialisation, including pretrained networks (Appendix A.3). The MTL bias toward generic shared features (Caruana, 1997) still applies to the backbone but, on its own, does not yield a controlled level of member diversity, which §3.2 supplies. 
+
+3.2 Controllable diversity via softmax-temperature regularisation 
+
+Members share a backbone and optimise the same loss on the same data, and nothing in the objective pushes them apart, so the regulariser must supply that pressure. For each regularised layer ℓ and feature i, we collect the M members’ importances σ(γ1,ℓ,i ), . . . , σ (γM,ℓ,i ) and take a softmax across members at temperature τ ,
+
+Ldiv = λ ∑
+
+> ℓ∈R
+
+∑
+
+> iM
+
+∑
+
+> m=1
+
+log [softmax τ
+
+(σ(γ·,ℓ,i ))] 
+
+> m
+
+, (2) where R is the set of regularised layers and the softmax is taken over the member index for one feature: for the vector z of the M members’ importances, [softmax τ (z)] m = ezm/τ / ∑ Mm′=1 ezm′ /τ . Minimising this sharpens each feature’s across-member distribution: the more a single member owns a feature, the lower the term, so members are driven to differentiate in which features they rely on. The temperature τ sets how sharp that target distribution is. This is where τ and the strength λ play distinct roles. τ sets the attractor the importances are pulled toward; λ sets how strongly they are pulled there against the task loss. Unlike a monotone penalty, where 40.00 0.25 0.50 0.75 1.00 
+
+σ(γ)   
+
+> 10 −1
+> 10 0
+> 10 1
+> density
+> τ=10
+> τ=0.01
+> 0.01 110 2
+
+τ
+
+> 4
+> 8
+> 12
+> 16
+> M
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> mean cosine
+> 0
+> 1
+> 2
+> 3
+> 4
+> k
+
+Figure 1: (Left) per-feature importance distributions for ResNet18, showing concentration toward the sigmoid extremes as temperature is decreased. (Center) simulated mean σNorm-cosine over the different member sizes and temperature values. (Right) clustering of features per their member importance vectors, showing the M -choose-k allocation. the strength alone fixes the endpoint, our softmax penalty defines a τ -parametrised target that selects which equilibrium the system moves toward. Trained from scratch, the endpoint is then governed by τ and is empirically insensitive to λ, which we keep fixed across experiments. We ablate the impact of λ in §5.2. The two temperature limits bound the behaviour and are derived in Appendix A.5. As τ → 0, the softmax target becomes one-hot, and each feature is driven to a single owner as a maximally diverse state. As τ → ∞ ,it becomes uniform, which carries no gradient toward any particular allocation, and the regulariser stops pushing. Figure 1 (Left) shows the effect at convergence of a ResNet18 during training: under sustained pressure at low temperature, the importances move toward the extremes of the sigmoid. Between the limits, τ is a navigable control, as illustrated in Figure 1 (Center) . We isolate the effects of the regulariser through a synthetic setting across a grid of ensemble size M and temperature τ . Using importance matrices initialised from N (0 , 1) , we plot the mean pairwise cosine between members at convergence: the surface is smooth and monotonic in τ , and varies only weakly with M , so τ moves the diversity equilibrium largely independently of ensemble size. The equilibrium is best read as a soft M -choose-k allocation. In the τ → 0 limit, the sigmoid damps each importance toward 0 or 1 (Figure 1 (Left) ), so every feature is owned by one member, an M -choose-1 hard partition, which partitioning methods build in by construction. As τ rises, the equilibrium relaxes along the tradeoff: rather than assigning each feature to one member, it spreads importance across an effective k
+
+members, growing with τ up to full sharing. Figure 1 (Right) shows this directly, features cluster by their usage pattern into groups owned by k members (having σ(γ) > 0.5), and τ controls how many features fall into each group. The implicit ensemble family has so far occupied only the two endpoints, partitioning at 
+
+k = 1 and shared modulation at k = M ; using τ , we can select the points between them. Because it acts through a regulariser, that point is set and held during training, for any backbone, rather than fixed at construction or initialisation. 
+
+3.3 The diversity tradeoff 
+
+Diversity matters because it is what makes an ensemble more than the sum of its members: disagreement on hard or shifted inputs is the signal that drives calibration and the epistemic uncertainty an ensemble is meant to provide. But more is not better. For any Bregman loss L, including cross-entropy, Wood et al. (2023) decompose the expected ensemble loss exactly into 
+
+ED [L(y, q ∗)] = 1
+
+> M
+
+∑
+
+> i
+
+L(y, ¯qi)
+
+︸ ︷︷ ︸
+
+> avg. bias
+
++ 1
+
+> M
+
+∑
+
+> i
+
+ED [L(¯ qi, q i)] 
+
+︸ ︷︷ ︸
+
+> avg. variance
+
+− 1
+
+> M
+
+∑
+
+> i
+
+ED [L(q∗, q i)] 
+
+︸ ︷︷ ︸
+
+> diversity
+
+, (3) 50.945 0.950 0.955 0.960 
+
+1 - ECE     
+
+> 0.840
+> 0.841
+> 0.842
+> 0.843
+> 0.844
+> 0.845
+> 0.846
+> 0.847
+> 0.848
+> Test Accuracy
+> τ=0.3 τ=0.5
+> τ=0.7
+> τ=0.9
+> τ=1 0.575 0.600 0.625 0.650
+
+mean σBN cosine 
+
+> 0.05
+> 0.06
+> 0.07
+> 0.08
+> 0.09
+> 0.10
+> Jensen gap
+
+r=-0.85 
+
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> τ
+
+Figure 2: (Left) accuracy–calibration frontier over a τ sweep on WideResNet-28-10 / CIFAR-100, 3 seeds; an interior optimum is visible. (Right) σNorm-cosine against Jensen gap across the same sweep. with qi member i’s prediction, ¯qi its Bregman centroid over D, and q∗ the corresponding centroid combiner across members. Diversity enters negatively, but the three terms are coupled: pushing members apart raises diversity while perturbing bias and variance. The best level of diversity is therefore interior, not maximal, and the temperature τ is what selects it. This gives concrete form to the suggestion of Wood et al. (2023) that a diversity measure could serve as a training regulariser: ours acts on the σNorm importances, at the parameter level, rather than on the outputs. Sweeping τ traces that trade off as an accuracy–calibration frontier. Figure 2 (Left) shows it with WideResNet-28-10 over 3 seeds on CIFAR-100: an interior optimum where τ is moving the ensemble smoothly along it. This enables guiding training towards a performance level aligned with an application’s risk sensi-tivity. What the decomposition rewards is output diversity: members predict differently when it helps, or sometimes alike but for different reasons (Ramé & Cord, 2021). Our regulariser, however, acts on parameters , the 
+
+σNorm importances. We need the two to coincide, and the bounded primitive lets us check directly whether the relationship holds. We define the parameter-space diversity as the pairwise cosine between member importance vectors, which is 
+
+σNorm-cos = mean  
+
+> ℓ, i<j
+
+cos (σ(γℓi ), σ (γℓj )), (4) computed from the weights alone, with no forward pass or labels. Its output-space counterpart is the Jensen gap (Abe et al., 2022), the diversity term under the arithmetic-mean combiner (Wood et al., 2023), 
+
+J = 1
+
+> M
+
+∑
+
+> i
+
+L(y, q i) − L (y, ¯q), (5) the average member loss minus the loss of the averaged prediction is non-negative and exactly zero when members agree. Across τ the two track closely (Figure 2 (Right) , |ρ| ≈ 0.85 ; |ρ| > 0.83 on ResNet-18, ResNet-50, and WideResNet). The cheap parameter-space quantity is therefore a faithful stand-in for the output diversity the framework rewards and can be monitored without a forward pass. The relationship holds for other output diversity measures, which we show in Appendix A.7. 
+
+3.4 Modulation uncertainty 
+
+The diversity an ensemble exposes is a form of epistemic uncertainty. Predictive uncertainty at an input x is the entropy H[Y | x] of the ensemble’s mean prediction; it splits into an aleatoric part, the mean entropy of 6the individual members, and an epistemic part, the mutual information I[Y ; M | x] between the prediction and the member index M (Smith & Gal, 2018). Refining this decomposition by conditioning on part of the model is an established device (Depeweg et al., 2018), and confining epistemic uncertainty to a small parameter subset over a deterministic backbone has precedents (Dusenberry et al., 2020; Trinh et al., 2022; Daxberger et al., 2021). Our construction is similar: member m predicts f (y | x, θ shared , ϕ m), sharing every backbone weight and varying only the σNorm importances ϕm. For the idealised ensemble in which both parts vary, the chain rule of mutual information splits the epistemic term exactly and without independence assumptions, 
+
+I[Y ; ( θ, ϕ ) | x] = I[Y ; θ | x]
+
+︸ ︷︷ ︸
+
+> backbone
+
++ I[Y ; ϕ | x, θ ]
+
+︸ ︷︷ ︸
+
+> modulation
+
+. (6) Our ensemble realises the second component at the single draw θ = θ⋆
+
+> shared
+
+, which we call modulation uncertainty, Umod (x) = I[Y ; ϕ | x, θ = θ⋆
+
+> shared
+
+], and structurally forgoes the first. Because Umod is one realisation of the conditional term rather than the term itself, it cannot be recombined with any measured quantity to recover the full epistemic term: it is a named component of ordinary epistemic uncertainty, not a new kind (Appendix A.6). The decomposition is structural and doesn’t say how large each component is at a given input. Those follow from an empirical premise: independently trained backbones agree on in-distribution inputs and diverge as inputs move off-distribution (Fort et al., 2019; Ovadia et al., 2019). Equation equation 6 then makes two predictions in advance of §4.4. A corrupted input is one the backbone still represents, so the modulation component carries calibrated disagreement and calibration should degrade gracefully under shift. An out-of-distribution input is one the backbone cannot represent, so the disagreement that would detect it lies in the forgone backbone component, and detection should be weak. §4.4 confirms both on the pretrained vision backbones, where the two sides appear in a single model. In the from-scratch regime, where members shape the shared representation during training, calibration under shift holds while detection instead improves with capacity. 
+
+## 4 Experiments 
+
+4.1 Setup 
+
+All experiments are run within TorchUncertainty (Lafage et al., 2025). For the convolutional networks, we adopt the Packed Ensembles protocol (Laurent et al., 2023), so our results append directly to the published Packed Ensembles tables. For the transformers, we follow the Hydra Ensembles protocol (Gabetni et al., 2025), which is implemented on an out-of-distribution branch of TorchUncertainty. On SST-2, where Hydra uses the public BERT-base backbone, we keep it as a baseline and append our row to its table. Its ViT results, however, rely on a bespoke ImageNet-21k backbone that is not publicly released; rather than transcribe numbers we cannot reproduce, we rerun ViT-B/16 benchmarks on public timm backbones using a shared recipe. We evaluate on CIFAR-10/100 (Krizhevsky, 2009) with ResNet-18/50 (He et al., 2016) and WideResNet-28-10 (Zagoruyko & Komodakis, 2016), on SST-2 (Socher et al., 2013) with BERT-base (Devlin et al., 2019), and on CIFAR-100 and ImageNet (Deng et al., 2009) with ViT-B/16 (Dosovitskiy et al., 2021). We report predictive quality (accuracy, NLL as the primary proper score, Brier on the transformer tables), calibration (ECE, and adaptive aECE where available), out-of-distribution detection (AUROC, AUPR, FPR95 against the framework-default near/far OOD sets), and efficiency (parameters, multiply-adds). Robustness under input corruption is reported separately as graded degradation on CIFAR-100-C and ImageNet-C (Hendrycks & Dietterich, 2019), severities 1–5. Per-experiment hyperparameters and implementation details are in Appendix A.4. 
+
+4.2 Convolutional networks 
+
+We compare against a single model, deep ensembles (Lakshminarayanan et al., 2017), and the implicit-ensemble baselines BatchEnsemble (Wen et al., 2020), MIMO (Havasi et al., 2021), Masksembles (Durasov 7Table 1: TorchUncertainty benchmark on CIFAR-10/100 (ResNet-50, WideResNet-28-10). Within each block, the best value per metric is also bold. σN-Ens FineTune is the pretrained model converted and briefly fine-tuned (Appendix A.3), its anchor being the Single row of the same block. ResNet-18 results are in Appendix A. 
+
+Data Arch Method Acc ↑ NLL ↓ ECE ↓ AUPR ↑ AUROC ↑ FPR95 ↓ Params ↓ MAdds ↓
+
+C10 RN50 Single 95.1 0.211 3.1 95.2 91.9 23.6 23.52 1.30 
+
+σN-Ens FineTune 94.3 0.178 0.99 95.7 92.2 23.3 24.38 5.22 BatchEnsemble 93.9 0.255 3.3 94.7 91.3 20.1 23.63 5.19 MIMO 95.4 0.197 3.0 95.1 90.8 26.0 23.59 1.30 Masksembles 95.3 0.175 1.9 95.7 92.2 22.1 23.81 5.19 FiLM-Ensemble 95.9 0.139 1.1 96.1 92.9 22.6 23.87 5.21 Packed 95.9 0.137 0.8 97.3 95.2 14.4 14.55 1.00 Deep Ensembles 96.0 0.136 0.8 97.0 94.7 15.5 94.08 5.19 
+
+σN-Ens 95.4 0.156 1.2 96.5 93.7 19.8 24.38 5.22 WRN Single 95.4 0.200 2.9 96.1 93.2 20.4 36.49 5.95 
+
+σN-Ens FineTune 95.1 0.157 0.79 94.5 91.6 21.2 36.76 23.83 BatchEnsemble 95.6 0.206 2.7 95.5 92.5 22.1 36.59 23.81 MIMO 94.7 0.234 3.4 94.9 90.6 30.9 36.51 5.96 Masksembles 94.0 0.186 1.6 97.2 95.0 14.5 36.53 23.82 FiLM-Ensemble 95.9 0.127 0.6 98.0 96.0 13.0 36.60 23.82 Packed 96.2 0.133 0.9 98.1 96.5 11.1 19.35 4.06 Deep Ensembles 95.8 0.143 1.3 97.8 96.0 12.5 145.96 23.82 
+
+σN-Ens 96.0 0.127 0.8 96.3 92.9 23.3 36.76 23.83 C100 RN50 Single 78.3 0.905 8.9 87.4 77.9 57.6 23.70 1.30 
+
+σN-Ens FineTune 77.5 0.788 1.94 87.1 76.0 63.8 24.38 5.22 BatchEnsemble 66.6 1.788 18.2 85.2 74.6 60.6 23.81 5.19 MIMO 79.0 0.876 7.9 87.5 76.9 64.7 24.33 1.30 Masksembles 78.5 0.832 4.6 90.3 81.9 52.3 23.81 5.19 FiLM-Ensemble 80.6 0.733 2.9 89.6 81.3 50.7 23.87 5.21 Packed 81.2 0.703 2.0 90.0 81.7 56.5 15.55 1.00 Deep Ensembles 80.9 0.713 2.6 89.2 80.8 52.5 94.82 5.19 
+
+σN-Ens 80.8 0.701 1.6 89.0 80.7 52.4 24.38 5.22 WRN Single 80.3 0.963 15.6 81.0 64.2 80.1 36.55 5.95 
+
+σN-Ens FineTune 80.2 0.663 1.31 86.5 75.7 62.3 36.76 23.83 BatchEnsemble 82.3 0.835 13.0 88.1 78.2 69.8 36.65 23.81 MIMO 80.2 0.822 2.8 84.9 72.0 72.8 36.74 5.96 Masksembles 74.4 0.937 6.3 76.1 60.0 75.1 36.59 23.82 FiLM-Ensemble 82.8 0.618 3.9 89.8 81.4 55.3 36.60 23.82 Packed 83.9 0.678 8.9 86.2 73.2 80.7 36.62 5.95 Deep Ensembles 82.5 0.903 22.9 81.6 67.9 71.3 145.96 23.82 
+
+σN-Ens 84.4 0.584 5.1 90.6 82.6 53.6 36.76 23.83 
+
+et al., 2021), Packed Ensembles (Laurent et al., 2023), and FiLM-Ensemble (Turkoglu et al., 2022), all at 
+
+M = 4 ; baseline numbers are transcribed from Laurent et al. (2023) and our rows run in the same protocol. We report two variants: σN-Ens trained from scratch, and σN-Ens FineTune, which converts the Single-model checkpoint and fine-tunes briefly. We use τ = 0 .1, λ = 10 −2 for all benchmarks; further details can be found in Appendix A. The σN-Ens FineTune rows fold the pretrained variant into the main comparison; the relevant baseline for them is the Single checkpoint, not the from-scratch ensembles. Further convolutional results, including the ResNet-18 backbone and per-seed standard deviations, are in Appendix A. 
+
+4.3 Transformers 
+
+We wrap every LayerNorm in the backbone with σLN via the output-preserving conversion of Appendix A.3, a small extension of TS σBN (Suteu & Serban, 2026) for pretrained models, not inherited from it. We regularise the FFN-block scales only. All four methods, Single, Deep Ensembles, LoRA-Ensemble, and 
+
+σN-Ens, share one public timm ViT-B/16 backbone and one recipe per dataset: SGD (momentum 0.9, no 8Table 2: Text classification on SST-2 with BERT-base, following the Hydra Ensembles protocol (Gabetni et al., 2025); baselines are transcribed from their Table 2, and our σN-Ens row is added on the same public backbone ( M = 3 , 5-seed mean). On this near-saturated task, accuracy is flat across methods, and σN-Ens is competitive on calibration and OOD detection.                                                                        
+
+> Method Heads Acc ↑Brier ↓NLL ↓ECE ↓aECE ↓AUROC ↑FPR95 ↓AUPR ↑
+> Single 12 92.55 0.12 0.27 0.05 0.04 70.16 70.62 81.93 Deep Ensembles 12 93.00 0.11 0.24 0.04 0.04 74.81 62.69 84.90
+> MC Dropout 12 92.55 0.13 0.31 0.05 0.04 72.23 67.36 81.96 LoRA-Ens 12 92.89 0.12 0.28 0.05 0.04 70.83 68.70 82.27 Hydra-Ens (Circ) 6×392.55 0.12 0.24 0.04 0.04 77.60 55.06 84.16
+> σN-Ens 12 91.93 0.13 0.23 0.04 0.04 75.38 58.45 84.38
+
+Table 3: ViT-B/16 benchmark: all methods on shared public pretrained backbones under one recipe ( M = 4 ,three-seed mean ± std, best per column in bold). σN-Ens is the best-calibrated model, without the deep ensemble’s parameter cost, but weaker at out-of-distribution detection, since members only use fully shared feature extractors, which cannot diverge much on inputs it does not encode.                                                                                
+
+> OOD AUROC ↑
+> Method Acc ↑NLL ↓ECE ↓Brier ↓near far Par. ↓MAdds ↓
+> C100  Single 92 .77 ±0.10 0.317 ±0.022 4.23 ±0.54 0.1185 ±0.0033 92 .75 ±0.24 80 .32 ±1.29 85 .916 .9
+> Deep Ensembles 93 .12 ±0.00 0.261 ±0.008 2.86 ±0.30 0.1058 ±0.0012 93 .13 ±0.06 81 .60 ±0.74 343 .567 .4
+> LoRA-Ens 92 .09 ±0.12 0.336 ±0.016 7.87 ±1.51 0.1276 ±0.0036 93 .22 ±0.21 85 .69 ±0.51 88 .567 .9
+> σN-Ens 93 .12 ±0.14 0.247 ±0.003 1.45 ±0.26 0.1055 ±0.0002 93 .08 ±0.07 80 .25 ±1.12 86 .267 .4
+> IN-1K  Single 82 .12 ±0.09 0.671 ±0.002 4.11 ±0.08 0.2566 ±0.0005 79 .04 ±0.26 88 .07 ±0.15 86 .616 .9
+> Deep Ensembles 83 .67 ±0.02 0.593 ±0.001 1.34 ±0.11 0.2347 ±0.0003 80 .24 ±0.09 90 .22 ±0.04 346 .367 .4
+> LoRA-Ens 83 .27 ±0.15 0.666 ±0.124 6.14 ±9.21 0.2518 ±0.0225 80 .93 ±0.35 91 .84 ±0.14 91 .267 .9
+> σN-Ens 82 .32 ±0.03 0.655 ±0.005 1.10 ±0.11 0.2526 ±0.0010 77 .95 ±0.09 89 .17 ±0.13 88 .967 .4
+
+weight decay), a single learning rate of 0.01 across all methods, cosine decay, M = 4 , and three seeds; the backbone is the original-augmentation in21k checkpoint on CIFAR-100 and the AugReg in21k checkpoint on ImageNet. Deep Ensembles is M independently trained single models; LoRA-Ensemble is the parameter-efficient baseline of Mühlematter et al. (2026), a frozen backbone with per-member rank-8 attention adapters. Full settings are in Appendix A.4. Packed and FiLM ensembles do not appear here: both rely on training from scratch, Packed as a partitioned architecture and FiLM through initialisation-variance diversity, so neither can wrap the pretrained backbone this benchmark uses. We report in-distribution, OOD, and corruption-shift results for both datasets in §4.4. 
+
+4.4 Results 
+
+Read together, the tables make one point clear: a single mechanism produces a calibrated ensemble across both convolutional and transformer architectures, in both training from scratch and fine-tuning pretrained models. On the convolutional benchmarks, our method is competitive with or ahead of every baseline, with the advantage over deep ensembles widening at higher capacity and harder data, peaking on WideResNet / CIFAR-100, where it attains the best accuracy and NLL at a fraction of the deep-ensemble parameter count. Overall performance, combining Accuracy and Calibration, can be assessed using the proper scoring rule NLL, which is dominant by a clear margin. Among related methods, Packed Ensembles is the most competitive but sits on the other branch of the family: hard-partitioning at construction, which means it cannot add members without widening the architecture or reducing member capacity, exposes no accuracy– calibration control, and cannot wrap a pretrained backbone. The contrast is sharpest under member scaling, where it collapses while ours improves (§5.1). Appendix A.2 sets out the full comparison, including where Packed’s efficiency and member independence win. 91 2 3 4 5
+
+> Corruption severity
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> ECE (%)
+
+WideResNet-28-10 — CIFAR-100-C      
+
+> 12345
+> Corruption severity
+> 2
+> 4
+> 6
+> 8
+> 10
+
+ViT-B/16 — ImageNet-C 
+
+> σN-Ens
+> Deep Ensembles
+> Packed-Ensembles
+> FiLM-Ensemble
+> LoRA-Ensemble
+> Single
+
+Figure 3: Calibration holds up under distribution shift: expected calibration error against corruption severity (1–5, M = 4 ) for a from-scratch WideResNet and a pretrained ViT-B/16. In both regimes, σN-Ens’s ECE remains nearly flat as corruption intensifies, degrading far more gently than related methods. Per-severity values and the remaining settings are in Appendix A.10. On transformers, the method’s appeal begins with how the ensemble is obtained: wrapping the normalisation layers of a pretrained checkpoint turns it into a calibrated ensemble after a short fine-tune, with none of the layer duplication, pruning, and merging of Hydra Ensembles, and at lower parameter cost than LoRA-Ensemble (Appendix A.2). Its diversity is also set explicitly by τ rather than left to adapter initialisation. Calibration is where the converted models stand out, most clearly under distribution shift. Figure 3 shows it maintaining a steady performance in both regimes as corruption intensifies and a single model steadily degrades. On text, where SST-2 leaves little headroom, accuracy separates weakly while the NLL advantage carries over, and detection there is competitive rather than weak, an exception to the vision pattern. Read across both families, the method’s relative performance improves with task difficulty and backbone capacity: mid-table on CIFAR-10, level with deep ensembles on CIFAR-100 / ResNet-50, ahead of every method on WideResNet, and the best-calibrated model on the pretrained ViT. This is the regime most relevant to current practice, and the trend is consistent with the soft allocation of §3.2. Because every filter remains available to every member, added capacity is pooled rather than partitioned, and harder tasks reward sharing where capacity is scarce and specialising where it is abundant. Partitioning and fixed-rank methods cannot reallocate capacity this way, which the member-scaling ablation (§5.1) shows directly. Out-of-distribution detection is where the shared backbone shows its limitation, and the two regimes manifest it differently. Trained from scratch, members shape the representation under the diversity pressure, and detection improves with capacity and difficulty. On the pretrained vision backbones, the representation is inherited, and members can only reweight what it already encodes, with limited success. The pretrained comparison itself carries a caveat: no method in these tables draws members from truly independent models, all of them are derived from one checkpoint (§4.3). Within this regime, detection tracks how far each method perturbs the inherited solution: LoRA-Ens, whose high-variance adapters perturb it most, leads on both datasets, while our modulation perturbs it least by design, and detection deteriorates. 
+
+## 5 Ablations 
+
+The two mechanistic studies that validate the diversity mechanism itself, the temperature Pareto frontier and the σNorm-cosine to Jensen-gap correspondence, are presented in §3.3 as the empirical anchors of the 10 2 4 8 12 16 
+
+> M
+> 0.76
+> 0.78
+> 0.80
+> 0.82
+
+Accuracy    
+
+> TSσBN
+> Packed
+> 24812 16
+> M
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+
+NLL    
+
+> 24812 16
+> M
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+
+ECE    
+
+> 24812 16
+> M
+> 0.76
+> 0.78
+> 0.80
+> 0.82
+> 0.84
+> 0.86
+
+OOD AUROC Figure 4: Member scaling on CIFAR-100 / ResNet-50 at τ = 0 .5. σN-Ens improves and then saturates as 
+
+M grows, while Packed degrades and collapses at the largest member counts; shaded bands are seed spread. Table 4: Regularisation-strength robustness, from-scratch CIFAR-100, single seed. λ swept at fixed τ ;converged Acc / NLL / ECE.                         
+
+> Arch τλ= 10 −4λ= 10 −3λ= 10 −2λ= 10 −1
+> ResNet-18 0.1 77.7 / 0.830 / 1.7 77.9 / 0.825 / 1.7 77.5 / 0.833 / 1.3 78.0 / 0.826 / 1.8 ResNet-50 0.1 80.8 / 0.706 / 1.7 80.6 / 0.703 / 1.5 80.7 / 0.710 / 1.9 80.9 / 0.701 / 2.3 WideResNet 0.1 84.3 / 0.590 / 5.1 84.3 / 0.592 / 5.3 84.3 / 0.590 / 5.2 84.2 / 0.591 / 5.0
+
+bias-variance-diversity framework. This section examines the method’s two remaining degrees of freedom: the ensemble size M , and the regularisation strength λ.
+
+5.1 Scaling with member count 
+
+A property that distinguishes soft sharing from hard partitioning is how each behaves as the number of members grows. We compare σN-Ens against Packed Ensembles, the archetypal partitioning method, on CIFAR-100 / ResNet-50 across M from 2 to 16, holding τ = 0 .5 fixed rather than tuning it per M . The two methods sit at opposite ends of the M -choose-k continuum of §3.2, and the sweep shows where each design assumption breaks down. Figure 4 shows the crossover (exact numbers in Appendix A.9). At M = 2 , Packed holds a small advantage, as expected, since its hard partition yields two genuinely independent sub-networks when capacity per member is still ample. By M = 4 , the methods are at parity, and beyond it they diverge: σN-Ens improves through the mid-range and then saturates gently, with its NLL flattening. At the same time, member cosine continues to rise slowly. In contrast, Packed degrades and then collapses at the largest member counts, where forcing many disjoint channel groups through a fixed width leaves each member too thin to remain competitive. The contrast mirrors the M -choose-k reading directly: Packed is locked at k = 1 , so per-member capacity falls as M grows, whereas σN-Ens’s soft allocation keeps filters shared where capacity is scarce. The claim here concerns scaling behaviour rather than absolute performance at small M , where Packed’s structural independence is a real if narrow advantage. 
+
+5.2 Regularisation strength 
+
+§3.2 casts τ as the control over the equilibrium and λ as the strength of the pull toward it. If, as we argue, the from-scratch endpoint is governed primarily by τ , then final-state performance should be largely insensitive to λ, leaving τ as the only hyperparameter a practitioner must set. We test this on from-scratch CNNs, sweeping λ across three orders of magnitude at fixed τ and reporting converged metrics. 11 Table 4 shows that accuracy and NLL are stable across the full λ range on all three backbones, varying by less than a point in accuracy and a few thousandths in NLL as λ moves over three orders of magnitude. This is the behaviour the τ /λ account predicts: trained to convergence, the τ -defined attractor governs the from-scratch endpoint, and the strength applied along the way leaves final performance essentially unchanged for any sufficiently non-trivial λ. We fix λ = 10 −2 for all from-scratch experiments and treat τ as the only user-facing control. In practice, this means λ need not be tuned per setting: it can be frozen at its default, leaving τ as the single knob a practitioner adjusts. Together with the member-scaling result and the temperature- and diversity-metric studies in §3.3, this com-pletes the empirical analysis: the method scales gracefully with ensemble size and its default regularisation weight requires no tuning. 
+
+## 6 Conclusion 
+
+We have presented a normalisation-based implicit ensemble in which a single temperature sets member diversity. Treating each member as a task in a multi-task architecture, a softmax-temperature regulariser drives the sigmoid-bounded normalisation scales toward a temperature-defined equilibrium, so that member disagreement becomes a quantity controlled during training rather than a byproduct of initialisation or architecture. Because only the normalisation layers are replicated, the same mechanism applies across convolutional and transformer backbones and across training regimes, thereby turning an existing pretrained model into a calibrated ensemble. The method’s principal limitation is a consequence of the same design that makes it efficient. Members share a single backbone and do not have their own feature extractors; they differ only in how they weight the features the backbone produces. The epistemic uncertainty they express, which we call modulation uncertainty, is therefore one component of what a full ensemble draws on: the disagreement reachable by reweighting shared features. The disagreement that requires differing feature extractors is structurally forgone, and this is why the method is weaker on out-of-distribution detection. The same structure makes it robust to distribution shift, where calibration degrades gracefully as corruption intensifies. Giving members some feature-extraction capacity of their own, for instance through partially shared LoRA adapters, is the natural way to recover the forgone component, and we leave it to future work. Empirically, the method matches or exceeds deep ensembles at a fraction of their parameter cost, with the margin widening at higher model capacity; and it continues to scale as members are added, where partitioning methods instead degrade and collapse. That a single temperature secures this, with no architecture-specific redesign, is what makes controllable diversity practical rather than merely of theoretical interest. As models continue to scale, it becomes an increasingly attractive alternative to training and storing a full deep ensemble. 
+
+## References 
+
+Taiga Abe, E. Kelly Buchanan, Geoff Pleiss, Richard Zemel, and John P. Cunningham. Deep ensembles work, but are they necessary? In Advances in Neural Information Processing Systems , 2022. Taiga Abe, E. Kelly Buchanan, Geoff Pleiss, and John P. Cunningham. Pathologies of predictive diversity in deep ensembles. Transactions on Machine Learning Research (TMLR) , 2024. Andrei Atanov, Arsenii Ashukha, Dmitry Molchanov, Kirill Neklyudov, and Dmitry Vetrov. Uncertainty estimation via stochastic batch normalization. In International Conference on Learning Representations (ICLR) Workshop , 2018. Freddie Bickford Smith, Jannik Kossen, Eleanor Trollope, Mark van der Wilk, Adam Foster, and Tom Rainforth. Rethinking aleatoric and epistemic uncertainty. In International Conference on Machine Learning (ICML) , 2025. Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in neural networks. In International Conference on Machine Learning (ICML) , 2015. 12 Rich Caruana. Multitask learning. Machine Learning , 28(1):41–75, 1997. Francesco D’Angelo and Vincent Fortuin. Repulsive deep ensembles are Bayesian. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. Erik Daxberger, Eric Nalisnick, James U. Allingham, Javier Antorán, and José Miguel Hernández-Lobato. Bayesian deep learning via subnetwork inference. In International Conference on Machine Learning , 2021. Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. ImageNet: A large-scale hierarchical image database. In IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2009. Stefan Depeweg, José Miguel Hernández-Lobato, Finale Doshi-Velez, and Steffen Udluft. Decomposition of uncertainty in bayesian deep learning for efficient and risk-sensitive learning. In International Conference on Machine Learning , 2018. Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidi-rectional transformers for language understanding. In Conference of the North American Chapter of the Association for Computational Linguistics (NAACL) , 2019. Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Un-terthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In International Conference on Learning Representations (ICLR) , 2021. Nikita Durasov, Timur Bagautdinov, Pierre Baque, and Pascal Fua. Masksembles for uncertainty estimation. In IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2021. Michael W. Dusenberry, Ghassen Jerfel, Yeming Wen, Yian Ma, Jasper Snoek, Katherine Heller, Balaji Lakshminarayanan, and Dustin Tran. Efficient and scalable bayesian neural nets with rank-1 factors. In 
+
+International Conference on Machine Learning , 2020. William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research (JMLR) , 2022. Stanislav Fort, Huiyi Hu, and Balaji Lakshminarayanan. Deep ensembles: A loss landscape perspective. 
+
+arXiv preprint arXiv:1912.02757 , 2019. Gianni Franchi, Olivier Laurent, Maxence Leguéry, Andrei Bursuc, Andrea Pilzer, and Angela Yao. Make me a BNN: A simple strategy for estimating Bayesian uncertainty from pre-trained models. In IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2024. Firas Gabetni, Giuseppe Curci, Andrea Pilzer, Subhankar Roy, Elisa Ricci, and Gianni Franchi. Ensembling pruned attention heads for uncertainty-aware efficient transformers. arXiv preprint arXiv:2510.18358 ,2025. Jakob Gawlikowski, Cedrique Rovile Njieutcheu Tassi, Mohsin Ali, Jongseok Lee, Matthias Humt, Jianxiang Feng, Anna Kruspe, Rudolph Triebel, Peter Jung, Ribana Roscher, Muhammad Shahzad, Wen Yang, Richard Bamler, and Xiao Xiang Zhu. A survey of uncertainty in deep neural networks. Artificial Intelli-gence Review , 2023. arXiv:2107.03342. Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern neural networks. In 
+
+International Conference on Machine Learning (ICML) , 2017. Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In International Conference on Machine Learning (ICML) , 2018. Marton Havasi, Rodolphe Jenatton, Stanislav Fort, Jeremiah Zhe Liu, Jasper Snoek, Balaji Lakshmi-narayanan, Andrew M. Dai, and Dustin Tran. Training independent subnetworks for robust prediction. In International Conference on Learning Representations (ICLR) , 2021. 13 Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In 
+
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2016. Wenchong He, Zhe Jiang, Tingsong Xiao, Zelin Xu, and Yukun Li. A survey on uncertainty quantification methods for deep learning. ACM Computing Surveys , 2026. arXiv:2302.13425. Dan Hendrycks and Thomas Dietterich. Benchmarking neural network robustness to common corruptions and perturbations. In International Conference on Learning Representations , 2019. Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 , 2015. Eric Jang, Shixiang Gu, and Ben Poole. Categorical reparameterization with Gumbel-softmax. In Interna-tional Conference on Learning Representations (ICLR) , 2017. Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Adrien Lafage, Olivier Laurent, Firas Gabetni, and Gianni Franchi. Torch-Uncertainty: A deep learn-ing framework for uncertainty quantification. In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track , 2025. Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncer-tainty estimation using deep ensembles. In Advances in Neural Information Processing Systems (NeurIPS) ,2017. Olivier Laurent, Adrien Lafage, Enzo Tartaglione, Geoffrey Daniel, Jean-Marc Martinez, Andrei Bursuc, and Gianni Franchi. Packed-ensembles for efficient uncertainty estimation. In International Conference on Learning Representations (ICLR) , 2023. Hanxiao Liu, Karen Simonyan, and Yiming Yang. DARTS: Differentiable architecture search. In Interna-tional Conference on Learning Representations (ICLR) , 2019. Jeremiah Zhe Liu, Zi Lin, Shreyas Padhy, Dustin Tran, Tania Bedrax-Weiss, and Balaji Lakshminarayanan. Simple and principled uncertainty estimation with deterministic deep learning via distance awareness. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2020. Yong Liu and Xin Yao. Ensemble learning via negative correlation. Neural Networks , 12(10):1399–1404, 1999. Chris J. Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous relaxation of discrete random variables. In International Conference on Learning Representations (ICLR) , 2017. Hendrik Alexander Mehrtens, Camila González, and Anirban Mukhopadhyay. Improving robustness and calibration in ensembles with diversity regularization. In German Conference on Pattern Recognition (GCPR) , 2022. arXiv:2201.10908. Bálint Mucsányi, Michael Kirchhof, and Seong Joon Oh. Benchmarking uncertainty disentanglement: Specialized uncertainties for specialized tasks. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. arXiv:2402.19460. Dominik J. Mühlematter, Michelle Halbheer, Alexander Becker, Dominik Narnhofer, Helge Aasen, Konrad Schindler, and Mehmet Ozgur Turkoglu. LoRA-Ensemble: Efficient uncertainty modelling for self-attention networks. Transactions on Machine Learning Research (TMLR) , 2026. arXiv:2405.14438. Ian Osband, Zheng Wen, Seyed Mohammad Asghari, Vikranth Dwaracherla, Morteza Ibrahimi, Xiuyuan Lu, and Benjamin Van Roy. Epistemic neural networks. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. 14 Yaniv Ovadia, Emily Fertig, Jie Ren, Zachary Nado, David Sculley, Sebastian Nowozin, Joshua Dillon, Balaji Lakshminarayanan, and Jasper Snoek. Can you trust your model’s uncertainty? evaluating predictive uncertainty under dataset shift. Advances in neural information processing systems , 32, 2019. Tianyu Pang, Kun Xu, Chao Du, Ning Chen, and Jun Zhu. Improving adversarial robustness via promoting ensemble diversity. In International Conference on Machine Learning (ICML) , 2019. Gabriel Pereyra, George Tucker, Jan Chorowski, Łukasz Kaiser, and Geoffrey Hinton. Regularizing neural networks by penalizing confident output distributions. In International Conference on Learning Repre-sentations (ICLR) Workshop , 2017. Alexandre Ramé and Matthieu Cord. DICE: Diversity in deep ensembles via conditional redundancy adver-sarial estimation. In International Conference on Learning Representations (ICLR) , 2021. Hippolyt Ritter, Aleksandar Botev, and David Barber. A scalable Laplace approximation for neural networks. In International Conference on Learning Representations (ICLR) , 2018. Murat Sensoy, Lance Kaplan, and Melih Kandemir. Evidential deep learning to quantify classification uncertainty. In Advances in Neural Information Processing Systems (NeurIPS) , 2018. Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. In International Conference on Learning Representations (ICLR) , 2017. Samarth Sinha, Homanga Bharadhwaj, Anirudh Goyal, Hugo Larochelle, Animesh Garg, and Florian Shkurti. DIBS: Diversity inducing information bottleneck in model ensembles. In AAAI Conference on Artificial Intelligence (AAAI) , 2021. Lewis Smith and Yarin Gal. Understanding measures of uncertainty for adversarial example detection. In 
+
+Conference on Uncertainty in Artificial Intelligence (UAI) , 2018. Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D. Manning, Andrew Ng, and Christo-pher Potts. Recursive deep models for semantic compositionality over a sentiment treebank. In Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2013. Sophie Steger, Christian Knoll, Bernhard Klein, Holger Fröning, and Franz Pernkopf. Function space di-versity for uncertainty prediction via repulsive last-layer ensembles. arXiv preprint arXiv:2412.15758 ,2024. Ximeng Sun, Rameswar Panda, Rogerio Feris, and Kate Saenko. AdaShare: Learning what to share for efficient deep multi-task learning. In Advances in Neural Information Processing Systems (NeurIPS) ,2020. Mihai Suteu and Yike Guo. Receding neuron importances for structured pruning. arXiv preprint arXiv:2204.06404 , 2022. Mihai Suteu and Ovidiu Serban. Simplifying multi-task architectures through task-specific normalization. 
+
+Transactions on Machine Learning Research (TMLR) , 2026. Trung Trinh, Markus Heinonen, Luigi Acerbi, and Samuel Kaski. Tackling covariate shift with node-based bayesian neural networks. In International Conference on Machine Learning , 2022. Mehmet Ozgur Turkoglu, Alexander Becker, Hüseyin Anil Gündüz, Mina Rezaei, Bernd Bischl, Rodrigo Caye Daudt, Stefano D’Aronco, Jan Dirk Wegner, and Konrad Schindler. FiLM-ensemble: Probabilistic deep learning via feature-wise linear modulation. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. 15 Max Welling and Yee Whye Teh. Bayesian learning via stochastic gradient Langevin dynamics. In Interna-tional Conference on Machine Learning (ICML) , 2011. Yeming Wen, Dustin Tran, and Jimmy Ba. BatchEnsemble: An alternative approach to efficient ensemble and lifelong learning. In International Conference on Learning Representations (ICLR) , 2020. Danny Wood, Tingting Mu, Andrew M. Webb, Henry W. J. Reeve, Mikel Lujan, and Gavin Brown. Aunified theory of diversity in ensemble learning. Journal of Machine Learning Research (JMLR) , 2023. Tianhe Yu, Saurabh Kumar, Abhishek Gupta, Sergey Levine, Karol Hausman, and Chelsea Finn. Gradient surgery for multi-task learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Sergey Zagoruyko and Nikos Komodakis. Wide residual networks. In British Machine Vision Conference (BMVC) , 2016. Anton Zamyatin, Patrick Indri, Sagar Malhotra, and Thomas Gärtner. Is BatchEnsemble a single model? on calibration and diversity of efficient ensembles. arXiv preprint arXiv:2601.16936 , 2026. 
+
+## A Appendix 
+
+A.1 Additional convolutional results 
+
+Table 5 reports the ResNet-18 backbone on CIFAR-10/100, extracted from the main benchmark for space. The reading matches the higher-capacity backbones: σN-Ens is competitive across metrics, and the σN-Ens FineTune row improves likelihood and calibration over the Single checkpoint it starts from. Table 5: ResNet-18 on CIFAR-10/100. Conventions as in Table 1. Our rows in bold; σN-Ens FineTune Params/MAdds match σN-Ens.                                                                                                                                                                       
+
+> Data Arch Method Acc ↑NLL ↓ECE ↓AUPR ↑AUROC ↑FPR95 ↓Params ↓MAdds ↓
+> C10 RN18 Single 94.0 0.238 3.5 94.0 89.7 33.8 11.17 0.56
+> σN-Ens FineTune 94.1 0.180 0.85 95.8 92.9 19.4 11.39 2.23 BatchEnsemble 92.9 0.257 3.1 92.4 87.8 32.1 11.21 2.22 MIMO 94.0 0.228 3.3 94.4 90.2 28.6 11.19 0.56 Masksembles 94.0 0.188 0.9 93.6 89.5 27.8 11.24 2.22 FiLM-Ensemble 94.1 0.180 0.7 94.3 90.6 25.7 11.25 2.22 Packed 94.3 0.178 0.7 94.7 91.3 23.2 8.18 0.48 Deep Ensembles 95.1 0.156 0.8 94.7 91.3 18.0 44.70 2.22
+> σN-Ens 93.9 0.185 0.7 93.4 89.1 30.6 11.39 2.23 C100 RN18 Single 75.1 1.016 9.3 88.6 79.5 55.0 11.22 0.56
+> σN-Ens FineTune 76.9 0.831 2.09 86.7 75.9 62.5 11.39 2.23 BatchEnsemble 71.2 1.236 11.6 86.0 75.4 60.2 11.25 2.22 MIMO 75.3 0.962 6.9 89.2 80.7 52.9 11.36 0.56 Masksembles 74.2 1.054 6.1 86.7 76.3 59.8 11.24 2.22 FiLM-Ensemble 77.0 0.886 2.3 89.2 80.1 56.6 11.25 2.22 Packed 76.4 0.858 4.1 88.7 79.8 57.1 8.27 0.48 Deep Ensembles 78.2 0.800 1.8 90.2 82.4 50.5 44.88 2.22
+> σN-Ens 77.8 0.826 1.6 86.8 76.5 61.5 11.39 2.23
+
+A.2 Detailed comparison with competing baselines 
+
+Several baselines match or beat σN-Ens on an individual axis. We set out where each stands relative to the modulation approach, beginning with the one closest to a genuine rival. 16 Packed Ensembles. Packed Ensembles (Laurent et al., 2023) hard-partitions a single architecture into M
+
+sub-models that share no weights, each given a slice of the channel width. The members are therefore fully independent: unlike a modulation ensemble, Packed does not share or reshape a common representation; it divides capacity. It is best understood as an efficiency construct, a way to fit several independent networks into a single model’s parameter and compute budget, rather than a statement about how members should differ. Its strengths follow from that independence. Fully independent members give strong disagreement and, with it, a strong epistemic and out-of-distribution signal; and when capacity comfortably exceeds task difficulty, each slice is still wide enough to be a competent model, so the ensemble is at once accurate and cheap. Our results show this on the easier settings: on CIFAR-10, Packed has the best OOD detection in the table and top-tier accuracy, among the lowest multiply-adds of any method there. The weaknesses follow from the same design. First, diversity is fixed at construction: the partition exposes no accuracy–calibration control, so there is no analogue of sweeping τ along a frontier. Second, the architecture must be built partitioned, so Packed cannot wrap an existing pretrained backbone, the adaptation route central to our method. Third, adding members subdivides a fixed width. It reduces the capacity each receives, tolerable when the width greatly exceeds the task difficulty, but increasingly harmful as the difficulty rises. Each slice becomes too thin to be handled individually. This last point is visible in our own numbers. On the hardest, most capacity-constrained cell, CIFAR-100 on WideResNet, Packed’s OOD detection collapses (AUROC 73 .2, FPR95 80 .7). Its calibration degrades (ECE 8.9), while σN-Ens holds strong detection (AUROC 82 .6) and the best accuracy and NLL in the block; and under member scaling (§5.1), Packed degrades as M grows, where the shared backbone lets our members improve. We therefore read Packed less as a competitor on the same axis than as a different paradigm: partitioning independent sub-models versus modulating a shared one. Packed wins efficiency and, where capacity is ample, raw disagreement; the modulation approach wins controllable diversity, adaptation of pretrained backbones, and graceful member scaling, and overtakes Packed even on accuracy once capacity must be committed to a hard task. In the terms of §3.2, the two sit at opposite ends of the same axis: Packed is the k = 1 hard partition built in by construction, while σN-Ens reaches that regime only as a limit and can move off it under τ .
+
+LoRA-Ensemble. LoRA-Ensemble (Mühlematter et al., 2026) shares our high-level aim, an implicit en-semble on a frozen pretrained transformer, and reaches it differently. Each member adds low-rank adapters to the attention projections, and the members differ only through the random initialisation of those adapters. Under its own protocol, it reports strong accuracy and calibration and is genuinely parameter-efficient. The difference that matters for us is how diversity is controlled. LoRA-Ensemble’s diversity is governed by the adapter initialisation scale, a choice fixed before training; ours is governed by the temperature τ , which moves the operating point along the accuracy–calibration frontier in a single interpretable step. That distinction is invisible when everything is tuned for one configuration and decisive when the configuration changes: an initialisation set for one recipe can over- or under-shoot under another, with no direct control to correct it, whereas τ adjusts the operating point directly. For a controlled evaluation, we run every method under a shared protocol, adopted from Hydra (Gabetni et al., 2025) and applied identically to each method, rather than tuning each separately, which is infeasible at this scale. This protocol differs from LoRA-Ensemble’s own configuration in its optimisation scheme and ensemble size ( M = 4 here, versus M = 16 in their paper). We report LoRA-Ensemble as it behaves under this common protocol; its results under its own tuned configuration are those of Mühlematter et al. (2026). 
+
+FiLM-Ensemble. FiLM-Ensemble (Turkoglu et al., 2022) is the prior method closest to ours in con-struction: an implicit ensemble that modulates a shared backbone through per-member feature-wise affine transformations. The two agree on the setting and differ in how member diversity is produced, how the modulation is parameterised, and how it is optimised. The most important difference is the source and control of diversity. FiLM-Ensemble seeds diversity by scaling the per-member affine initialisation, then trains every member on the same loss with no mechanism to maintain the spread, so the diversity of the trained model may drift as training proceeds. Our softmax-temperature regulariser instead drives the per-17 member importances toward a τ -defined equilibrium, so τ sets where members converge and directly selects the operating point on the accuracy–calibration frontier. A consequence of the initialisation-seeded design is that FiLM-Ensemble is confined to training from scratch: a pretrained checkpoint’s parameters are already set, leaving no initialisation to perturb, whereas our output-preserving conversion (Appendix A.3) lets the regulariser introduce diversity during a short fine-tune. The modulation itself and its optimisation also differ. FiLM applies the full affine transformation per member, while σNorm drops the shift and passes the scale through a sigmoid, yielding a bounded [0 , 1] importance. The bound is what makes the member importances directly comparable, so the σNorm-cos diversity metric is well conditioned and the equilibrium of §3.2 is well defined; an unbounded affine supports neither reading. The optimisation differs in a way that is load-bearing for diversity: FiLM-Ensemble trains all parameters under a single learning rate, whereas we apply a 100 × multiplier to the σNorm scales (Appendix A.4) as per Suteu & Serban (2026). 
+
+A.3 Adapting pretrained backbones 
+
+The from-scratch construction of §3.1 trains σNorm in place of each normalisation layer. The same mecha-nism wraps a pretrained backbone, with one requirement: the conversion must leave the network’s output unchanged, so fine-tuning starts from the pretrained function rather than a perturbed one. The obstacle is that σ(γ) ∈ (0 , 1) cannot reproduce a pretrained scale that lies outside it. We therefore rein-troduce a per-layer scale magnitude kℓ and the per-channel shift βℓ, used only to reconstruct the pretrained signal. For a member’s trainable logit γ, the converted layer applies 
+
+yℓ(γ) = kℓ σ(γ)
+
+︸ ︷︷ ︸
+
+> reconstructed scale
+
+⊙ norm ℓ(x) + β. (7) As in the original affine, γ and β are per-channel and σ acts channel-wise; the only per-layer quantity is the scalar kℓ = max c |γpre  
+
+> ℓ,c
+
+|/0.95 , one value shared across the layer’s channels (the 0.95 keeps the largest scale off the saturation wall at σ−1(1) ). The pretrained bias is copied into β, and the logits are initialised per channel by γnew  
+
+> ℓ,c
+
+= σ−1(γpre  
+
+> ℓ,c
+
+/k ℓ), so that kℓ σ(γnew  
+
+> ℓ,c
+
+) = γpre  
+
+> ℓ,c
+
+for every channel and yℓ matches the pretrained output at initialisation. Crucially, kℓ and β are shared across members and frozen throughout training, so they reconstruct the pretrained signal without compensating for the diversity introduced by the regulariser. The regulariser acts on σ(γ) alone, which stays the only member-specific, bounded quantity; the conversion is an output-preserving reparameterisation orthogonal to the diversity mechanism, and the equilibrium, the σNorm-cosine metric, and τ as the sole control all carry over unchanged. The from-scratch construction is the special case 
+
+kℓ = 1 , β = 0 .This wider scale matters mainly for transformers. Convolutional scales already lie in (0 , 1) , so kℓ = 1 suffices, and the layer reduces to plain σBN. Transformer backbones instead show large magnitude differences between attention and MLP blocks, with LayerNorm scales growing with depth, so a bounded scale alone cannot reconstruct them. TS σBN (Suteu & Serban, 2026) handled this only partially, wrapping a selected subset of layers where the resulting error was acceptable; the per-layer scale here lets us wrap every normalisation layer, as long as the pretrained scales are positive, which they are in all backbones we tested. Member heads are reinitialised: a shared head is a symmetric fixed point at which the regulariser has no gradient, so reinitialisation supplies the asymmetry the mechanism needs. 
+
+A.4 Implementation details 
+
+We report only where we deviate from the protocols we build on; base settings are as in the cited references. Two choices are common to all experiments: the backbone σNorm scales are trained with the 100 × learning-rate multiplier suggested by TS σBN (Suteu & Serban, 2026), adopted unchanged rather than tuned, and no weight decay, and every member head places an additional normalisation layer (BN or LN) before its randomly-initialised linear layer. 18 Convolutional networks. We follow the Packed Ensembles training protocol (Laurent et al., 2023) (SGD with a step schedule; learning rate, weight decay, and epochs vary by dataset and model as specified there), deviating only in setting dropout to zero. From-scratch σBN scales are initialised from N (0 , 1) , with τ = 0 .1,
+
+λ = 10 −2, and M = 4 . The diversity regulariser is applied to one σNorm layer per residual block: the second normalisation layer in ResNet-18, the first in WideResNet-28-10, and the first and last in ResNet-50. The 
+
+σN-Ens FineTune variant converts a pretrained single-model checkpoint (Appendix A.3), reinitialises the heads, and fine-tunes with Adam at 10 −3 for 25 epochs at τ = 0 .1, λ = 10 −4.
+
+Transformers. For the ViT experiments, all methods share one recipe: SGD (momentum 0.9, no weight decay), learning rate 0.01 , 500 -step linear warmup then cosine decay, batch size 256 , no dropout, M = 4 ,three seeds. Backbones are public timm ViT-B/16 in21k checkpoints, original-augmentation on CIFAR-100 and AugReg on ImageNet, with 10 ,000 training steps on CIFAR-100 and 20 ,000 on ImageNet. For σN-Ens, scales are initialised by the output-preserving conversion of Appendix A.3, the regulariser acts on the FFN-block scales only, and we deviate from the shared recipe by using no warmup; we set λ = 10 −3 throughout with τ = 0 .5 on CIFAR-100 and τ = 1 .0 on ImageNet, and τ = 0 .5, λ = 10 −3 on SST-2 / BERT-base, where we follow Hydra’s protocol at M = 3 with five-seed means rather than the M = 4 , three-seed ViT setting above. The LoRA-Ensemble baseline (Mühlematter et al., 2026) freezes the backbone and trains per-member rank-8 adapters on the three attention projections ( α/r = 1 , high-variance down-projection init for diversity) plus a per-member head, under the same SGD recipe. Applying one shared recipe to all methods, rather than tuning each method separately, is a deliberate choice to enable a controlled comparison, as per-method grid search is infeasible at this scale. This recipe differs from LoRA-Ensemble’s own configuration in both its optimisation scheme and its ensemble size, their paper uses M = 16 members whereas we use M = 4 
+
+throughout. 
+
+A.5 Temperature limits of the diversity penalty 
+
+We characterise the diversity penalty in isolation, as a function of the importances alone. This isolates what the penalty contributes: a sharpening force whose strength depends on τ . The equilibria observed in practice are not fixed points of the penalty alone; they arise where this force balances the task loss, and the simulation of §3.2 (Figure 1) probes those joint equilibria empirically. Fix one feature in one regularised layer and let sm = σ(γm) ∈ (0 , 1) be member m’s importance for it, with across-member shares p = softmax τ (s). The penalty for this feature is ℓ = ∑ 
+
+> m
+
+log pm, and its gradient is 
+
+∂ℓ ∂s j
+
+= 1
+
+τ
+
+(1 − M p j
+
+). (8) By concavity, ℓ is maximised exactly at the uniform distribution, so descent moves away from equal sharing: it raises every member whose share is above average ( pj > 1/M ) and lowers the rest, at an overall rate of 
+
+1/τ . The limits follow from the standard softmax behaviour. As τ → 0 the shares approach one-hot at the leading member, and the penalty drives each feature toward a single owner. As τ → ∞ the shares flatten to 
+
+1/M regardless of s and the gradient vanishes: the regulariser stops contributing. It does not push members to be identical; it leaves the configuration to the task loss and the initialisation. The sigmoid keeps this well-posed. On unbounded logits, minimising ℓ is degenerate: the leading logit grows without limit and the penalty has no minimum. The bound sm ∈ (0 , 1) caps the logit spread at 1, keeping the penalty bounded below, and caps how sharp the realised softmax can become: even with one importance at 1 and the rest at 0, the peak share is e1/τ /( e1/τ + M − 1). Moreover, since training descends on the logits 
+
+γ, each update carries the factor σ′(γm) = sm(1 − sm), which vanishes at the extremes: allocations approach 
+
+0 and 1 asymptotically, so every finite run ends at a soft allocation strictly inside the box. 
+
+The attractors are k-owner corners. For 1 ≤ k < M , call a configuration with k members at importance 
+
+1 (the owners) and M −k at importance 0 a k-owner corner . Evaluating the shares at such a corner (softmax denominator ke 1/τ + M − k) places each owner above the average 1/M and each non-owner below it, so the gradient pushes owners up and non-owners down: the flow points into the corner, at every k < M and every finite τ . The penalty’s attractors are therefore the k-owner corners, the M -choose-k allocation of §3.2 19 derived rather than observed. The two ends of the family bracket the designs of §2: k = 1 is the hard partition that partitioning methods build in by construction, and full sharing lies outside the family, as the uniform state the penalty moves away from. 
+
+How τ controls the allocation. The temperature does not change which corners exist; it changes the force driving features toward them. Low τ pushes hard toward concentrated ownership, high τ pushes weakly, with the two limits above as endpoints. In training, each feature settles where this τ -shaped force balances the task loss, which resists allocations that starve members of useful features. Raising τ weakens the push, so features settle nearer to sharing; lowering it strengthens the push, so they settle nearer to single ownership. Which members end up owning a given feature depends on its initial configuration and the training dynamics; the simulation of §3.2 maps the resulting allocations empirically. This is the sense in which τ selects the operating point: not by redefining the destinations, but by setting how far toward hard partitioning the ensemble is driven before the task loss holds it. 
+
+A.6 Modulation uncertainty: a component of the epistemic term 
+
+We expand the decomposition of §3.4 and make the identification precise. Notation follows §3.4: member 
+
+i predicts qi(y | x) = f (y | x, θ shared , ϕ i), with the backbone θshared shared across members and only the 
+
+σNorm importances ϕi varying with the member index. 
+
+A reachable-set view. Fixing the trained backbone at θ⋆
+
+> shared
+
+, every predictor our ensemble can instan-tiate lies in 
+
+Fmod = { f (· | θ⋆
+
+> shared
+
+, ϕ ) : ϕ ∈ Φ }, FDE = { f (· | θ, ϕ ) : θ ∈ Θ, ϕ ∈ Φ }, (9) where FDE is the family an ensemble with a free backbone draws its members from. Since θ⋆ 
+
+> shared
+
+is one point of Θ, Fmod ⊆ F DE , strictly so whenever varying the backbone changes the predictor. Any disagreement that requires two members to extract different features from the same input is unreachable for us by construction; our members realise only the disagreement obtainable by reweighting the features θ⋆ 
+
+> shared
+
+already produces. The inclusion is deliberately elementary; its role is to fix intuition for the decomposition. 
+
+The chain-rule decomposition. To place the two ensembles in one frame, consider the idealised ensemble in which both parts vary: a distribution over pairs (θ, ϕ ), of which our method is the slice at θ = θ⋆
+
+> shared
+
+. Its epistemic term splits by the chain rule of mutual information, 
+
+I[Y ; ( θ, ϕ ) | x] = I[Y ; θ | x]
+
+︸ ︷︷ ︸
+
+> backbone component
+
++ I[Y ; ϕ | x, θ ]
+
+︸ ︷︷ ︸
+
+> modulation component
+
+, (10) an identity requiring no independence assumptions. The first component is disagreement attributable to varying the feature extractor itself, what independently trained members express (Fort et al., 2019); the second is disagreement attributable to varying the modulation with the extractor held fixed. Our ensemble realises the second component at the single draw θ = θ⋆
+
+> shared
+
+,
+
+Umod (x) = I[Y ; ϕ | x, θ = θ⋆
+
+> shared
+
+], (11) evaluated at our single trained backbone rather than averaged over θ, so it is one realisation of the conditional term rather than the conditional term itself; the backbone component is forgone entirely. A deep ensemble varies the full network and so draws on both components; the backbone component is the part of its epistemic uncertainty that our shared-backbone construction cannot reach. 
+
+The absent component. The decomposition is structural and says nothing, on its own, about how large each component is at a given input. Independently trained backbones converge to solutions that agree on in-distribution data and diverge on inputs far from it (Fort et al., 2019). The backbone component 
+
+I[Y ; θ | x] is therefore small when x is drawn from the distribution the backbone family represents, and large off-distribution, where it is precisely the signal a deep ensemble detects with. A corrupted input is a perturbation of in-distribution data the backbone still represents and little is lost by sharing. The 20 modulation component still expresses calibrated disagreement which we observe: a calibration that degrades gracefully under corruption, holding deep-ensemble-level ECE across severities where a single model does not (§4.4). At the out-of-distribution edge, the backbone component dominates the epistemic term, and it is exactly the part our members cannot express. Near-OOD detection is correspondingly our weakest result on both pretrained vision settings (§4.4), the predicted cost of sharing the backbone rather than an incidental shortfall. Members can still disagree somewhat on such inputs, through their reinitialised heads and reweightings of weak features, but not with the representation-level divergence that makes deep-ensemble disagreement informative there. The same decomposition applies to any shared-backbone ensemble, including FiLM-Ensemble (Turkoglu et al., 2022): each expresses a modulation component and forgoes the backbone component. What the bounded σNorm primitive adds is not a different split but a controllable, measurable position within the com-ponent that is expressed, set through τ and monitored through the σNorm-cos metric, where initialisation-seeded modulation leaves that position to drift. 
+
+A.7 Diversity-metric correspondence 
+
+Section 3.3 validates σNorm-cosine, a parameter-space metric, as a proxy for the output-space diversity that the bias-variance-diversity framework rewards. Here we give the full correspondence. The distinction is between parameter diversity, how differently members weight shared features, which our regulariser acts on directly, and output diversity, how differently members predict, which is what the decomposition contains. We compare four metrics: 
+
+• σNorm -cosine (parameter-space, ours): the mean per-layer pairwise cosine between member impor-tance vectors σ(γ), averaged over all normalisation layers. Computed from the weights alone, with no forward pass and no labels. 
+
+• Jensen gap J (output-space, label-dependent) (Abe et al., 2022): the Wood diversity term under the arithmetic-mean combiner (Wood et al., 2023), equal to the average member cross-entropy minus the cross-entropy of the averaged prediction. 
+
+• I[Y ; M | x] (output-space, label-free): the Smith & Gal (Smith & Gal, 2018) epistemic term, equal to the average KL divergence from each member to the arithmetic-mean prediction. 
+
+• Geometric ambiguity (output-space, label-free): the ambiguity term under the cross-entropy’s centroid combiner, the normalised geometric mean (Wood et al., 2023). It is empirically indistin-guishable from I[Y ; M | x] in our setting ( |ρ| > 0.998 across all backbones), the centroid distinction falling below noise, so we report it only here. Table 6 reports the correlation of σNorm-cosine against the three output-space metrics across a τ sweep (three seeds) on CIFAR-100. Correlations are strong throughout, with a floor of |ρ| ≥ 0.83 (Pearson) and 
+
+|ρ| ≥ 0.87 (Spearman). Spearman exceeds Pearson on every setting, indicating a monotonic relationship with mild curvature, consistent with σNorm-cosine saturating at the τ extremes while the output-space measures grow more linearly. Table 6: Correlation of σNorm-cosine (all-layer average) with three output-space diversity metrics, across a 
+
+τ sweep ( 3 seeds) on CIFAR-100. All values are negative (higher cosine, lower diversity).                                  
+
+> Pearson Spearman Backbone I[Y;M|x]JGeometric I[Y;M|x]JGeometric ResNet-18 −0.96 −0.97 −0.95 −0.99 −0.99 −0.99
+> ResNet-50 −0.89 −0.83 −0.90 −0.95 −0.89 −0.93
+> WideResNet-28-10 −0.86 −0.85 −0.86 −0.88 −0.87 −0.87
+
+21 Table 7: Member-scaling numbers behind Figure 4, σN-Ens against Packed Ensembles on CIFAR-100 / ResNet-50 as the member count M grows ( τ = 0 .5 throughout); three-seed mean ± std for both methods. 
+
+σN-Ens improves and then saturates, while Packed is strong at small M but degrades once its hard partition makes each member too thin; M = 12 is architecturally invalid for Packed under its grouping constraint. Packed’s OOD AUROC instead rises with M : its fully independent members still disagree strongly on outliers even as their accuracy and calibration collapse, consistent with the independence account of Appendix A.2. 
+
+σN-Ens Packed 
+
+M Acc ↑ NLL ↓ ECE ↓ AUROC ↑ Acc ↑ NLL ↓ ECE ↓ AUROC ↑
+
+2 79 .5±0.3 0.790 ±0.009 4.7±0.4 80 .8±0.8 80 .6±0.2 0.747 ±0.011 3.5±0.5 82 .9±2.4
+
+4 80 .8±0.4 0.708 ±0.009 2.2±0.1 80 .5±0.6 81 .2±0.1 0.710 ±0.001 1.9±0.3 82 .3±1.9
+
+8 81 .5±0.1 0.672 ±0.005 1.7±0.0 82 .0±0.5 79 .5±0.1 0.747 ±0.002 4.3±0.1 83 .8±1.9
+
+12 81 .7±0.1 0.670 ±0.003 1.8±0.2 79 .6±3.2 – – – –16 81 .6±0.2 0.675 ±0.003 1.6±0.2 80 .0±2.4 74 .9±0.2 0.949 ±0.004 11 .9±0.2 84 .2±1.2
+
+A.8 Additional frontiers and importance embeddings 
+
+Figure 5 shows the accuracy–calibration frontier of §3.3 for all three convolutional backbones; each traces the same interior-optimum shape as τ is swept, the WideResNet panel reproducing the main-text figure. 0.980 0.982 0.984 0.986         
+
+> 1 - ECE
+> 0.776
+> 0.777
+> 0.778
+> 0.779
+> 0.780
+> 0.781
+> 0.782
+> 0.783
+> 0.784
+> Test Accuracy
+> τ=0.7
+> τ=0.5
+> τ=0.4
+> τ=0.3 0.976 0.978 0.980 0.982
+> 1 - ECE
+> 0.807
+> 0.808
+> 0.809
+> 0.810
+> 0.811
+> 0.812
+> 0.813
+> Test Accuracy
+> τ=1 τ=0.7
+> τ=0.2
+> τ=0.1 0.945 0.950 0.955 0.960
+> 1 - ECE
+> 0.840
+> 0.841
+> 0.842
+> 0.843
+> 0.844
+> 0.845
+> 0.846
+> 0.847
+> 0.848
+> Test Accuracy
+> τ=0.3 τ=0.5
+> τ=0.7
+> τ=0.9
+> τ=1
+
+Figure 5: Accuracy–calibration frontiers over a τ sweep on CIFAR-100 (3 seeds): ResNet-18 (left), ResNet-50 (centre), WideResNet-28-10 (right). Figures 6–7 show the member-ownership structure directly. Each panel embeds the per-filter importance vectors and colours each filter by k, the number of members that place substantial importance on it ( k = 1 
+
+single-owner through k = M fully shared). Within each figure, the left column is τ = 0 .1 and the right is 
+
+τ = 1 ; the top row aggregates all normalisation layers, and the bottom row aggregates only the regularised layers. Two readings stand out and are consistent across architectures. First, τ shifts the ownership distribution as the mechanism predicts: on the regularised layers, τ = 0 .1 drives most filters to k = 1 (single-owner, the diverse extreme), while τ = 1 moves mass to k = 1 , 2 with a few at k = 3 . Second, the regularised and unregularised layers play complementary roles: the soft partitioning induced by the regulariser on its target layers coexists with heavy sharing ( k = 3 , 4) on the untouched layers, as visible in the all-layer rows. The diverse member-specific allocation is thus concentrated where the regulariser acts, on a backbone that remains largely shared elsewhere. 
+
+A.9 Member-scaling numbers 
+
+Table 7 reports the exact values underlying the member-scaling sweep of Figure 4. 22 RN50 | τ=0.1 | all RN50 | τ=1 | all  
+
+> RN50 | τ=0.1 | reg RN50 | τ=1 | reg
+> 0
+> 1
+> 2
+> 3
+> 4
+> k
+> RN50
+
+Figure 6: ResNet-50 importance embeddings; coloured by member-ownership k. Columns: τ = 0 .1 (left), 
+
+τ = 1 (right). Rows: all layers (top), regularised layers (bottom). WRN | τ=0.1 | all WRN | τ=1 | all  
+
+> WRN | τ=0.1 | reg WRN | τ=1 | reg
+> 0
+> 1
+> 2
+> 3
+> 4
+> k
+> WRN
+
+Figure 7: WideResNet-28-10 importance embeddings; coloured by member-ownership k. Columns: τ = 0 .1
+
+(left), τ = 1 (right). Rows: all layers (top), regularised layers (bottom). 
+
+A.10 Distribution-shift protocol and additional backbones 
+
+We evaluate robustness on the corruption benchmarks CIFAR-100-C and ImageNet-C (Hendrycks & Diet-terich, 2019), which apply 15 synthetic corruptions (noise, blur, weather, and digital types) at five severity levels to the clean test sets. For each severity level, we average all metrics across the 15 corruption types and report accuracy, NLL, and ECE as a function of severity. Models are those of §4.4, evaluated without any corruption-specific adaptation; the corrupted sets are used only at test time. Figure 3 shows the ImageNet ViT-B/16 result in the main text; per-severity numbers are collected in Tables 8 (from-scratch CNNs) and 9 23 (pretrained ViT-B/16). On the from-scratch WideResNet, σN-Ens achieves the best accuracy and NLL across all severities and the flattest ECE, holding near 5–6%, while deep ensembles and Packed surpass 16 %. On the lower-capacity ResNet-50, the advantage narrows, as the capacity trend of §5.1 predicts: σN-Ens stays competitive and second-best on ECE at every severity. At the same time, Packed takes calibration, and deep ensembles take accuracy. On the pretrained ViT-B/16, σN-Ens achieves deep-ensemble-level ECE on ImageNet-C (both ≈1–2%, with the single model degrading from 4 to 10%) and attains the best NLL and ECE across the lower and middle corruption severities on CIFAR-100-C. Table 8: Distribution shift on the from-scratch convolutional backbones (CIFAR-100-C): per-severity accu-racy, NLL, and ECE, each aggregated over the 15 corruption types ( M = 4 , three seeds). Acc and ECE in %; bold marks the best value per column within each setup. Interpretation in the text above.                                                                                                                                
+
+> Setup Method Metric s1 s2 s3 s4 s5 WRN-28-10 / C100-C  Deep Ens. Acc ↑75.8 71.5 66.9 60.5 49.0 NLL ↓0.942 1.129 1.349 1.722 2.501 ECE ↓5.6 6.8 8.1 10.7 16.7 FiLM Acc ↑75.5 71.0 66.2 59.6 48.6 NLL ↓0.929 1.108 1.322 1.652 2.228 ECE ↓4.4 3.9 4.2 5.6 8.6 Packed Acc ↑66.9 61.8 56.8 50.2 39.3 NLL ↓1.267 1.504 1.759 2.177 2.960 ECE ↓4.3 5.8 7.6 10.8 17.2
+> σN-Ens Acc ↑78.0 74.1 69.8 63.2 52.6
+> NLL ↓0.843 0.999 1.182 1.482 1.992
+> ECE ↓5.4 5.0 4.8 5.5 6.5
+> ResNet-50 / C100-C  Deep Ens. Acc ↑68.5 60.4 53.4 46.0 35.7
+> NLL ↓1.318 1.719 2.112 2.595 3.280 ECE ↓6.4 9.1 12.3 16.4 22.1 FiLM Acc ↑66.6 58.3 51.4 43.8 33.9 NLL ↓1.391 1.801 2.199 2.679 3.339 ECE ↓7.2 10.2 13.5 17.8 23.7 Packed Acc ↑67.7 59.5 52.6 45.4 35.4 NLL ↓1.318 1.720 2.102 2.535 3.135
+> ECE ↓4.6 7.1 10.0 13.4 18.3
+> σN-Ens Acc ↑67.5 59.0 52.0 44.5 34.5 NLL ↓1.333 1.749 2.155 2.665 3.334 ECE ↓4.8 7.5 10.6 14.8 20.2
+
+24 Table 9: Distribution shift on the pretrained ViT-B/16 (ImageNet-C and CIFAR-100-C): per-severity accu-racy, NLL, and ECE, each aggregated over the 15 corruption types ( M = 4 , three seeds). Acc and ECE in %; bold marks the best value per column within each setup. 
+
+Setup Method Metric s1 s2 s3 s4 s5 ViT-B/16 / ImageNet-C  Single Acc ↑ 73.82 68.01 62.66 52.96 39.87 NLL ↓ 1.043 1.367 1.666 2.257 3.190 ECE ↓ 4.20 5.33 6.03 7.48 9.57 Deep Ens. Acc ↑ 76.10 70.85 66.02 56.97 43.90 NLL ↓ 0.923 1.201 1.459 1.975 2.833 ECE ↓ 1.47 1.53 1.77 1.58 0.86 
+
+LoRA-Ens Acc ↑ 76.33 71.37 66.94 58.80 46.03 
+
+NLL ↓ 0.967 1.222 1.458 1.908 2.717 
+
+ECE ↓ 6.73 6.86 7.04 6.78 4.70 
+
+σN-Ens Acc ↑ 74.85 69.23 63.95 54.53 41.45 NLL ↓ 0.998 1.294 1.583 2.135 3.015 ECE ↓ 1.72 1.46 1.35 0.96 1.69 ViT-B/16 / CIFAR-100-C  Single Acc ↑ 86.58 82.07 77.71 71.31 61.34 NLL ↓ 0.643 0.892 1.146 1.554 2.195 ECE ↓ 8.17 10.96 13.60 17.48 23.63 Deep Ens. Acc ↑ 87.39 83.12 78.94 72.69 62.82 
+
+NLL ↓ 0.522 0.726 0.939 1.296 1.861 ECE ↓ 5.37 7.18 9.03 12.07 17.06 LoRA-Ens Acc ↑ 85.67 80.61 75.92 69.04 59.35 NLL ↓ 0.580 0.779 0.983 1.302 1.757 
+
+ECE ↓ 7.69 7.24 6.24 4.56 3.41 
+
+σN-Ens Acc ↑ 86.90 82.11 77.56 70.97 61.10 NLL ↓ 0.503 0.707 0.922 1.266 1.800 ECE ↓ 3.10 4.42 5.97 8.51 12.66 
+
+25
