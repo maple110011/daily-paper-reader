@@ -1,0 +1,7449 @@
+Title: BayesAME: Bayesian Active Model Evaluation
+
+URL Source: https://arxiv.org/pdf/2607.27023v1
+
+Published Time: Thu, 30 Jul 2026 01:15:47 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+# BayesAME: Bayesian Active Model Evaluation 
+
+Paula Cordero Encinar 1, Taylan Cemgil 2, Arnaud Doucet 2, Virginia Aglietti *2 and Silvia Chiappa *2 
+
+> 1Imperial College London (work conducted while at Google DeepMind), 2Google DeepMind
+
+Evaluating large generative models across benchmarks is time-consuming and computationally expensive. This drives the need for methods that can estimate full benchmark performance by evaluating models on only a subset of items, known as a coreset. Current literature mostly requires the practitioner to input a coreset size. However, when reliable performance estimation takes priority over efficiency, an evaluation method should also be capable of automatically determining a coreset size that reflects this priority. We introduce BayesAME , a sequential Bayesian framework specifically targeting automatic determination of the coreset size. BayesAME models performance as a random variable by defining a latent ability for each group of items sharing the same historical model performances, with a joint prior distribution encoding the belief that the target model behaves similarly to these historical models. The posterior distribution over these abilities is used to derive performance estimators, quantify performance uncertainty, and select items to add to the coreset via an information-gain criterion. The coreset is iteratively augmented until the performance estimate fluctuation and the performance uncertainty fall below their respective user-defined thresholds. Moreover, we propose a multi-target extension that actively captures performance correlations across multiple target models to further reduce the coreset size. Through extensive experiments across diverse benchmarks, we demonstrate that BayesAME 
+
+consistently outperforms sequential adaptations of existing methods. Crucially, our comprehensive analysis addresses recent skepticism in the literature, establishing that non-random coreset selection is advantageous over random selection, and demonstrating that one can reliably improve upon the random sample mean baseline. Additionally, we highlight that leveraging continuous response log-likelihoods over traditional binary scores significantly enhances estimation accuracy. 
+
+1. Introduction 
+
+The massive scale and frequency of generating responses render large generative model evaluation across benchmarks a time-consuming and computationally expensive process (Liang et al., 2023). To mitigate this, a growing number of methods estimate full benchmark performance by evaluating models on only a subset of items, known as a coreset . Such methods mostly require the practitioner to input a coreset size (Berrada et al., 2025; Bowyer et al., 2026; Fisch et al., 2026; Hsu and Shekhar, 2026; Huang et al., 2026; Kipnis et al., 2025; Kossen et al., 2021; Liao et al., 2025; Liu et al., 2026; Perlitz et al., 2024; Saranathan et al., 2025; Vivek et al., 2024; Zhang et al., 2025). While this is most suitable when facing strict computational limits, in scenarios where reliable performance estimation takes priority over efficiency, an evaluation method should also be capable of automatically determining a coreset size that reflects this priority. In addition, the predominant approach of leveraging evaluations from historical models ( reference models ) has largely operated within the regime in which the models being evaluated ( target models ) fall within the performance range of these reference models ( interpolation regime ). Zhang et al. (2025) underscored the importance of also testing efficient model evaluation methods in regimes where the target models significantly deviate from this range ( extrapolation regimes ) to obtain a more accurate assessment of a method’s robustness. In particular, through a study that considered both regimes, the authors questioned the utility of non-random coreset selection and highlighted the difficulty of outperforming the mean of a random coreset as a performance estimate in extrapolation. In this work, we focus on efficient model evaluation leveraging reference models, specifically targeting auto-matic determination of the coreset size. We propose BayesAME , a sequential Bayesian method that models  
+
+> *Senior co-authors.
+> ©2026 Google DeepMind. All rights reserved arXiv:2607.27023v1 [cs.LG] 29 Jul 2026 BayesAME: Bayesian Active Model Evaluation
+
+performance as a random variable via underlying abilities whose joint prior distribution encodes the belief that the target model behaves similarly to the reference models. The posterior distribution over these abilities is used to derive performance estimators, quantify performance uncertainty, and select items to add to the coreset via an information-gain criterion. The coreset is iteratively augmented until the performance estimate fluctuation and the performance uncertainty fall below their respective user-defined thresholds. In the setting where multiple target models are being evaluated, we capture correlation among them using a linear model of coregionalization (Álvarez et al., 2012; Journel and Huijbregts, 1978) with the goal of further reducing the coreset size. To validate our approach, we comprehensively evaluate BayesAME against sequential adaptations of existing methods. Our main contributions are summarized as follows: 
+
+• We formulate efficient model evaluation with automatic coreset-size determination as a Bayesian sequential process that augments the coreset until the performance estimate fluctuation and the performance uncertainty fall below their respective user-defined thresholds. 
+
+• We develop a computationally efficient method, equipped with robust performance estimators possessing well-defined properties. 
+
+• We design active selection strategies that identify benchmark items maximizing information gain. 
+
+• We extend the method to capture correlations across multiple target models to further reduce the coreset size. 
+
+• We conduct an extensive empirical analysis across varying numbers of reference models, interpola-tion/extrapolation regimes, and different degrees of target model correlation, showing that BayesAME 
+
+outperforms sequential adaptations of existing methods designed to automatically determine the coreset size. We further show that BayesAME remains advantageous even when the coreset size is predetermined. 
+
+• Crucially, this analysis overturns recent claims in the literature by demonstrating that non-random coreset selection does improve performance and that several methods can reliably outperform the random sample mean baseline. 
+
+• We demonstrate that leveraging available response log-likelihoods, rather than using binary scores, greatly improves performance estimation. 
+
+2. Problem Setup 
+
+Consider a benchmark 𝐸 = {( 𝑥 𝑖 , 𝑦 𝑖 )} 𝑁 𝑖 =1, where 𝑥 𝑖 is the 𝑖 -th input instance and 𝑦 𝑖 is the corresponding ground-truth response. Let T = {𝑡 1, . . . , 𝑡 𝐾 𝑡 } be a set of 𝐾 𝑡 target models that we wish to evaluate, and let 𝑠 𝑡 𝑖 be the score 
+
+of target model 𝑡 ∈ T on item (𝑥 𝑖 , 𝑦 𝑖 ). We consider the problem of estimating the full benchmark performance  
+
+> 𝑅 ★𝑡
+
+= 1
+
+> 𝑁
+
+Í𝑁 𝑖 =1 𝑠 𝑡 𝑖 by evaluating the target model 𝑡 only on a subset of items C𝑡 ⊆ 𝐸 , which we refer to as a 
+
+coreset . We focus on the setting where the full benchmark scores for a set of 𝐾 𝑟 reference models {𝑟 1, . . . , 𝑟 𝐾 𝑟 }
+
+are available. Although our framework is applicable to scores 𝑠 𝑡 𝑖 ∈ ℝ, in our experiments we consider either binary scores ( 𝑠 𝑡 𝑖 ∈ { 0, 1}), indicating whether the model’s response matches 𝑦 𝑖 , or bounded continuous scores, where, e.g., 𝑠 𝑡 𝑖 ∈ [ 0, 1] represents the probability assigned by the model to the ground-truth response 𝑦 𝑖 .Our goal is to address the setting in which the user prioritizes reliable performance estimation over minimizing cost, without a priori knowing the coreset size required to achieve this. Therefore, we focus on methods that not only operate with a user-specified coreset size, but can also automatically determine a coreset size that reflects this priority. In the remainder of the paper, with a slight abuse of notation, we use 𝐸 and C𝑡 to indicate the indices of the benchmark items rather than the items themselves. 
+
+3. BayesAME 
+
+BayesAME is a sequential Bayesian method that assigns a latent ability to each group of benchmark items sharing the same reference model performances. It then treats the item scores as noisy versions of these 
+
+> 2BayesAME: Bayesian Active Model Evaluation
+
+abilities and models the full benchmark performance as a random variable defined as the average of the scores, 
+
+𝑅 𝑡 = 1
+
+> 𝑁
+
+Í𝑁 𝑖 =1 𝑠 𝑡 𝑖 (where, with a slight abuse of notation, we use 𝑠 𝑡 𝑖 to denote both the score random variable and its realization). The abilities are assigned a joint Gaussian prior distribution to encode the belief that, if the reference models achieved similar scores on two groups of items, the target model likely exhibits similar behavior. At each iteration, the posterior distribution of the latent abilities is used to derive performance estimators, quantify performance uncertainty, and select an item to add to the coreset via an information gain criterion. The sequential process terminates when the performance fluctuation and uncertainty fall below their respective user-defined thresholds. 
+
+3.1. Single-Target Setting 
+
+We first consider the setting of a single target model. For the remainder of this section, we omit the target model index. Let (𝑠 𝑟 1 
+
+> 𝑖
+
+, . . . , 𝑠 𝑟 𝐾𝑟  
+
+> 𝑖
+
+) be the vector of scores achieved by the 𝐾 𝑟 reference models on item (𝑥 𝑖 , 𝑦 𝑖 ).Suppose that the reference models yield 𝐵 unique score vectors across the 𝑁 benchmark items, which we denote as the set {𝜙 1, . . . , 𝜙 𝐵 }. This partitions the items into 𝐵 disjoint buckets, such that all items assigned to bucket 
+
+𝑏 share the same reference score vector 𝜙 𝑏 .We consider a random vector 𝜃 = (𝜃 1, . . . , 𝜃 𝐵 ), where 𝜃 𝑏 represents the target model’s underlying ability on items belonging to bucket 𝑏 , with a Gaussian prior distribution 𝑝 (𝜃 ) = N ( 𝜇 𝜃 , Σ𝜃 ), defined as: 
+
+𝜇 𝜃 𝑏 = 1
+
+𝐾 𝑟 
+
+𝜙 ⊤ 
+
+> 𝑏
+
+1𝐾 𝑟 , Σ𝜃 𝑏,𝑏 ′ = 𝛼 exp 
+
+
+
+− 𝛽 𝐾 𝑟 ∥𝜙 𝑏 − 𝜙 𝑏 ′ ∥2
+
+, (1) where 1𝐾 𝑟 denotes a 𝐾 𝑟 -dimensional column vector of ones, 𝛼 and 𝛽 are parameters to be learned, and ∥𝜙 𝑏 −𝜙 𝑏 ′ ∥2
+
+is the squared Euclidean distance. This form of the covariance encodes the belief that buckets with similar reference scores yield highly correlated latent abilities for the target model 1. Applying this latent variable approach at the bucket level, rather than the item level, reduces overreliance on prior information when reference models behave similarly and thus a large number of items map to the same 𝜙 𝑏 , which most commonly manifests when 𝐾 𝑟 is small or when the scores are binary. For any item (𝑥 𝑖 , 𝑦 𝑖 ) belonging to bucket 𝑏 , we model the target model’s score 𝑠 𝑖 as a random variable with conditional distribution 𝑝 (𝑠 𝑖 | 𝜃 𝑏 ) = N ( 𝜃 𝑏 , 𝑁 𝑏 𝜎 2), where 𝑁 𝑏 is the number of items in bucket 𝑏 . Let 𝐻 denote an 𝑁 × 𝐵 binary indicator matrix, where 𝐻 𝑖,𝑏 = 1 if the 𝑖 -th item belongs to bucket 𝑏 , and 0 otherwise. The target model’s score vector 𝑆 = (𝑠 1, . . . , 𝑠 𝑁 ) is then modeled as a random variable with conditional distribution 
+
+𝑝 (𝑆 | 𝜃 ) = N ( 𝐻𝜃, 𝐷 ), where 𝐷 is an 𝑁 × 𝑁 diagonal noise matrix such that 𝐷 𝑖,𝑖 = 𝜎 2 Í𝐵 𝑏 =1 𝐻 𝑖,𝑏 𝑁 𝑏 . Note that, when all items map to unique reference vectors ( 𝐵 = 𝑁 ), 𝐷 𝑖,𝑖 = 𝜎 2. This bucket-size-dependent noise accounts for the inherent heterogeneity within larger buckets. Even though items in a large bucket share identical reference scores, the target model’s performance on each individual item might vary. By scaling the individual item variance by 𝑁 𝑏 , we ensure that the variance of the average bucket score remains constant at 𝜎 2, regardless of how many items the bucket contains: Var 
+
+ 1
+
+> 𝑁 𝑏
+
+Í𝑖 ∈bucket 𝑏 𝑠 𝑖 
+
+
+
+= 1
+
+> 𝑁 2
+> 𝑏
+
+Í𝑖 ∈bucket 𝑏 Var (𝑠 𝑖 ) = 1
+
+> 𝑁 2
+> 𝑏
+
+(𝑁 𝑏 · 𝑁 𝑏 𝜎 2) = 𝜎 2. While a more principled approach to modeling binary and bounded continuous scores would explicitly model their support, exploring this direction revealed that the approximations required not only introduced substantial computational overhead but also resulted in inferior performance (see Appendix B.3). In contrast, the Gaussian model admits closed-form posterior distributions, delivering superior scalability and performance. We therefore adopt a Gaussian model as the default choice. Let 𝑠 C denote the subvector of 𝑠 corresponding to the items in C, and let 𝜇 𝜃  
+
+> | C
+
+and Σ𝜃  
+
+> | C
+
+be the posterior mean and covariance of 𝜃 conditioned on 𝑠 C , such that 𝑝 (𝜃 | 𝑠 C ) = N ( 𝜇 𝜃  
+
+> | C
+
+, Σ𝜃  
+
+> | C
+
+). The posterior mean and variance of the full benchmark performance 𝑅 = 1
+
+> 𝑁
+
+Í𝑁 𝑖 =1 𝑠 𝑖 are given by: 
+
+𝔼 [𝑅 | 𝑠 C ] = 1
+
+𝑁 
+
+©«∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 +∑︁ 
+
+> 𝑗 ∈𝐸 \C
+
+𝔼 [𝑠 𝑗 | 𝑠 C ]ª®¬
+
+= 1
+
+𝑁  ∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+(𝑁 𝑏 − 𝑛 𝑏 )𝜇 𝜃 𝑏 | C 
+
+!
+
+,
+
+> 1When given metadata for the reference and target models, we could employ a weighted mean and covariance, where the weights capture the similarity between the target and reference models, see Appendix B.2. 3BayesAME: Bayesian Active Model Evaluation
+
+Var (𝑅 | 𝑠 C ) = 1
+
+𝑁 2∑︁ 𝑗 ∈𝐸 \C ∑︁ 𝑗 ′ ∈𝐸 \C 
+
+Cov (𝑠 𝑗 , 𝑠 𝑗 ′ | 𝑠 C ) = 1
+
+𝑁 2
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+(𝑁 𝑏 − 𝑛 𝑏 ) 𝜎 2 𝑁 𝑏 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 ′=1
+
+(𝑁 𝑏 ′ − 𝑛 𝑏 ′ )Σ𝜃 𝑏,𝑏 ′ | C 
+
+!
+
+, (2) where 𝑛 𝑏 is the number of evaluated items in bucket 𝑏 . As more items are evaluated, the posterior mean increasingly relies on the actual scores, converging to the true performance 𝑅 ★ when the entire benchmark has been evaluated ( 𝑛 𝑏 = 𝑁 𝑏 for all 𝑏 ), at which point the posterior variance vanishes. 
+
+Performance Estimator We construct an estimator ˆ𝑅 of 𝑅 ★ by adapting our approach to the number of unique reference score vectors in the benchmark, introducing a small margin 𝑁 0 > 0 to allow for slight deviations from uniqueness. In the nearly-unique reference regime 𝐵 ≥ 𝑁 − 𝑁 0, the natural and optimal performance estimator is the Bayesian posterior expectation: 
+
+ˆ𝑅 Bayes = 𝔼 [𝑅 | 𝑠 C ] = 1
+
+𝑁  ∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+(𝑁 𝑏 − 𝑛 𝑏 )𝜇 𝜃 𝑏 | C 
+
+!
+
+. (3) However, using Eq. (3) in the non-unique reference regime 𝐵 < 𝑁 − 𝑁 0 presents a potential issue: if a heavily populated bucket 𝑏 has a large number of unevaluated items ( 𝑛 𝑏 ≪ 𝑁 𝑏 ), its posterior mean 𝜇 𝜃 𝑏 | C exerts a high weight on the overall estimate, amplifying any estimation errors. In this regime, we instead use the following estimator: 
+
+ˆ𝑅 CV = 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+ 𝑁 𝑏 
+
+𝑁 − 𝑛 𝑏 
+
+𝑛 
+
+
+
+𝔼 [𝜃 𝑏 | 𝑠 C ] = 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+ 𝑁 𝑏 
+
+𝑁 − 𝑛 𝑏 
+
+𝑛 
+
+
+
+𝜇 𝜃 𝑏 | C , (4) where 𝑛 indicates the size of the coreset C. This estimator serves as an in-sample proxy for the unbiased control variate estimator given in Appendix A.2. We can unify both regimes into a single estimator: 
+
+ˆ𝑅 = 𝑤 ∑︁ 
+
+> 𝑖 ∈ C
+
+𝑠 𝑖 +
+
+> 𝐵
+
+∑︁ 
+
+> 𝑏 =1
+
+ 𝑁 𝑏 
+
+𝑁 − 𝑛 𝑏 𝑤 
+
+
+
+𝜇 𝜃 𝑏 | C , (5) where 𝑤 = 1 
+
+> 𝑛
+
+if 𝐵 < 𝑁 − 𝑁 0 and 𝑤 = 1 
+
+> 𝑁
+
+if 𝐵 ≥ 𝑁 − 𝑁 0.
+
+Selection Strategy At each iteration of the sequential process, we use an information-gain criterion to select the next item on which to evaluate the target model. Specifically, we choose an item that maximally reduces the expected uncertainty of the model’s performance 𝑅 , measured via differential entropy: 𝛼 IG (𝑖 ) =
+
+H ( 𝑅 | 𝑠 C ) − 𝔼 𝑠 𝑖 [H ( 𝑅 | 𝑠 C , 𝑠 𝑖 )] . Assuming candidate item (𝑥 𝑖 , 𝑦 𝑖 ) belongs to bucket 𝑏 , due to the Gaussian nature of the posterior distribution, this expected information gain simplifies to: 
+
+𝛼 IG (𝑖 ) = 12 log 
+
+ Var (𝑅 | 𝑠 C )
+
+Var (𝑅 | 𝑠 C , 𝑠 𝑖 )
+
+
+
+= − 12 log ©«
+
+1 −
+
+  Í 𝐵 𝑏 ′=1 (𝑁 𝑏 ′ − 𝑛 𝑏 ′ )Σ𝜃 𝑏,𝑏 ′ | C + 𝜎 2 𝑁 𝑏 
+
+2
+
+𝑁 2 Var (𝑅 | 𝑠 C )( Σ𝜃 𝑏,𝑏 | C + 𝜎 2 𝑁 𝑏 )
+
+ª®¬
+
+. (6) Note that all items in the same bucket have the same expected information-gain value. In the non-unique reference regime with imbalanced bucket sizes, purely active selection can degrade performance. This occurs because the target model may exhibit fine-grained variations in behavior that are not captured by the coarse grouping of the reference models. Consequently, when 𝐵 < 𝑁 − 𝑁 0, we default to random selection, which ensures that the expected number of sampled items from each bucket remains proportional to its size. The margin 𝑁 0 > 0 allows the method to use active sampling whenever the reference score vectors are nearly unique. Furthermore, when dealing with continuous scores, unique reference score vectors may become non-unique when rounded to a specified tolerance. Under such conditions, we similarly default to random selection. We also explored alternative selection strategies that operate on batches of items rather than individual items, including non-myopic approaches. However, these provided similar performance (see Appendix B.1). 
+
+> 4BayesAME: Bayesian Active Model Evaluation
+
+Stopping Criterion One of our key objectives is to determine the coreset size, rather than requiring it as input from the user. Intuitively, we would like to stop evaluating additional items once they are unlikely to meaningfully change our estimate of the target model’s performance. To formalize this, we monitor the uncertainty of 𝑅 as items are evaluated. We quantify this uncertainty using the width of the 95% credible interval of 𝑅 : 𝑞 97 .5 (𝑅 | 𝑠 C ) − 𝑞 2.5 (𝑅 | 𝑠 C ) = 2𝑧 0.975 √︁ Var (𝑅 | 𝑠 C ), where 𝑧 0.975 denotes the standard normal 𝑧 -score and Var (𝑅 | 𝑠 C ) is given in Eq. (2). We dynamically augment the coreset until a two-condition stopping criterion is satisfied: (𝑖 ) the performance estimate ˆ𝑅 stabilizes, defined as its range over a window of 𝑊 iterations falling below a threshold 𝜖 1; and (𝑖𝑖 ) 2𝑧 0.975 √︁ Var (𝑅 | 𝑠 C ) ≤ 𝜖 2. The threshold 
+
+𝜖 2 represents the maximum acceptable width of this uncertainty interval, translating directly into a user’s tolerated margin of error. By treating 𝜖 1 and 𝜖 2 as user-defined parameters, BayesAME enables the user to decide the precision required. For additional discussion, see Appendix A.3. 
+
+Posterior Distribution To optimize the cost required to compute 𝜇 𝜃  
+
+> | C
+
+and Σ𝜃  
+
+> | C
+
+, throughout the sequential process we adapt our formulation as detailed below. Let 𝐻 C and 𝐷 C denote the submatrices of 𝐻 and 𝐷 formed by the rows corresponding to C. Let C𝑏 denote the subset of 𝑛 𝑏 items in the coreset C that are in bucket 𝑏 .Finally, let ¯𝑠 C1: 𝐵 = (¯𝑠 C1 , . . . , ¯𝑠 C𝐵 ), where ¯𝑠 C𝑏 = 1
+
+> 𝑛 𝑏
+
+Í𝑖 ∈ C 𝑏 𝑠 𝑖 (for notational simplicity we assume 𝑛 𝑏 > 0 for all 𝑏 ). As detailed in Appendix A.1, the posterior distribution of 𝜃 satisfies 𝑝 (𝜃 | 𝑠 C ) = 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ). Although mathematically equivalent, computing 𝑝 (𝜃 | 𝑠 C ) requires inverting an 𝑛 × 𝑛 matrix, whereas computing 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ) requires inverting at most a 𝐵 × 𝐵 matrix. Indeed, 𝑝 (𝜃 | 𝑠 C ) is Gaussian with mean 𝜇 𝜃  
+
+> | C
+
+and covariance Σ𝜃  
+
+> | C
+
+given by: 
+
+𝜇 𝜃  
+
+> | C
+
+= 𝜇 𝜃 + Σ𝜃 𝐻 ⊤C (𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C )−1 (𝑠 C − 𝐻 C 𝜇 𝜃 ),
+
+Σ𝜃  
+
+> | C
+
+= Σ𝜃 − Σ𝜃 𝐻 ⊤C (𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C )−1 𝐻 C Σ𝜃 , (7) while, starting from 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ), the mean 𝜇 𝜃  
+
+> | C
+
+and covariance Σ𝜃  
+
+> | C
+
+can be expressed as: 
+
+𝜇 𝜃  
+
+> | C
+
+= 𝜇 𝜃 + Σ𝜃 (Σ𝜃 + Δ)−1 (¯𝑠 C1: 𝐵 − 𝜇 𝜃 ),
+
+Σ𝜃  
+
+> | C
+
+= Σ𝜃 − Σ𝜃 (Σ𝜃 + Δ)−1Σ𝜃 , (8) where Δ is a diagonal noise matrix with entries Δ𝑏,𝑏 = 𝜎 2 𝑁 𝑏 /𝑛 𝑏 . To achieve the best computational cost, we use Eq. (7) when 𝑛 < 𝐵 and Eq. (8) when 𝑛 ≥ 𝐵 . We employ Cholesky updates across both regimes, leveraging the fact that the prior covariance Σ𝜃 remains fixed between hyperparameter updates, which occur every 𝐹 
+
+iterations. This yields a computational complexity of O( min (𝑛, 𝐵 )2) per iteration. 
+
+Algorithm We summarize the method in Algorithm 1. Starting with an empty coreset C, BayesAME 
+
+iteratively selects the benchmark item maximizing the expected information gain 𝛼 IG (𝑖 ) when 𝐵 ≥ 𝑁 − 𝑁 0 (or at random otherwise). The target model is evaluated on this item, its index is added to C, and the posterior mean 𝜇 𝜃  
+
+> | C
+
+and covariance Σ𝜃  
+
+> | C
+
+are updated, along with the performance estimate ˆ𝑅 . Every 𝐹 iterations, the covariance hyperparameters 𝛼 and 𝛽 are optimized by minimizing the negative log-marginal likelihood L( 𝛼, 𝛽 )
+
+of the coreset scores (see Appendix A.4). This sequential process terminates once the two-condition stopping criterion is satisfied: (𝑖 ) the range of the performance estimate ˆ𝑅 over a window of 𝑊 iterations falls below threshold 𝜖 1; and (𝑖𝑖 ) the width of the 95% credible interval falls below threshold 𝜖 2.
+
+3.2. Multi-Target Setting 
+
+In the case of multiple target models T = {𝑡 1, . . . , 𝑡 𝐾 𝑡 }, a standard approach would be to simply apply the single-target method of Section 3.1 to each model independently. However, jointly modeling target models that exhibit correlated performance behaviors can improve estimation accuracy and reduce the required coreset size. We model the targets jointly using a linear model of coregionalization (Álvarez et al., 2012; Journel and Huijbregts, 1978). 
+
+> 5BayesAME: Bayesian Active Model Evaluation
+
+Algorithm 1 BayesAME Single-target 
+
+Require: Benchmark 𝐸 ; noise variance 𝜎 2; margin 𝑁 0; stopping criterion thresholds 𝜖 1, 𝜖 2 and window-length 
+
+𝑊 ; Optimizer , hyperparameter initial values 𝛼 0, 𝛽 0 and update frequency 𝐹 
+
+Initialize coreset C ← ∅ 
+
+Initialize hyperparameters 𝛼 ← 𝛼 0, 𝛽 ← 𝛽 0
+
+for 𝑗 ∈ { 1, . . . , 𝑁 } do if 𝐵 ≥ 𝑁 − 𝑁 0 then 
+
+Select item via expected information gain: 𝑖 ∗ = arg max 𝑖 ∈𝐸 \C 𝛼 IG (𝑖 ) ⊲ Eq. (6) 
+
+else 
+
+Select item via random sampling: 𝑖 ∗ ∼ Uniform (𝐸 \ C) 
+
+end if 
+
+Obtain score 𝑠 𝑖 ∗ and add 𝑖 ∗ to the coreset: C ← C ∪ { 𝑖 ∗ }
+
+Compute 𝜇 𝜃  
+
+> | C
+
+and Σ𝜃  
+
+> | C
+
+⊲ Eq. (7) or Eq. (8) Compute performance estimate ˆ𝑅 ⊲ Eq. (5) Set ˆ𝑅 𝑗 ← ˆ𝑅 
+
+if 𝑗 %𝐹 = 0 then 
+
+Update hyperparameters: 𝛼, 𝛽 ← Optimizer (L( 𝛼, 𝛽 ), 𝛼, 𝛽 ) ⊲ Eq. (11) 
+
+end if if 𝑗 ≥ 𝑊 and max 𝑙 ∈ [ 𝑗 −𝑊 +1, 𝑗 ] ( ˆ𝑅 𝑙 ) − min 𝑙 ∈ [ 𝑗 −𝑊 +1, 𝑗 ] ( ˆ𝑅 𝑙 ) ≤ 𝜖 1 and 2𝑧 0.975 √︁ Var (𝑅 | 𝑠 C ) ≤ 𝜖 2 then break end if end for 
+
+Return ˆ𝑅 
+
+We capture cross-model correlations by assuming that their abilities are driven by 𝐿 shared, independent latent random vectors 𝑢 𝑙 ∈ ℝ𝐵 . Specifically, let 𝜃 𝑡 𝑏 represent the latent ability of target model 𝑡 on bucket 𝑏 , and let 
+
+𝜃 𝑡 = (𝜃 𝑡 
+
+> 1
+
+, . . . , 𝜃 𝑡 𝐵 ). We model 𝜃 𝑡 as: 
+
+𝜃 𝑡 = 𝜇 𝜃 𝑡 
+
++
+
+> 𝐿
+
+∑︁ 
+
+> 𝑙 =1
+
+𝑤 𝑡 𝑙 𝑢 𝑙 ,
+
+where 𝜇 𝜃 𝑡 
+
+is defined as in Eq. (1), 𝑤 𝑡 
+
+> 1
+
+, . . . , 𝑤 𝑡 𝐿 are model-specific weights to be learned, and 𝑢 𝑙 ∼ N ( 0, Σ𝜃,𝑙 ),where Σ𝜃,𝑙 is a covariance matrix specific to latent vector 𝑙 . This induces a Gaussian prior distribution over 
+
+𝜃 = (𝜃 𝑡 1 , . . . , 𝜃 𝑡 𝐾𝑡 ) given by: 
+
+𝑝 (𝜃 ) = N 𝜇 𝜃 ,
+
+> 𝐿
+
+∑︁ 
+
+> 𝑙 =1
+
+𝑤 𝑙 𝑤 ⊤ 
+
+> 𝑙
+
+⊗ Σ𝜃,𝑙 
+
+!
+
+,
+
+where ⊗ denotes the Kronecker product, 𝑤 𝑙 = (𝑤 𝑡 1 
+
+> 𝑙
+
+, . . . , 𝑤 𝑡 𝐾𝑡  
+
+> 𝑙
+
+)⊤ and 𝜇 𝜃 = (𝜇 𝜃 𝑡 1 , . . . , 𝜇 𝜃 𝑡 𝐾𝑡 ). This formula-tion provides a flexible yet computationally efficient way to capture correlation across both buckets and models by combining bucket-specific ( Σ𝜃,𝑙 𝑏,𝑏 ′ ) and model-specific ( 𝑤 𝑡 𝑙 ) terms. To provide greater modeling flexibility, we use two covariance families with complementary inductive biases: the squared exponential covariance defined as in Eq. (1), which imposes strict smoothness, and a Matérn-3/2 kernel of the form 
+
+Σ𝜃,𝑙 𝑏,𝑏 ′ = 𝛼 𝑙 
+
+
+
+1 + √3𝛽 𝑙 ∥𝜙 𝑏 − 𝜙 𝑏 ′ ∥
+
+
+
+exp 
+
+
+
+−√3𝛽 𝑙 ∥𝜙 𝑏 − 𝜙 𝑏 ′ ∥
+
+
+
+with 𝛼 𝑙 , 𝛽 𝑙 > 0, which imposes weaker smoothness. Be-cause the degree of correlation between the target models is typically unknown a priori , we set 𝐿 = 𝐾 𝑡 . This enables the framework to dynamically adapt: it captures strong correlations by sharing latent components across models, yet it retains the ability to recover the fully independent case. The scores are then modeled similarly to the single-target setting described in Section 3.1. 
+
+Selection Strategy In contrast to the single-target setting, the multi-target selection step requires simultane-ously selecting an item and a target model to evaluate on that item, substantially expanding the search space. Furthermore, relying on a purely greedy information-gain criterion across this joint item-model space can bias performance estimates, particularly during early stages when correlations across target models are still being learned. To mitigate this bias and establish a robust initial estimate of the correlation structure, we depart 
+
+> 6BayesAME: Bayesian Active Model Evaluation
+
+from the empty coreset initialization used in the single-target setting. Instead, we randomly select 10% of the benchmark items and evaluate all target models on them. After this initialization step, we deploy the following selection strategy, which maintains some degree of exploration. We iterate deterministically through the target models. For a given model 𝑡 , we select the item that maximizes the expected information gain: 𝛼 𝑡  
+
+> IG
+
+(𝑖 ) = H ( 𝑅 𝑡 | 𝑠 C ) − 𝔼 𝑠 𝑡 𝑖 [H ( 𝑅 𝑡 | 𝑠 C , 𝑠 𝑡 𝑖 )] , where 𝑠 C = {𝑠 𝑡 1  
+
+> C𝑡 1, . . . , 𝑠 𝑡 𝐾𝑡
+> C𝑡 𝐾𝑡
+
+}. This approach substantially reduces the search space, maintaining a selection complexity identical to that of the single-target setting. We iteratively augment the coresets {C 𝑡 1 , . . . , C𝑡 𝐾𝑡 } until all target models have met the two-condition stopping criterion detailed above. We also investigated an alternative average marginalized information-gain strategy. At each iteration, we first select the item that maximizes the expected information gain averaged across all 𝐾 𝑡 target models:  
+
+> 𝛼 IG
+
+(𝑖 ) = 1
+
+> 𝐾 𝑡
+
+Í𝐾 𝑡 
+
+> 𝑡 =1
+
+
+
+H ( 𝑅 𝑡 | 𝑠 C ) − 𝔼 𝑠 𝑡 𝑖 [H ( 𝑅 𝑡 | 𝑠 C , 𝑠 𝑡 𝑖 )] 
+
+
+
+. After selecting an item, we choose the target model uniformly at random. We present these results in Figure 15 of Appendix C.4. 
+
+4. Related work 
+
+The issue of computational inefficiency in model evaluation is primarily tackled from two, sometimes intersecting, directions: constructing smaller, static versions of existing benchmarks (or developing methods for reducing benchmarks) (Bean et al., 2025; Kipnis et al., 2025; Zhao et al., 2025), and estimating performance without fully evaluating the target model (Berrada et al., 2025; Bowyer et al., 2026; Fisch et al., 2026; Hsu and Shekhar, 2026; Huang et al., 2026; Kipnis et al., 2025; Kossen et al., 2021; Liao et al., 2025; Liu et al., 2026; Polo et al., 2024; Saranathan et al., 2025; Vivek et al., 2024; Wang et al., 2025; Zhang et al., 2025). 
+
+Automatic Determination of Coreset Size With the exception of Cer-Eval (Wang et al., 2025), all methods in the second category assume that the evaluation budget is specified by the user. Cer-Eval differs substantially from our method as it does not utilize reference models, relying instead exclusively on the responses from the target model. It repeats the following steps until a strict confidence condition is met: (𝑖 ) partitioning the benchmark based on previously evaluated items to isolate regions of low variance in the target model’s scores, 
+
+(𝑖𝑖 ) computing summary statistics for each partition, (𝑖𝑖𝑖 ) identifying the partition that yields the greatest expected reduction in evaluation uncertainty; and (𝑖𝑣 ) sampling an item from that optimal partition. Extending methods designed for user-specified coreset sizes to automatically determine the coreset size poses fundamental challenges. This task requires striving for accurate estimation across all coreset sizes, which, as we show in our experiments, is not always achievable. Furthermore, establishing a reliable stopping criterion requires confidence intervals that accurately reflect the true remaining uncertainty, a property that existing formulations often lack. 
+
+Performance Modeling and Estimation From a modeling perspective, many works that leverage reference model information rely on Item Response Theory (IRT) to infer the target model’s profile (Kipnis et al., 2025; Liao et al., 2025; Polo et al., 2024). However, obtaining reliable parameter estimates with IRT requires on the order of hundreds (Jiang et al., 2026) or thousands (Kipnis et al., 2025) of reference models. Another line of work (Bowyer et al., 2026; Zhang et al., 2025) frames the problem as a regression task. ProEval (Huang et al., 2026) introduces a Gaussian process approach that shares similarities with our Bayesian modeling. However, we depart critically from their formulation to address automatic coreset size determination and more robustly handle the lack of prior information about the target model. 
+
+Multi-Target Setting Finally, to the best of our knowledge, the only other work that leverages performance correlations across multiple target models rather than treating them independently is Fisch et al. (2026). This approach frames model evaluation as a matrix completion problem. While the method could be run 
+
+> 7BayesAME: Bayesian Active Model Evaluation
+
+sequentially by randomly sampling the next item and model to evaluate, its confidence intervals capture only the sampling uncertainty around the mean performance, assuming the benchmark is a finite sample drawn from an infinite population of prompts. Consequently, even when all items in the finite benchmark have been evaluated, the confidence interval does not shrink to zero. In contrast, our Bayesian credible intervals provide a direct probability statement about the true, finite-sample benchmark performance given the observed data, yielding an intuitively appealing and actionable stopping criterion. 
+
+5. Experiments 
+
+We evaluate our approach across seven standard benchmarks collected from three primary sources: the Open LLM Leaderboard (Fourrier et al., 2024), evaluations compiled by Zhang et al. (2025), and the HELM Lite benchmark (Liang et al., 2023). From the Open LLM Leaderboard, we extracted scores for GPQA (Rein et al., 2024), MMLU-Pro (Hendrycks et al., 2021; Wang et al., 2024), BBH (Suzgun et al., 2023), ARC-Challenge (Clark et al., 2018), and MuSR (Sprague et al., 2024). Beyond standard binary scores, we leveraged the leaderboard’s raw log-likelihoods to obtain continuous scores via a softmax transformation. These continuous scores allow us to assess the impact of exploiting richer information and mitigate the issue of identical reference model scores. To ensure a representative distribution of model capabilities, we partitioned the available models into five quantiles based on accuracy. We then sampled evenly by selecting the most popular models from each quantile, resulting in an initial set of 300 models. After extracting the data for these selections, we filtered out any records containing NaN values caused by incomplete leaderboard entries, formatting discrepancies, or evaluation timeouts. This curation process yielded the following final model counts per benchmark: GPQA: 102, MMLU-Pro: 165, BBH: 279, ARC-Challenge: 125, and MuSR: 288. From Zhang et al. (2025), we extracted binary scores for IFEval (Zhou et al., 2023) across 448 models. Finally, from HELM Lite (up to version 1.13.0), we extracted the F1 scores for the Natural QA Openbook long-answer scenario (Kwiatkowski et al., 2019) across 44 models. 
+
+5.1. Single-Target Setting Baselines Since all existing approaches that leverage reference models assume a predefined coreset size, we adapt the most effective methods to operate in the same sequential manner as Algorithm 1. Specifically, C is iteratively augmented until max 𝑙 ∈ [ 𝑗 −𝑊, 𝑗 ] ( ˆ𝑅 𝑙 ) − min 𝑙 ∈ [ 𝑗 −𝑊, 𝑗 ] ( ˆ𝑅 𝑙 ) ≤ 𝜖 1 and 2𝑧 0.975 
+
+√Var 𝑅 ≤ 𝜖 2 where ˆ𝑅 and Var 𝑅 
+
+are defined below. 1. BayesAME-RS : A simpler version of BayesAME that selects items at random. 2. Seq-APW : An extension of the anchor points weighted method from Vivek et al. (2024), in which C is augmented by choosing items that maximize space covering, as measured by correlations between the reference models’ performances. Benchmark items are partitioned into clusters by assigning each item to its nearest anchor in C. ˆ𝑅 = Í𝑖 ∈ C 𝑤 𝑖 𝑠 𝑖 , where 𝑤 𝑖 is a weight proportional to the cluster size, while Var 𝑅 is given by the following estimator of Var (𝑅 ):
+
+Var 𝑅 = 𝑠 2 ∑︁ 
+
+> 𝑖 ∈ C
+> 𝑤 2
+> 𝑖
+
+! 
+
+> 𝑁
+
+− 𝑛 eff    
+
+> 𝑁 ,𝑛 eff
+
+=
+
+ Í 𝑖 ∈ C 𝑤 𝑖 
+
+2
+
+Í𝑖 ∈ C 𝑤 2 
+
+> 𝑖
+> ,
+
+(9) where 𝑠 denotes the sample standard deviation. By construction, ˆ𝑅 recovers the true performance 𝑅 ★
+
+once the entire benchmark has been evaluated. Moreover, Var 𝑅 captures the sampling variance arising from the randomness in the coreset selection. Due to the finite-population correction factor, this variance decreases as the coreset grows and converges to zero when the full benchmark is evaluated. 3. RS-Mean : The simplest baseline that augments C by selecting items at random and estimates the full benchmark performance as the empirical average performance on C. Var 𝑅 is given by Eq. (9) using  
+
+> 𝑤 𝑖
+
+= 1/𝑛 . The same properties regarding ˆ𝑅 and Var 𝑅 discussed for Seq-APW apply. 
+
+> 8BayesAME: Bayesian Active Model Evaluation
+
+4. Bayes-AIPW : A Bayesian ridge regression extension of AIPW (Zhang et al., 2025), obtained by placing a Gaussian prior distribution on the coefficients 𝛽 of the model 𝑠 𝑖 = 𝜙 ⊤ 
+
+> 𝑖
+
+𝛽 + 𝜀 𝑖 , where 𝜙 𝑖 = (𝑠 𝑟 1 
+
+> 𝑖
+
+, . . . , 𝑠 𝑟 𝐾𝑟  
+
+> 𝑖
+
+),and 𝜀 𝑖 ∼ N ( 0, 𝛼 −1) with 𝛼 ∼ Gamma (𝛼 1, 𝛼 2). By conditioning on {( 𝜙 𝑖 , 𝑠 𝑖 )} 𝑖 ∈ C , we obtain a posterior distribution over 𝛽 with mean 𝜇 𝛽  
+
+> | C
+
+and covariance Σ𝛽  
+
+> | C
+
+. As ˆ𝑅 , we use the AIPW estimator: 
+
+ˆ𝑅 = 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+𝑠 𝑖 + 11 + 𝑛 𝑁 −𝑛 
+
+1
+
+𝑁 − 𝑛 ∑︁ 𝑖 ∈𝐸 \C 
+
+𝜇 𝑖 | C − 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+𝜇 𝑖 | C 
+
+!
+
+,
+
+where 𝜇 𝑖 | C = 𝜙 ⊤ 
+
+> 𝑖
+
+𝜇 𝛽  
+
+> | C
+
+. Note that ˆ𝑅 recovers the true performance 𝑅 ★ when all items have been evaluated. Posterior uncertainty is obtained by propagating the posterior distribution of 𝛽 through the AIPW 
+
+correction, yielding: 
+
+Var 𝑅 =
+
+( ¯𝜙 𝐸 \C − ¯𝜙 C )⊤Σ𝛽  
+
+> | C
+
+( ¯𝜙 𝐸 \C − ¯𝜙 C ) + ˆ𝛼 −1
+
+ 1 
+
+> 𝑛
+
++ 1 
+
+> 𝑁 −𝑛
+
+ 1 + 𝑛 𝑁 −𝑛 
+
+2 ,
+
+where ¯𝜙 C = 1
+
+> 𝑛
+
+Í𝑖 ∈ C 𝜙 𝑖 , ¯𝜙 𝐸 \C = 1 
+
+> 𝑁 −𝑛
+
+Í𝑖 ∈𝐸 \C 𝜙 𝑖 , and ˆ𝛼 is the posterior mean of 𝛼 . C is augmented by selecting items at random. Figure 6 in Appendix C.3 shows that this Bayesian extension matches or exceeds the performance of the original AIPW method. 5. Bayes-RS-Learn : A Bayesian ridge regression extension of Random-Sampling-Learn (Zhang et al., 2025), obtained by placing a Gaussian prior on the coefficients 𝛽 of the model 𝑅 = 𝑠 ⊤C 𝛽 + 𝜀 , where 
+
+𝜀 ∼ N ( 0, 𝛼 −1), 𝛼 ∼ Gamma (𝛼 1, 𝛼 2). We perform inference on 𝛽 by conditioning on {( 𝑠 𝑟 𝑘  
+
+> C
+
+, 𝑅 ★𝑟 𝑘 )} 𝐾 𝑟 
+
+> 𝑘 =1
+
+. This yields a posterior distribution over 𝛽 with mean 𝜇 𝛽  
+
+> | C
+
+and covariance Σ𝛽  
+
+> | C
+
+. We then obtain ˆ𝑅 and Var 𝑅 as: 
+
+ˆ𝑅 = 𝑠 ⊤C 𝜇 𝛽  
+
+> | C
+
+, Var 𝑅 = 𝑠 ⊤C Σ𝛽  
+
+> | C
+
+𝑠 C + ˆ𝛼 −1,
+
+where ˆ𝛼 −1 is the posterior mean of 𝛼 −1.6. ProEval : The method in Huang et al. (2026) for the setting with no prior performance data for the target model (called New Model setting with Score Features in the original paper), without abstention rule. The method defines the target model’s performance as 𝑅 = 1
+
+> 𝑁
+
+Í𝑁 𝑖 =1 𝜃 𝑖 , where 𝜃 = (𝜃 1, . . . , 𝜃 𝑁 ) is a Gaussian random vector whose prior covariance matrix is given by the empirical covariance of the reference model scores. ˆ𝑅 = 𝔼 [𝑅 | 𝑠 C ] and Var 𝑅 = Var (𝑅 | 𝑠 C ). Because 𝑅 is defined as the average of the latent abilities, the estimator ˆ𝑅 can deviate significantly from the true performance 𝑅 ★ even for large coreset sizes, as discussed in Section 4. The confidence interval induced by Var 𝑅 can be interpreted as a Bayesian credible interval. 7. IRT : Two variants of IRT where C is selected randomly, depending on the score type: one for binary scores based on the 2-PL model (Polo et al., 2024) ( p-IRT ) and one for continuous scores based on the Beta distribution, specifically the extension of Noel and Dauvier (2007) provided in Chen et al. (2019). The item parameters are learned using the reference models’ scores, and the scores 𝑠 C are used to fit the target model-specific parameters. As the performance estimator, we deploy Eq. (5) with 𝑤 = 1/𝑁 .Because we fit the model parameters separately for each benchmark, treating them as scalars rather than vector-valued as in Polo et al. (2024), applying the generalized variant ( gp-IRT ) does not improve performance. We fit the parameters using MCMC. This provides samples from the posterior distribution of the parameters, allowing us to directly obtain the posterior distribution of 𝑅 and its variance, which we use as ˆ𝑅 and Var 𝑅 . Due to the computational cost of MCMC, we update the parameters only every 50 evaluations (resulting in piecewise-constant curves in the plots). 
+
+Metrics We evaluate our framework using four metrics: RMSE Log , RMSE Gain , Evaluation-Weighted Integrated RMSE , and Cost-Accuracy Trade-Off . By computing the Root Mean Square Error (RMSE) over 200 initialization seeds, all metrics intrinsically account for the empirical variance of the performance estimates across different samples, thereby providing a rigorous evaluation of each method’s precision. The first three metrics evaluate the methods when stopping at fixed coreset sizes 𝑛 = 1, . . . , 𝑁 (thereby not using the 
+
+𝜖 1, 𝜖 2 stopping criterion). Evaluating across the entire range of coreset sizes as input stopping points enables us to determine whether any method dominates the others regardless of the stopping point. In contrast, the 
+
+Cost-Accuracy Trade-Off measures estimation error at the specific coreset sizes reached when the 𝜖 1, 𝜖 2
+
+> 9BayesAME: Bayesian Active Model Evaluation
+
+stopping criterion is met, demonstrating which method achieves the lowest estimation error at the smallest automatically determined coreset size. 1. RMSE Log : The RMSE on a logarithmic scale, multiplied by 100. 2. RMSE Gain : The relative improvement of a given method over the RS-Mean baseline, calculated as: 
+
+RMSE Gain (Method ) = 20 log 10 
+
+ RMSE (RS-Mean )
+
+RMSE (Method )
+
+
+
+> .
+
+A positive gain indicates a relative reduction in estimation error compared to the baseline. 3. Evaluation-Weighted Integrated RMSE : The weighted integral 100 ∫ 𝑁  
+
+> 0𝑛 ′
+
+RMSE (𝑛 ′) 𝑑𝑛 ′, which ensures that late-stage errors are penalized more heavily than early-stage ones. 4. Cost-Accuracy Trade-Off : The RMSE (multiplied by 100) computed at the coreset sizes dynamically determined by the 𝜖 1, 𝜖 2 stopping criterion, plotted against the average coreset size ¯𝑛 across seeds. We vary  
+
+> 𝜖 2
+
+∈ { 0.005 , 0.0075 , 0.01 , 0.015 , 0.02 , 0.025 , 0.03 }, and fix 𝜖 1 = 0.005 since empirical results indicate that 𝜖 2 is the primary factor governing the stopping decision. We also evaluate our method using Spearman’s rank correlation to assess how well the estimated performance preserves the true relative ordering of the models. The results, presented in Appendix C.3, demonstrate that our method works well for tasks such as model comparison and ranking. 
+
+Interpolation and Extrapolation Reference Setup To investigate the interpolation and extrapolation regimes with granularity, we partition the available models into a pool of potential reference models and a fixed set of 10 target models, following an approach similar to Zhang et al. (2025). In the interpolation regime, the target models are selected uniformly at random, with all remaining models assigned to the reference pool. In the extrapolation regime, we induce a distribution shift by designating the 10 highest-performing models as the target set, discarding the next 20% of models to create a performance gap, and using the remaining lower-performing models as potential reference models. To assess the impact of reference model quantity, we vary the size of the set of reference models by sampling 10%, 50%, or 90% of the reference pool uniformly at random. 
+
+5.1.1. Results 
+
+Figure 1 shows the RMSE Log (top three rows) and RMSE Gain (bottom three rows) for GPQA with 𝑠 𝑖 ∈ { 0, 1}
+
+(left two columns) and MMLU-Pro with 𝑠 𝑖 ∈ [ 0, 1] (right two columns) across different percentages of reference models (10%, 50%, and 90%) for the interpolation and extrapolation regimes. Overall, when considering the entire range of coreset sizes, BayesAME consistently achieves the lowest RMSE Log , demonstrating superior estimation accuracy and precision. The relative gains of BayesAME and the two other most competitive methods, BayesAME-RS and Bayes-AIPW , over the RS-Mean baseline can be fully appreciated in the RMSE Gain plots (bottom three rows), which exclude the less competitive methods ( Seq-APW , Bayes-RS-Learn ,
+
+ProEval , and IRT ) for clarity. The plots also illustrate that the gain scales positively with the number of reference models, and that this trend is more pronounced for BayesAME . This confirms that a richer reference pool establishes a stronger prior, which BayesAME successfully exploits to isolate and select the most critical benchmark items. In the two cases where 𝐵 < 𝑁 − 𝑁 0, which occur for GPQA with 10% of reference models, 
+
+BayesAME and BayesAME-RS coincide by construction and perform comparably to Bayes-AIPW .Figure 2 displays the Cost-Accuracy Trade-Off for GPQA with 𝑠 𝑖 ∈ { 0, 1} (left two columns) and MMLU-Pro with 𝑠 𝑖 ∈ [ 0, 1] (right two columns). By providing the most accurate performance estimates for any threshold value at the lowest cost across both the interpolation and extrapolation regimes, BayesAME establishes a strictly superior Pareto frontier. Plots corresponding to Figures 1 and 2 for the remaining benchmarks, which show similar conclusions, are provided in Appendix C.3. We summarize these results for 50% of reference models via the Evaluation-Weighted Integrated RMSE in Table 1. As the table shows, BayesAME outperforms the other methods in 
+
+> 10
+
+BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100                                                                                
+
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> ProEval
+> Seq-APW
+> Bayes-RS-Learn
+> IRT
+> RS-Mean
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> ProEval
+> Seq-APW
+> Bayes-RS-Learn
+> IRT
+> RS-Mean
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> ProEval
+> Seq-APW
+> Bayes-RS-Learn
+> IRT
+> RS-Mean
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> ProEval
+> Seq-APW
+> Bayes-RS-Learn
+> IRT
+> RS-Mean
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80                                  
+
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 620 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 20 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 20 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 20 40 60 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+
+Figure 1 | Single-target Setting. GPQA with binary scores (left two columns) and MMLU-Pro with continuous scores (right two columns). RMSE Log (top three rows) and RMSE Gain (bottom three rows) across varying proportions of reference models (10%, 50%, and 90%) for the interpolation and extrapolation regimes. The 
+
+𝑥 -axis denotes the coreset size 𝑛 as a percentage of the benchmark size 𝑁 .nearly all cases. For binary scores, we have 𝐵 < 𝑁 − 𝑁 0 for MMLU-Pro, ARC-Challenge, and MuSR in both the interpolation and extrapolation regimes, and for IFEVAL in the extrapolation regime. For continuous scores, we have that 𝐵 < 𝑁 − 𝑁 0 up to some tolerance for ARC-Challenge in the extrapolation regime. In these cases, 
+
+BayesAME-RS coincides with BayesAME by construction. The table clearly quantifies the overall benefit of using richer continuous scores over binary scores. In Appendix C.3, we demonstrate this advantage via the other three metrics. Our results demonstrate that active coreset selection becomes significantly advantageous over random coreset selection whenever reference models provide sufficiently unique item representations (e.g., via larger reference pools or continuous scores), and show that it is possible to strongly outperform RS-Mean . While non-unique representations cause BayesAME to default to random selection (matching BayesAME-RS and Bayes-AIPW ), richer item signals enable active selection to effectively target informative items and strongly outperform 
+
+RS-Mean , addressing the concerns raised by Zhang et al. (2025). 
+
+11 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 80 85 90 95 100                                             
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 80 85 90 95 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 80 85 90 95 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 80 85 90 95 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 80 85 90 95 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 80 85 90 95 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> BayesAME
+> BayesAME-RS
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 20 40 60 80 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+
+Figure 2 | Single-target Setting. GPQA with binary scores (left two columns) and MMLU-Pro with continuous scores (right two columns). Cost-Accuracy Trade-Off across varying proportions of reference models (10%, 50%, and 90%) for the interpolation and extrapolation regimes. The 𝑥 -axis denotes the average coreset size ¯𝑛 as a percentage of the benchmark size 𝑁 .
+
+5.2. Multi-Target Setting 
+
+We compare the multi-target version of BayesAME (Section 3.2) against its single-target counterpart (Sec-tion 3.1) applied independently to each target model. To evaluate the multi-target formulation under varying degrees of correlation, we construct sets of 10 target models exhibiting either low or high correlation. Specif-ically, we form the low-correlation set using a random selection of 10 models, and the high-correlation set using the 10 most correlated models overall. We construct the set of reference models by sampling 50% of the reference model pool uniformly at random. Figure 3 shows RMSE Log , RMSE Gain , and Cost-Accuracy Trade-Off for IFEval with 𝑠 𝑖 ∈ { 0, 1} (left two columns) and GPQA with 𝑠 𝑖 ∈ [ 0, 1] (right two columns). Additional results for GPQA with 𝑠 𝑖 ∈ { 0, 1} are given in Fig. 14 of Appendix C.4. The primary conclusion drawn from these plots is that jointly evaluating multiple target models provides a significant efficiency advantage when the models exhibit correlated behaviors. Specifically, in the high-correlation regime, BayesAME Multi-target demonstrates a steeper decline in 
+
+RMSE Log and reach a higher RMSE Gain much earlier compared to BayesAME Single-target . This is further reflected in the Cost-Accuracy Trade-Off plots, where BayesAME Multi-target establishes a strictly superior Pareto frontier, achieving the same level of estimation accuracy at a notably lower coreset size across all threshold values. However, the low-correlation regime plots reveal a practical nuance of the multi-target framework. When target models do not share meaningful behavioral similarities, attempting to jointly model their latent abilities introduces a degree of negative transfer. As observed in the Cost-Accuracy Trade-Off plots, the multi-target approach slightly underperforms BayesAME Single-target , exhibiting higher estimation errors for a given evaluation budget. Crucially, however, this degradation is not catastrophic, the performance of the multi-target method degrades gracefully to match that of the competitive baseline 
+
+Bayes-AIPW . This suggests that while the active selection process expends some resources attempting to learn nonexistent cross-model correlations, the underlying framework remains highly robust. Nonetheless, to maximize evaluation efficiency, practitioners should apply the multi-target extension primarily when there is a reasonable prior expectation of correlated performance. 
+
+12 BayesAME: Bayesian Active Model Evaluation                                                                                                                                                                                                                     
+
+> Benchmarks BayesAME BayesAME-RS RS-Mean Seq-APW Bayes-AIPW Bayes-RS-Learn ProEval IRT
+> Binary
+> GPQA Interpolation 61.54 66.38 76.48 866.61 67.21 99.06 96.29 89.61 Extrapolation 68.91 72.65 81.73 751.08 73.41 403.29 418.11 91.40
+> MMLU-Pro Interpolation 30.18 30.18 40.20 1141.06 30.68 90.59 95.56 46.38 Extrapolation 37.20 37.20 44.89 821.40 37.69 670.20 701.84 156.33
+> BBH Interpolation 31.70 36.35 50.42 495.01 35.54 50.63 57.82 50.95 Extrapolation 38.35 42.02 52.59 448.04 41.34 448.53 600.98 158.41
+> ARC-Challenge Interpolation 36.53 36.53 56.09 1391.22 36.68 70.84 74.06 44.19 Extrapolation 36.56 36.56 53.21 768.83 38.03 327.45 364.21 88.58
+> MuSR Interpolation 47.86 47.86 69.27 949.90 49.18 69.12 68.54 84.51 Extrapolation 54.19 54.19 71.28 719.86 56.72 289.76 353.44 104.41
+> IFEval Interpolation 49.53 56.14 72.45 1464.91 56.71 76.22 78.53 79.06 Extrapolation 58.08 58.08 64.54 488.54 60.52 466.45 1017.33 212.27
+> Continuous
+> GPQA Interpolation 30.58 34.42 45.25 50.22 35.21 49.08 54.03 81.44 Extrapolation 40.40 40.75 56.64 62.52 46.77 262.65 313.65 142.56
+> MMLU-Pro Interpolation 13.11 17.10 27.80 39.99 17.19 72.66 82.62 66.44 Extrapolation 26.82 31.10 40.83 47.07 31.33 482.43 570.76 311.12
+> BBH Interpolation 13.04 17.54 35.21 49.38 18.01 26.13 40.45 61.84 Extrapolation 29.80 35.57 47.10 48.50 33.64 303.09 612.49 388.23
+> ARC-Challenge Interpolation 26.04 26.47 47.67 93.82 26.19 46.84 53.57 46.10 Extrapolation 33.16 33.16 49.07 43.52 33.05 292.45 354.75 144.55
+> MuSR Interpolation 27.83 33.42 50.67 76.21 34.34 50.02 62.88 57.39 Extrapolation 36.96 42.56 60.19 70.64 43.69 246.90 372.08 211.37
+> Natural QA Openbook Interpolation 28.26 29.68 45.91 1185.87 29.12 275.90 286.37 129.11 Extrapolation 20.83 28.36 41.76 1044.02 27.70 226.18 262.55 127.84
+
+Table 1 | Single-target Setting. Evaluation-Weighted Integrated RMSE for 50% of reference models. 
+
+6. Discussion and Conclusions 
+
+A primary objective of this work was to provide an efficient model evaluation method that is capable of automatically determining a coreset size when reliable performance estimation takes priority over efficiency, while remaining flexible to accept a predefined coreset size. To this end, we introduced a simple, high-performing method, BayesAME . Furthermore, we proposed an extension to the multi-target setting that leverages performance correlations among target models to further reduce the coreset size. Another objective was to address skepticism in recent literature, which suggests that random coreset selection and simply using a random sample mean baseline gives competitive performance. Our study overturns this belief by showing that, when leveraging richer information (such as continuous scores and sufficiently varied sets of reference models), looking across the entire spectrum of coreset sizes, and accounting for the empirical variance of the performance estimates across different samples, non-random coreset selection and more robust performance estimation remain highly advantageous. Interestingly, while our results challenge the literature’s reliance on random selection, they do validate the underlying intuition that simple methods are difficult to outperform. We found that introducing highly sophisticated, principled modeling of the scores did not translate to better performance. For example, when dealing with binary or bounded continuous scores, a more principled model of the latent abilities using logit transformations (as described in Appendix B.3) failed to outperform the coarser joint Gaussian approach. Though relying on an improper prior for bounded data, the Gaussian approach proved far more effective because it allowed for highly efficient, closed-form evaluations of information gain. Similarly, our attempts to find richer, more complex representations of items (for example, including prompt embeddings), rather than simply relying on reference scores, did not yield tangible improvements. There are several limitations of BayesAME that provide promising avenues for future research. Currently, our framework assumes scalar scores. A natural step is to adapt it to handle more complex, multi-dimensional, or unstructured evaluation formats. In addition, future iterations could investigate ways to integrate architecture details, training hyperparameters, or training data distributions to further refine the prior covariance. 
+
+13 BayesAME: Bayesian Active Model Evaluation 
+
+Low correlation High correlation Low correlation High correlation 20 40 60 80 100                                                                                     
+
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME Single-target
+> BayesAME Multi-target
+> BayesAME-RS Single-target
+> BayesAIPW
+> RS-Mean
+> 20 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 110 20 30 40 50 60 70 80 90 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME Single-target
+> BayesAME Multi-target
+> BayesAME-RS Single-target
+> BayesAIPW
+> RS-Mean
+> 10 20 30 40 50 60 70 80 90 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME Single-target
+> BayesAME Multi-target
+> BayesAME-RS Single-target
+> BayesAIPW
+> RS-Mean 10 20 30 40 50 60 70 80 90
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 10 20 30 40 50 60 70 80 90
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 610 20 30 40 50 60 70 80 90
+> 2
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10 20 30 40 50 60 70 80 90
+> 2
+> 0
+> 2
+> 4
+> 6
+> 870 75 80 85 90 95 100
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 70 75 80 85 90 95 100
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 50 60 70 80 90 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 50 60 70 80 90 100
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+
+Figure 3 | Multi-target Setting. IFEval with binary scores (left two columns) and GPQA with continuous scores (right two columns). The rows represent RMSE Log , RMSE Gain , and Cost-Accuracy Trade-Off ,respectively, for 50% of reference models for the low and high correlation regimes. 
+
+Acknowledgments 
+
+The authors would like to thank Michalis Titsias for valuable discussions and providing feedback on the manuscript. 
+
+References 
+
+M. A. Álvarez, L. Rosasco, and N. D. Lawrence. Kernels for vector-valued functions: A review. Foundations and Trends ® in Machine Learning , 4:195–266, 2012. A. M. Bean, N. Seedat, S. Chen, and J. R. Schwarz. Scales++: Compute efficient evaluation subset selection with cognitive scales embeddings. arXiv preprint arXiv:2510.26384 , 2025. G. Berrada, J. Kossen, M. Razzak, F. B. Smith, Y. Gal, and T. Rainforth. Scaling up active testing to large language models. In Advances in Neural Information Processing Systems , 2025. S. Bowyer, A. Locatelli, and K. Cao. Efficient benchmarking is just feature selection and multiple regression. 
+
+arXiv preprint arXiv:2605.25773 , 2026. R. H. Byrd, P. Lu, J. Nocedal, and C. Zhu. A limited memory algorithm for bound constrained optimization. 
+
+SIAM Journal on Scientific Computing , 16:1190–1208, 1995. Y. Chen, T. S. Filho, R. B. Prudencio, T. Diethe, and P. Flach. 𝛽 3-IRT: A new item response model and its applications. In International Conference on Artificial Intelligence and Statistics , pages 1013–1021, 2019. P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord. Think you have solved question answering? Try ARC, the AI2 reasoning challenge. arXiv preprint arXiv:1803.05457 , 2018. A. Fisch, D. Deutsch, J. Maynez, A. Agarwal, J. Berant, W. Cohen, A. Globerson, and J. Eisenstein. CollabEval: Statistically efficient collaborative model evaluation via matrix completion. arXiv preprint arXiv:2607.05046 ,2026. C. Fourrier, N. Habib, A. Lozovskaya, K. Szafer, and T. Wolf. Open LLM leaderboard v2, 2024. 
+
+14 BayesAME: Bayesian Active Model Evaluation 
+
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt. Measuring massive multitask language understanding. In International Conference on Learning Representations , 2021. C.-Y. Hsu and S. Shekhar. Efficient sequential evaluation of large language models. arXiv preprint arXiv:2607.17409 , 2026. Y. Huang, W. Zeng, A. Kumaresan, and Z. Wang. ProEval: Proactive failure discovery and efficient performance estimation for generative AI evaluation. In International Conference on Machine Learning , 2026. H. Jiang, S. Kwon, J. Luo, Z. Xiao, and S. Zhang. Can we trust item response theory for AI evaluation? arXiv preprint arXiv:2607.15190 , 2026. A. G. Journel and C. J. Huijbregts. Mining Geostatistics . Academic Press, 1978. A. Kipnis, K. Voudouris, L. M. Schulze Buschoff, and E. Schulz. metabench - A sparse benchmark of reasoning and knowledge in large language models. In International Conference on Learning Representations , 2025. J. Kossen, S. Farquhar, Y. Gal, and T. Rainforth. Active testing: Sample-efficient model evaluation. In International Conference on Machine Learning , 2021. A. Kulesza and B. Taskar. k-DPPs: Fixed-size determinantal point processes. In International Conference on Machine Learning , pages 1193–1200, 2011. T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee, K. Toutanova, L. Jones, M. Kelcey, M.-W. Chang, A. M. Dai, J. Uszkoreit, Q. Le, and S. Petrov. Natural questions: A benchmark for question answering research. Transactions of the Association for Computational Linguistics , 7:452–466, 2019. P. Liang, R. Bommasani, T. Lee, D. Tsipras, D. Soylu, M. Yasunaga, Y. Zhang, D. Narayanan, Y. Wu, A. Kumar, B. Newman, B. Yuan, B. Yan, C. Zhang, C. Cosgrove, C. D. Manning, C. Re, D. Acosta-Navas, D. A. Hudson, E. Zelikman, E. Durmus, F. Ladhak, F. Rong, H. Ren, H. Yao, J. WANG, K. Santhanam, L. Orr, L. Zheng, M. Yuksekgonul, M. Suzgun, N. Kim, N. Guha, N. S. Chatterji, O. Khattab, P. Henderson, Q. Huang, R. A. Chi, S. M. Xie, S. Santurkar, S. Ganguli, T. Hashimoto, T. Icard, T. Zhang, V. Chaudhary, W. Wang, X. Li, Y. Mai, Y. Zhang, and Y. Koreeda. Holistic evaluation of language models. Transactions on Machine Learning Research , 2023. L. Liao, Q. Zhang, R. Wu, and G. Fang. Toward a unified framework for data-efficient evaluation of large language models. arXiv preprint arXiv:2510.04051 , 2025. Z. Liu, J. Zhang, C. Liu, and Y. Zhu. Active testing of large language models via approximate Neyman allocation. 
+
+arXiv preprint arXiv:2605.10075 , 2026. I. Loshchilov and F. Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations , 2019. D. J. C. MacKay. The evidence framework applied to classification networks. Neural Computation , 4(5):720–736, 1992. Y. Noel and B. Dauvier. A Beta item response model for continuous bounded responses. Applied Psychological Measurement , 31(1):47–73, 2007. M. Osborne, R. Garnett, S. Roberts, C. Hart, S. Aigrain, and N. Gibson. Bayesian quadrature for ratios. In 
+
+International Conference on Artificial Intelligence and Statistics , pages 832–840, 2012. F. Pedregosa, G. Varoquaux, A. Gramfort, V. Michel, B. Thirion, O. Grisel, M. Blondel, P. Prettenhofer, R. Weiss, V. Dubourg, J. Vanderplas, A. Passos, D. Cournapeau, M. Brucher, M. Perrot, and É. Duchesnay. Scikit-learn: Machine learning in Python. Journal of Machine Learning Research , 12:2825–2830, 2011. Y. Perlitz, E. Bandel, A. Gera, O. Arviv, L. Ein-Dor, E. Shnarch, N. Slonim, M. Shmueli-Scheuer, and L. Choshen. Efficient benchmarking (of language models). In Conference of the North American Chapter of the Association for Computational Linguistics , pages 2519–2536, 2024. 
+
+> 15 BayesAME: Bayesian Active Model Evaluation
+
+F. M. Polo, L. Weber, L. Choshen, Y. Sun, G. Xu, and M. Yurochkin. tinyBenchmarks: evaluating LLMs with fewer examples. In International Conference on Machine Learning , 2024. C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning . The MIT Press, 2006. D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman. GPQA: A graduate-level google-proof Q&A benchmark. In First Conference on Language Modeling , 2024. G. Saranathan, C. Xu, M. P. Alam, T. Kumar, M. Foltin, S. Y. Wong, and S. Bhattacharya. SubLIME: Subset selection via rank correlation prediction for data-efficient LLM evaluation. In Annual Meeting of the Association for Computational Linguistics , pages 30572–30593, 2025. Z. Sprague, X. Ye, K. Bostrom, S. Chaudhuri, and G. Durrett. MuSR: Testing the limits of chain-of-thought with multistep soft reasoning. In International Conference on Learning Representations , 2024. M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, H. Chung, A. Chowdhery, Q. Le, E. Chi, D. Zhou, and J. Wei. Challenging BIG-Bench tasks and whether chain-of-thought can solve them. In Findings of the Association for Computational Linguistics , pages 13003–13051, 2023. R. Vivek, K. Ethayarajh, D. Yang, and D. Kiela. Anchor points: Benchmarking models with much fewer examples. In Conference of the European Chapter of the Association for Computational Linguistics , pages 1576–1601, 2024. G. Wang, Z. Chen, B. Li, and H. Xu. Cer-Eval: Certifiable and cost-efficient evaluation framework for LLMs. 
+
+arXiv preprint arXiv:2505.03814 , 2025. Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen. MMLU-Pro: A more robust and challenging multi-task language understanding benchmark. In Advances in Neural Information Processing Systems (Track on Datasets and Benchmarks) , 2024. G. Zhang, F. E. Dorner, and M. Hardt. How benchmark prediction from fewer data misses the mark. In Advances in Neural Information Processing Systems , 2025. H. Zhao, M. Li, L. Sun, and T. Zhou. BenTo: Benchmark reduction with in-context transferability. In International Conference on Learning Representations , 2025. J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou. Instruction-following evaluation for large language models. arXiv preprint arXiv:2311.07911 , 2023. 
+
+> 16
+
+BayesAME: Bayesian Active Model Evaluation 
+
+A. BayesAME Details 
+
+A.1. Posterior Distribution Computation 
+
+In this section, we show the equivalence between 𝑝 (𝜃 | 𝑠 C ) and 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ) stated in Section 3.1. Based on this, we derive the two equivalent expressions for 𝜇 𝜃  
+
+> | C
+
+and Σ𝜃  
+
+> | C
+
+given in Eq. (7) and Eq. (8). Recall that ¯𝑠 C1: 𝐵 = (¯𝑠 C1 , . . . , ¯𝑠 C𝐵 ), where ¯𝑠 C𝑏 = 1
+
+> 𝑛 𝑏
+
+Í𝑖 ∈ C 𝑏 𝑠 𝑖 and C𝑏 denotes the subset of 𝑛 𝑏 items in C that are in bucket 𝑏 . As 𝑝 (¯𝑠 C𝑏 | 𝜃 𝑏 ) = N
+
+
+
+𝜃 𝑏 , 𝜎 2 𝑁 𝑏 
+
+> 𝑛 𝑏
+
+
+
+, we have: 
+
+𝑝 (𝑠 C𝑏 | 𝜃 𝑏 ) ∝ exp − 12𝜎 2 𝑁 𝑏 ∑︁ 𝑖 ∈ C 𝑏 
+
+(𝑠 𝑖 − 𝜃 𝑏 )2
+
+!
+
+= exp − 12𝜎 2 𝑁 𝑏 ∑︁ 𝑖 ∈ C 𝑏 
+
+(( 𝑠 𝑖 − ¯𝑠 C𝑏 ) + ( ¯𝑠 C𝑏 − 𝜃 𝑏 )) 2
+
+!
+
+= exp − 12𝜎 2 𝑁 𝑏  ∑︁ 𝑖 ∈ C 𝑏 
+
+(𝑠 𝑖 − ¯𝑠 C𝑏 )2 + 𝑛 𝑏 (¯𝑠 C𝑏 − 𝜃 𝑏 )2
+
+!! 
+
+= exp − 12𝜎 2 𝑁 𝑏 ∑︁ 𝑖 ∈ C 𝑏 
+
+(𝑠 𝑖 − ¯𝑠 C𝑏 )2
+
+!
+
+exp 
+
+
+
+− 𝑛 𝑏 
+
+2𝜎 2 𝑁 𝑏 
+
+(¯𝑠 C𝑏 − 𝜃 𝑏 )2
+
+
+
+∝ exp 
+
+
+
+− 𝑛 𝑏 
+
+2𝜎 2 𝑁 𝑏 
+
+(¯𝑠 C𝑏 − 𝜃 𝑏 )2
+
+
+
+∝ 𝑝 (¯𝑠 C𝑏 | 𝜃 𝑏 ),
+
+where the proportionality is with respect to 𝜃 𝑏 . This results into: 
+
+𝑝 (𝜃 | 𝑠 C ) ∝ 𝑝 (𝜃 ) 𝑝 (𝑠 C | 𝜃 ) = 𝑝 (𝜃 )
+
+> 𝐵
+
+Ö  
+
+> 𝑏 =1; 𝑛 𝑏 >0
+
+𝑝 (𝑠 C𝑏 | 𝜃 𝑏 ) ∝ 𝑝 (𝜃 )
+
+> 𝐵
+
+Ö  
+
+> 𝑏 =1; 𝑛 𝑏 >0
+
+𝑝 (¯𝑠 C𝑏 | 𝜃 𝑏 ) = 𝑝 (𝜃 ) 𝑝 (¯𝑠 C1: 𝐵 | 𝜃 ) ∝ 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ),
+
+which establishes that 𝑝 (𝜃 | 𝑠 C ) = 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ).Having shown this equivalence, we now derive the explicit form for 𝑝 (𝜃 | 𝑠 C ) = 𝑝 (𝜃 | ¯𝑠 C1: 𝐵 ) through the Gaussian conditioning rule, which states that, for a joint distribution 𝑝 (𝑥 1, 𝑥 2), the conditional distribution 𝑝 (𝑥 1 | 𝑥 2) has mean 𝜇 1 + Σ12 Σ−122 (𝑥 2 − 𝜇 2) and covariance Σ11 − Σ12 Σ−122 Σ21 .Recall that 𝐻 C and 𝐷 C denote the submatrices of 𝐻 and 𝐷 formed by the rows corresponding to C. The joint distribution of (𝜃, 𝑠 C ) can be written as: 
+
+ 𝜃 𝑠 C
+
+
+
+∼ N 
+
+  𝜇 𝜃 
+
+𝐻 C 𝜇 𝜃 
+
+
+
+,
+
+ Σ𝜃 Σ𝜃 𝐻 ⊤C
+
+𝐻 C Σ𝜃 𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C
+
+  
+
+.
+
+Applying the Gaussian conditioning rule, we obtain: 
+
+𝜇 𝜃  
+
+> | C
+
+= 𝜇 𝜃 + Σ𝜃 𝐻 ⊤C (𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C )−1 (𝑠 C − 𝐻 C 𝜇 𝜃 ),
+
+Σ𝜃  
+
+> | C
+
+= Σ𝜃 − Σ𝜃 𝐻 ⊤C (𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C )−1 𝐻 C Σ𝜃 ,
+
+which corresponds to Eq. (7). Let Δ be a diagonal noise matrix with entries Δ𝑏,𝑏 = 𝜎 2 𝑁 𝑏 /𝑛 𝑏 . The joint distribution of (𝜃, ¯𝑠 C1: 𝐵 ) can be written as:  𝜃 
+
+¯𝑠 C1: 𝐵 
+
+
+
+∼ N 
+
+  𝜇 𝜃 
+
+𝜇 𝜃 
+
+
+
+,
+
+Σ𝜃 Σ𝜃 
+
+Σ𝜃 Σ𝜃 + Δ
+
+  
+
+.
+
+17 BayesAME: Bayesian Active Model Evaluation 
+
+Applying the Gaussian conditioning rule, we obtain: 
+
+𝜇 𝜃  
+
+> | C
+
+= 𝜇 𝜃 + Σ𝜃 (Σ𝜃 + Δ)−1 (¯𝑠 C1: 𝐵 − 𝜇 𝜃 ),
+
+Σ𝜃  
+
+> | C
+
+= Σ𝜃 − Σ𝜃 (Σ𝜃 + Δ)−1Σ𝜃 ,
+
+which corresponds to Eq. (8). 
+
+A.2. Performance Estimator 
+
+In this section, we discuss the estimator ˆ𝑅 𝐶𝑉 (Eq. (4)) that we use in the non-unique reference regime 𝐵 < 𝑁 − 𝑁 0.To simplify the exposition, we adopt an item-level, rather than bucket-level, description. Specifically, for an item (𝑥 𝑖 , 𝑦 𝑖 ) belonging to bucket 𝑏 , we use 𝜇 𝑖 | C to denote 𝔼 [𝜃 𝑏 | 𝑠 C ]. We can rewrite Eq. (4) at the item-level as: 
+
+ˆ𝑅 CV = 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+ 𝑠 𝑖 − 𝜇 𝑖 | C 
+
+ + 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝜇 𝑗 | C .
+
+This estimator can be seen as an in-sample proxy of the following control variate estimator that uses out-of-sample posteriors: 
+
+ˆ𝑅 CVO = 1
+
+𝑛 ∑︁ 𝑖 ∈ C 
+
+©«
+
+𝑠 𝑖 − 𝜇 𝑖 | C\{ 𝑖 } + 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝜇 𝑗 | C\{ 𝑖 } ª®¬
+
+.
+
+Note that the in-sample proxy estimator avoids the computational bottleneck of recomputing the posterior for every held-out item. 
+
+ˆ𝑅 CVO is unbiased with respect to the random selection of the coreset as shown below. Let C = (𝑖 1, . . . , 𝑖 𝑛 ) be constructed by sampling items uniformly at random with replacement, such that 𝑖 𝑘 ∼ 𝑈 (1, . . . , 𝑁 ). ˆ𝑅 CVO can be expressed as: 
+
+ˆ𝑅 CVO = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+©«
+
+𝑠 𝑖 𝑘 − 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 } + 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝜇 𝑗 | C\{ 𝑖 𝑘 } ª®¬
+
+.
+
+Taking the unconditional expectation with respect to the random selection of the coreset C yields: 
+
+𝔼 [ ˆ𝑅 CVO ] = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+𝔼 [𝑠 𝑖 𝑘 ] − 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+©«
+
+𝔼 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 }
+
+ − 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝔼 𝜇 𝑗 | C\{ 𝑖 𝑘 }
+
+ª®¬
+
+. (10) We first focus on the term 𝔼 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 }
+
+. Using the Law of Total Expectation, we have: 
+
+𝔼 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 }
+
+ = 𝔼 C\{ 𝑖 𝑘 }
+
+𝔼 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 } |C \ { 𝑖 𝑘 }  .
+
+Because 𝑖 𝑘 is drawn independently from the remaining coreset items C \ { 𝑖 𝑘 }, the inner expectation over the uniform draw of 𝑖 𝑘 is exactly the population mean: 
+
+𝔼 𝜇 𝑖 𝑘 | C\{ 𝑖 𝑘 }
+
+ = 𝔼 C\{ 𝑖 𝑘 }
+
+
+
+1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝜇 𝑗 | C\{ 𝑖 𝑘 }
+
+
+
+= 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝔼 𝜇 𝑗 | C\{ 𝑖 𝑘 }
+
+ .
+
+Plugging this into Eq. (10), the second term cancels out, resulting in: 
+
+𝔼 [ ˆ𝑅 CVO ] = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+𝔼 [𝑠 𝑖 𝑘 ] = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+𝔼 C\{ 𝑖 𝑘 } [𝔼 [𝑠 𝑖 𝑘 | C \ { 𝑖 𝑘 }]] = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =1
+
+𝔼 C\{ 𝑖 𝑘 }
+
+
+
+1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝑠 𝑗 
+
+
+
+= 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑗 =1
+
+𝑠 𝑗 = 𝑅. 
+
+Remark : In practice, the coreset is sampled without replacement. This breaks strict independence, introducing a weak dependence between 𝑖 𝑘 and C \ { 𝑖 𝑘 } and yielding a residual bias. However, this value is negligible when 
+
+𝑁 ≫ 1.
+
+> 18 BayesAME: Bayesian Active Model Evaluation
+
+A.3. Stopping Criterion 
+
+Recall that, to monitor posterior uncertainty about the random variable 𝑅 , we consider the width of the 95% credible interval for 𝑅 , which is governed by Var (𝑅 | 𝑠 C ). Crucially, this quantity is not tied to a particular choice of point estimator. This distinction is important in the non-unique reference regime, 𝐵 < 𝑁 − 𝑁 0, where we use the control-variate estimator ˆ𝑅 CV in Eq. (4). Our stopping criterion deliberately separates these two roles: the stability condition (𝑖 ) is applied to the reported estimator ˆ𝑅 CV , whereas the credible-interval condition (𝑖𝑖 ) is applied to the target quantity 𝑅 .A natural alternative would be to define a random variable 𝑅 CV = 1
+
+> 𝑛
+
+Í𝑖 ∈ C 𝑠 𝑖 + Í𝐵 𝑏 =1
+
+ 𝑁 𝑏  
+
+> 𝑁
+
+− 𝑛 𝑏 
+
+> 𝑛
+
+
+
+𝜃 𝑏 and use 
+
+Var (𝑅 CV | 𝑠 C ) in the stopping criterion. However, this variance is not reliable as a measure of uncertainty about 
+
+𝑅 since it vanishes whenever 𝑁 𝑏 /𝑁 = 𝑛 𝑏 /𝑛 , which occurs, e.g., when there is only one bucket. Another possible estimator-specific diagnostic is the posterior MSE, 𝔼 [( 𝑅 − ˆ𝑅 CV )2 | 𝑠 𝐶 ] = Var (𝑅 | 𝑠 C ) + ( ˆ𝑅 Bayes − ˆ𝑅 CV )2. This is a valid posterior risk criterion under squared-error loss: the first term captures residual uncertainty about 𝑅 ,while the second captures the conditional bias of 𝑅 CV relative to the posterior mean. We use Var (𝑅 | 𝑠 C ) as the default uncertainty measure because it preserves a direct credible-interval interpretation for the benchmark performance and avoids conflating posterior uncertainty with the deliberate correction introduced by the control-variate estimator. The estimator-specific discrepancy is instead monitored through the stability condition 
+
+(𝑖 ).
+
+A.4. Hyperparameter Optimization Single-target Setting We tune the hyperparameters 𝛼 and 𝛽 , which govern the prior covariance Σ𝜃 , by minimizing the negative log-marginal likelihood L( 𝛼, 𝛽 ) of the coreset scores. As established in Appendix A.1, the conditional likelihoods 𝑝 (𝑠 C | 𝜃 ) and 𝑝 (¯𝑠 C1: 𝐵 | 𝜃 ) are proportional up to a constant independent of 𝜃 . As a result, their negative log-marginal likelihoods differ only by a constant independent of 𝛼 and 𝛽 . Therefore, to evaluate the objective efficiently, we define L( 𝛼, 𝛽 ) as: 
+
+L( 𝛼, 𝛽 ) =
+
+( 12 (𝑠 C − 𝐻 C 𝜇 𝜃 )⊤ (𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C )−1 (𝑠 C − 𝐻 C 𝜇 𝜃 ) + 12 log |𝐻 C Σ𝜃 𝐻 ⊤C + 𝐷 C | if 𝑛 < 𝐵  
+
+> 12
+
+(¯𝑠 C1: 𝐵 − 𝜇 𝜃 )⊤ (Σ𝜃 + Δ)−1 (¯𝑠 C1: 𝐵 − 𝜇 𝜃 ) + 12 log |Σ𝜃 + Δ| if 𝑛 ≥ 𝐵 (11) For additional efficiency and to maintain numerical stability, we employ a Cholesky decomposition of the respective covariance matrix. We perform this minimization via an L-BFGS-B optimizer (Byrd et al., 1995), constraining the parameters with a small lower bound of 10 −5 to ensure the covariance matrix remains positive definite. 
+
+Multi-target Setting We tune the hyperparameters 𝛼 𝑙 and 𝛽 𝑙 which govern the prior covariance Σ𝜃,𝑙 , as well as the model-specific weights {𝑤 𝑡 𝑙 }𝐾 𝑡  
+
+> 𝑡 =1
+
+for each 𝑙 = 1, . . . , 𝐿 . Additionally, we learn the noise variance 𝜎 2 instead of keeping it fixed as for the single-target setting. This turns minimizing the negative log-marginal likelihood into a highly non-convex, joint optimization problem. Consequently, instead of L-BFGS-B, we employ AdamW (Loshchilov and Hutter, 2019). AdamW leverages momentum to successfully navigate complex loss surfaces and provides adaptive, per-parameter learning rates, which are essential for handling parameters that operate on fundamentally different scales. Because the hyperparameters naturally stabilize as the coreset grows, we deploy an adaptive computational schedule that executes 500 gradient steps during the initial active learning iterations and progressively decreases this count in later iterations to significantly reduce computational overhead. To ensure numerical stability throughout the training process, we clip the values of 𝛼 𝑙 , 𝛽 𝑙 , and 𝜎 2 after each update, enforcing a lower bound of 10 −4.
+
+> 19 BayesAME: Bayesian Active Model Evaluation
+
+B. BayesAME Single-target Variants 
+
+B.1. Batch Selection Strategies 
+
+We extend the approach from the main text by introducing selection strategies that identify an optimal batch of items 𝐴 , rather than a single item. We focus on the nearly unique reference regime 𝐵 ≥ 𝑁 − 𝑁 0. To simplify the presentation, we denote Σ| C = 𝐻 Σ𝜃  
+
+> | C
+
+𝐻 ⊤ + 𝐷 , which in the case 𝐵 = 𝑁 simplifies to Σ| C = Σ𝜃  
+
+> | C
+
++ 𝜎 2 𝐼 𝑁 .The extension of the expected information gain Eq. (6) from one item to a batch of items 𝐴 is given by: 
+
+𝛼 IG ( 𝐴 ) = H ( 𝑅 | 𝑠 C ) − 𝔼 𝑠 𝐴 [H ( 𝑅 | 𝑠 C , 𝑠 𝐴 )] 
+
+= − 12 log 
+
+
+
+1 − 1
+
+𝑁 2 Var (𝑅 | 𝑠 C ) (Σ𝐴,𝑈 | C 1|𝑈 | )⊤Σ−1 
+
+> 𝐴,𝐴 | C
+
+(Σ𝐴,𝑈 | C 1|𝑈 | )
+
+
+
+,
+
+where Σ𝐴,𝑈 | C denotes the submatrix of Σ| C of columns and rows corresponding to 𝐴 and the unevaluated set 
+
+𝑈 = 𝐸 \ C , respectively, and 1|𝑈 | is a |𝑈 |-dimensional vector of ones. A fundamental property of Gaussian conditioning where the noise is not a function of the score value implies that Σ| C depends only on the score indexes rather than their actual values. This means that batch selection strategies simplify to a purely combinatorial problem of identifying an optimal batch of indices. Once this optimal batch is identified, the specific sequence in which these items are evaluated is arbitrary. Because the expected information gain is strictly monotonically increasing with respect to the variance reduction, maximizing 𝛼 IG ( 𝐴 ) is equivalent to maximizing the variance reduction term: 
+
+𝛽 ( 𝐴 ) = 1
+
+𝑁 2 (Σ𝐴,𝑈 | C 1|𝑈 | )⊤Σ−1 
+
+> 𝐴,𝐴 | C
+
+(Σ𝐴,𝑈 | C 1|𝑈 | ). (12) Therefore, for a batch 𝐴 of specified size | 𝐴 | = 𝑘 , we obtain the following optimization problem: 
+
+𝐴 ★ = argmax 𝐴 ⊂𝑈, | 𝐴 |=𝑘 𝛽 ( 𝐴 ). (13) 
+
+Batch Size | 𝐴 | = 2 When | 𝐴 | = 2, we can derive a closed-form expression of 𝛽 ( 𝐴 = {𝑖, 𝑗 }) that can be efficiently vectorized: 
+
+𝛽 ({ 𝑖, 𝑗 }) = 1
+
+𝑁 2
+
+ 𝑇 𝑖 𝑇 𝑗 
+
+ Σ𝑖,𝑖 | C Σ𝑖, 𝑗 | C 
+
+Σ𝑖, 𝑗 | C Σ𝑗, 𝑗 | C 
+
+ −1 𝑇 𝑖 
+
+𝑇 𝑗 
+
+
+
+= 1
+
+𝑁 2
+
+𝑇 2 
+
+> 𝑖
+
+Σ𝑗, 𝑗 | C + 𝑇 2 
+
+> 𝑗
+
+Σ𝑖,𝑖 | C − 2𝑇 𝑖 𝑇 𝑗 Σ𝑖, 𝑗 | C 
+
+Σ𝑖,𝑖 | C Σ𝑗, 𝑗 | C − Σ2
+
+> 𝑖, 𝑗 | C
+
+,
+
+where 𝑇 𝑖 = Í𝑘 ∈𝑈 Σ𝑖,𝑘 | C and similarly for 𝑇 𝑗 .
+
+Batch Size | 𝐴 | > 2 As the batch size | 𝐴 | grows, an exhaustive search over all  |𝑈 || 𝐴 |
+
+ subsets requires O(| 𝑈 || 𝐴 | | 𝐴 |3)
+
+operations, which quickly becomes computationally infeasible even for moderate |𝑈 |. We address this by replacing the exhaustive search with an approximation algorithm that scales linearly with |𝑈 |. Specifically, we use heuristic warm-start strategies to identify initial candidate batches, followed by a combination of local search and Sequential Monte Carlo (SMC). Coupling local search with SMC prevents the algorithm from getting stuck in local optima: we maintain a population of candidate batches, apply local search to each independently, and resample them according to their fitness 𝛽 ( 𝐴 ). We use the following warm-start strategies: 
+
+• LARS : Solve an ℓ1-penalized continuous relaxation of Eq. (13). In particular, for 𝑤 ∈ ℝ𝑁 define the following function: 
+
+𝑔 (𝑤 ) = 12 𝑤 ⊤Σ| C 𝑤 − 𝑤 ⊤ 𝑣, 
+
+where 𝑣 = Σ𝐸,𝑈 | C 1|𝑈 | . Fix a subset 𝐴 and let 𝑤 𝐴 𝑐 = 0. The gradient of 𝑔 with respect to 𝑤 𝐴 is 
+
+∇𝑤 𝐴 𝑔 = Σ𝐴,𝐴 | C 𝑤 𝐴 − 𝑣 𝐴 ,
+
+> 20 BayesAME: Bayesian Active Model Evaluation
+
+where 𝑣 𝐴 = Σ𝐴,𝑈 | C 1|𝑈 | . Setting the gradient to zero yields the optimizer 𝑤 ★𝐴 = Σ−1 
+
+> 𝐴,𝐴 | C
+
+𝑣 𝐴 . Substituting 𝑤 ★𝐴 
+
+into 𝑔 gives 
+
+𝑔 (𝑤 ★𝐴 ) = − 12 𝑣 ⊤ 
+
+> 𝐴
+
+Σ−1 
+
+> 𝐴,𝐴 | C
+
+𝑣 𝐴 = − 𝑁 2
+
+2 𝛽 ( 𝐴 ).
+
+Therefore, maximizing 𝛽 ( 𝐴 ) over all subsets 𝐴 of size 𝑘 is equivalent to solving the ℓ0-constrained quadratic program 
+
+min 
+
+> 𝑤 ∈ℝ𝑁
+
+12 𝑤 ⊤Σ| C 𝑤 − 𝑤 ⊤ 𝑣 subject to ∥𝑤 ∥0 ≤ 𝑘. 
+
+Since this problem is NP-hard, we instead consider the standard ℓ1 relaxation 
+
+min 
+
+> 𝑤 ∈ℝ𝑁
+
+12 𝑤 ⊤Σ| C 𝑤 − 𝑤 ⊤ 𝑣 + 𝜆 ∥𝑤 ∥1, 𝜆 > 0.
+
+To solve this, we apply the least angle regression (LARS) algorithm to efficiently extract an initial active set of | 𝐴 | items. 
+
+• DPP : Sample multiple diverse initial batches using a 𝑘 -determinantal point process ( 𝑘 -DPP) (Kulesza and Taskar, 2011) restricted to size | 𝐴 |, using the posterior covariance matrix of the candidates as the likelihood kernel. 
+
+• Clust : Perform 𝐾 -means clustering on the reference model score vectors 𝜙 𝑖 to partition the candidate pool into | 𝐴 | distinct clusters. Generate multiple initial sets by uniformly sampling one item from each cluster. Crucially, during the local search phase, evaluating a neighbor where only a single item in the candidate batch is swapped can be computed highly efficiently using rank-2 updates. Suppose we wish to recompute the inverse in Eq. (12) after a swap. Let 𝑀 𝐴 = Σ𝐴,𝐴 | C be the original | 𝐴 | × | 𝐴 | matrix and 𝑀 ′ 
+
+> 𝐴
+
+= Σ ˜𝐴, ˜𝐴 | C be the updated matrix. If the 𝑚 -th item is swapped from 𝐴 to ˜𝐴 , then 𝑀 𝐴 and 𝑀 ′ 
+
+> 𝐴
+
+differ only by their 𝑚 -th row and column. Let 
+
+𝑒 𝑚 ∈ ℝ| 𝐴 | denote the 𝑚 -th standard basis vector (a vector of zeros with a 1 at the 𝑚 -th coordinate). Let 𝑐 𝑚 be the 𝑚 -th column of 𝑀 𝐴 and ˜𝑐 𝑚 be the corresponding column in 𝑀 ′
+
+> 𝐴
+
+. Defining the difference vector 𝑑 = ˜𝑐 𝑚 − 𝑐 𝑚 ,we can express the update as: 
+
+𝑀 ′ 
+
+> 𝐴
+
+= 𝑀 𝐴 + 𝑑𝑒 ⊤ 
+
+> 𝑚
+
++ 𝑒 𝑚 𝑑 ⊤ − 𝑑 𝑚 𝑒 𝑚 𝑒 ⊤
+
+> 𝑚
+
+,
+
+where 𝑑 𝑚 denotes the 𝑚 -th coordinate of 𝑑 . This can be factorized into 𝑀 ′ 
+
+> 𝐴
+
+= 𝑀 𝐴 + 𝑈𝑉 ⊤, where 
+
+𝑈 = 𝑒 𝑚 𝑑 − 12 𝑑 𝑚 𝑒 𝑚 
+
+ , 𝑉 = 𝑑 − 12 𝑑 𝑚 𝑒 𝑚 𝑒 𝑚 
+
+ .
+
+This rank-2 factorization allows us to apply the Woodbury matrix identity: 
+
+(𝑀 𝐴 + 𝑈𝑉 ⊤)−1 = 𝑀 −1 
+
+> 𝐴
+
+− 𝑀 −1 
+
+> 𝐴
+
+𝑈 (𝐼 2 + 𝑉 ⊤ 𝑀 −1 
+
+> 𝐴
+
+𝑈 )−1𝑉 ⊤ 𝑀 −1 
+
+> 𝐴
+
+.
+
+Because 𝑉 ⊤ 𝑀 −1 
+
+> 𝐴
+
+𝑈 is only a 2 × 2 matrix, evaluating this update is extremely fast. We can plug this inverted matrix directly back into Eq. (12), reducing the computational complexity of evaluating a neighbor to just 
+
+O(| 𝐴 |2) instead of O(| 𝐴 |3).Once the optimal batch 𝐴 ★ is found, we can proceed in two different ways: (i) Myo : We evaluate the target model on all items in 𝐴 ★ simultaneously. Batch evaluation allows us to maximize throughput when multiple evaluations can be processed in parallel; or (ii) Non-Myo : We select a single item from it at random. Because this item is selected based on an optimal future horizon rather than just the immediate next step, this renders the active selection non-myopic. Figure 4 presents the RMSE Log , RMSE Gain , and Cost-Accuracy Trade-Off for GPQA with binary (left two columns) and continuous (right two columns) scores. We evaluate the selection strategies outlined above using batch sizes of | 𝐴 | = 2 and | 𝐴 | = 5. We observe that the overall performance of these batch approaches is similar to that of the single-item selection strategy. Table 2 compares the Evaluation-Weighted Integrated RMSE achieved by BayesAME with single-candidate selection, random selection, bath selection with | 𝐴 | = 2 using both myopic ( Myo ) and non-myopic (Non-Myo ) criteria, and Bayes-AIPW across the different benchmarks. Consistent with the results of Figure 4, BayesAME with batch size | 𝐴 | = 2 exhibits performance similar to that of myopic single-candidate selection under both the myopic and non-myopic variants. 
+
+> 21
+
+BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 50% 90% 20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+620 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+Interpolation Extrapolation Interpolation Extrapolation 50% 90% 70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME |A|=2 Myo 
+
+BayesAME |A|=2 Non-Myo 
+
+BayesAME |A|=5 Myo LARS 
+
+BayesAME |A|=5 Myo DPP 
+
+BayesAME |A|=5 Myo Clust 
+
+BayesAME-RS 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Figure 4 | Single-target Setting. GPQA with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top two rows) and RMSE Gain (central two rows), and Cost-Accuracy Trade-Off 
+
+(bottom two rows) across 50%, and 90% of reference models (percentages with unique reference scores 𝐵 = 𝑁 ). 
+
+B.2. Metadata-Weighted Prior Distribution 
+
+When rich metadata (such as, model size, training data, or hyperparameter configurations) is available for both the reference and target models, we can formulate a weighted prior distribution. Specifically, we define a weight vector 𝑤 = (𝑤 1, . . . , 𝑤 𝐾 𝑟 ), where 𝑤 𝑘 ≥ 0 captures the prior positive correlation between reference model 
+
+𝑘 and the target model, with Í𝐾 𝑟 
+
+𝑘 =1 𝑤 𝑘 = 1. We then consider the prior distribution 𝑝 (𝜃 ) = N ( 𝜇 𝜃 , Σ𝜃 ) with 
+
+𝜇 𝜃 𝑏 = 𝜙 ⊤
+
+𝑏 𝑤, Σ𝜃 𝑏,𝑏 ′ = 𝛼 exp 
+
+
+
+− 𝛽 𝐾 𝑟 
+
+(𝜙 𝑏 − 𝜙 𝑏 ′ )⊤𝑊 (𝜙 𝑏 − 𝜙 𝑏 ′ )
+
+
+
+,
+
+where 𝑊 = diag (𝑤 ). In practice, public leaderboards rarely provide sufficiently detailed metadata to calibrate these weights reliably, so we assign uniform weights across the reference models 𝑤 𝑘 = 1/𝐾 𝑟 .
+
+22 BayesAME: Bayesian Active Model Evaluation                                                                                                                                              
+
+> Benchmarks BayesAME BayesAME-RS BayesAME |A|=2 Myo BayesAME |A|=2 Non-Myo Bayes-AIPW
+> Binary
+> GPQA Interpolation 61.54 66.38 62.08 61.51 67.21 Extrapolation 68.91 72.65 69.43 69.50 73.41
+> MMLU-Pro Interpolation 30.18 30.18 --30.68 Extrapolation 37.20 37.20 --37.69
+> BBH Interpolation 31.70 36.35 30.51 30.98 35.54 Extrapolation 38.35 42.02 38.47 38.66 41.34
+> ARC-Challenge Interpolation 36.53 36.53 --36.68 Extrapolation 36.56 36.56 --38.03
+> MuSR Interpolation 47.86 47.86 --49.18 Extrapolation 54.19 54.19 --56.72
+> IFEval Interpolation 49.53 56.14 49.99 50.00 56.71 Extrapolation 58.08 58.08 --60.52
+> Continuous
+> GPQA Interpolation 30.58 34.42 30.84 29.88 35.21 Extrapolation 40.40 40.75 41.17 40.76 46.77
+> MMLU-Pro Interpolation 13.11 17.10 13.14 13.32 17.19 Extrapolation 26.82 31.10 26.24 26.60 31.33
+> BBH Interpolation 13.04 17.54 12.81 13.13 18.01 Extrapolation 29.80 35.57 30.62 30.49 33.64
+> ARC-Challenge Interpolation 26.04 26.47 --26.19 Extrapolation 33.16 33.16 --33.05
+> MuSR Interpolation 27.83 33.42 27.94 27.43 34.34 Extrapolation 36.96 42.56 35.70 36.57 43.69
+> Natural QA Openbook Interpolation 28.26 29.68 28.41 28.89 29.12 Extrapolation 20.83 28.36 20.43 20.79 27.70
+
+Table 2 | Evaluation-Weighted Integrated RMSE for 50% reference models. A dash - denotes that we are in a non-unique reference regime. Therefore, selection defaults to random and the entry is omitted. 
+
+B.3. Logit-Normal Prior Distribution 
+
+While achieving strong empirical performance, a Gaussian prior distribution on 𝜃 is not the best choice for binary and bounded continuous scores from a modeling viewpoint, as it assigns positive probability mass outside the true support. Below, we describe more appropriate alternative formulations that we considered. 
+
+Case 𝑠 𝑖 ∈ [ 0, 1] We introduce a logit-normal model that respects the support of scores. Specifically, we map both the latent abilities and the observed scores to the unconstrained real line using the logit transformation. We define the latent variable vector 𝑓 = ( 𝑓 1, . . . , 𝑓 𝐵 ), where 𝑓 𝑏 = logit (𝜃 𝑏 ) = ln 
+
+ 𝜃 𝑏 
+
+1−𝜃 𝑏 
+
+
+
+, and assign a Gaussian prior distribution on it. The scores are similarly transformed, and we assume a Gaussian conditional distribution 
+
+𝑝 (logit (𝑠 𝑖 ) | 𝑓 𝑏 ) = N ( 𝑓 𝑏 , 𝑁 𝑏 𝜎 2) for an item 𝑖 belonging to bucket 𝑏 . The posterior distribution of 𝑓 = ( 𝑓 1, . . . , 𝑓 𝐵 )
+
+conditioned on 𝑠 C is given by: 
+
+𝑝 ( 𝑓 | 𝑠 C ) ∝ 𝑝 ( 𝑓 )
+
+Ö
+
+> 𝑖
+
+∈ C 
+
+𝑝 (logit (𝑠 𝑖 ) | 𝑓 ).
+
+Under this specification, 𝑝 ( 𝑓 | 𝑠 C ) is itself Gaussian and inference over 𝑓 remains fully tractable. 
+
+Case 𝑠 𝑖 ∈ { 0, 1} Similarly to above, consider the latent variable vector 𝑓 = ( 𝑓 1, . . . , 𝑓 𝑏 ), where 𝑓 𝑏 = logit (𝜃 𝑏 ),and assign a Gaussian prior distribution on it. In the case of binary responses, a more appropriate model would use a Bernoulli likelihood of the form 
+
+𝑝 (𝑠 𝑖 | 𝑓 ) = 𝜎 ( 𝑓 𝑏 )𝑠 𝑖 (1 − 𝜎 ( 𝑓 𝑏 )) 1−𝑠 𝑖 ,
+
+for an item 𝑖 belonging to bucket 𝑏 . Then, the posterior distribution of 𝑓 = ( 𝑓 1, . . . , 𝑓 𝐵 ) conditioned on 𝑠 C is given by: 
+
+𝑝 ( 𝑓 | 𝑠 C ) ∝ 𝑝 ( 𝑓 )
+
+Ö
+
+> 𝑖
+
+∈ C 
+
+𝑝 (𝑠 𝑖 | 𝑓 ).
+
+23 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 50% 90% 0 20 40 60 80 100                                                    
+
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAME-Logit
+> BayesAME-Logit-RS
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAME-Logit
+> BayesAME-Logit-RS
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAME-Logit
+> BayesAME-Logit-RS
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> BayesAME
+> BayesAME-RS
+> BayesAME-Logit
+> BayesAME-Logit-RS
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 020 40 60 80 100
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+
+Figure 5 | Single-target Setting. GPQA with binary scores (left two columns) and continuous scores (right two columns). RMSE Log across 50% and 90% of reference models. In this case, we can resort to variational inference or a Laplace approximation (Rasmussen and Williams, 2006) to compute the posterior. However, we are interested in the posterior of 𝜃 = 𝜎 ( 𝑓 ) = (1 + 𝑒 − 𝑓 )−1, conditioned on 𝑠 C . The posterior mean can be computed as: 
+
+𝔼 [𝜃 𝑏 | 𝑠 C ] =
+
+∫
+
+𝜎 ( 𝑓 𝑏 ) 𝑝 ( 𝑓 | 𝑠 C ) d 𝑓 , 
+
+which does not admit a closed-form solution because of the nonlinearity of 𝜎 . We consider three strategies for approximating this integral. 
+
+• Monte Carlo estimation. The main drawback is that obtaining accurate estimates for all 𝑁 items requires a large number of samples, which is prohibitive inside the sequential active learning loop. 
+
+• Other numerical integration methods. We can approximate 𝜎 ( 𝑓 𝑏 ) in the integral with a rescaled probit function that has the same slope at the origin (MacKay, 1992), obtaining: 
+
+𝔼 [𝜃 𝑏 | 𝑠 C ] ≈ 𝜎 
+
+
+
+𝔼 [ 𝑓 𝑏 | 𝑠 C ]√︁ 1 + 𝜋 Var ( 𝑓 𝑏 |𝑠 C )/ 8
+
+
+
+.
+
+• Linear approximation. Following Osborne et al. (2012), we linearize the logistic term around a reference point 𝑓 𝑏, 0, that is, 
+
+𝜎 ( 𝑓 𝑏 ) = 𝜎 ( 𝑓 𝑏, 0) + 𝜎 ( 𝑓 𝑏, 0)( 1 − 𝜎 ( 𝑓 𝑏, 0))( 𝑓 𝑏 − 𝑓 𝑏, 0)
+
+Under this approximation, the posterior mean of 𝜃 admits a closed-form expression. To select the reference point, we introduce an auxiliary multivariate Gaussian model in the original space and set 𝜎 ( 𝑓 𝑏, 0) to be its posterior mean given 𝑠 C , i.e., 𝜎 ( 𝑓 𝑏, 0) = 𝔼 [𝜃 𝑏 | 𝑠 C ], clipping the value to [0, 1] if necessary to remain within the valid range. Although this auxiliary Gaussian model is not appropriate as it does not have the correct range, it is used solely to inform the choice of 𝑓 𝑏, 0.While these alternative formulations offer a more principled treatment of the score support, they require approximate inference at every step and introduce substantial computational overhead. In practice, we found that these approximations resulted in worse performance. For example, Figure 5 compares BayesAME 
+
+and BayesAME-RS with their corresponding versions using logit-normal models ( BayesAME-Logit and 
+
+BayesAME-Logit-RS ) on GPQA for both binary and continuous scores, using the linear approximation described above to derive the posterior for 𝜃 . For both settings and regardless of the selection strategy, 
+
+BayesAME and BayesAME-RS outperform the logit-normal formulation. 
+
+24 BayesAME: Bayesian Active Model Evaluation 
+
+C. Experimental Details and Additional Results 
+
+C.1. Implementations Details 
+
+BayesAME For the single-target setting, we use Algorithm 1 with 𝜎 2 = 10 −4 when 𝐵 ≥ 𝑁 − 𝑁 0 and 𝜎 2 = 10 −1
+
+otherwise, 𝑁 0 = 10 , 𝑊 = 30 . As described in Appendix A.4, optimization is performed using L-BFGS-B with  
+
+> 𝛼 0
+
+= 𝛽 0 = 1, and 𝐹 = 50 .For the multi-target setting, we set 𝑁 0 = 10 , and 𝑊 = 30 . Of the 𝐿 covariances, half are squared exponential (Eq. (1)) and the rest are Matérn-3/2. As described in Appendix A.4, optimization is performed using AdamW, with 𝛼 𝑙 and 𝛽 𝑙 initialized to 1, each 𝑤 𝑡 𝑖 to a sample from N ( 0, 0.01 ), and 𝜎 2 to 0.1 for binary scores and to 0.01 
+
+for continuous scores. We use 𝐹 = 50 , and learning rate 𝜂 = 0.01 for binary scores and 𝜂 = 0.001 for continuous scores. We set the margin 𝑁 0 = 10 to safely handle regimes where reference scores are nearly unique across items. Empirically, we identified a specific failure mode for active selection: when almost all items have unique combinations of reference scores (effectively forming singleton buckets), but one single bucket contains a significantly larger number of items, the active selection biases the posterior estimation and degrades performance. Enforcing 𝑁 0 = 10 prevents the algorithm from relying on active selection in this skewed regime, yielding stable results across all scenarios considered in this work. While fixing 𝑁 0 = 10 serves as a safe value, because the total number of buckets and the exact distribution of items across them are fully known to the algorithm, a more sophisticated future approach could explicitly incorporate this distributional information to set more suitable, benchmark-specific values. We conjecture that larger threshold values may be admissible when bucket sizes are strictly balanced, as the observed estimation bias appears to be driven by the presence of a single, severely unbalanced bucket. When selecting items in batches, we scale the window size 𝑊 proportionally. Specifically, for a batch size |𝐵 |,we set 𝑊 = 30 /| 𝐵 |.
+
+Baselines For Bayes-AIPW , Bayes-RS-Learn , and Seq-APW , we adapt the implementations of AIPW ,
+
+Random-Sampling-Learn , and APW , respectively, provided by Zhang et al. (2025) in https://github.com /socialfoundations/benchmark-prediction . In Bayes-AIPW and Bayes-RS-Learn , we replace the linear ridge regression with its Bayesian counterpart as implemented in scikit-learn library using the default setting (Pedregosa et al., 2011). For ProEval , we use the implementation provided by Huang et al. (2026) in https://github.com/google-deepmind/proeval . For IRT, we implement the binary and continuous approaches based on the methodology outlined in Polo et al. (2024) and Chen et al. (2019), respectively. 
+
+C.2. Additional Benchmark Details 
+
+For BBH, we only consider a subset of scenarios: temporal sequences, salient translation error detection, tracking shuffled objects (seven objects), geometric shapes, and reasoning about colored objects. For MMLU-Pro, we also restrict our evaluation to a subset of subjects, namely business and law, resulting in a total of 1890 items. 
+
+C.3. Additional Results Single Target Setting 
+
+Figure 6 shows that our Bayesian extension of AIPW matches or outperforms the original method of Zhang et al. (2025). We present extended results for all benchmarks considered. To facilitate navigation of the plots, Table 3 summarizes the figures corresponding to each benchmark and evaluation metric. 
+
+> 25
+
+BayesAME: Bayesian Active Model Evaluation 
+
+Plot Type GPQA MMLU-Pro BBH ARC-Challenge MuSR IFEval Natural QA Openbook RMSE Log , RMSE Gain & Cost-Accuracy Tradeoff 7 8 9 10 11 12 12 
+
+Spearman Correlation 13 – 13 – – – –
+
+Table 3 | Figure index for the extended experimental results across all benchmarks. 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80                                  
+
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 620 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80                                  
+
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 620 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> BayesAIPW
+> AIPW
+> RS-Mean
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 20 40 60 80
+> 2
+> 1
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+
+Figure 6 | Single-target Setting. GPQA (top three rows) and MMLU-Pro (bottom three rows) with binary scores (left two columns) and continuous scores (right two columns). RMSE Log for the AIPW ablation study across varying proportions of reference models (10%, 50%, and 90%) ablation for AIPW. 
+
+C.4. Multi-target Setting 
+
+Figure 14 show the results comparing BayesAME Multi-target with BayesAME Single-target on GPQA using both binary and continuous scores. Figure 15 reports results for the alternative selection strategy introduced in Section 3.2, which selects items based on the average marginalized information gain across target models. 
+
+26 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+620 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+20 40 60 80 
+
+2
+
+1
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+80 85 90 95 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+Figure 7 | Single-target Setting. GPQA with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off 
+
+(bottom three rows) across varying proportions of reference models. 
+
+27 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+20 40 60 80 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+Figure 8 | Single-target Setting. MMLU-Pro with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off (bottom three rows) across varying proportions of reference models. 
+
+28 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Figure 9 | Single-target Setting. BBH with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off 
+
+(bottom three rows) across varying proportions of reference models. 
+
+29 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+Figure 10 | Single-target Setting. ARC-Challenge with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off (bottom three rows) across varying proportions of reference models. 
+
+30 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+20 40 60 80 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+70 75 80 85 90 95 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+Figure 11 | Single-target Setting. MuSR with binary scores (left two columns) and continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off 
+
+(bottom three rows) across varying proportions of reference models. 
+
+31 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 10 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+ProEval 
+
+Seq-APW 
+
+Bayes-RS-Learn 
+
+IRT 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+0 20 40 60 80 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+20 40 60 80 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+12 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 
+
+70 75 80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+20 30 40 50 60 70 80 90 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Figure 12 | Single-target Setting. IFEval with binary scores (left two columns) and Natural QA Openbook 
+
+with continuous scores (right two columns). RMSE Log (top three rows), RMSE Gain (middle three rows), and Cost-Accuracy Trade-Off (bottom three rows) across varying proportions of reference models. 
+
+32 BayesAME: Bayesian Active Model Evaluation 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Interpolation Extrapolation Interpolation Extrapolation 10% 50% 90% 0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+BayesAME 
+
+BayesAME-RS 
+
+BayesAIPW 
+
+RS-Mean 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+0 20 40 60 80 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+Figure 13 | Single-target Setting. GPQA (top three rows) and BBH (bottom three rows) with binary scores (left two columns) and continuous scores (right two columns). Spearman’s rank correlation across varying proportions of reference models. 
+
+33 BayesAME: Bayesian Active Model Evaluation 
+
+Low correlation High correlation Low correlation High correlation 10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 
+
+10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 
+
+10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 10 20 30 40 50 60 70 80 90 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 30 40 50 60 70 80 90 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+810 20 30 40 50 60 70 80 90 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 20 30 40 50 60 70 80 90 
+
+2
+
+0
+
+2
+
+4
+
+6
+
+880 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+80 85 90 95 100 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+Figure 14 | Multiple-target Setting. GPQA with binary scores (left two columns) and with continuous scores (right two columns). The rows represent RMSE Log , RMSE Gain , and Cost-Accuracy Trade-Off ,respectively. We compare the multitarget method against methods that do not model correlations across targets. 
+
+Low correlation High correlation Low correlation High correlation 10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME Multi-target Avg. Marg. IG 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 
+
+10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME Multi-target Avg. Marg. IG 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME Multi-target Avg. Marg. IG 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 
+
+10 20 30 40 50 60 70 80 90 100 
+
+10 2
+
+10 1
+
+10 0
+
+10 1
+
+BayesAME Single-target 
+
+BayesAME Multi-target 
+
+BayesAME Multi-target Avg. Marg. IG 
+
+BayesAME-RS Single-target 
+
+BayesAIPW 
+
+RS-Mean 10 20 30 40 50 60 70 80 90 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+10 20 30 40 50 60 70 80 90 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 10 20 30 40 50 60 70 80 90 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+10 20 30 40 50 60 70 80 90 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+10 80 85 90 95 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+80 85 90 95 100 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+50 60 70 80 90 100 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+Figure 15 | Multiple-target Setting. GPQA with binary scores (left two columns) and with continuous scores (right two columns). The rows represent RMSE Log , RMSE Gain , and Cost-Accuracy Trade-Off ,respectively. We compare the different selection strategies in the multitarget setting. 
+
+34
