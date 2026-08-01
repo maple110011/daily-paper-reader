@@ -6,28 +6,27 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-31
-- 运行时间：2026-07-31 21:46:18 UTC
+- 最新运行日期：2026-08-01
+- 运行时间：2026-08-01 20:26:14 UTC
 - 运行状态：成功
 - 本次总论文数：2
-- 精读区：1
-- 速读区：1
+- 精读区：0
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读一篇高分论文关注可信深度学习的不确定性量化，另速读一篇概率测度优化加速方法。  
-最值得看的是不确定性量化方向，获9/10分，是提升模型可靠性的核心。  
-建议优先精读该论文，并顺带了解优化加速概念即可。
-- 详情：[/202607/31/README](/202607/31/README)
+今日速读2篇，暂无精读；重点关注数据驱动优化与YOLO姿态估计的不确定性量化。最值得看的是多阶段约束优化框架（7.0分），其次为YOLO-Pose的后验分布方法（6.0分）。建议普通读者优先浏览优化框架的适用场景，再结合姿态模型的不确定性提升落地可靠性。
+- 详情：[/202608/01/README](/202608/01/README)
 
 ### 精读区论文标签
-1. [Uncertainty quantification for trustworthy deep learning: Methods and measures](/202607/31/2607.28248v1-uncertainty-quantification-for-trustworthy-deep-learning-methods-and-measures)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：不确定性量化综述，包含近似贝叶斯方法与贝叶斯神经网络
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Nesterov acceleration in optimizing over probability measures](/202607/31/2607.23008v1-nesterov-acceleration-in-optimizing-over-probability-measures)  
+1. [A Multi-stage Constrained Optimization Framework for Data-driven Problems](/202608/01/2607.23480v1-a-multi-stage-constrained-optimization-framework-for-data-driven-problems)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：使用熵约束变分自编码器这一贝叶斯深度生成模型处理数据驱动约束优化
+2. [From Keypoints to Predictive Distributions: Post-Hoc Uncertainty for YOLO-Pose Models](/202608/01/2607.26921v1-from-keypoints-to-predictive-distributions-post-hoc-uncertainty-for-yolo-pose-models)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：概率测度空间优化，可应用于变分推断
+   evidence：面向深度关键点模型给出校准预测分布与不确定性估计，与不确定性量化需求相符
 
 
 <div class="dpr-home-promo-card">
