@@ -6,43 +6,39 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-04
-- 运行时间：2026-08-04 21:47:32 UTC
+- 最新运行日期：2026-08-05
+- 运行时间：2026-08-05 21:37:14 UTC
 - 运行状态：成功
-- 本次总论文数：7
-- 精读区：3
+- 本次总论文数：5
+- 精读区：1
 - 速读区：4
 
 ### 今日简报（AI）
-今日精读聚焦光子贝叶斯神经网络与递归高斯过程，探讨贝叶斯计算的硬件实现与神经机制。  
-最值得关注10分满分的《Constrained Co-Design for Photonic Bayesian Neural Networks》，以及8分的《Recursive Gaussian Processes and the Bayesian Brain》，前者是光子芯片上的贝叶斯推理设计，后者连接了递归高斯过程与大脑认知。  
-建议从贝叶斯神经网络的硬件实现入手，结合大脑中的递归机制，理解高效概率计算的实际路径。
-- 详情：[/202608/04/README](/202608/04/README)
+今日聚焦贝叶斯推断前沿，精读分治式摊销推断框架，另速读三篇相关方法与应用。
+
+最值得看：漂移扩散模型的高泛化贝叶斯推断（8.0分）与变分推断软件默认设置评估（7.0分）。
+
+建议普通读者从精读论文入手，理解贝叶斯推断如何平衡效率与泛化，再延伸至实际工具的应用边界。
+- 详情：[/202608/05/README](/202608/05/README)
 
 ### 精读区论文标签
-1. [Constrained Co-Design for Photonic Bayesian Neural Networks](/202608/04/2608.02229v1-constrained-co-design-for-photonic-bayesian-neural-networks)  
-   标签：评分：10.0/10、query:bayes-dl
-   evidence：光子贝叶斯神经网络及其受限协同设计与不确定性推断
-2. [Recursive Gaussian Processes and the Bayesian Brain](/202608/04/2608.00503v1-recursive-gaussian-processes-and-the-bayesian-brain)  
+1. [Divide-and-Conquer: Towards Generalizable Amortized Bayesian Inference for the Drift Diffusion Model](/202608/05/2608.03566v1-divide-and-conquer-towards-generalizable-amortized-bayesian-inference-for-the-drift-diffusion-model)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：递归高斯过程实现分层贝叶斯推断与不确定性传播，属于深度贝叶斯模型
-3. [Robust Deep Mixture Models](/202608/04/2608.01613v1-robust-deep-mixture-models)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：深度贝叶斯混合模型，共享伽马精度并得到Student-t分布
+   evidence：用神经网络进行漂移扩散模型的摊销贝叶斯推断
 
 ### 速读区论文标签
-1. [Variational Inference Using a Differentiable Multigrid Linear Solver](/202608/04/2608.00760v1-variational-inference-using-a-differentiable-multigrid-linear-solver)  
+1. [The Curious Case of the Default Settings: Evaluating Default Performance of Variational Inference Software](/202608/05/2608.01403v1-the-curious-case-of-the-default-settings-evaluating-default-performance-of-variational-inference-software)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：开发可微分多重网格求解器，为贝叶斯反问题的变分推断提供高效雅可比-向量积
-2. [Robust Surrogate-Based Bayesian Inference via Sampling-Based Adaptive Active Learning (SALE)](/202608/04/2608.00841v1-robust-surrogate-based-bayesian-inference-via-sampling-based-adaptive-active-learning-sale)  
+   evidence：对变分推断软件默认设置的系统评估，涉及贝叶斯模型后验近似
+2. [Bayesian Data Reweighting Improves Multimodal Retrieval for Knowledge-Based Visual Question Answering](/202608/05/2608.02907v1-bayesian-data-reweighting-improves-multimodal-retrieval-for-knowledge-based-visual-question-answering)  
+   标签：评分：7.0/10、query:bayes-dl
+   evidence：用于深度多模态检索的贝叶斯数据重加权方法
+3. [The Bayesian Reflex: A Predictive Coding Engine for Artificial Intelligence](/202608/05/2608.00492v1-the-bayesian-reflex-a-predictive-coding-engine-for-artificial-intelligence)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：基于高斯过程代理模型的自适应主动学习实现近似贝叶斯推断，适用于似然昂贵场景
-3. [Beyond Global Latents: Chunk-Based Sparse Grid VAE for Scalable 3D Modeling](/202608/04/2608.02016v1-beyond-global-latents-chunk-based-sparse-grid-vae-for-scalable-3d-modeling)  
+   evidence：面向AI的预测编码框架，基于分层生成模型和序贯贝叶斯更新
+4. [Information-Geometric Forward Policy Training in GFlowNets](/202608/05/2608.03967v1-information-geometric-forward-policy-training-in-gflownets)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：提出基于局部块的稀疏网格变分自编码器，实现可扩展三维重建
-4. [Private Generative Bootstrap via Blocking](/202608/04/2608.02480v1-private-generative-bootstrap-via-blocking)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：结合摊销推断与隐私保护的贝叶斯自助法
+   evidence：GFlowNets的摊销推断训练采用信息几何与Fisher信息
 
 
 <div class="dpr-home-promo-card">

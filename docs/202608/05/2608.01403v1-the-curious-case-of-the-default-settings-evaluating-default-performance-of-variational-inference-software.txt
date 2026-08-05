@@ -1,0 +1,755 @@
+Title: The Curious Case of the Default Settings: Evaluating Default Performance of Variational Inference Software
+
+URL Source: https://arxiv.org/pdf/2608.01403v1
+
+Published Time: Tue, 04 Aug 2026 01:52:13 GMT
+
+Number of Pages: 43
+
+Markdown Content:
+# The Curious Case of the Default Settings: Evaluating Default Performance of Variational Inference Software 
+
+# Madelyn Andersen, Elizabeth Bersson, Tamara Broderick MIT LIDS 
+
+Abstract 
+
+We systematically evaluate a suite of off-the-shelf variational inference (VI) software packages from the perspective of a standard practitioner. Using simple analytic benchmark models, we assess the accuracy and stability of the default VI settings in PyMC, NumPyro, and TensorFlow Probability. Unlike previous research focusing on methodological advances, our evaluation emphasizes software implementation and the default configurations that typical users encounter. Our results show that default settings can yield biased approximations of posterior summaries even for simple one-dimensional conjugate models, controls of initial-ization and transformations differ between software implementations, and relying on defaults may yield silent failures or poor approximations. 
+
+# 1 Introduction 
+
+Bayesian methods underpin decision-making in healthcare (Blaiotta et al., 2016), climate science (Palma et al., 2026), and financial risk assessment (Arian et al., 2022). In principle, full Bayesian inference provides access to the exact posterior distribution over model parameters, enabling the computation of any posterior summary of interest, including posterior means, variances, credible intervals, and predictive probabilities (Hoff, 2009, Ch. 1.1, Ch. 4 intro paragraph). In applications, posterior means and variances are commonly reported summaries of Bayesian inference; this practice is well-established in the literature and often guides interpretation and downstream decisions (SAS Institute Inc., 2013, Ch. 7; Ross, 2022, Sec. 10.1.5; Mason et al., 2018, Sec. 3.7). Closed-form solutions, however, are rarely available for posterior distributions, or for posterior means and variances, in practically relevant models (Hoff, 2009, Ch. 4), so 1arXiv:2608.01403v1 [stat.CO] 2 Aug 2026 practitioners often turn to approximations. One such option is Markov Chain Monte Carlo (MCMC). MCMC approximates exact posterior expectations by generating samples (Roberts and Rosenthal, 2004, Sec. 1) and is asymptotically exact as the number of samples increases (Nemeth and Fearnhead, 2021; Roberts and Rosenthal, 2004, Sec. 3.2). In practice, however, the computational cost is often prohibitive for complex models and large datasets, as in many real-world applications (Giordano et al., 2024; Salimans et al., 2015). In complex or large-data cases where MCMC struggles, analysts often to turn to variational inference (VI) in the hope of using fewer computational resources than sampling methods (Kucukelbir et al., 2017; Ranganath et al., 2014). Variational inference replaces sampling with an optimization problem: choose a variational family and minimize a divergence to the posterior over this family (Jaakkola and Jordan, 1997; Jordan et al., 1999). In practice, the reverse Kullback–Leibler ( KL ) divergence is commonly chosen (see Bishop, 2006, ch. 10). When the family is restrictive, the approximation for a posterior mean or variance can be systematically biased (see Bishop, 2006 ch. 10). While VI is often faster than MCMC (Salimans et al., 2015), the accuracy of the result depends on the choice of variational family and on optimization success, sometimes trading accuracy for greater speed (Kucukelbir et al., 2017). Probabilistic programming languages such as Stan (Carpenter et al., 2017), PyMC (Salvatier et al., 2016), NumPyro (Bingham et al., 2019), and TensorFlow Probability (Abadi et al., 2016) provide built-in implementations of VI. While VI implementations in many popular packages have made VI methods accessible to non-experts, users often encounter difficulties with the reliability and quality of results, especially when using default settings. Reports of optimization failures, numerical instability, and poor accuracy in posterior approximations frequently arise in software forums (madelynandersen, 2024; CmdStanPy Developers, 2022; Herrera and Modrák, 2023; Ho et al., 2018), blog posts (Vehtari, 2022), developer messages (CmdStanPy Developers, 2022), and other platforms (Anonymous, 2023; Vieira, 2022). Although systematic evaluations for MCMC software performance exist (Thompson, 2010; Kavianihamedani et al., 2024), VI’s distinct optimization-based nature differs from the sampling-based nature of MCMC. It therefore remains an open question how well default settings in current VI software serve users’ needs. The present work evaluates and compares the current default settings available in VI software packages; in particular, we examine optimizer choice, Monte Carlo sample size, control over initialization, control over transformations, and diagnostics for tracking. We assess the quality of posterior 2approximation under simplified use cases. We find that there is substantial room for improvement in output quality by making straightforward changes to these default settings. In concurrent work, Campbell et al. (2026) provide a detailed comparison of a wide range of different optimizers and optimizer settings that might be used within VI (and maximum a posteriori computation); they consider optimizers beyond those currently used as software defaults, and they vary internal settings of the optimizers. They also focus on minimization of VI’s optimization objective whereas we focus on quantities users will commonly report from variational inference (posterior means and variances). Where our focuses overlap (study of current default optimizers in existing software), our recommendations agree; beyond that, our findings are complementary and suggest useful settings for VI software developers. In the remainder of this paper, we evaluate existing variational inference software packages by assessing their quality of posterior approximation under simplified use cases. We focus on the default user experience, i.e., the experience under standard settings. We show that, beyond the variational family, implementation choices (default values, optimizer, and transformations) materially affect accuracy under defaults. Specifically, in the remainder of this paper, we demonstrate the following aspects of default VI software behavior. These include failure modes that arise in at least one software package (e.g., default settings inducing bias, lack of transformation control). 
+
+• Default settings can induce bias. In certain simple models, we find that defaulting to a single Monte Carlo sample and the Adagrad_Window optimizer yields posterior summary estimates that are systematically biased away from the best variational posterior in certain software implementations. 
+
+• Sensitivity to initialization. User control over initializations may mitigate posterior summary estimates getting stuck in a (poor) local optimum. 
+
+• Lack of transformation control can cause silent failure. We find cases where defaulting to no transformations leads to silent VI failure and nonsensical posterior summary values. 
+
+• Some useful diagnostics are missing. A lack of diagnostics for tracking param-eter values in their original space (rather than in an internal representation of the software) may make interpretation more difficult. In Section 2, we review VI, popular existing implementations, and our selection methodology for choosing software packages to evaluate. In Section 3, we compare the implementation differences in each of the selected software packages and present our results from each software package. We present a concise guide for users in Section 4, 3which includes troubleshooting and getting-started tips, concluding with an illustration of some of the limitations of our work in Section 5. 
+
+# 2 Background and Related Work 
+
+Modern probabilistic programming languages (PPLs) aim to make Bayesian inference accessible. Markov Chain Monte Carlo (MCMC) is regarded as the gold standard for accuracy (Nemeth and Fearnhead, 2021), but it can be prohibitively computation-ally expensive (Wang and Blei, 2019). Variational inference (VI) aims to address this computational challenge by turning inference into optimization. VI fits a tractable approximation to the posterior by maximizing an evidence lower bound (ELBO). The quality of the approximation depends on the variational family (see Section 2.1), sup-port transformation, and optimization algorithm, choices that differ across software implementations. 
+
+# 2.1 Variational Inference 
+
+In Bayesian inference, the posterior distribution updates beliefs about latent variables 
+
+Z ∈ Rd after observing data Y = {y1, . . . , y n}. Consider a probabilistic model in which the latent variables Z are given prior distributions p(Z) and Y = {y1, . . . , y n} is a set of observations yi belonging to some measurable space. Each observation yi is drawn i.i.d. from a likelihood p(yi|Z), and our posterior distribution is p(Z|Y ). We will denote the mean and covariance of the posterior distribution as μp ∈ Rd and Σp ∈ Rd×d, respectively, which are values that practitioners use to make decisions in real-world applications (Speagle, 2020). For many models used in practice, computing the exact posterior mean and covariance is an intractable computation (Bishop, 2006, Ch. 10). We may therefore approximate the posterior mean and covariance, possibly using MCMC or VI. MCMC generates samples from the posterior (Salimans et al., 2015). For a specified family Q, VI minimizes the reverse Kullback Leibler ( KL ) divergence, KL( q∥p( · | Y )) across q ∈ Q , which is equivalent up to a constant to maximizing the Evidence Lower Bound (ELBO) (Bishop, 2006, Ch. 10, Eqn. (10.3)). 
+
+Variational Families To maximize the ELBO, we must choose a family Q of posterior approximations. A common choice is the mean-field variational family, which partitions 4latent variables Z into disjoint groups Zi and factorizes, for a distribution q ∈ Q ,
+
+q(Z) = ∏
+
+> i
+
+qi(Zi). (1) In its most general form, the mean-field family imposes no functional form restrictions on the qi, but in practice it is often used together with the further restriction that the qi
+
+take an exponential-family form (Bishop, 2006, Sec. 10.1.1), (Blei et al., 2017, Sec. 2.3). For common variational family choices, the ELBO has no closed form. In practice, VI implementations often estimate the gradient of the ELBO numerically at each iteration, commonly with Monte Carlo sampling (Ranganath et al., 2014), and optimize with stochastic gradients (Blei et al., 2017). 
+
+Best Variational Approximation To summarize, the variational inference problem posed by VI is to choose the distribution within a variational family that maximizes the ELBO. In general, this maximizer need not be unique; however, in this paper, we consider cases where it is. Therefore, going forward, we will refer to the ELBO maximizer as the best variational approximation. Because the exact posterior may fall outside the chosen variational family, the best variational approximation need not equal the exact posterior. Consequently, if a variational approximation returned by software differs from the exact posterior, that difference a priori can be due both to (1) issues inherent in using any variational approximation, even with perfect optimization capability, and (2) issues with trying to solve the variational approximation in practice. Since the first issue has been well-studied in the literature (Blei et al., 2017; Turner and Sahani, 2011), (Bishop, 2006, Ch. 10.1) (MacKay, 2003, Ch. 33), we focus on the second issue in the present manuscript. In particular, when evaluating software in what follows, we will treat the best variational approximation as ground truth. In general cases, such ground truth is inaccessible, much like the exact posterior is inaccessible. We will focus on cases where we have access to a unique, analytically tractable solution, enabling us to compare the outputs of VI optimizers directly to this target. 
+
+Optimizing in Practice Standard optimizers include stochastic gradient descent (SGD, first introduced by Robbins and Monro (1951)) and adaptive methods (e.g., Adam, Adagrad, Adadelta, introduced in Kingma and Ba (2015) and Duchi et al. (2011)). See Campbell et al. (2026) for a comprehensive evaluation of optimizers for the purposes 5of minimizing the variational Bayes objective. Our evaluation focuses on comparing the package defaults, which include Adam and Adagrad_Window. We note that our evaluation focuses on the quantities users will commonly report from variational inference (namely, posterior means and variances); Campbell et al. (2026) instead focus more directly on VI’s optimization objective in the form of the ELBO (and the squared gradient 2-norm). Giordano et al. (2024) have previously observed that performance of VI methods evaluated in these separate ways can differ. 
+
+ADVI in practice Automatic Differentiation Variational Inference (ADVI) imple-ments a mean-field approximation 1 with normal marginals in a transformation of the original parameter space, then optimizing the ELBO with stochastic gradients (Kucukel-bir et al., 2017). Essentially, each step of the optimization estimates the gradient with a pre-specified number of Monte Carlo samples. Model parameters may have constrained supports (e.g., variances restricted to 
+
+R>0, simplex-valued probabilities, or correlation matrices), so ADVI applies a bijective transformation only to those parameters with constrained domains, mapping them into an unconstrained Euclidean space. Concretely, ADVI samples 
+
+z∗ 
+
+> i
+
+∼ N (˜ μ, ˜σ2), zi = T (z∗ 
+
+> i
+
+), (2) where z∗ 
+
+> i
+
+∈ Rd∗
+
+is drawn from a normal distribution with mean ˜μ and standard deviation 
+
+˜σ, and T maps each unconstrained parameter to the constrained space. Optimization occurs in the unconstrained space, while practitioners often interpret posterior sum-maries in the constrained domain. When we optimize, we seek stabilization, which we roughly define as the point at which successive changes in the object of interest become negligible after a finite number of iterations; we hope this stabilization indicates that the optimization algorithm has at least found a local optimum, and ideally a global optimum. Transformations are essential because many real-world models impose constraints (e.g., heights are strictly positive, blood pressure values lie within an interval, species proportion vectors must lie in the probability simplex). Typical bijectors include ex-ponential for positivity, sigmoid for the unit interval, stick-breaking for simplices, and Cholesky-based maps for covariance matrices (Stan Development Team, 2025; Dillon 
+
+> 1Another form of ADVI allows a full-rank approximation, which PyMC, TFP, and NumPyro all offer as a non-default option.
+
+6et al., 2017; Phan et al., 2019). VI has several well-known limitations. For example, the nonconvex, mode-seeking nature of the reverse-KL can favor only a few high-density modes instead of the full posterior (Zhang et al., 2019). Further, VI is well-known to underestimate marginal variances (Giordano et al., 2018; MacKay, 2003; Giordano et al., 2016; Wang and Titter-ington, 2005; Giordano et al., 2015)(Bishop, 2006, Ch. 10), and increasing expressiveness of the variational family may not lead to better posterior estimates (Turner and Sahani, 2011). When stochastic gradients are used with ADVI, the resulting posterior variances and “convergence” behavior may be unreliable or unclear (Giordano et al., 2024). We do not elaborate on these fundamental limitations of VI here. Rather, they motivate our study: since VI can be sensitive to model structure and optimization pathologies, we would like to understand how different software implementations perform in practice when confronted with such challenges. 
+
+# 2.2 Evaluating Approximation Quality of Implementation Choices 
+
+We evaluate PyMC, NumPyro, and TensorFlow Probability (TFP), three widely used Python probabilistic programming frameworks (PPLs) with active support for VI. Though we exclude Stan’s VI module in this draft, we plan to evaluate it in our future work. Although other PPLs (e.g., Bambi, Edward) are part of the broader ecosystem (Štrumbelj et al., 2024), we restrict scope to the three packages above because—apart from Stan—they represent the most popular subset of software packages including unique VI implementations as of October 2025, according to the PyPI statistics database and CRAN logs (Table 1) (van Kemenade, 2024; CRAN Logs, 2025). We cannot directly compare the download numbers reported for Python to those reported for R, since what constitutes a “download” may differ by source (Python Packaging Authority, 2025). We note that all three software packages we consider offer functionality beyond VI (e.g., MCMC) and many users may have downloaded them for a use other than VI. Practitioners primarily use either Python or R for variational inference; we have chosen to limit our scope to Python—specifically the most popular packages as listed in Table 1 (a). We also observe that Bambi is a high-level wrapper built on PyMC, and TFP has superseded Edward, which is no longer actively developed (Bambi Developers, 2025; Tran et al., 2017). In particular, we examined the versions listed in Table 2 because they were the latest 7Table 1. Download counts (last 30 days, as of October 2025) for software packages that include variational inference functionality in (a) Python and (b) R.                 
+
+> (a) Python packages
+> Package Last 30 days
+> CmdStanPy (cmdstanpy )9,444,333 TensorFlow Probability (tensorflow-probability )1,283,307 PyMC ( pymc )927,688 PyStan ( pystan )599,396 Pyro ( pyro-ppl )560,959 NumPyro ( numpyro )518,507 Bambi ( bambi )52,496 Edward2 ( edward2 )3,444 Edward ( edward )1,121
+> (b) R packages
+> Package Last 30 days
+> rstan 74,196
+> rstanarm 34,442
+> varbvs 1,002
+> tfprobability 988
+> greta 271
+
+Table 2. Version of each software package studied in this manuscript.     
+
+> Package Version PyMC 5.25.1 NumPyro 0.18.0 TFP 0.25.0
+
+available in October 2025. 
+
+Scope and Motivation In practice, PPLs with VI implementations rely on default choices—variational families, transformations for constrained parameters, initialization schemes, and optimizers—that we expect users rarely modify. 2 Our goal is to characterize how these defaults behave in PyMC, NumPyro, and TFP, and to disentangle intrinsic limitations of VI from numerical or design effects specific to each software framework. 
+
+Evaluating Simple Models While our broader interest lies in applying VI to complex hierarchical and deep models, we begin with univariate conjugate distributions as a minimal testbed. These settings drastically simplify the VI optimization problem, allowing us to isolate software-level numerical behavior. Although our testbeds are simpler than the models we expect to see in practice, they can still represent realistic geometries that are close to those that arise in practice. For instance, the Bernstein–von Mises theorem shows that, under regularity conditions, 
+
+> 2This behavior mirrors the “opt-out” phenomenon: the tendency for most people to accept default options rather than take action to change them (Davidai et al., 2012; Mehta et al., 2016).
+
+8posterior distributions become asymptotically Gaussian (as the number of data points increases) across many common choices of prior or likelihood (see van der Vaart, 1998, Ch. 10.2; Le Cam, 1953). As a result, Gaussian posteriors can capture key behaviors of posteriors that arise in real-world applications. We further focus on one-dimensional conjugate models; if an approximation fails in one dimension, we may reasonably expect the failure to occur or worsen in higher dimensions or more complex setups. 
+
+One-Dimensional Gaussian–Gaussian (Unknown Mean, Known Variance) 
+
+Throughout this paper, we will use a one-dimensional conjugate Gaussian with known variance as our canonical test case. Given a known variance σ2 and observations Y drawn i.i.d. from a Gaussian likelihood with a Gaussian prior on the mean μ, the posterior is also Gaussian with parameters μp, σ 2 
+
+> p
+
+, i.e., p(μ | Y ) ∼ N (μp, σ 2 
+
+> p
+
+). Because the true posterior lies exactly within the Gaussian variational family, the optimal VI solution matches the true posterior. Moreover, a special case with n = 0 simply recovers the prior. By having a known variational approximation, the one-dimensional Gaussian–Gaussian is a useful test for isolating software-induced VI errors. 
+
+# 3 Results 
+
+We evaluated PyMC, NumPyro, and TFP on the benchmark outlined at the end of Section 2. Under default settings in PyMC, we observe a persistent systematic bias for millions of iterations. In all three software packages, we observe minor oscillations in variational parameter trajectories (i.e., the paths traced by the variational posterior parameters across iterations of the VI algorithm). Minor non-default adjustments—such as either increasing the number of Monte Carlo (MC) gradient samples or switching to Adam—resolve the systematic bias, and using both adjustments together reduces the magnitude of the oscillations in all cases. We also observe differences across the software packages in how they handle initial-ization and transformations. Because typical VI objectives are non-convex, initialization can substantially affect the resulting posterior approximation. The software packages differ in how they expose control over initialization. The software packages also differ in how they apply and expose transformations. In the case of TFP, transformations are not automatically enacted, and VI may fail silently if a transformation is required: optimiza-9tion may proceed, but the ELBO value becomes NaN and the returned approximation is nonsensical. 
+
+# 3.1 Optimization Quality 
+
+Here, we first describe undesirable behavior under the default single MC sample and default Adagrad_Window optimizer in PyMC. In PyMC’s default settings, we observe a systematic bias of ≈ 5% in the approximated variational posterior standard deviation for millions of iterations. We then discuss how to mitigate this behavior by changing software defaults, noting that while NumPyro and TFP’s default behaviors are not problematic for our one-dimensional Gaussian-Gaussian benchmark, both software packages exhibit minor performance improvements when some defaults are changed as well. 
+
+3.1.1 Software Implementation Setup 
+
+Before describing the optimization behavior, we establish the default settings in PyMC, NumPyro, and TFP. We discuss which default settings are truly default, i.e., they will run without any user input, and which settings require user input to run without an error. 
+
+Number of Monte Carlo Gradient Samples (Default = 1) We establish that the default setting in PyMC, NumPyro, and TFP is to use a single MC sample. The package source code confirms these defaults directly. NumPyro sets num_particles=1 in its ELBO implementation (Contributors to the Pyro Project, 2019), TFP sets sample_size=1 in 
+
+fit_surrogate_posterior (TFP Developers, 2024c), and PyMC uses obj_n_mc=1 (Lao, 2018). In all three packages, using a single MC sample is specified without requiring any user input. The single MC sample software package defaults may be informed by the claim in Kucukelbir et al. (2017) that using a single MC sample per iteration in the numerical integration approximating the gradient of the ELBO is sufficient in practice for desired performance. We will later see that, in practice, a single MC sample does not always guarantee desirable behavior. 
+
+Optimizer Choice: Adam vs. Adagrad_Window PyMC does not require the user to specify an optimizer, as it automatically uses Adagrad_Window. Both NumPyro and TFP require the user to specify an optimizer, and neither will run without a 10 provided optimizer. Since many developer-written and officially released VI vignettes for NumPyro and TFP reference the Adam optimizer (NumPyro Developers, 2025b,e; TFP Developers, 2023, 2024c, 2025a,b), we use Adam as the default for NumPyro and TFP. We summarize each package’s default optimizer and whether the optimizer is run by default or must be chosen by the user in Table 3. The default parameters of each optimizer used in this paper are displayed in Table 4. We include PyMC’s Adam optimizer alongside the default optimizers to demonstrate that small changes to the default PyMC behavior return results matching those of the other software packages’ defaults. NumPyro’s implementation of the Adam optimizer is a wrapper on Jax’s Adam implementation (NumPyro Developers, 2025d). While PyMC, NumPyro, and TFP implement the β1 and β2 parameters identically as exponential decay rates for the first- and second-moment estimates in Adam, respectively, they differ in their incorporation of numerical stability constants (e.g., between NumPyro and TFP) (TensorFlow Developers, 2023; JAX Developers, 2026). 
+
+Package Default optimizer User-input vs. default 
+
+PyMC Adagrad_Window Default NumPyro Adam User-input TFP Adam User-input  
+
+> Table 3. Optimizers we use as default for each software package. Each is specified as either running by default without user intervention or requiring user specification of the optimizer. PyMC uses Adagrad_Window as its true default optimizer without user intervention. In contrast, NumPyro and TFP examples and vignettes typically specify the use of the Adam optimizer (NumPyro Developers, 2025b,e; TFP Developers, 2023, 2024c, 2025a,b)
+
+Termination criteria In each software package, the default behavior is to terminate the algorithm at the specified number of iterations and return the current variational approximation as the reported variational posterior. If the number of iterations is left unspecified by the user, PyMC will terminate after 10 ,000 iterations and both NumPyro and TFP will return an error stating that the user needs to choose a number of iterations for which to run the VI algorithm. While neither NumPyro or TFP will run without a provided number of iterations by the user, both software packages have vignettes that suggest different numbers of iterations for the VI algorithm. TFP’s documentation and vignettes reference using 
+
+100 iterations (TFP Developers, 2024c), 200 iterations (TFP Developers, 2024a), 300 
+
+iterations (TFP Developers, 2025a), 500 iterations (TFP Developers, 2023), 1000 itera-11 Package and Optimizer step size Other defaults Notes 
+
+PyMC Adagrad_Window 10 −3 ϵPyMC = 0.1,
+
+nwin = 10 
+
+True default optimizer used by PyMC PyMC Adam 10 −3 ϵPyMC = 10 −8,
+
+β1 = 0.9, β2 =0.999 
+
+–NumPyro Adam – ϵNumPyro = 10 −8,
+
+β1 = 0.9, β2 =0.999 
+
+Wraps JAX Adam; user must provide step size TFP Adam 10 −3 ϵTFP = 10 −7 , β1 =0.9, β2 = 0 .999 ,–   
+
+> Table 4. Default hyperparameters for optimizers we used in our experiments. All specified default values in the table are used by default without user input. NumPyro’s Adam optimizer requires a user-specified step size and will fail with an error if none is provided. Following the NumPyro VI vignettes (NumPyro Developers, 2025c,d), we use 0.0005 as the default step size for NumPyro Adam.
+
+tions (TFP Developers, 2025a), 3000 iterations (TFP Developers, 2025b), and 10 ,000 
+
+iterations (TFP Developers, 2024b). NumPyro’s documentation and vignettes reference using 2,000 iterations (NumPyro Developers, 2025d) and 5,000 iterations (NumPyro Developers, 2025e). 
+
+3.1.2 Default Implementation Behavior 
+
+The top plot of Figure 1 visualizes the trajectory of the approximate posterior standard deviation σp on the one-dimensional Gaussian–Gaussian benchmark run in PyMC. We use default settings: one MC sample and Adagrad_Window. Model details are in Section 2.2. The trajectory of σp with 1 MC sample (blue line) overshoots and settles at a posterior standard deviation about 5% above the analytic target (red dashed line). Considering the approximate posterior mean μp, instead, yields the bottom plot of Figure 1 displays the PyMC trajectory of μp in the same run of the algorithm as in the top plot. We see small-magnitude oscillations and are not concerned with this default behavior. In conjugate beta, inverse-gamma, and gamma models, outlined in Section A, we expect to observe at least as much systematic bias in the approximated variational posterior standard deviation when using PyMC with default settings. Our preliminary further experiments suggest that the bias does persist. While it is well-noted in the literature that stochastic gradient methods may struggle 12 to clearly converge when used with ADVI (Giordano et al., 2024) and Adam is a more robust optimizer of the ELBO (Campbell et al., 2026), to our knowledge, this particular bias issue when using PyMC’s defaults has not been previously documented in such simple cases. Next, we consider NumPyro and TFP, with their default settings: one MC sample and Adam. In NumPyro and TFP, when we run both with the optimizers in Table 3 and optimizer settings from Table 4, trajectories for both μp and σp demonstrate minor oscillations that we do not consider to be problematic and no systemic bias. The oscillation behaviors of all three software packages are consistent with previous observations for low–sample stochastic VI (Giordano et al., 2024). We expect to see similar behaviors for conjugate beta, inverse-gamma, and gamma models. Again, our preliminary further experiments suggest the bias persists. The various plots and the iteration-by-iteration tracked values illustrated in this paper are not provided by default in any of the software implementations. 
+
+3.1.3 Behavior Mitigation and Improvement 
+
+We find that PyMC’s systemic bias can be mitigated by changing the default values, and all of the non-problematic oscillations can also be improved by changing the default values. For PyMC, we see in the top of Figure 1 that the trajectory of σp under increased MC sample count ( 100 MC samples, green line) settles at the best variational approximation. If we instead use Adam as the optimizer, as demonstrated in Figure 2, we observe that the resulting trajectory of σp is unproblematic with 1 MC sample (blue line) and may be considered to be improved with 100 MC samples (green line). Also for PyMC, we see at the bottom of Figure 1 that the trajectory of μp under increased MC sample count (green line) has a smaller magnitude of oscillations around the analytic ground truth posterior value. When we change the optimizer to Adam, the resulting trajectory of μp remains acceptable and behaves much the same as with the Adagrad_Window optimizer. We observed unconcerning behavior for both parameters in NumPyro and TFP; both μp and σp exhibit smaller oscillations around the analytic ground-truth posterior value when run with increased MC sample count compared to the default of a single MC sample. We see the default and slightly improved behavior in NumPyro in Figure 3 and observe similar behavior in TFP in Figure 4. With the exception of Figure 2, where we run PyMC with the Adam optimizer, we run each figure in the respective software 13 Figure 1. Default vs. tuned Monte Carlo gradient samples in PyMC (one-dimensional Gaussian, known variance) run with PyMC’s default Adagrad_Window optimizer. The top and bottom figures plot the variational trajectories under default (1) and adjusted (100) MC sample values for the posterior parameters σp and μp, respectively, where trajectories of the same color between plots are derived from the same VI run. 
+
+Upper plot: Using a single MC sample overshoots and settles at a biased value; increasing the number of MC samples to 100 causes the variational approximation of σp to settle at the analytic posterior standard deviation (dashed line). Lower plot: Using a single MC sample (blue) results in minor trajectory oscillations; increasing the number of MC samples to 100 (green) reduces the magnitude of oscillatory behavior. 
+
+14 Figure 2. Default vs. tuned Monte Carlo gradient samples in PyMC (one-dimensional Gaussian, known variance) run with Adam optimizer and default Adam settings. The upper and lower figures plot the variational trajectories under default (1) and adjusted (100) MC sample values for the posterior parameters σp and μp, respectively, where trajectories of the same color between plots are derived from the same VI run. 
+
+Upper plot: Using a single MC sample displays minor oscillations around analytic posterior standard deviation (dashed line); increasing the number of MC samples to 100 further decreases oscillations. Lower plot: Using a single MC sample (blue) results in minor trajectory oscillations; increasing the number of MC samples to 100 (green) reduces the magnitude of oscillatory behavior. 
+
+15 Figure 3. Default vs. tuned Monte Carlo gradient samples in NumPyro (one-dimensional Gaussian, known variance). The top and bottom figures plot the variational trajectories under default (1) and adjusted (100) MC sample values for the posterior parameters σp and μp,respectively, where trajectories of the same color between plots are derived from the same VI run. 
+
+Upper plot: Using a single MC sample oscillates with a small magnitude; increasing the number of MC samples to 100 decreases the oscillation around the analytic posterior standard deviation (dashed line). Lower plot: Using a single MC sample (blue) results in small trajectory oscillations; increasing the number of MC samples to 100 (green) reduces the magnitude of oscillatory behavior. 
+
+16 Figure 4. Default vs. tuned Monte Carlo gradient samples in TFP (one-dimensional Gaussian, known variance). The top and bottom figures plot the variational trajectories under default (1) and adjusted (100) MC sample values for the posterior parameters σp and μp, respectively, where trajectories of the same color between plots are derived from the same VI run. 
+
+Upper plot: Using a single MC sample oscillates with a small magnitude; increasing the number of MC samples to 100 decreases the oscillation around the analytic posterior standard deviation (dashed line). Lower plot: Using a single MC sample (blue) results in oscillatory trajectories that are larger than those produced after increasing the number of MC samples to 100 (green). 
+
+17 package with its default optimizer and default optimizer parameters, for a manual input of 1.6 million iterations, using the same prior and likelihood parameters as in the PyMC case above. While the 1 MC sample oscillations in NumPyro, TFP, and the μp parameter of PyMC are not concerning in the one-dimensional Gaussian-Gaussian benchmark, we do note that increasing the number of MC samples further decreases the magnitude of oscillations, indicating that all three software packages stand to be improved by the slight change in defaults of increasing the number of default MC samples. 
+
+# 3.2 Initialization 
+
+Results from VI software can be sensitive to initialization. NumPyro and TFP both offer random restarts by default without a set seed, so multiple default runs yield different initializations. PyMC, however, has a fixed default initialization. All three software packages provide non-default options that enable users to explore different initializations. 
+
+Initialization Sensitivity We begin by describing the importance of initialization. In variational inference, the objective may be non-convex (Blei et al., 2017), and the reverse-KL divergence that is commonly used in VI is empirically mode-seeking, often capturing only a single mode when the posterior is multimodal (Jerfel et al., 2021, sec. 2.1). Because the ELBO may exhibit multiple local optima, the initialization of the variational parameters can materially affect the attained optima. As a result, we may reasonably expect multiple distinct initializations to aid in better exploring the totality of posterior modes. 
+
+TFP initialization behavior By default, TFP initializes the unconstrained mean 
+
+˜μ by drawing from a N (0 , 1) distribution and initializes the unconstrained standard deviation ˜σ by setting it to 0.01 . TFP does not set a random seed by default, so repeated runs of the same VI procedure should yield different initializations, encouraging exploration of the posterior support. Beyond the default functionality, TFP also allows users to explicitly initialize both the unconstrained mean ˜μ and standard deviation ˜σ of the underlying normal distribution; they may be set arbitrarily by the user. 18 NumPyro default initialization behavior By default, NumPyro uses a draw from a Uniform (−2, 2) distribution to set the initial unconstrained mean ˜μ and sets ˜σ = 0 .1.As with TFP, NumPyro does not fix a random seed by default, so repeated runs should yield different initializations. Beyond the default, NumPyro offers several predefined initialization functions for the unconstrained mean ˜μ, such as initializing it to the median of a collection of prior samples in the unconstrained space or specifying a fixed value. The user can also numerically set the initial value of ˜σ. Concretely, users may provide an init_loc_fn to determine the initial value of ˜μ and an init_scale to control the initial value of ˜σ.
+
+PyMC initialization behavior By default, PyMC initializes the unconstrained mean ˜μ to a fixed value given the specified model. For any choice of prior distribution, PyMC provides a predefined starting value, denoted support_point . PyMC selects a transformation T based on the prior and likelihood’s implied support for the posterior. It applies the inverse transformation T −1 to the starting value, assigning the result as the initial value of the unconstrained mean ˜μ. PyMC sets the unconstrained standard deviation ˜σ to a fixed default value of approximately 0.693 , corresponding to the softplus inverse of 1 (PyMC Developers, 2025). Beyond the default initialization behavior, PyMC allows users to explicitly specify the 
+
+support_point value via a start dictionary, as discussed in Fonnesbeck (2023). PyMC then proceeds with the same transformation procedure as in the default case to choose the ˜μ value. PyMC does not offer initialization options to change the unconstrained standard deviation ˜σ.
+
+Multimodality Concerns In multimodal models, initialization can affect which mode VI captures. Our example in Figure 5 illustrates that VI can become trapped in a local optimum under specific initializations. In particular, we set up a density (black solid line) that corresponds to a bimodal distribution not only in the constrained space but also in the unconstrained space. 3 Across different initializations of the variational parameters, reverse-KL variational inference converges to distinct local optima, each of which concentrates mass near a single mode of the target. Each dashed curve corresponds     
+
+> 3We note that we need a mixture of two betas rather than a single beta distribution to achieve bimodality in the unconstrained space. While a single beta can be bimodal in the constrained space with an appropriate choice of parameters, its transformed distribution to unconstrained space is strictly unimodal. See Section A.1.1 for model details.
+
+19 Figure 5. The true target density (black solid line) is a balanced mixture of beta (20 , 2) and beta (2 , 20) , producing two narrow modes. Shown are variational approximations (dashed lines) obtained by fitting a Gaussian in the unconstrained space and mapping it to (0 , 1) via a sigmoid transformation using the NumPyro package with a default value of ˜σ = 0 .1. Each color corresponds to a different initialization of ˜μ.
+
+to a different initialization, illustrating the strong sensitivity of the optimization outcome to initialization in this setting. The mode-seeking behavior need not always be a problem, though. In many clustering settings, label non-identifiability means that our desired outcome is to recover the posterior corresponding to a single labeling of the clusters (not the posterior averaged over all labelings). The importance of multiple initializations depends on the application. 
+
+# 3.3 Control and Defaults of Transformations 
+
+Each software package offers different control and types of transformations. NumPyro and PyMC both automatically apply transformations derived from defined prior support constraints (noted in Table 6 and Table 5). The transforms from NumPyro and PyMC cannot be overridden without changing the prior distribution or the support constraints, respectively. By default, TFP does not automatically apply any transforms; users must explicitly add bijectors. Further, we observe that when a transformation is needed and not specified by the user, TFP can fail silently. 
+
+Software Implementation Details In TFP, while users can choose to add transfor-mations to their variational family, the default is not to have a transformation. If there 20 are any support constraints, TFP will, by default, run VI without using a transformation and not raise any errors, but it will have a support mismatch. NumPyro and PyMC both automatically choose transformations from the defined prior support constraints (PyMC Development Team, 2025; NumPyro Developers, 2025a). We note that the user cannot override the selected transformations in NumPyro or PyMC. See Section C.2 for details on each of the transformations used by the software packages. 
+
+Implementation Behavior In Figure 6, we compare fitting an untransformed Gaus-sian variational family to fitting a transformed Gaussian variational family to a conjugate beta distribution (detailed in Section A.1.1), demonstrating how the ill-definition of the ELBO creates a poor approximation of the conjugate beta without the proper transformation. We plot four normal approximations, run in TFP on the same seed, after 10, 50, 5,000, and 100,000 iterations, respectively. As TFP’s VI algorithm runs for more iterations, the untransformed normal distribution drifts into the positive reals, producing an invalid MC approximation to the ELBO and an unusable approximation. Adding the appropriate bijector (e.g., a sigmoid) restores support validity and produces a meaningful fit. 
+
+Why Transformations Matter Without a support-matching transformation, an untransformed Gaussian variational family can assign probability mass outside the posterior’s domain (e.g., outside of the unit interval for a beta distribution). 
+
+# 3.4 Diagnostics and Tracking using Transformations 
+
+To identify whether VI is encountering difficulties, diagnostics can help detect oscilla-tions, premature plateaus, stabilization rates, and sample efficiency. However, monitoring only the unconstrained parameters can be misleading: large fluctuations in the uncon-strained space may correspond to negligible changes after transformation, especially near constraint boundaries where nonlinear distortions compress scale. Because the constrained space carries the interpretable units of the original model, and we want to report posterior summaries there, we prefer it and believe it may be helpful to have diagnostics in the constrained space after transformation, where evaluation metrics, analytical references, and decision thresholds are defined. While none of the three software packages provides an explicit report of the mean and variance of the variational parameters in the constrained space during VI fitting in 21 their default VI interfaces explored in this paper, they all provide access to parameter tracking on the unconstrained scale. 
+
+Software Implementation Details In TFP, users can access ˜μ and ˜σ, the mean and standard deviation of the underlying normal distribution of the variational approximation, by calling the loc and scale attributes of our variational approximation of the posterior. In NumPyro, users can access ˜μ and ˜σ through the get_params() method. In PyMC, users can access ˜μ and ˜σ by calling advi.approx.mean.eval and advi.approx.std.eval 
+
+methods, respectively. All three software packages provide access to constrained-space posterior means and standard deviations at the end of VI, but none provide a way to access them during optimization. 
+
+Diagnostics and tracking across spaces. Because transformations T are often nonlinear, small changes in constrained parameters (e.g., probabilities near the boundary of (0 , 1) ) may correspond to extremely large changes on the unconstrained scale, and vice versa. Monitoring and comparing within the constrained space avoids scale distortions and mismatches and directly reflects the posterior quantities practitioners report and evaluate. In all three packages, since we do not have existing access to the current constrained parameters during optimization, the user must instead implement their own iteration-by-iteration technique; we used a method—known as measure transport—where we sample from the unconstrained Gaussian, transform via the known transformation T , and compute constrained summaries from the transformed samples (Marzouk et al., 2016). We note that using the measure transport method introduces additional Monte Carlo variability that diminishes with increasing numbers of MC draws used to approximate constrained parameters. 22 Figure 6. Support mismatch without a transform. The untransformed fit drifts out of support. Adding the sigmoid bijector yields a valid fit. The inset axes zoom out on the fitted VI distributions after 5,000 and 100,000 iterations to show behavior not visible on the smaller scale of the main plot. 
+
+# 4 Practitioner User Guide 
+
+This section distills our evaluation into risk-aware guidance for practitioners who wish to use VI in PyMC, NumPyro, and TFP on problems similar to our benchmarks. We summarize settings that reduced specific failure modes in the examples we examined. We do not expect these settings will eliminate all failure modes, but we believe that these instructions will be helpful in general. 
+
+# 4.1 Monte Carlo Gradient Estimation 
+
+Recommendation Increase Monte Carlo gradient samples to at least 100. The variables num_particles (NumPyro), sample_size (TFP), obj_n_mc (PyMC) control the number of MC samples used in each respective software implementation. In each software package, set the respective variable to at least 100 .
+
+Rationale More MC samples reduce stochastic gradient variance, which reduces bias/oscillation in our tests. In our benchmark, the default 1 MC sample yielded ≈ 5% 
+
+variance bias or small persistent oscillations; increasing to 100 MC samples removed the bias and reduced the oscillations. We expect additional MC samples to be helpful in 23 other models because using more MC samples will reduce the variance in the gradient estimate. 
+
+Possible Tradeoff More MC samples will incur additional runtime cost. 
+
+# 4.2 Optimizer and Learning Rate Choices 
+
+Recommendation Switch to using Adam if using PyMC. PyMC is the only software package that we tested that does not default to Adam. Within the advi.fit call in PyMC, use obj_optimizer=pm.adam(learning_rate) to change the optimizer to Adam. 
+
+Rationale In our PyMC tests, switching from Adagrad_Window to Adam on the same settings resolved the systematic bias error (Section 3.1.1). In non-convex objectives, Adagrad_Window can prematurely shrink steps and stall progress (Wilson et al., 2017), while Adam is able to adapt to recent curvature and may be more reliable on VI objectives (Kingma and Ba, 2015; Reddi et al., 2018; Campbell et al., 2026). 
+
+# 4.3 Initialization 
+
+Recommendation Use multiple random restarts or manual initialization when you can. If you would like to control initialization values of ˜μ and ˜σ numerically, use NumPyro or TFP. PyMC does not allow initialization of the unconstrained standard deviation ˜σ but users may influence the initialization of the unconstrained mean ˜μ. If you’re using PyMC, you can set the starting value for the parameter of interest using the start parameter. If you’re using NumPyro, you can set the initial parameters using init_loc_fn and 
+
+init_scale . If you’re using TFP, you can change the initial_parameters .
+
+Rationale For our one-dimensional unimodal benchmark, default initializations typi-cally found the single mode; when they didn’t, the issue wasn’t initialization (Figure 6). If you’re working in multimodal settings where finding multiple modes is desirable, we recommend multiple random restarts. 
+
+# 4.4 Transformations 
+
+Recommendation Confirm that, when working with a constrained support, a trans-form is being implemented to map from the unconstrained reals to the model’s support 24 and that reported variational parameters are in the constrained space. 
+
+Rationale Omitting transformations can yield invalid approximations. Mismatched supports can produce out-of-support optima and unstable/ill-conditioned ELBO esti-mates. In our beta example (Figure 6), omitting the sigmoid bijector caused drift and an unstable fit. 
+
+# 4.5 Summary 
+
+Across all three frameworks, defaults sometimes yielded acceptable results in our one-dimensional tests. Our recommendations focus on users who use the package defaults. For such a user, after our analysis, we recommend using NumPyro and double-checking the support constraints. We prefer NumPyro because it has not demonstrated bias like PyMC or silent failure without transformations like TFP. NumPyro also requires explicit constraint specifications, which reduces tracking ambiguity and support mismatches in our tests. We like the level of control offered by NumPyro and the ease of debugging and diagnostics. For a default user, we recommend not using PyMC or TFP since they both may fail without changing default settings. Following our recommendations in this subsection, the sensitivities we observe (bias, mode-sticking, and support mismatch) are reduced, and the optimization behavior becomes more predictable in our one-dimensional benchmarks. 
+
+# 5 Conclusion and Limitations 
+
+# 5.1 Summary of Findings 
+
+Our findings reveal a clear pattern: accuracy under default settings is not guaranteed and depends on increasing the number of Monte Carlo gradient samples, using Adam, and verifying support-matching transforms. 
+
+# 5.2 Implications for Developers 
+
+Our findings also carry lessons for PPL developers: 
+
+• Create vignettes with consistent parameter values to make developer recommenda-tions clear. 
+
+• Implement default transformations. 25 • Change the default number of MC samples to 100 .
+
+• Default to using the Adam optimizer. 4
+
+• Add constrained-space tracking methods. Such improvements would make VI more trustworthy for new users and more reliable in production workflows. 
+
+# 5.3 Limitations 
+
+5.3.1 Why We Need to Test More Models 
+
+Our evaluation focuses on one-dimensional conjugate cases (especially the Gaussian– Gaussian conjugate model) to ensure a well-understood variational approximation is available and to ensure we can visualize the entire distribution. However, most applied models are non-conjugate and have more than one dimension. Even one-dimensional models beyond our Gaussian benchmark with known varia-tional approximations would allow us to explore the impact of transformations while having a known variational approximation to compare VI results to for verification of correctness. A priori, we might expect conjugate models to be especially simplistic. Non-conjugate models (including widely used hierarchical models) may have distinctive posterior geometries, underscoring the risk of overgeneralizing results from conjugate benchmarks and highlighting the importance of expanding future evaluations to include such models. Moreover, software packages sometimes have different implementations when analytic posteriors exist; in NumPyro, for example, there are two ELBO estimators: Trace_ELBO 
+
+estimator is used for non-conjugate models, while TraceMeanField_ELBO takes advan-tage of analytic KL terms for conjugate cases. We observe that TraceMeanField_ELBO 
+
+performs substantially better when conjugacy holds. Since this paper’s results are limited to conjugate cases, new issues may arise in non-conjugate cases. 
+
+5.3.2 Scope and Generalizability 
+
+Our scope is intentionally narrow, focusing on particular one-dimensional conjugate baselines in order to isolate the effects of VI implementation. As a next step, we will expand our evaluation to a wider selection of conjugate baselines. We will then extend to non-conjugate and hierarchical models where no analytic ground truth is available, 
+
+> 4The work of Campbell et al. (2026) also supports the suggestion of using the Adam optimizer.
+
+26 high-dimensional and heavy-tailed models where optimization is more challenging, and runtime and scaling comparisons across frameworks to complement our focus on accuracy. We plan to extend our analysis to include the Stan framework to more comprehensively represent the most popular software packages offering VI. We’re particularly interested in whether our recommendations still hold for more complex models. Extending the evaluation framework in these directions will provide a greater understanding of how VI defaults behave in practice and guide both users and developers toward more robust inference. See our demo code at https://github.com/madelynandersen/simpleVI/. 27 References 
+
+Martín Abadi, Paul Barham, Jianmin Chen, Zhifeng Chen, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghemawat, Geoffrey Irving, Michael Isard, Manjunath Kudlur, Josh Levenberg, Rajat Monga, Sherry Moore, Derek G. Murray, Benoit Steiner, Paul Tucker, Vijay Vasudevan, Pete Warden, Martin Wicke, Yuan Yu, and Xiaoqiang Zheng. TensorFlow: A system for Large-Scale machine learning. In 12th USENIX Symposium on Operating Systems Design and Implementation (OSDI 16) , pages 265– 283, Savannah, GA, November 2016. USENIX Association. ISBN 978-1-931971-33-1. URL https://www.usenix.org/conference/osdi16/technical-sessions/presentation/aba di. Anonymous. Why and how variational inference underestimates variance? Data Science Stack Exchange, 2023. URL https://datascience.stackexchange.com/questions/ 110369/why-and-how-variational-inference-underestimates-variance. Accessed: 2025-04-23. Hamid Arian, Mehrdad Moghimi, Ehsan Tabatabaei, and Shiva Zamani. Encoded Value-at-Risk: A machine learning approach for portfolio risk measurement. Mathematics and Computers in Simulation (MATCOM) , 202(C):500–525, 2022. Bambi Developers. Bambi: Bayesian model-building interface. https://bambinos.github. io/bambi/, 2025. Accessed: 2025-10-02. Eli Bingham, Jonathan P. Chen, Martin Jankowiak, Fritz Obermeyer, Neeraj Pradhan, Theofanis Karaletsos, Rohit Singh, Paul Szerlip, Paul Horsfall, and Noah D. Good-man. Pyro: Deep universal probabilistic programming. Journal of Machine Learning Research , 20(28):1–6, 2019. Christopher M. Bishop. Pattern Recognition and Machine Learning . Information Science and Statistics. Springer, 2006. ISBN 0387310738. Claudia Blaiotta, M. Jorge Cardoso, and John Ashburner. Variational inference for medical image segmentation. Computer Vision and Image Understanding , 151:14–28, 2016. David M. Blei, Alp Kucukelbir, and Jon D. McAuliffe. Variational Inference: A Review for Statisticians. Journal of the American Statistical Association , 112(518):859–877, April 2017. 28 Trevor Campbell, Jonathan H. Huggins, Kyurae Kim, and Charles C. Margossian. Large-scale empirical tuning and comparison of default optimizers for variational inference, 2026. Bob Carpenter, Andrew Gelman, Matthew D. Hoffman, Daniel Lee, Ben Goodrich, Michael Betancourt, Marcus Brubaker, Jiqiang Guo, Peter Li, and Allen Riddell. Stan: A probabilistic programming language. Journal of Statistical Software , 76(1):1–32, 2017. CmdStanPy Developers. Variational inference in stan. CmdStanPy Documentation v1.0.7, 2022. URL https://cmdstanpy.readthedocs.io/en/v1.0.7/users-guide/example s/Variational%20Inference.html. Accessed: 2026-05-27. Contributors to the Pyro Project. Source code for numpyro.infer.elbo. https://num.py ro.ai/en/0.4.0/_modules/numpyro/infer/elbo.html, 2019. CRAN Logs. CRAN download counts: API for CRAN package download statistics. https://cranlogs.r-pkg.org/, 2025. Accessed: 2025-10-30. Shai Davidai, Thomas Gilovich, and Lee D. Ross. The meaning of default options for potential organ donors. Proceedings of the National Academy of Sciences of the United States of America , 109(38):15201–15205, 2012. Joshua V. Dillon, Ian Langmore, Dustin Tran, Eugene Brevdo, Srinivas Vasudevan, Dave Moore, Brian Patton, Alex Alemi, Matt Hoffman, and Rif A. Saurous. Tensorflow distributions, 2017. URL https://arxiv.org/abs/1711.10604. John Duchi, Elad Hazan, and Yoram Singer. Adaptive subgradient methods for online learning and stochastic optimization. Journal of Machine Learning Research , 12(61): 2121–2159, 2011. Christopher Fonnesbeck. How to initialize advi. PyMC Discourse, August 2023. URL https://discourse.pymc.io/t/how-to-initialize-advi/12693. Accessed: 2025-04-23. Ryan Giordano, Tamara Broderick, and Michael I. Jordan. Linear response methods for accurate covariance estimates from mean field variational bayes. Advances in Neural Information Processing Systems , 28:1441–1449, 2015. 29 Ryan Giordano, Tamara Broderick, Rachael Meager, Jonathan Huggins, and Michael Jordan. Fast robustness quantification with variational bayes. Proceedings of the 2016 ICML Workshop on #Data4Good: Machine Learning in Social Good Applications ,2016. Ryan Giordano, Tamara Broderick, and Michael I. Jordan. Covariances, robustness, and variational bayes. Journal of Machine Learning Research , 19(51):1–49, 2018. Ryan Giordano, Martin Ingram, and Tamara Broderick. Black box variational inference with a deterministic objective: Faster, more accurate, and even more black box. 
+
+Journal of Machine Learning Research , 25(18):1–39, 2024. Daniel Herrera and Martin Modrák. Parameters way off with variational inference, not sure why. The Stan Forums, 2023. URL https://discourse.mc-stan.org/t/parameters -way-off-with-variational-inference-not-sure-why/32449. Accessed: 2025-04-23. Bruce Ho, Jonah Gabry, Rasmus Bonnevie, and Bob Carpenter. Question on variational inference. The Stan Forums, 2018. URL https://discourse.mc-stan.org/t/question-o n-variational-inference/4150. Accessed: 2025-04-23. Peter D. Hoff. A First Course in Bayesian Statistical Methods . Springer Publishing Company, 1st edition, June 2009. Tommi S. Jaakkola and Michael I. Jordan. A variational approach to Bayesian logistic regression models and their extensions. Proceedings of the Sixth International Workshop on Artificial Intelligence and Statistics , R1:283–294, 04–07 Jan 1997. Reissued by PMLR on 30 March 2021. JAX Developers. example_libraries/optimizers.py. JAX Optimizers Example Code. https://github.com/jax-ml/jax/blob/main/jax/example_libraries/optimizers.py, 2026. Accessed: 2026-01-02. Ghassen Jerfel, Serena Wang, Clara Fannjiang, Katherine A. Heller, Yian Ma, and Michael I. Jordan. Variational refinement for importance sampling using the for-ward kullback–leibler divergence. Proceedings of the Thirty-Seventh Conference on Uncertainty in Artificial Intelligence (UAI 2021) , 161:1819–1829, 2021. Michael I. Jordan, Zoubin Ghahramani, Tommi S. Jaakkola, and Lawrence K. Saul. An Introduction to Variational Methods for Graphical Models. Machine Learning , 37(2): 183–233, 1999. 30 Hossein Kavianihamedani, Julianne D. Quinn, and Jared D. Smith. New diagnostic assessment of mcmc algorithm effectiveness, efficiency, reliability, and controllability. 
+
+IEEE Access , 12:42385–42400, 2024. Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. 
+
+International Conference on Learning Representations (ICLR) , 2015. arXiv:1412.6980. Alp Kucukelbir, Dustin Tran, Rajesh Ranganath, Andrew Gelman, and David M. Blei. Automatic differentiation variational inference. Journal of Machine Learning Research ,18(14):1–45, 2017. Junpeng Lao. Default value used for obj_n_mc in advi. PyMC Discourse, May 2018. URL https://discourse.pymc.io/t/default-value-used-for-obj-n-mc-in-advi/1227. Accessed: 2025-04-23. Lucien Le Cam. On some asymptotic properties of maximum likelihood estimates and related bayes’ estimates. University of California Publications in Statistics , 1:277–329, 1953. David J. C. MacKay. Information Theory, Inference and Learning Algorithms . Cambridge University Press, 2003. madelynandersen. Cmdstanpy variational - how to get density parameters? The Stan Forums, November 2024. Youssef Marzouk, Tarek Moselhy, Matthew Parno, and Alessio Spantini. Sampling via measure transport: An introduction. In R. Ghanem, D. Higdon, and H. Owhadi, editors, Handbook of Uncertainty Quantification , pages 1–41. Springer International Publishing, Cham, 2016. doi: 10.1007/978-3-319-11259-6_23-1. Alexina J. Mason, Manuel Gomes, Richard Grieve, and James R. Carpenter. A bayesian framework for health economic evaluation in studies with missing data. Health Economics , 27(11):1670–1683, 2018. Shivan J. Mehta, Andrea B. Troxel, Noora Marcus, Christina Jameson, Devon Taylor, David A. Asch, and Kevin G. Volpp. Participation rates with opt-out enrollment in a remote monitoring intervention for patients with myocardial infarction. JAMA Cardiology , 1(7):847–848, 2016. 31 Christopher Nemeth and Paul Fearnhead. Stochastic gradient markov chain monte carlo. 
+
+Journal of the American Statistical Association , 116(533):433–450, 2021. NumPyro Developers. NumPyro: Probabilistic Programming with NumPy and JAX. https://github.com/pyro-ppl/numpyro, 2025a. NumPyro Developers. Example: AutoDAIS. NumPyro Documentation. https://num.py ro.ai/en/stable/examples/dais_demo.html, 2025b. Accessed: 2026-01-02. NumPyro Developers. NumPyro Documentation. https://num.pyro.ai/en/stable/, 2025c. NumPyro Developers. Stochastic Variational Inference (SVI). NumPyro Documentation. https://num.pyro.ai/en/latest/svi.html, 2025d. Accessed: 2026-01-02. NumPyro Developers. SVI Part I: An Introduction to Stochastic Variational Inference in Pyro. https://pyro.ai/examples/svi_part_i.html, 2025e. Accessed: 2026-01-02. Lluís Palma, Alejandro Peraza, David Civantos-Prieto, Amanda Duarte, Stefano Materia, Ángel G. Muñoz, Jesús Peña-Izquierdo, Laia Romero, Albert Soret, and Markus G. Donat. Data-driven seasonal climate predictions via variational inference and trans-formers. npj Climate and Atmospheric Science , 9(1):48, January 2026. ISSN 2397-3722. doi: 10.1038/s41612-026-01320-z. Du Phan, Neeraj Pradhan, and Martin Jankowiak. Composable Effects for Flexible and Accelerated Probabilistic Programming in NumPyro. In Program Transformations for ML Workshop at NeurIPS 2019 , 2019. PyMC Developers. PyMC: Probabilistic Programming in Python. https://github.com /pymc-devs/pymc, 2025. PyMC Development Team. Transformations — PyMC Distributions API. https: //www.pymc.io/projects/docs/en/latest/api/distributions/transforms.html, 2025. Python Packaging Authority. Analyzing PyPI Package Downloads: Counting Package Downloads. https://packaging.python.org/en/latest/guides/analyzing-pypi-package -downloads/#counting-package-downloads, 2025. Last updated November 12, 2025. 32 Rajesh Ranganath, Sean Gerrish, and David Blei. Black Box Variational Inference. In Samuel Kaski and Jukka Corander, editors, Proceedings of the Seventeenth Interna-tional Conference on Artificial Intelligence and Statistics , volume 33 of Proceedings of Machine Learning Research , pages 814–822, Reykjavik, Iceland, 22–25 Apr 2014. PMLR. Sashank J Reddi, Satyen Kale, and Sanjiv Kumar. On the convergence of adam and beyond. International Conference on Learning Representations (ICLR) , 2018. Herbert Robbins and Sutton Monro. A stochastic approximation method. The Annals of Mathematical Statistics , 22(3):400–407, September 1951. Gareth O. Roberts and Jeffrey S. Rosenthal. General state space markov chains and mcmc algorithms. Probability Surveys , 1:20–71, 2004. Kevin Davis Ross. Bayesian Reasoning and Methods . Open Book Publishers, Cambridge, UK, 2022. Tim Salimans, Diederik P. Kingma, and Max Welling. Markov chain Monte Carlo and variational inference: bridging the gap. In Francis Bach and David Blei, editors, 
+
+Proceedings of the 32nd International Conference on Machine Learning , volume 37, page 1218–1226, Lille, France, 07–09 Jul 2015. PMLR. John Salvatier, Thomas V. Wiecki, and Christopher Fonnesbeck. Probabilistic program-ming in python using pymc3. PeerJ Computer Science , 2, 2016. SAS Institute Inc. SAS/STAT ® 13.1 User’s Guide: The MCMC Procedure . SAS Institute Inc., Cary, NC, 2013. Joshua S. Speagle. A conceptual introduction to Markov chain Monte Carlo methods, 2020. URL https://arxiv.org/abs/1909.12313. Stan Development Team. Stan user’s guide, 2025. URL https://mc-stan.org. Version 2.37.0. TensorFlow Developers. adam.py at v3.3.3 — Keras Optimizers (Adam) Source Code. https://github.com/keras-team/keras/blob/v3.3.3/keras/src/optimizers/adam.py, 2023. Accessed: 2026-01-02. 33 TFP Developers. TFP Release Notes notebook (0.12.1). https://www.tensorflow.org/pr obability/examples/TFP_Release_Notebook_0_12_1, 2023. Accessed: 2026-01-02. TFP Developers. Probabilistic PCA — TensorFlow Probability Example. https: //www.tensorflow.org/probability/examples/Probabilistic_PCA, 2024a. Accessed: 2026-01-02. TFP Developers. Variational inference on probabilistic graphical models with joint distributions. https://www.tensorflow.org/probability/examples/Variational_Inferen ce_and_Joint_Distributions, 2024b. Accessed: 2026-01-02. TFP Developers. tfp.vi.fit_surrogate_posterior — tensorflow probability api documen-tation. https://www.tensorflow.org/probability/api_docs/python/tfp/vi/fit_surroga te_posterior, 2024c. Accessed: 2026-01-02. TFP Developers. Bayesian modeling with joint distribution. https://www.tensorflo w.org/probability/examples/Modeling_with_JointDistribution, 2025a. Accessed: 2026-01-02. TFP Developers. Fitting generalized linear mixed-effects models using variational inference. https://www.tensorflow.org/probability/examples/Linear_Mixed_Effect s_Model_Variational_Inference, 2025b. Accessed: 2026-01-02. Madeleine B. Thompson. Graphical comparison of mcmc performance, 2010. URL https://arxiv.org/abs/1011.4457. Dustin Tran, Alp Kucukelbir, Adji B. Dieng, Maja Rudolph, Dawen Liang, and David M. Blei. Edward: A library for probabilistic modeling, inference, and criticism, 2017. URL https://arxiv.org/abs/1610.09787. Richard E. Turner and Maneesh Sahani. Two problems with variational expectation maximisation for time-series models. In David Barber, A. Taylan Cemgil, and Silvia Chiappa, editors, Bayesian Time Series Models , chapter 5, pages 109–130. Cambridge University Press, 2011. A. W. van der Vaart. Bayes procedures. In Asymptotic Statistics , page 138–152. Cambridge University Press, 1998. Hugo van Kemenade. pypistats. Zenodo, 2024. doi: 10.5281/zenodo.10254758. 34 Aki Vehtari. Advi: Too many dropped evaluations even for well behaved models. The Stan Forums, 2022. URL https://discourse.mc-stan.org/t/advi-too-many-dropped-e valuations-even-for-well-behaved-models/24338. Accessed: 2025-04-23. Ricardo Vieira. Issue #6271: Improve advice / diagnostics when vi gives terrible results. GitHub, 2022. URL https://github.com/pymc-devs/pymc/issues/6271. Accessed: 2025-04-23. Bo Wang and D. M. Titterington. Inadequacy of interval estimates corresponding to variational bayesian approximations. In Robert G. Cowell and Zoubin Ghahramani, editors, Proceedings of the Tenth International Workshop on Artificial Intelligence and Statistics , volume R5 of Proceedings of Machine Learning Research , pages 373–380. PMLR, 06–08 Jan 2005. Yixin Wang and David M. Blei. Frequentist consistency of variational bayes. Journal of the American Statistical Association , 114(527):1147–1161, 2019. Ashia C Wilson, Rebecca Roelofs, Mitchell Stern, Nathan Srebro, and Benjamin Recht. The marginal value of adaptive gradient methods in machine learning. Advances in Neural Information Processing Systems (NeurIPS) , 30, 2017. Cheng Zhang, Judith Butepage, Hedvig Kjellstrom, and Stephan Mandt. Advances in variational inference. IEEE Transactions on Pattern Analysis and Machine Intelligence ,41(8):2008–2026, 2019. Erik Štrumbelj, Alexandre Bouchard-Côté, Jukka Corander, Andrew Gelman, Håvard Rue, Lawrence Murray, Henri Pesonen, Martyn Plummer, and Aki Vehtari. Past, Present and Future of Software for Bayesian Inference. Statistical Science , 39(1): 46–61, February 2024. 35 A Conjugate Benchmark Models 
+
+This appendix collects analytically tractable conjugate models we may use as future benchmarks and details the conjugate beta–bernoulli model we use in our discussion of transformations and initialization. For each, we state the prior, likelihood, and closed-form posterior. These models support unit tests of VI implementations under default settings. 
+
+# A.1 Benchmark Models 
+
+A.1.1 Beta–Bernoulli (Unknown Probability θ)
+
+Consider binary observations yi ∈ { 0, 1} with a Bernoulli likelihood and a Beta prior on the success probability θ:
+
+yi
+
+> iid
+
+∼ Bernoulli( θ), θ ∼ Beta( α0, β 0),
+
+where Beta (α, β ) has density p(θ) ∝ θα−1(1 − θ)β−1 on (0 , 1) . Let S = ∑ni=1 yi be the number of observed successes. The posterior is 
+
+θ | y1: n ∼ Beta (
+
+α0 + S, β 0 + n − S)
+
+.
+
+The posterior mean and variance are 
+
+μn = E[θ | y1: n] = α0 + Sα0 + β0 + n, Var( θ | y1: n) = (α0 + S)( β0 + n − S)(α0 + β0 + n)2(α0 + β0 + n + 1) .
+
+For large α0 + β0 + n, the Beta posterior is well approximated by a Gaussian distribution, 
+
+θ | y1: n ≈ N  
+
+> (
+
+α0 + Sα0 + β0 + n, (α0 + S)( β0 + n − S)(α0 + β0 + n)2(α0 + β0 + n + 1) 
+
+> )
+
+,
+
+with support truncated to (0 , 1) . This benchmark stresses correct handling of (0 , 1) 
+
+support via log-odds or sigmoid transforms and sensitivity to skewed posteriors near the boundaries. 36 A.2 Future Conjugate Benchmarks 
+
+A.2.1 Gamma–Poisson (Unknown Rate λ)
+
+With Poisson likelihood and Gamma prior on the rate, 
+
+yi
+
+> iid
+
+∼ Poisson( λ), λ ∼ Gamma( α0, β 0),
+
+using the rate parameterization Gamma (α, β ) with density p(λ) ∝ λα−1e−βλ , λ > 0. Let 
+
+S = ∑ni=1 yi. The posterior is 
+
+λ | y1: n ∼ Gamma (
+
+α0 + S, β 0 + n)
+
+.
+
+This is a natural check for correct support transforms to (0 , ∞) and stable variance estimation. 
+
+A.2.2 Gamma–Exponential (Unknown Rate λ)
+
+With Exponential likelihood and Gamma prior on the rate, 
+
+yi
+
+> iid
+
+∼ Exponential( λ), λ ∼ Gamma( α0, β 0).
+
+Let T = ∑ni=1 yi. The posterior is 
+
+λ | y1: n ∼ Gamma (
+
+α0 + n, β 0 + T )
+
+.
+
+This benchmark stresses correctness of the positive-real bijector and sensitivity to skew. 
+
+A.2.3 Inverse-Gamma–Normal (Unknown Variance σ2, Known Mean μ)
+
+Assume the mean μ is known and the variance is unknown: 
+
+yi
+
+> iid
+
+∼ N (μ, σ 2), σ2 ∼ Inv -Gamma( α0, β 0),
+
+with Inv -Gamma (α, β ) density p(s2) ∝ (s2)−(α+1) e−β/s 2
+
+for s2 > 0. Let S = ∑ni=1 (yi −μ)2.The posterior is 
+
+σ2 | y1: n ∼ Inv -Gamma 
+
+> (
+
+α0 + n
+
+2 , β 0 + S
+
+2
+
+> )
+
+.
+
+This is a test of variance-parameter transforms (log vs. softplus) and gradient noise. 37 A.2.4 High-Dimensional Gaussian–Gaussian (Unknown Mean, Known Co-variance) 
+
+Let yi ∈ Rd and Σ be known, positive definite. The model is 
+
+yi
+
+> iid
+
+∼ N d(μ, Σ) , μ ∼ N d(μ0, Σ0).
+
+Define ¯y = 1
+
+> n
+
+∑ni=1 yi. The posterior is 
+
+Σp = (
+
+nΣ−1 + Σ −10
+
+)−1
+
+, μp = Σ p
+
+(
+
+nΣ−1 ¯y + Σ −10 μ0
+
+)
+
+,
+
+so that 
+
+μ | y1: n ∼ N d(μp, Σp).
+
+This benchmark stresses scaling with dimension: mean-field guides ignore posterior correlations, while full-rank guides can capture them but require O(d2) parameters. 
+
+# B Package Settings 
+
+Table 5. PyMC Transformation Mappings 
+
+Constraint / Case Transformation Notes 
+
+PositiveContinuous transforms.log R → (0 , ∞) (log) 
+
+UnitContinuous transforms.logodds R → (0 , 1) (log-odds) 
+
+CircularContinuous transforms.circular Wraps to [0 , 2π)
+
+BoundedContinuous transforms.Interval R → (a, b )
+
+Special Cases 
+
+Scale parameters (VI) softplus (rho2sigma) Ensures positive scale Ordered vectors OrderedTransform() Cumulative-sum ordering Simplex SumTo1 Sum-to-1 projection Cholesky covariance CholeskyCovPacked Log on diagonal of Cholesky factor 
+
+38 Table 6. NumPyro Transformation mappings 
+
+Constraint (constraints.) Transformation Notes / Examples 
+
+positive ExpTransform() Exponential, Gamma 
+
+nonnegative ExpTransform() Same as positive 
+
+greater_than(lower_bound) ComposeTransform([ ExpTransform(), AffineTransform(lower_bound, 1) ]) 
+
+Shifted; ensures values > lower bound 
+
+less_than(upper_bound) ComposeTransform([ ExpTransform(), AffineTransform(upper_bound, -1) ]) 
+
+Ensures values < upper bound 
+
+unit_interval SigmoidTransform() Maps R → (0 , 1) 
+
+interval(lower, upper) ComposeTransform([ SigmoidTransform(), AffineTransform(lower, scale) ]) 
+
+Uniform (a, b )
+
+simplex StickBreakingTransform() Simplex (e.g. Dirichlet) 
+
+ordered_vector OrderedTransform() Enforces increasing order 
+
+positive_definite ComposeTransform([ LowerCholeskyTransform(), CholeskyTransform().inv ]) 
+
+Positive-definite matrices 
+
+real IdentityTransform() Normal (no transform) 
+
+Distribution Examples 
+
+Normal constraints.real No transform Exponential constraints.positive ExpTransform() 
+
+Gamma constraints.positive ExpTransform() 
+
+Uniform (a, b ) ComposeTransform([ SigmoidTransform(), AffineTransform(lower, scale) ]) 
+
+—
+
+39 C Numerical Stability and Transformations 
+
+This appendix records mathematical details relevant to variance parameterizations in variational inference and summarizes standard transformations used to map between un-constrained and constrained parameter spaces. We focus on functional forms, derivatives, and log-Jacobians that appear in ELBO calculations. 
+
+# C.1 Variance Parameterizations 
+
+For a univariate latent variable z, we take the variational family to be 
+
+qϕ(z) = N (z | m, σ 2), ϕ = ( m, ω ),
+
+with ω an unconstrained scale parameter. Two parameterizations are commonly used: 
+
+σ = exp( ω), σ = softplus( ω) = log(1 + eω).
+
+Under the reparameterization 
+
+z = m + σ ϵ, ϵ ∼ N (0 , 1) ,
+
+the ELBO is 
+
+L(ϕ) = Eϵ[log p(y, z )] − Eϵ[log qϕ(z)] .
+
+C.1.1 Log-Scale Parameterization 
+
+With σ = exp( ω),
+
+∂σ ∂ω = exp( ω), ∂∂ω (m + σϵ ) = σϵ. 
+
+The entropy term 
+
+− log qϕ(z) = 12 
+
+> (
+
+z − mσ
+
+> )2
+
++ log σ + 12 log(2 π)
+
+satisfies ∂∂ω [− log qϕ(z)] = 1 .
+
+Thus, 
+
+∇ωL = Eϵ[∂z log p(y, z ) σϵ ] + 1 .
+
+40 Usage Notes. The log-scale parameterization has an unbounded derivative and therefore amplifies large values of ϵ.
+
+C.1.2 Softplus Parameterization 
+
+For σ = softplus( ω),
+
+∂σ ∂ω = sigmoid( ω), ∂∂ω (m + σϵ ) = ϵ sigmoid( ω).
+
+For the entropy term, 
+
+∂∂ω [− log qϕ(z)] = sigmoid( ω)softplus( ω).
+
+The ELBO gradient becomes 
+
+∇ωL = Eϵ
+
+> [
+
+∂z log p(y, z ) ϵ sigmoid( ω)]
+
++ sigmoid( ω)softplus( ω).
+
+Usage Notes. The bounded derivative sigmoid (ω) ∈ (0 , 1) moderates the effect of large ϵ and smooths behavior near both small and large σ. This parameterization is widely employed in modern VI implementations for scale variables. 
+
+# C.2 Transformations for Constrained Parameters 
+
+Many probabilistic models require transforming an unconstrained variable u ∈ R to a constrained domain via x = f (u). The change of variables is 
+
+pU (u) = pX (f (u)) 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+, log 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+.
+
+We record formulas for standard transformations. 
+
+C.2.1 Exponential Transform 
+
+x = exp( u), u ∈ R, x ∈ (0 , ∞).f −1(x) = log x, dx du = x, log 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+= u. 
+
+41 Usage Notes. This mapping enforces positivity and appears in reparameterizations of parameters including the rate variable of poisson or exponential distributions. 
+
+C.2.2 Logarithm Transform 
+
+u = log x, x ∈ (0 , ∞).f −1(u) = exp( u), du dx = 1 
+
+> x
+
+, log 
+
+> ∣∣∣∣∣
+
+du dx  
+
+> ∣∣∣∣∣
+
+= − log x. 
+
+Usage Notes. The transform is the inverse of the exponential mapping. It is sometimes used to avoid directly evaluating very large or very small values that approach numerical overflow or underflow, respectively. 
+
+C.2.3 Sigmoid Transform 
+
+x = σ(u) = 11 + e−u , u ∈ R, x ∈ (0 , 1) .f −1(x) = log x
+
+1 − x, dx du = x(1 − x), log 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+= log x + log(1 − x).
+
+Usage Notes. The sigmoid transform is the standard way to parameterize probabili-ties. Its derivative vanishes near boundaries, which compresses extreme regions of the constrained space into broad regions of u.
+
+C.2.4 Log-Odds (Logit) Transform 
+
+u = log x
+
+1 − x, x ∈ (0 , 1) .f −1(u) = σ(u), du dx = 1
+
+x(1 − x), log 
+
+> ∣∣∣∣∣
+
+du dx  
+
+> ∣∣∣∣∣
+
+= − log x − log(1 − x).
+
+Usage Notes. The logit transform is the inverse of the sigmoid mapping. It linearizes deviations around interior probabilities but expands neighborhoods of x → 0 or x → 1.42 C.2.5 Softplus Transform 
+
+x = softplus( u) = log(1 + eu), u ∈ R, x ∈ (0 , ∞).f −1(x) = log( ex − 1) , dx du = sigmoid( u), log 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+= − log (
+
+1 + e−u)
+
+.
+
+Usage Notes. Softplus is a smooth alternative to exp (u) with slower growth for large u and a positive lower envelope for small u. It is used extensively for stabilizing scale-parameter optimization. 
+
+C.2.6 Interval Transform 
+
+For any finite interval (a, b ),
+
+x = a + ( b − a) σ(u),
+
+log 
+
+> ∣∣∣∣∣
+
+dx du  
+
+> ∣∣∣∣∣
+
+= log( b − a) + log σ(u) + log(1 − σ(u)) .
+
+Usage Notes. This maps R to (a, b ) via an affine transformation of the sigmoid. It is common in models with bounded parameters. 
+
+C.2.7 Higher-Dimensional Constructions 
+
+Matrix-valued constraints frequently rely on elementwise transforms applied to Cholesky factors. For example, diagonal entries may be parameterized by di = softplus (ui), with the total log-Jacobian equal to the sum over coordinates.  
+
+> Table 7. Common transformations used for constrained parameters.
+
+Transform Domain → Codomain Inverse f −1(x) log 
+
+> ∣∣∣∣∣
+
+dx du 
+
+> ∣∣∣∣∣
+
+Exponential R → (0 , ∞) log x u
+
+Logarithm (0 , ∞) → R eu − log x
+
+Sigmoid R → (0 , 1) log x 
+
+> 1−x
+
+log x + log(1 − x)
+
+Log-odds (0 , 1) → R 11+ e−u − log x − log(1 − x)
+
+Softplus R → (0 , ∞) log( ex − 1) − log(1 + e−u)
+
+43
