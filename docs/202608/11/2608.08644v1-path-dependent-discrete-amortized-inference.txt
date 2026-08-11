@@ -1,0 +1,1704 @@
+Title: Path-dependent Discrete Amortized Inference
+
+URL Source: https://arxiv.org/pdf/2608.08644v1
+
+Published Time: Tue, 11 Aug 2026 01:16:58 GMT
+
+Number of Pages: 26
+
+Markdown Content:
+# Path-dependent Discrete Amortized Inference 
+
+Tiago da Silva 1 Esmeralda S. Whitammer 2 3 Salem Lahlou 1
+
+## Abstract 
+
+We consider the problem of sampling com-positional and discrete objects from a given unnormalized posterior distribution. Notably, recent studies have shown that this problem can be efficiently solved by learning a deterministic Markov Decision Process (MDP) that progres-sively builds each object in proportion to the posterior. In this work, however, we demonstrate that the Markovian assumption can both hamper signal propagation during training and catastroph-ically reduce the learned sampler’s expressivity due to state aliasing. To address these issues, we propose lifting the MDP with a learnable latent dynamical system that allows the underlying pol-icy to depend on the entire past trajectory—and not only on the current state. In view of this, we refer to the resulting method as path-dependent discrete amortized inference . Importantly, we provably extend existing learning algorithms for discrete amortized samplers to our setting. In experiments on standard benchmark problems, we also show that our approach often leads to faster learning convergence and improved state space exploration relatively to prior techniques. 
+
+## 1. Introduction 
+
+When dealing with complex stochastic models, there is only so much one can achieve analytically. Instead, practitioners frequently rely on approximate algorithms for drawing sam-ples from a target distribution, which are used to produce Monte Carlo approximations to a desired functional (Kirk-patrick et al., 1983; Geyer, 1991; Robert et al., 1999; Blei & et al., 2017). For continuous state spaces, this sampling problem can often be efficiently addressed by the celebrated Hamiltonian Monte Carlo algorithm (HMC; Neal et al., 2011; Carpenter et al., 2017). Similarly to other Markov            
+
+> *Equal contribution 1MBZUAI 2University of Edinburgh
+> 3CIFAR Fellow. Correspondence to: Tiago da Silva
+> <tiago.dasilva@mbzuai.ac.ae >.
+> Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s).
+
+chain Monte Carlo (MCMC) techniques, HMC operates by constructing a Markov chain for which the target distribution is stationary. Nonetheless, its central idea is to augment the state space with a momentum variable that evolves through a partly deterministic process dictated by the Hamiltonian dynamics (Hamilton, 1833), enhancing exploration and reducing convergence (mixing) time (Betancourt, 2017). Apart from continuously relaxing the state space (Maddison et al., 2017; Jang et al., 2017; Han et al., 2020), which can only be done in low-dimensional settings, there has been no corresponding one-size-fits-all solution for the sampling problem for discrete distributions. This issue has been particularly challenging in the presence of compositional objects (e.g., graphs and sequences), as the combinatorial explosion of the induced space often makes generic samplers impractical and forces the reliance on ad hoc techniques (Dinh et al., 2017). To fill this gap, Bengio et al. (2021; 2023) recently introduced a novel class of models— termed Generative Flow Networks (GFlowNets)—that cast the sampling problem as learning a Markov decision process (MDP) that constructs each compositional object according to a given unnormalized distribution. Since then, GFlowNets have been thoroughly studied (Lahlou et al., 2023; Deleu & Bengio, 2023; Shen et al., 2023a; Yu, 2025), with successful applications on phylogenetic inference (Zhou et al., 2024) and causal discovery (Deleu et al., 2022; 2023), among others, that repeatedly demonstrated their competitiveness against ad hoc MCMC-based alternatives. On top of that, their relationship to hierarchical variational inference (Malkin et al., 2023) and reinforcement learning (RL; Tiapkin et al., 2024; Deleu et al., 2024) methods has also been formally established. From a reinforcement learning perspective, in particular, a GFlowNet can be viewed as solving an MDP problem on a finite and completely observable environment (Sutton et al., 1998; Mohri et al., 2018) defined by the iterative process of constructing the compositional objects (e.g., adding ancestral nodes to a phylogenetic tree). Importantly, as we cannot directly assign unnormalized probabilities—i.e., rewards—to incomplete states (Pan et al., 2023b;a), GFlowNets are often impaired by reward sparsity and a consequent inefficient credit assignment during training (Jang et al., 2024). In addition, although the seminal work of Bengio et al. (2023) demonstrated that there always exists 1arXiv:2608.08644v1 [cs.LG] 9 Aug 2026 Path-dependent Discrete Amortized Inference 
+
+a deterministic MDP that generates each complete state in proportion to a given target distribution, recent theoretical results indicate that the expressive power of commonly used deep neural networks may be insufficient for representing this optimal policy (Silva et al., 2025a; Kim et al., 2025a). To mitigate these issues, we propose expanding the given MDP with a history-dependent auxiliary variable. The graphical models for the resulting generative process alongside that of the original GFlowNet are illustrated in Figure 1b. As with HMC, this variable follows a determinisitic and state-conditional dynamics defined by a discretized differential equation. (Although it can also be made stochastic; see Section D). Remarkably, as we explain in Section 4, both the vector field underlying the dynamics and the policy function can be jointly learned by stochastic gradient descent on a single loss function. Indeed, from an algorithmic learning standpoint, the introduced latent variable might also be thought of as the memory component of a recurrent neural network (Schmidhuber, 1992; Hochreiter & Schmidhuber, 1997; Irie & Gershman, 2025). In this context, we refer to our method as path-dependent discrete amortized inference . As in hidden Markov models (Baum & Petrie, 1966), by lifting the original state space with a dynamic latent variable, we can no longer ensure that the state-only stochastic process ( {st}t≥1; blue in Figure 1b) is Markovian. As we argue in Section 3, however, the introduction of path-dependent state-transitions can strictly improve the expressivity of the hypothesis class defined by the space of parametric policies. To show this, we present illustrative environments and distributions that can be solved through path-dependent parameterizations, but not through their Markovian counterparts. Additionally, traditional learning objectives for GFlowNets (Malkin et al., 2022; Madan et al., 2022; Zhang et al., 2023b; Tiapkin et al., 2024) have to be adjusted to preserve their validity within our lifted space. We carry this out in Section 4 for the trajectory balance (TB), subtrajectory bal-ance (SubTB), and contrastive balance (CB) loss functions. Complementarily, our empirical analysis in Section 5 sug-gests that the proposed path-dependent algorithm frequently achieves faster learning convergence and a better fit to the target than a similarly parameterized Markovian model. Besides, we also demonstrate in Section E that task-specific techniques for distributed and streaming inference can be seamlessly adapted to the non-Markovian setting (da Silva et al., 2024b). In summary, our contributions are as follows. 1. We introduce a path-dependent algorithm for amortized inference in discrete and compositional spaces, outlining the limitations of the conventional Markovian methods. 2. We provably extend existing learning algorithms for dis-crete amortized samplers to this new setting, demonstrating their effectiveness on standard benchmark problems.                           
+
+> (a) MDP for Discrete Amortized Samplers.
+> (b) Lifted MDP.
+> Figure 1. Graphical model for our algorithm. We propose attaching a state-conditional latent dynamical system {Wt}Tt=1 (b) to the GFlowNet’s traditional state-only Markov chain {st}Tt=1 (a). The resulting stochastic process, {(st, W t)}Tt=1 , can be described by st|st−1, W t−1∼p(·| st−1, W t−1)and Wt=Wt−1+
+> ϕ(st, W t−1)for 1≤t≤Tand learnable p, ϕ (see Section 4).
+
+## 2. Preliminaries 
+
+Notations. Let X be a finite set, and R : X → R+ be a positive function defined on X . Our objective is to generate samples from the distribution π(x) ∝ R(x) over X induced by R. For this, we assume that X has a compositional structure , that is, each x ∈ X can be obtained through the addition of simple components to an initial state so. This iterative process characterizes a pointed DAG , or a state graph , which is central to our work (Bengio et al., 2023). 
+
+Definition 2.1 (Pointed DAG) . A pointed DAG is a tuple 
+
+G = ( S, X , E ) composed of terminal (or complete ) states 
+
+X , (incomplete) states S, and directed edges E ⊆ S × (S ∪ X ). The elements of X are the only nodes of G without outgoing edges. Also, there is a unique so ∈ S , called ini-tial state , without incoming edges and connected to every 
+
+x ∈ X through a directed path (or trajectory ). See Figure 2. We say that a trajectory τ = ( st)Tt=0 ∈ S T −1 × X is com-plete if it starts at the initial state so and finishes at sT ∈ X .
+
+GFlowNets. A GFlowNet (Bengio et al., 2021; Lahlou at al., 2023) learns a Markovian forward policy 
+
+pF : S × (S ∪ X ) → [0 , 1] over a state graph such that the marginal of pF (so, ·) over the terminal states X ,
+
+p⊺(x) := X 
+
+> τ=( st)Tt=0 ⇝x
+
+Y
+
+> 1≤t≤T
+
+pF (st|st−1), (1) matches R(x) up to a normalizing constant; τ ⇝ x means that τ is complete and finishes at x. In this case, pF (·| s) := 
+
+pF (s, ·) is supported on the states s′ for which (s, s ′) ∈ E in the pointed DAG. A GFlowNet also introduces a backward 
+
+policy pB , which is a forward policy on the transposed state graph, that is used for tractable learning of pF . Readers may consult Section C and (Bengio et al., 2023; Malkin et al., 2022) for a comprehensive literature review on GFlowNets. 2Path-dependent Discrete Amortized Inference         
+
+> Figure 2. Illustration of the L INES environment with length N
+> and step size M= 2 . Starting at po, an agent can either move up to Msteps forward or transition to a terminal state ( q) and stop.
+
+## 3. On the limitations of Markovian samplers 
+
+This section lays out the empirical and provable limitations of Markovian samplers. In Sections 3.1 and 3.2, we demon-strate that the introduction of path-dependence strictly im-proves the model’s expressivity under certain conditions. In Section 3.3, we experimentally show that the phenomenon of state aliasing (Whitehead & Ballard, 1991; Pardo et al., 2022), in which distinct states become representationally in-distinguishable from the agent’s perspective, is dramatically mitigated by a path-dependent parameterization. 
+
+A running example. Throughout this section, we consider the simple state graph depicted in Figure 2, which we refer to as the N -length L INES environment. There, an agent starts at po and, from any state pk, can choose between two actions: either progressing up to M states forward along the main path (i.e., to pk+j for 1 ≤ j ≤ min {M, N − k})or transitioning directly to the terminal state qk and stopping. The only information available at each pk
+
+and qk is the state’s position k. For convenience, we let 
+
+P = {po, p 1, . . . , p N } and Q = {qo, q 1, . . . , q N }. Under the formalism of Definition 2.1, S = P and X = Q is the set of terminal states. Clearly, when M = 1 , the L INES 
+
+environment corresponds to a one-dimensional version of the standard hypergrid environment (Bengio et al., 2021; Madan et al., 2025). Our objective is to sample each qk
+
+proportionally to a given positive function R : Q → R+.
+
+3.1. Linear policies 
+
+This problem can be addressed by learning a forward policy 
+
+pF : P × (P ∪ Q ) → [0 , 1] satisfying, for a backward policy 
+
+pB , the trajectory balance condition (Malkin et al., 2022): 
+
+pF (qik |pik :io ) Q 
+
+> 1≤j≤k
+
+pF (pij |pij−1:io )
+
+pB (pik |qik ) Q 
+
+> 1≤j≤k
+
+pB (pij−1 |pij ) = R(qik )
+
+Z (2) for each increasing sequence (io, . . . , i k) such that 
+
+|ij − ij−1| ≤ M and 0 ≤ ij ≤ N and 0 ≤ k ≤ N and 
+
+io = 0 , in which ij : io = ( io, i 1, . . . , i j ) for 0 ≤ j ≤ k.Although a sufficiently wide (Cybenko, 1989; Hornik et al., 1989) or deep (Lu et al., 2017; Hanin & Sellke, 2018) neural network can approximate any smooth function, including a policy abiding by Equation (2), such a model is not mathematically tractable (Laurent & Brecht, 2018). Instead, motivated by the literature on deep linear networks (Baldi & Hornik, 1989; Baldi & Lu, 2012; Saxe et al., 2014; Laurent & Brecht, 2018) and inverse reinforcement learning (Arora & Doshi, 2020; Metelli et al., 2023), we consider linearly parameterized policies in order to understand the differences between the Markovian and path-dependent approaches for discrete amortized inference. That is, we fix a state-embedding function ψ : P → Rd for intermediate states and examine policy functions with the form 
+
+pF (pi+k|pi, Wi) = Softmax (( Wiψ(pi)) ⊙ mi)k (3) for 1 ≤ k ≤ M , Wi ∈ Rd×(M +1) as a learnable parameter and mi ∈ { 1, −∞} M +1 as a mask that inhibits actions leading to positions with index larger than N . Under a con-ventional Markovian linear model, Wi = W is fixed. This represents a standard GFlowNet implementation (Viviano et al., 2025). In this scenario, we say that an unnormalized distribution R : Q → R+ is learnable by our sampler if there exists a W for which the marginal distribution of 
+
+pF (·| so) on Q matches R up to a normalizing constant (see (1)). Notably, when {Wt}t≥1 follows a linear dynamics, 
+
+Wt = ba Tt ,
+
+at = at−1 + ( wTa ψ(st)) · va, (4) with ao ∈ Rd, wa ∈ Rd, and va ∈ Rd as learnable parameters and b ∈ RM +1 fixed normally at random, then the space of learnable distributions under Equation (4) is strictly larger than that of a corresponding Markovian model; this is the content of the next proposition. 
+
+Proposition 3.1. Let M = 1 and r = ( R(qi)) Ni=0 be the vector of state-wise probabilities. Clearly, both λr and r
+
+induce the same distribution over Q for λ > 0; let [r] be the corresponding equivalence class. Then, define 
+
+WM = {[r] : ∃W s.t. p⊺(qi) ∝ [r]i}
+
+and WP = {[r] : ∃ao, wa, va s.t. p⊺(qi) ∝ [r]i}
+
+as the space of learnable distributions for a Markovian and path-dependent parameterizations. Under these conditions, dim span( WM ) ≤ dim span( WP ) almost surely (with respect to b) for all state-embedding functions 
+
+ψ : P → Rd, and dim span( WM ) < dim span( WP ) for some ψ, including the natural embedding ψ(pi) = i.
+
+In Proposition 3.1, the span ( span ) and dimension ( dim )are meant in the Euclidean sense. In a nutshell, it states that an MDP augmented (or lifted) with a specific linear determinisitic dynamics posseses significantly greater representational power than a simple linear MDP. 
+
+Empirical illustration. To illustrate Proposition 3.1, we consider a distribution R : Q → R+ with the form 
+
+R(qi) = X
+
+> 1≤j≤4
+
+wj exp {−| i − kj |} , (5) 3Path-dependent Discrete Amortized Inference Markovian Path-dependent Target   
+
+> Figure 3. Illustration of Proposition 3.1. While a linear Markovian model (left) completely misses the high-probability regions of the target (right; see Equation (5)), our path-dependent parameterization (middle) provides a near-perfect distributional fit.
+
+in which kj ∈ { 1, . . . , N } for 1 ≤ j ≤ 4 and wj ∈ [0 , 1] 
+
+with P4 
+
+> j=1
+
+wj = 1 as weighting factors; see Figure 3 (right). We also let ψ be P’s natural embedding, i.e., ψ(pi) = i
+
+for each 1 ≤ i ≤ N . For simplicity, we let N = 16 and 
+
+M = 1 , and train both models by minimizing the TB loss; see Section 4 and Corollary B.1 for further details. As expected, Figure 3 shows that the distribution learned by our non-Markovian model closely matches the target distribution, while its Markovian alternative catastrophically underrepresents the target’s high-probability regions. 
+
+3.2. GNN-based policies 
+
+Notably, the proven additional expressivity of path-dependent models can also be extended beyond linear policies. Drawing on the recent analysis in (Silva et al., 2025a; Kim et al., 2025a) and on the long-standing theory about the limitations of graph neural networks (GNNs; Kipf & Welling, 2017; Hamilton, 2020; Bronstein et al., 2021; Corso et al., 2024), we will demonstrate that the lifting pro-cess illustrated in Figure 1b provably boosts the expressive power of GNN-parameterized policy networks for discrete amorized samplers. For this, we briefly review the setup in (Silva et al., 2025a) and the structure of GNNs (Xu et al., 2020; Wang et al., 2022) for learning on dynamic graphs. To start with, the reader should recall that a GNN modifies a featured graph G = ( X, E) with node features X ∈ Rn×d
+
+and edges E via a neighborhood-aggregating transformation, 
+
+x′ 
+
+> i
+
+= μ ({ζ(xj ) : ( i, j ) ∈ E} ) := f (xi; G),
+
+in which xi ∈ Rd is the feature of the i-th node; 
+
+ζ : Rd → Rd′
+
+, a parametric function (e.g., an MLP); and 
+
+μ, a permutation-invariant function on Rd′
+
+(Hamilton, 2020). Based on this formulation, it is clear that a single-layer GNN will fail to distinguish nodes xi and xj
+
+for which xi = xj and both i and j have isomorphic 1-hop neighborhoods. In fact, the expressivity of deep GNNs is well-understood under the light of the Weisfeiler-Lehman hierarchy (WL; Weisfeiler & Lehman, 1968; Grohe, 2022). Building on this, Silva et al. (2025a) have shown that a GFlowNet constructed on a simple edge-adding generative process (see Figure 4) with a policy function defined by 
+
+pF (G+( m,n )|G ) ∝ exp {ζ(f (xm; G) ⊕ f (xn; G)) }, (6) in which G+( m,n ) is the graph resulting from adding the edge (i, j ) to G, ⊕ is the concatenation operator, f is a 1-WL multi-layer GNN, and ζ : R2d′
+
+→ R is a feedforward deep network, cannot sample from some simple graph-structured distributions. This is another manifestation of state aliasing, as the sampler fails to distinguish distinct states due to its limited representational capacity. We show below that our path-dependent parameterization mitigates this issue. 
+
+Proposition 3.2 (Temporal GNNs improve GFlowNet’s expressivity) . Let SGs be the space of state graphs defined by the edge-additive process over featured graphs (Figure 4), and let R(S) be the space of all unnormalized distributions over the graphs in S ∈ SGs . Also, by letting 
+
+Ai be the adjacency matrix of the i-th graph and 1 ∈ R|X|
+
+be column vector of 1’s, define 
+
+m(o) = 0, m(i+1) = m(i) + α(Gi) · (Ai+1 − Ai)1
+
+and V(i+1) = [ X|| m(i+1) ] ∈ Rn×(d+1) and α(Gi) ∈
+
+(0 , 1] . Similarly, for S ∈ SGs , let RP (S) ⊆ R (S) be the set of distributions that a path-dependent amortized sampler based on a GNN fP and a feedforward deep network ζP ,
+
+pF (G+( m,n )|G i) ∝ exp {ζP (fP (v(i) 
+
+> m
+
+; G) ⊕ fP (v(i) 
+
+> n
+
+; G)) },
+
+(7) 
+
+can sample from, and let RM (S) ⊆ R (S) be the set of dis-tributions learnable by an amortized sampler in the form of Equation (6) . Then, RM (S) ⊆ R P (S) for every S ∈ SGs ,and there exist sets S for which RM (S)̸ = RP (S).
+
+Intuitively, Proposition 3.2 states that including the infor-mation of when a node’s degree has changed (Equation (7)) into the generative process strictly improves the expressivity of the learned sampler when compared against the original formulation in Equation (6). In doing so, the resulting gener-ative process clearly fits into the path-dependent framework described in Figure 1b, as the policy function no longer satisfies the Markovian property. With this in mind, it would be interesting to understand the performance and limitations of this family of models for graph-structured tasks (e.g., Pandey et al. (2024)) under the lens of the analysis in (Souza et al., 2022). We leave this investigation to future endeavors. 
+
+Empirical illustration. To shed light on Proposition 3.2, we present in Figure 4a a state graph S for which 
+
+RP (S)̸ = RM (S). Notice, in particular, that S has two terminal nodes ( q1 and q2) preceded by a non-terminal node ( p). Due to the indistinguishability of node pairs (a, b )
+
+and (a, c ) in p, a GFlowNet based on Equation (6) will fail to learn any non-uniform distribution over q1 and q2. In contrast, as a and c are modified at distinct moments in the different trajectories leading to p, our path-dependent pa-rameterization in Equation (7) is able to fit any distribution. This fact is illustrated in Figure 4b, wherein we let 
+
+R(q1) = α and R(q2) = 1 − α
+
+4Path-dependent Discrete Amortized Inference 
+
+(a) Common GNN architectures (e.g., GCN, GAT) cannot distinguish the edges (a, b ) and 
+
+(a, c ) on the graph p. Consequently, a GFlowNet parameterized as in Equation (6) would fail to learn any non-uniform distribution over {q1, q 2} when trained on this state graph. 0.2 0.4 0.6 0.8
+
+> α
+> 0.00.10.20.30.4
+> Total Variation Distance  Markovian Path-dependent
+
+(b) However, due to its larger expres-sive power, a path-dependent sampler perfectly fits any target distribution. 
+
+Figure 4. Illustration of Proposition 3.2. We present an example in which a 1-WL GNN-based Markovian amortized sampler (Equation (6)) cannot sample from an non-uniform target over {q1, q 2}, while a corresponding path-dependent model can (right). 
+
+for α ∈ { 0.1, 0.2, . . . , 0.9} and use a standard two-layer GCN (Kipf & Welling, 2017) for parameterizing the policies, which are trained by minimizing the TB loss in Corollary B.1. As expected, the total variation (TV) distance between the target R and the GFlowNet’s learned distribution, which is uniform (as discussed above), is 
+
+TV( R, p ⊺) := 12
+
+
+
+α − 12 + (1 − α) − 12
+
+
+
+= α − 12 ,
+
+while the same TV distance for our path-dependent model in Equation (7) is vanishingly small. 
+
+3.3. Multi-layer ReLU networks 
+
+A ReLU network learns a representation of each state by composing piecewise-linear functions, fi : Rdi → Rdi+1 ,defined by fi(x) = max( Wix, 0) , in which the max 
+
+operator is applied elementwise; do is the dimension of each state’s natural embedding into the Euclidean space (e.g., 
+
+do = 1 for the L INES environment). Although the composi-tion f1 ◦ f2 can approximate any target continuous function from Rdo to Rd2 given a sufficiently large d1 (Hornik et al., 1989), finding the appropriate parameters Wo, W1,and W2 by gradient descent is often difficult—especially when the target has a large Lipschitz constant (Scaman & Virmaux, 2019). In the realm of RL, this limitation commonly manifests itself in the form of state aliasing , in which the learned model is unable to accurately distinguish states x1 and x2, regardless of their corresponding optimal action distributions. In other words, from the agent’s perspective, the environment becomes partially observable .To understand how this phenomenon emerges in the context of Markovian amortized samplers, consider the L INES en-vironment with M = 2 and the target R over Q depicted in Figure 5a. There, R(q2) = 1000 R(q1) and R(q20 ) = 
+
+R(q2). Under these conditions, the optimal policy p⋆F at p2
+
+and p3 differ significantly. Hence, as shown in Figure 5b, a Markovian sampler based on a 2-layer ReLU network with a softmax output cannot easily separate p2 and p3, as the Kullback-Leibler divergence (Kullback & Leibler, 1951) 
+
+max      
+
+> τ:po⇝p2,τ ′:po⇝p3
+
+KL [ pF (·| p3, τ ′)|| pF (·| p2, τ )] (8) remains essentially constant and near 0 throughout training (Figure 5b, blue). Contrarily, a path-dependent model—which has the ability to learn distinct values of 
+
+pF (·| p2, τ ) for distinct τ —can smoothly learn a distinct representation for p2 and p3 early in training (Figure 5b, orange). This also results in faster learning convergence and a better fit to the target distribution given a limited budget of trajectories; see Figure 5c, in which we used the model in Equation (4) for modelling path-dependence. 
+
+## 4. Path-dependent Amortized Samplers 
+
+The last section showed that a path-dependent algorithm can provide a provable expressivity boost for discrete amortized samplers. Nonetheless, it left the following question unanswered: how to define the latent dynamical process 
+
+{Wt}t≥1? After presenting a formal definition of our framework (Section 4.1 and Definition 4.1), we introduce a general-purpose algorithm for learning the vector field 
+
+ϕ characterizing the latent dynamical system {Wt}t≥1—through the rule Wt = Wt−1 + ϕ(Wt−1, s t)—and demon-strate its correctness (Section 4.2 and Proposition 4.5). 
+
+4.1. Path-dependent Discrete Amortized Inference 
+
+Based on the prior examples, we provide a formal descrip-tion of our framework for path-dependent discrete amortized inference. Crucially, although Proposition 3.2 suggests that different applications may benefit from specialized imple-mentations, we will see in Sections 4 and 5 that a single architecture inspired by recent advances in recurrent RL (Irie et al., 2022; Irie & Gershman, 2025) is able to outperform standard Markovian models on most benchmark problems. With this in mind, we start by defining a lifted pointed DAG .
+
+Definition 4.1 (Lifted Pointed DAG) . Let SG = ( S, X , E )
+
+be a pointed DAG (as per Definition 2.1) with state space S,5Path-dependent Discrete Amortized Inference 
+
+(a) Sparse L INES environment; 
+
+R(qi) = 10 −3 for all i / ∈ { 2, 20 }.10 0 10 1 10 2 10 3
+
+> Training iteration
+> 10 −3
+> 10 −1
+> max KL(3 , 2)
+> Markovian Path-dependent
+
+(b) KL -divergence between poli-cies at p3 and p2; see Equation (8). 10 0 10 1 10 2 10 3 10 4
+
+> Training iteration
+> −0.50.00.5log  Z
+> Markovian Path-dependent True
+> Markovian
+> Path-dependent
+> Snapshot Target
+
+(c) Learning convergence for a Markovian and a path-dependent sampler for the sparse L INES environment. 
+
+Figure 5. Markovian samplers struggle to distinguish similar states (Section 3.3). (a) L INES environment with a sparse target; the optimal action distribution at p2 puts a large weight on moving up (due to the largeness of R(q2)), while the one at its adjacent state, 
+
+p3, is biased towards moving to the right. (b) KL -divergence between the policies at p2 and p3 throughout training; a ReLU network-parameterized Markovian sampler takes around 100 times more iterations to separate p2 and p3 than its path-dependent counterpart. (c) This results in a better convergence rate. The right-hand-side snapshot shows the sampler’s state at the iteration marked by the dotted line. 
+
+edges E, and terminal states X . Also, let ϕ : S × Ω → Ω
+
+be a function over some set Ω, and Wo ∈ Ω. We say that 
+
+SG ⋆ = ( S⋆, X , E ⋆, ϕ, W o) is a pointed DAG lifted by ϕ
+
+and Wo when the following conditions are satisfied. 1. S⋆ ⊆ S × Ω, E⋆ ⊆ S ⋆ ×(S⋆ ∪X ), s⋆o := ( so, W o) ∈ S ⋆;2. (s, W ) ∈ S ⋆ iff there is a path {(st, W t)}Tt=0 such that 
+
+(sT , W T ) = ( s, W ), Wt = Wt−1 + ϕ(st, W t−1), and 
+
+(st−1, s t) ∈ E for all 1 ≤ t ≤ T ;3. (( s, W ), (s′, W ′)) ∈ E⋆ iff (s, s ′) ∈ E are connected in 
+
+SG and W ′ = W + ϕ(s′, W ); and 4. (( s, W ), x ) ∈ E⋆ iff (s, W ) ∈ S ⋆ and (s, x ) ∈ E.When ϕ, Wo, and SG are clear from the context, we shall refer to SG ⋆ simply as the lifted pointed DAG. In Definition 4.1, we will often let Ω = Rd for some integer 
+
+d. As illustrated in Figure 1b, a lifted pointed DAG extends a state graph with a latent dynamical system {Wt}t≥1 abiding by the difference equation determined by ϕ and conditioned on {st}t≥1 (state-conditional ). In the following examples, we show that the problems outlined in the previous section fit into the structure presented in Definition 4.1. 
+
+Example 4.2 (L INES ). In the context of Figure 2, S =
+
+P, X = Q, and E = SNi=0 {(pi, p i+k) for 1 ≤ k ≤
+
+min {M, N −i}}∪{ (pi, q i)}. For Proposition 3.1, Wo = ao,
+
+Ω = Rd (b is fixed), and ϕ : S × Rd → Rd is defined by 
+
+ϕ(s, a) = ( wTa ψ(s)) · va,
+
+in which wa and va are learnable parameters and ψ is an embedding function. Also, notice that ϕ is independent of a.
+
+Example 4.3 (G RAPHS ). We consider the edge-additive process illustrated in Proposition 3.2. There, S and X are sets of featured graphs with a fixed number N of nodes, denoted by G = ( X, E); E is the set of edges. Also, E =
+
+{(G, G′) for |E ′ \ E| = 1 and E ⊆ E ′}. For instance, |X | =2 and |S| = 5 in Figure 4a. In Proposition 3.2, Wo =(mo, Ao), with mo = 0 ∈ RN and Ao as the initial state’s adjacency matrix, Ω = RN × { 1, 0}N ×N , and ϕ : S × Ω →
+
+Ω is characterized by the recurrence relation 
+
+ϕ(s, (m, A)) = ( α(s) · (As − A)1, 0N ×N ) ,
+
+in which α : S → (0 , 1] , 1 is a N -sized vector of 1s, and 
+
+As is s’s adjacency matrix. Correspondingly, the update step for the dynamic system {Wt}t≥1 can be written as 
+
+At+1 = At, mt+1 = mt + αt (At+1 − At) 1,
+
+with αt = α(st). Here, ϕ depends on s and W = ( m, A).Interestingly, a stochastic latent dynamical system can also be developed (e.g., as in S¨ arkk¨ a & Solin (2019)). Nonethe-less, this significantly increases the problem’s complexity, as the lifted domain becomes uncountable; see Section D for a formal exposition and preliminary derivations. 
+
+4.2. Choosing a latent dynamical system Recurrent policy network. To select an appropriate up-date rule for {Wt}t≥1, we initially remark upon the fact that 
+
+Wt = Wt−1 + ϕ(st, W t−1)
+
+can be directly implemented by a recurrent neural network (RNN; Rumelhart et al., 1986; Cho et al., 2014). Asingle-layer vanilla RNN with identity activation, for instance, would provide the equation 
+
+ϕ(st, W t) = ψ(st)Ws + Wt−1(Wh − I) + bh,
+
+with Wt ∈ Rd, Ws ∈ Rd×d, Wh ∈ Rd×d, and bh ∈ Rd
+
+as optimizable parameters and ψ : S → Rd as a (possibly learnable) embedding function for S. The resulting representation, Wt, could then be used as an input to a standard multi-layer neural network for computing a probability distribution over st’s children in the state graph (as in Equation (3)). In practice, this process would be repeated until the sampling of a terminal state x ∈ X , as explained in Section 2. We refer to a forward policy pF
+
+parameterized by such a recurrent network as a recurrent policy network (Karkus et al., 2017; Ni et al., 2022). 6Path-dependent Discrete Amortized Inference 
+
+Self-Referential Weight Matrix (SRWM). Based on the long-standing success of Fast Weight Programmers (FWPs; Schlag et al., 2021; Irie & Gershman, 2025) on RL and on our own empirical assessment (see Section 5), we propose using a modified self-referential weight matrix (SRWM; Schmidhuber, 1993b; Irie et al., 2022) for learning the sampler’s recurrent policy network. Simply put, our modified SRWM implements an update rule with the form: 
+
+qt, kt, vt, β t = Wψ(st) + b,
+
+¯vt = Wt−1ζ(kt),
+
+Wt = Wt−1R + σ(βt) · (vt − ¯vt) ⊗ ζ(qt),
+
+(9) in which W ∈ R(3 d+1) ×d and b ∈ R3d+1 are parameters, 
+
+ζ : Rd → ∆d−1 is an activation function that maps a vector in Rd into the (d − 1) -dimensional simplex (e.g., softmax), R is a (fixed) ergodic rotation matrix, and σ(x) = (1 + exp {− x})−1 is the sigmoid function. Intuitively, R en-forces diversity into the policy by rotating the eigenvectors of Wt throughout the rollout of a trajectory, which reduces the aliasing-related effects described in Section 3.3. Under the terminology introduced by Schmidhuber (1993b;a), 
+
+W and b are slowly changing variables optimized via stochastic gradient descent, while Wt−1 is a rapidly evolving matrix with a self-determined learning rate σ(βt).Correspondingly, we also parameterize the initial state for the latent dynamical system as Wo = aobTo , in which both 
+
+ao ∈ Rd×1 and bo ∈ Rd×1 are optimizable parameters. Importantly, we notice that other architectures, such as LSTMs (Hochreiter & Schmidhuber, 1997) and GRUs (Cho et al., 2014), have also been tested for parameterizing the up-date rule ϕ in early experiments. However, we found them to be generally less effective than a comparably sized SRWM, which corroborates evidence in prior work (Irie et al., 2022). 
+
+4.3. Learning a latent dynamical system Criteria for path-dependent samplers. Given the SRWM-based architecture, we are left with the problem of estimating the model’s parameters. In this context, we demonstrate that the learning criteria for GFlowNets can also be used for learning a policy function on our lifted DAG. (Interested readers are referred to Section B for an extension of the flow network analogy to our context). We start by recalling the definition of a state flow (Bengio et al., 2021). 
+
+Definition 4.4. A state flow for a target R : X → R+ is any function F : S⋆ ∪X → R+ s.t. F (x) = R(x) for all x ∈ X .In practice, F is a learned function representing the total flow arriving at each s⋆ ∈ S ⋆. Under certain conditions (established below), this is also equivalent to the unnor-malized marginal probability of reaching s⋆ when starting at the initial state s⋆o and following the forward policty pF
+
+(Bengio et al., 2021). As such, it is natural to restrict F in X
+
+by letting F (x) = R(x) for x ∈ X (Deleu et al., 2022), as we do in Definition 4.4. From this perspective, we show in the next proposition that Madan et al. (2022)’s subtrajectory balance (SubTB) condition is enough to ensure sampling correctness on the lifted DAG of Definition 4.1. 
+
+Proposition 4.5. Let S⋆ be a lifted pointed DAG, and pF ,
+
+pB , and F be a recurrent forward policy, a backward policy, and a flow function on S⋆. Assume that, for each complete trajectory τ = ( s⋆t )Tt=0 with s⋆T = x ∈ X and each i < j ,
+
+F (s⋆i )pF (s⋆i+1: j |s⋆i ) = pB (s⋆i:j−1|s⋆j )F (s⋆j ), (10) 
+
+in which pF is computed according to the graphical model in Figure 1b and pB (s⋆i |s⋆i+1: j ) = Qj−1 
+
+> t=i
+
+pB (s⋆t |s⋆t+1 ), ac-cording to the transposed SG ⋆. Then, denoting by τ ⇝ s⋆
+
+the trajectories starting at s⋆o and finishing at s⋆ ∈ S ⋆ ∪ X ,
+
+p⊺(s⋆) = X 
+
+> τ⇝s⋆
+
+pF (τ |s⋆o) ∝ F (s⋆). (11) 
+
+In particular, p⊺(x) ∝ R(x) for x ∈ X .
+
+Since our interest lies exclusively on the sampling of complete objects, it should be clear that the Equation (11) remains true on X when Equation (10) is only for i = 0 and 
+
+j = T (Madan et al., 2022). This results in the trajectory balance (TB) condition (Malkin et al., 2022). 
+
+Corollary 4.6. Similarly to Proposition 4.5, assume that 
+
+F (s⋆o)pF (τ |s⋆o) = R(x)pB (τ |x) (12) 
+
+for each complete trajectory τ = ( s⋆t )Tt=0 . Then, p⊺(x) ∝
+
+R(x) for each terminal state x ∈ X .
+
+As in Bengio et al. (2023, Example 6), Corollary 4.6 only depends on the flow associated to the initial state, F (s⋆o),which equals the target R’s partition function when Equa-tion (12) is satisfied (Malkin et al., 2022). Below, we demon-strate that the F -independent contrastive balance (CB) condition (Zhang et al., 2023b; da Silva et al., 2024a) is also sufficient to ensure the marginal of pF over X matches R.
+
+Corollary 4.7. Under the setup of Proposition 4.5, let τ =(s⋆t )Tt=0 , τ ′ = ( s′⋆t )Tt=0 be complete trajectories on SG ⋆. If 
+
+pF (τ |s⋆o)pB (τ ′|s′⋆T )R(s′⋆T ) = pF (τ ′|s′⋆o )pB (τ |s⋆T )R(s⋆T )
+
+for every pair (τ, τ ′), then p⊺(x) ∝ R(x).
+
+Taken together, Proposition 4.5 and Corolaries 4.6 and 4.7 demonstrate that traditional learning objectives for GFlowNets can be seamlessly adapted to a lifted pointed DAG (see Definition 4.1). In practice, we enforce these conditions by minimizing an expectation of the log-squared difference between their left- and right-hand sides (as in Ben-gio et al., 2023, Examples 4-6). Remarkably, when pB does not depend on the latent dynamical system {Wt}t≥1, the optimal pF satisfying either Corollaries 4.6 or 4.7 is Marko-vian with respect to the unlifted DAG; see Proposition 4.8. 7Path-dependent Discrete Amortized Inference 
+
+Proposition 4.8. Under the setup of Proposition 4.5, assume ˜pB is a backward policy on SG such that 
+
+pB (s⋆t |s⋆t+1 ) = ˜pB (st|st+1 ) for each trajectory (s⋆t )Tt=0 
+
+on SG ⋆. We write st for the unlifted instantiation of 
+
+s⋆t := ( st, W t). Let pF be a forward policy abiding by either Corollaries 4.6 or 4.7. Then, there is a policy ˜pF on 
+
+SG for which pF (s⋆t+1 |s⋆t ) = ˜ pF (st+1 |st).
+
+Figure 6 illustrates Proposition 4.8 for the L INES en-vironment (recall Figure 2), measuring the same-state, distinct-trajectory KL divergence averaged over non-terminal states s ∈ { p1, . . . , p N } when (i) pB is Markovian and (ii) pB is non-Markovian. Under (i), pF converges to a Markovian policy, as indicated by the vanishing KL diver-gence; under (ii), pF stabilizes as a non-Markovian model. 0 1000 2000 3000 4000 5000 6000      
+
+> Training steps
+> 0.00 0.05 KL( s) Path-dependent pB
+> Markovian pB
+> Markovian pF&pB
+
+Figure 6. Illustration of Proposition 4.8 . A (non-)Markovian pB
+
+entails a (non-)Markovian pF at equilibrium. We let KL( s) = max τ,τ ′ : so⇝s KL( pF (·| τ, s )|| pF (·| τ ′, s )) be the maximum KL between policies conditioned on the same state, but distinct trajec-tories; KL( s) > 0 for some s indicates pF is path-dependent. 
+
+Importantly, in view of the aliasing-related challenges described in Section 3, the choice of a Markovian pB can be effective, as a path-dependent parameterization may provide a better approximation to the optimal policy ˜pF
+
+outlined in Proposition 4.8 than its Markovian equivalent. 
+
+## 5. Experiments 
+
+The main purpose of our experiments is to attest the effectiveness of our path-dependent models in terms of their goodness-of-fit to the target distribution relatively to their Markovian counterparts. For this, we consider the following four standard benchmark tasks in the GFlowNet literature. Additionally, we provide results for the tasks of preference learning, bit sequences, and lazy random walk in the supplement. We implemented our models in JAX (Bradbury et al., 2018); see Section F for further details. 
+
+Set generation (Bengio et al., 2023). This task consists of generating fixed-size subsets of a fixed superset. Let 
+
+Γ = {1, 2, . . . , S } be such a superset, and u : Γ → R be a log-utility function for the elements of Γ. In this context, our initial state is the empty set, so = ∅, and each transition consists of adding an element of Γ \ s to the current state 
+
+s until |s| = K. Our objective is to sample each γ ⊆ Γ
+
+with |γ| = K in proportion to R(γ) = P 
+
+> i∈γ
+
+exp {u(i)}.In this scenario, Table 1 shows that a path-dependent 
+
+Table 1. FCS for set generation with S = 64 and varying K.
+
+K Markovian Path-dependent 16 0.091 ±0.012 0.053 ±0.006 
+
+24 0.105 ±0.009 0.064 ±0.002 
+
+Table 2. FCS for the sequence design task. Syn-S stands for the synthetic distribution over S-sized sequences, while SIX6 and PHO4 refer to the task of DNA sequence generation. 
+
+Task Markovian Path-dependent Syn-8 0.084 ±0.001 0.011 ±0.001 
+
+Syn-16 0.165 ±0.006 0.024 ±0.001 
+
+Syn-32 0.243 ±0.015 0.055 ±0.002 
+
+SIX6 0.165 ±0.006 0.135 ±0.003 
+
+PHO4 0.175 ±0.004 0.130 ±0.001 
+
+parameterization achieves better goodness-of-fit for S = 64 
+
+and K ∈ { 16 , 32 } (X contains roughly 10 14 and 10 18 
+
+elements, respectively) in terms of FCS (i.e., the average TV distance on tractable subsets of X ; see Equation (18)). 
+
+Sequence design (Jain et al., 2022). For this problem, we autoregressively generate sequences with a fixed size 
+
+S. That is, we start at an empty sequence so = ∅ and add tokens from a given vocabulary V to the current state s until s ∈ VS . First, we consider a synthetic distribution with V = {1, . . . , 6}, S ∈ { 8, 16 , 32 }, and 
+
+R(s) = PSi=1 u(i) · v(si) with u : {1, . . . , S } → R+ and 
+
+v : V → R+ as utility functions. Table 2 shows that our path-dependent parameterization has a better fit to the target distribution for each S. Figure 10 (supplement) shows these results are consistent across model sizes. Second, and simi-larly, we show in Table 2 that our model also achieves better distributional fit for the task of 8 (resp. 10)-sized biological sequence design of Jain et al. (2022), in which the target dis-tribution measures the binding affinity of a DNA sequence to human (resp. yeast) transcription factors (Barrera et al., 2016; Trabucco et al., 2022) denoted by SIX6 (resp. PHO4). 
+
+Grid world (Bengio et al., 2021). The grid world repre-sents a sparse distribution over {0, . . . , N − 1}2 illustrated in Figure 7 (right). The initial state is the origin, so = (0 , 0) ,and a transition consists of either stopping, or moving up, or moving to the right, similarly to the L INES task in Figure 2. Again, we show in Figure 7 that our path-dependent model achieves a better approximation to the target than its Marko-vian counterpart—which struggles to navigate the space. Markovian Path-dependent Target distribution 
+
+Figure 7. Goodness-of-fit to the target in the grid-world . 
+
+8Path-dependent Discrete Amortized Inference 
+
+## 6. Conclusions 
+
+When working with continuous distributions, the most ef-fective samplers rely on augmenting the state space with an auxiliary momentum (latent) variable to accelerate conver-gence (Neal et al., 2011; Cheng et al., 2018), a process which we call lifting . In this work, we demonstrated that a similar strategy can be used effectively for discrete amortized sam-plers in compositional spaces. We also delineated the lim-itations of existing samplers operating on the unlifted state space, and showed that the latent dynamical process can be efficiently learned with a self-referential weight matrix. In closing, we note the question regarding the feasibility of a stochastic dynamics for a path-dependent model remains open, which we believe represents an interesting venue for future research. All in all, our results further suggest that algorithms for partially observable MDPs are well-suited for discrete amortized sampling, corroborating early observations by Randlov (1998); Boussif et al. (2024). 
+
+## Impact statement 
+
+Our work delineates the limitations of Markovian amortized samplers for discrete and compositional objects, which have attracted increasing interest from our community, and in-troduces a general-purpose path-dependent algorithm for mitigating them. However, we do not foresee any direct negative societal impacts for this work specifically. 
+
+## Acknowledgements 
+
+ESW acknowledges support from the CIFAR Learning in Machines and Brains program. 
+
+## References 
+
+Arora, S. and Doshi, P. A survey of inverse reinforcement learning: Challenges, methods and progress, 2020. URL 
+
+https://arxiv.org/abs/1806.06877 .Atanackovic, L. and Bengio, E. Investigating Generaliza-tion Behaviours of Generative Flow Networks. ICML 2024 Workshop on Structured Probabilistic Inference & Generative Modeling , 2024. URL https://arxiv. org/abs/2402.05309 .Baldi, P. and Hornik, K. Neural networks and principal component analysis: Learning from examples without local minima. Neural networks , 2(1):53–58, 1989. Baldi, P. and Lu, Z. Complex-valued autoencoders. Neural Networks , 33:136–147, 2012. Barrera, L. A., Vedenko, A., Kurland, J. V., Rogers, J. M., Gisselbrecht, S. S., Rossin, E. J., Woodard, J., Mariani, L., Kock, K. H., Inukai, S., et al. Survey of variation in human transcription factors reveals prevalent DNA binding changes. Science , 351(6280):1450–1454, 2016. Baum, L. E. and Petrie, T. Statistical inference for proba-bilistic functions of finite state markov chains. The annals of mathematical statistics , 37(6):1554–1563, 1966. Bengio, E., Jain, M., Korablyov, M., Precup, D., and Bengio, Y. Flow Network based Generative Models for Non-Iterative Diverse Candidate Generation. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. Bengio, Y., Lahlou, S., Deleu, T., Hu, E. J., Tiwari, M., and Bengio, E. GFlowNet Foundations. Journal of Machine Learning Research (JMLR) , 2023. Betancourt, M. A conceptual introduction to hamiltonian monte carlo. arXiv preprint arXiv:1701.02434 , 2017. Blei, D. M. and et al. Variational Inference: A Review for Statisticians. Journal of the American Statistical Associa-tion , 2017. Boussif, O., Ezzine, L. N., Viviano, J. D., Koziarski, M., Jain, M., Malkin, N., Bengio, E., Assouel, R., and Bengio, Y. Action abstractions for amortized sampling, 2024. URL https://arxiv.org/abs/2410.15184 .Bradbury, J., Frostig, R., Hawkins, P., Johnson, M. J., Leary, C., Maclaurin, D., Necula, G., Paszke, A., VanderPlas, J., Wanderman-Milne, S., and Zhang, Q. JAX: composable transformations of Python+NumPy programs, 2018. URL 
+
+http://github.com/jax-ml/jax .Bronstein, M. M., Bruna, J., Cohen, T., and Veliˇ ckovi´ c, P. Geometric deep learning: Grids, groups, graphs, geodesics, and gauges, 2021. URL https://arxiv. org/abs/2104.13478 .Brunswic, L., Li, Y., Xu, Y., Feng, Y., Jui, S., and Ma, L. A theory of non-acyclic generative flow networks. Proceed-ings of the AAAI Conference on Artificial Intelligence , 38 (10):11124–11131, March 2024. ISSN 2159-5399. doi: 10.1609/aaai.v38i10.28989. URL http://dx.doi. org/10.1609/aaai.v38i10.28989 .Carpenter, B., Gelman, A., Hoffman, M. D., Lee, D., Goodrich, B., Betancourt, M., Brubaker, M., Guo, J., Li, P., and Riddell, A. Stan: A probabilistic programming language. Journal of statistical software , 76:1–32, 2017. Cheng, X., Chatterji, N. S., Bartlett, P. L., and Jordan, M. I. Underdamped langevin mcmc: A non-asymptotic analy-sis, 2018. URL https://arxiv.org/abs/1707. 03663 .Cho, K., Van Merri¨ enboer, B., Gulcehre, C., Bahdanau, D., Bougares, F., Schwenk, H., and Bengio, Y. Learn-ing phrase representations using rnn encoder-decoder 9Path-dependent Discrete Amortized Inference 
+
+for statistical machine translation. arXiv preprint arXiv:1406.1078 , 2014. Cole, T. J. Algorithm AS 281: Scaling and Rounding Re-gression Coefficients to Integers. Applied Statistics , 42 (1), 1993. ISSN 0035-9254. doi: 10.2307/2347432. Corso, G., Stark, H., Jegelka, S., Jaakkola, T., and Barzilay, R. Graph neural networks. Nature Reviews Methods Primers , 4(1):17, 2024. Cybenko, G. Approximation by superpositions of a sig-moidal function. Mathematics of control, signals and systems , 2(4):303–314, 1989. da Silva, T., Carvalho, L. M., Souza, A., Kaski, S., and Mesquita, D. Embarrassingly Parallel GFlowNets, 2024a. URL https://arxiv.org/abs/2406.03288 .da Silva, T., de Souza, D. A., and Mesquita, D. Streaming bayes gflownets, 2024b. URL https://arxiv.org/ abs/2411.05899 .Dall’Antonia, P., da Silva, T., de Souza, D. A., Mattos, C. L. C., and Mesquita, D. Boosted gflownets: Improving exploration via sequential learning, 2026. URL https: //arxiv.org/abs/2511.09677 .Deleu, T. and Bengio, Y. Generative Flow Net-works: a Markov Chain Perspective. arXiv preprint arXiv:2307.01422, 2023. URL https://arxiv. org/abs/2307.01422 .Deleu, T., G´ ois, A., Emezue, C. C., Rankawat, M., Lacoste-Julien, S., Bauer, S., and Bengio, Y. Bayesian Structure Learning with Generative Flow Networks. In Uncertainty in Artificial Intelligence (UAI) , 2022. Deleu, T., Nishikawa-Toomey, M., Subramanian, J., Malkin, N., Charlin, L., and Bengio, Y. Joint Bayesian Inference of Graphical Structure and Parameters with a Single Gen-erative Flow Network. In Advances in Neural Processing Systems (NeurIPS) , 2023. Deleu, T., Nouri, P., Malkin, N., Precup, D., and Bengio, Y. Discrete Probabilistic Inference as Control in Multi-path Environments, 2024. URL https://arxiv.org/ abs/2402.10309 .Dinh, V., Darling, A. E., and Matsen IV, F. A. Online Bayesian Phylogenetic Inference: Theoretical Founda-tions via Sequential Monte Carlo. Systematic Biol-ogy , 67(3), December 2017. ISSN 1076-836X. doi: 10.1093/sysbio/syx087. Garipov, T., Peuter, S. D., Yang, G., Garg, V., Kaski, S., and Jaakkola, T. S. Compositional Sculpting of Iterative Generative Processes. In Advances in Neural Information Processing Systems , 2023. Gelfand, A. E. and Smith, A. F. Sampling-based approaches to calculating marginal densities. Journal of the American statistical association , 85(410):398–409, 1990. Geyer, C. J. Markov chain monte carlo maximum likelihood. Technical report, University of Minessota, 1991. Grohe, M. The logic of graph neural networks, 2022. URL 
+
+https://arxiv.org/abs/2104.14624 .Hamilton, W. L. Graph representation learning . Morgan & Claypool Publishers, 2020. Hamilton, W. R. On a General Method of Expressing the Paths of Light, & of the Planets, by the Coefficients of a Characteristic Function . PD Hardy, 1833. Han, J., Ding, F., Liu, X., Torresani, L., Peng, J., and Liu, Q. Stein variational inference for discrete distributions, 2020. URL https://arxiv.org/abs/2003.00605 .Hanin, B. and Sellke, M. Approximating continuous functions by relu nets of minimal width, 2018. URL 
+
+https://arxiv.org/abs/1710.11278 .Hochreiter, S. and Schmidhuber, J. Long short-term memory. 
+
+Neural computation , 9(8):1735–1780, 1997. Hornik, K., Stinchcombe, M., and White, H. Multilayer feedforward networks are universal approximators. Neu-ral networks , 2(5):359–366, 1989. Hu, E. J., Jain, M., Elmoznino, E., Kaddar, Y., and et al. Amortizing intractable inference in large language mod-els. In International Conference on Learning Represen-tations , 2024a. URL https://arxiv.org/abs/ 2310.04363 .Hu, R., Zhang, Y., Li, Z., and Huang, L. Beyond squared error: Exploring loss design for enhanced training of gen-erative flow networks, 2024b. URL https://arxiv. org/abs/2410.02596 .Irie, K. and Gershman, S. J. Fast weight programming and linear transformers: from machine learning to neurobiol-ogy, 2025. URL https://arxiv.org/abs/2508. 08435 .Irie, K., Schlag, I., Csord´ as, R., and Schmidhuber, J. Amodern self-referential weight matrix that learns to mod-ify itself, 2022. URL https://arxiv.org/abs/ 2202.05780 .Jain, M., Bengio, E., Hernandez-Garcia, A., Rector-Brooks, J., Dossou, B. F. P., Ekbote, C. A., Fu, J., Zhang, T., Kilgour, M., Zhang, D., Simine, L., Das, P., and Bengio, Y. Biological Sequence Design with GFlowNets. In 
+
+International Conference on Machine Learning (ICML) ,2022. 10 Path-dependent Discrete Amortized Inference 
+
+Jang, E., Gu, S., and Poole, B. Categorical Reparameteriza-tion with Gumbel-Softmax. In International Conference on Learning Representations , 2017. Jang, H., Kim, M., and Ahn, S. Learning Energy De-compositions for Partial Inference in GFlowNets. In 
+
+International Conference on Learning Representations ,2024. URL https://openreview.net/forum? id=P15CHILQlg .Jones, G. L. and Hobert, J. P. Honest exploration of in-tractable probability distributions via markov chain monte carlo. Statistical Science , pp. 312–334, 2001. Karkus, P., Hsu, D., and Lee, W. S. Qmdp-net: Deep learning for planning under partial observability, 2017. URL https://arxiv.org/abs/1703.06692 .Kim, H., Lee, S., and hwan Oh, M. Symmetry-aware gflownets, 2025a. URL https://arxiv.org/abs/ 2506.02685 .Kim, M., Ko, J., Yun, T., Zhang, D., Pan, L., Kim, W., Park, J., Bengio, E., and Bengio, Y. Learning to Scale Logits for Temperature-Conditional GFlowNets, 2024a. URL 
+
+https://arxiv.org/abs/2310.02823 .Kim, M., Yun, T., Bengio, E., Zhang, D., Bengio, Y., Ahn, S., and Park, J. Local Search GFlowNets, 2024b. URL 
+
+https://arxiv.org/abs/2310.02710 .Kim, M., Choi, S., Yun, T., Bengio, E., Feng, L., Rector-Brooks, J., Ahn, S., Park, J., Malkin, N., and Bengio, Y. Adaptive teachers for amortized samplers. In The Thirteenth International Conference on Learning Rep-resentations , 2025b. URL https://openreview. net/forum?id=BdmVgLMvaf .Kipf, T. N. and Welling, M. Semi-supervised classification with graph convolutional networks, 2017. URL https: //arxiv.org/abs/1609.02907 .Kirkpatrick, S., Gelatt Jr, C. D., and Vecchi, M. P. Opti-mization by simulated annealing. Science , 220(4598), 1983. Kullback, S. and Leibler, R. A. On information and suf-ficiency. The annals of mathematical statistics , 22(1): 79–86, 1951. Lahlou, S., Deleu, T., Lemos, P., Zhang, D., Volokhova, A., Hern´ andez-Garcıa, A., Ezzine, L. N., Bengio, Y., and Malkin, N. A theory of continuous generative flow net-works. In International Conference on Machine Learning ,pp. 18269–18300. PMLR, 2023. Lahlou at al., S. A Theory of Continuous Gener-ative Flow Networks. In International Confer-ence on Machine Learning (ICML) , 2023. URL 
+
+https://proceedings.mlr.press/v202/ lahlou23a.html .Lau, E., Vemgal, N. M., Precup, D., and Bengio, E. DGFN: Double Generative Flow Networks. In NeurIPS 2023 Generative AI and Biology (GenBio) Workshop , 2023. Lau, E., Lu, S. Z., Pan, L., Precup, D., and Bengio, E. QGFN: Controllable Greediness with Action Val-ues, 2024. URL https://arxiv.org/abs/2402. 05234 .Laurent, T. and Brecht, J. Deep linear networks with arbi-trary loss: All local minima are global. In International conference on machine learning , pp. 2902–2907. PMLR, 2018. Liu, S., Ramadge, P. J., and Adams, R. P. Generative marginalization models, 2024. URL https://arxiv. org/abs/2310.12920 .Loshchilov, I. and Hutter, F. Decoupled Weight Decay Regularization. In International Conference on Learning Representations (ICLR) , 2019. Lu, Z., Pu, H., Wang, F., Hu, Z., and Wang, L. The expres-sive power of neural networks: A view from the width. 
+
+Advances in neural information processing systems , 30, 2017. Madan, K., Rector-Brooks, J., Korablyov, M., Ben-gio, E., Jain, M., Nica, A. C., Bosc, T., Bengio, Y., and Malkin, N. Learning GFlowNets from par-tial episodes for improved convergence and stabil-ity. In International Conference on Machine Learning ,2022. URL https://proceedings.mlr.press/ v202/madan23a.html .Madan, K., Lamb, A., Bengio, E., Berseth, G., and Bengio, Y. Towards improving exploration through sibling augmented GFlownets. In The Thirteenth In-ternational Conference on Learning Representations ,2025. URL https://openreview.net/forum? id=HH4KWP8RP5 .Maddison, C. J., Mnih, A., and Teh, Y. W. The Concrete Distribution: A Continuous Relaxation of Discrete Ran-dom Variables. In International Conference on Learning Representations , 2017. Malik, S. A., Lahlou, S., Jesson, A., Jain, M., Malkin, N., Deleu, T., Bengio, Y., and Gal, Y. BatchGFN: Generative Flow Networks for Batch Active Learning, 2023. URL 
+
+https://arxiv.org/abs/2306.15058 .Malkin, N., Jain, M., Bengio, E., Sun, C., and Bengio, Y. Trajectory balance: Improved credit assignment in GFlowNets. In Advances in Neural Information Process-ing Systems (NeurIPS) , 2022. 11 Path-dependent Discrete Amortized Inference 
+
+Malkin, N., Lahlou, S., Deleu, T., Ji, X., Hu, E., Everett, K., Zhang, D., and Bengio, Y. GFlowNets and variational inference. In International Conference on Learning Rep-resentations (ICLR) , 2023. Metelli, A. M., Lazzati, F., and Restelli, M. Towards the-oretical understanding of inverse reinforcement learn-ing, 2023. URL https://arxiv.org/abs/2304. 12966 .Mohri, M., Rostamizadeh, A., and Talwalkar, A. Founda-tions of machine learning . MIT press, 2018. Morozov, N., Maksimov, I., Tiapkin, D., and Samsonov, S. Revisiting non-acyclic gflownets in discrete envi-ronments, 2025. URL https://arxiv.org/abs/ 2502.07735 .Neal, R. M. et al. Mcmc using hamiltonian dynamics. Hand-book of markov chain monte carlo , 2(11):2, 2011. Ni, T., Eysenbach, B., and Salakhutdinov, R. Recur-rent model-free rl can be a strong baseline for many pomdps, 2022. URL https://arxiv.org/abs/ 2110.05038 .Nica, A. C., Jain, M., Bengio, E., Liu, C.-H., Korablyov, M., Bronstein, M. M., and Bengio, Y. Evaluating gener-alization in GFlowNets for molecule design. ICLR2022 Machine Learning for Drug Discovery workshop , 2022. Pan, L., Malkin, N., Zhang, D., and Bengio, Y. Better Training of GFlowNets with Local Credit and Incomplete Trajectories. In International Conference on Machine Learning (ICML) , 2023a. Pan, L., Zhang, D., Courville, A., Huang, L., and Bengio, Y. Generative Augmented Flow Networks. In International Conference on Learning Representations (ICLR) , 2023b. Pandey, M., Subbaraj, G., and Bengio, E. GFlowNet Pre-training with Inexpensive Rewards. NeurIPS 2024 Work-shop AIDrugX , 2024. Pardo, F., Tavakoli, A., Levdik, V., and Kormushev, P. Time limits in reinforcement learning, 2022. URL https: //arxiv.org/abs/1712.00378 .Randlov, J. Learning macro-actions in reinforce-ment learning. In Kearns, M., Solla, S., and Cohn, D. (eds.), Advances in Neural Informa-tion Processing Systems , volume 11. MIT Press, 1998. URL https://proceedings.neurips. cc/paper_files/paper/1998/file/ 8f19793b2671094e63a15ab883d50137-Paper. pdf .Richter, L., Boustati, A., N¨ usken, N., Ruiz, F. J. R., and ¨Omer Deniz Akyildiz. Vargrad: A low-variance gradient estimator for variational inference, 2020. URL https: //arxiv.org/abs/2010.10436 .Robert, C. P., Casella, G., and Casella, G. Monte Carlo statistical methods , volume 2. Springer, 1999. Rumelhart, D. E., Hinton, G. E., and Williams, R. J. Learn-ing representations by back-propagating errors. Nature ,323(6088):533–536, October 1986. ISSN 1476-4687. doi: 10.1038/323533a0. URL http://dx.doi.org/10. 1038/323533a0 .S¨ arkk¨ a, S. and Solin, A. Applied Stochastic Dif-ferential Equations . Cambridge University Press, April 2019. ISBN 9781316649466. doi: 10.1017/ 9781108186735. URL http://dx.doi.org/10. 1017/9781108186735 .Saxe, A. M., McClelland, J. L., and Ganguli, S. Exact solutions to the nonlinear dynamics of learning in deep linear neural networks, 2014. URL https://arxiv. org/abs/1312.6120 .Scaman, K. and Virmaux, A. Lipschitz regularity of deep neural networks: analysis and efficient estimation, 2019. URL https://arxiv.org/abs/1805.10965 .Schlag, I., Irie, K., and Schmidhuber, J. Linear transform-ers are secretly fast weight programmers, 2021. URL 
+
+https://arxiv.org/abs/2102.11174 .Schmidhuber, J. Learning to control fast-weight memories: An alternative to dynamic recurrent networks. Neural Computation , 4(1):131–139, January 1992. ISSN 1530-888X. doi: 10.1162/neco.1992.4.1.131. URL http:// dx.doi.org/10.1162/neco.1992.4.1.131 .Schmidhuber, J. An’introspective’network that can learn to run its own weight change algorithm. In 1993 third international conference on artificial neural networks , pp. 191–194. IET, 1993a. Schmidhuber, J. A ‘self-referential’weight matrix. In In-ternational conference on artificial neural networks , pp. 446–450. Springer, 1993b. Shen, M. W., Bengio, E., Hajiramezanali, E., Loukas, A., Cho, K., and Biancalani, T. Towards Understanding and Improving GFlowNet Training. In International Confer-ence on Machine Learning , 2023a. Shen, M. W., Bengio, E., Hajiramezanali, E., Loukas, A., Cho, K., and Biancalani, T. Towards Understanding and Improving GFlowNet Training. In International Con-ference on Machine Learning , 2023b. arXiv preprint arXiv:2305.07170. 12 Path-dependent Discrete Amortized Inference 
+
+Silva, T., Alves, R. B., de Souza da Silva, E., Souza, A. H., Garg, V., Kaski, S., and Mesquita, D. When do GFlownets learn the right distribution? In The Thirteenth International Conference on Learning Representations ,2025a. URL https://openreview.net/forum? id=9GsgCUJtic .Silva, T., Souza, A. H., Rivasplata, O., Garg, V., Kaski, S., and Mesquita, D. Generalization and distributed learning of GFlownets. In The Thirteenth International Confer-ence on Learning Representations , 2025b. URL https: //openreview.net/forum?id=PJNhZoCjLh .Souza, A. H., Mesquita, D., Kaski, S., and Garg, V. Provably expressive temporal graph networks, 2022. URL https: //arxiv.org/abs/2209.15059 .Sutton, R. S., Barto, A. G., et al. Reinforcement learning: An introduction , volume 1. MIT press Cambridge, 1998. Tiapkin, D., Morozov, N., Naumov, A., and Vetrov, D. Generative Flow Networks as Entropy-Regularized RL. In International Conference on Artificial Intelligence and Statistics , pp. 4213–4221. PMLR, 2024. URL 
+
+https://arxiv.org/abs/2310.12934 .Trabucco, B., Geng, X., Kumar, A., and Levine, S. Design-bench: Benchmarks for data-driven offline model-based optimization. In International Conference on Machine Learning , pp. 21658–21676. PMLR, 2022. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin, I. Attention is all you need, 2023. URL https://arxiv.org/ abs/1706.03762 .Venkatraman, S., Jain, M., Scimeca, L., Kim, M., Sendera, M., Hasan, M., Rowe, L., Mittal, S., Lemos, P., Bengio, E., Adam, A., Rector-Brooks, J., Bengio, Y., Berseth, G., and Malkin, N. Amortizing intractable inference in diffusion models for vision, language, and control. In Ad-vances in Neural Information Processing Systems , 2024. URL https://arxiv.org/abs/2405.20971 .Viviano, J. D., Younis, O. G., Choi, S., Schmidt, V., Ben-gio, Y., and Lahlou, S. torchgfn: A pytorch gflownet library, 2025. URL https://arxiv.org/abs/ 2305.14594 .Wang, H., Fu, T., Du, Y., Gao, W., Huang, K., Liu, Z., Chandak, P., Liu, S., Van Katwyk, P., Deac, A., et al. Scientific discovery in the age of artificial intelligence. 
+
+Nature , 620(7972):47–60, 2023. Wang, Y., Chang, Y.-Y., Liu, Y., Leskovec, J., and Li, P. Inductive representation learning in temporal networks via causal anonymous walks, 2022. URL https:// arxiv.org/abs/2101.05974 .Weisfeiler, B. and Lehman, A. A. A Reduction of a Graph to a Canonical Form and an Algebra Arising During This Reduction. Nauchno-Technicheskaya Informatsia , Ser. 2 (N9):12–16, 1968. Whitehead, S. D. and Ballard, D. H. Learning to per-ceive and act by trial and error. Machine Learning , 7 (1):45–83, July 1991. ISSN 1573-0565. doi: 10.1023/a: 1022619109594. URL http://dx.doi.org/10. 1023/A:1022619109594 .Xu, D., Ruan, C., Korpeoglu, E., Kumar, S., and Achan, K. Inductive representation learning on temporal graphs, 2020. URL https://arxiv.org/abs/ 2002.07962 .Yu, T. Secrets of gflownets’ learning behavior: A theoret-ical study, 2025. URL https://arxiv.org/abs/ 2505.02035 .Zhang, D., Malkin, N., Liu, Z., Volokhova, A., Courville, A., and Bengio, Y. Generative flow networks for discrete probabilistic modeling, 2022. URL https://arxiv. org/abs/2202.01361 .Zhang, D., Dai, H., Malkin, N., Courville, A., Bengio, Y., and Pan, L. Let the Flows Tell: Solving Graph Combinato-rial Optimization Problems with GFlowNets. In Advances in Neural Information Processing Systems (NeurIPS) ,2023a. Zhang, D. W., Rainone, C., Peschl, M., and Bondesan, R. Robust scheduling with GFlowNets. In International Conference on Learning Representations (ICLR) , 2023b. Zhang, N., Yang, J., Cao, Z., and Chi, X. Adversar-ial generative flow network for solving vehicle routing problems, 2025. URL https://arxiv.org/abs/ 2503.01931 .Zhou, M. Y., Yan, Z., Layne, E., Malkin, N., Zhang, D., Jain, M., Blanchette, M., and Bengio, Y. PhyloGFN: Phylogenetic inference with generative flow networks. In 
+
+International Conference on Learning Representations ,2024. 13 Path-dependent Discrete Amortized Inference 
+
+## A. Proofs 
+
+This section provides the proofs for our statements throughout the text. Each section corresponds to a different Proposition and, when needed, Corollary. Our results in Section 4.3 closely match that of (Bengio et al., 2023; Malkin et al., 2022; Madan et al., 2022), to which we refer the reader for further details. 
+
+A.1. Proof of Proposition 3.1 
+
+Our proof has two steps. First, we characterize the space of learnable distributions for both the Markovian and path-dependent parameterizations. Second, we argue that, under the conditions of Proposition 3.1, the latter is larger than the former. As M = 1 , Wi = W ∈ R2×d for the Markovian model. For clarity, let 
+
+Softmax( Wψ(pi)) = αi 1 − αi
+
+ ;
+
+equivalently, for yi = Wψ(pi) ∈ R2, log αi 
+
+> 1−αi
+
+= yTi (e1 − e2), with e1, e2 ∈ { 1, 0}2×1 as the first and second columns of the identity matrix. (As per standard convention, vectors in Rd represent column vectors). We omit mi as mi = 1 for each i except for i = N —in which case αN = 0 is the only solution. From this viewpoint, the sampler’s objective can be represented through the linear system 
+
+o = Ψ k, (13) in which o ∈ RN , oi = log αi/1−αi, and Ψ, Ψi = ψ(pi)T , are fixed 1; ki = WT (e1 − e2) is the quantity we wish to learn (through W). Consequently, we can only learn distributions for which the policies’ log-odds, o, are within the column space of the state-embedding matrix, Ψ. Under the notation of Proposition 3.1, this implies that dim WM = rank Ψ ≤ d.Under the non-Markovian parameterization of our linear control system, the corresponding learning problem becomes 
+
+oi = ψ(pi)T aibT (e1 − e2) ,
+
+in which 
+
+ai = ao +
+
+ X
+
+> 0≤j≤i
+
+wTa ψ(pi)
+
+ va.
+
+Clearly, δ := bT (e1 −e2) is a non-zero scalar almost surely (with respect to b). Therefore, we let ˜oi = oi/δ. Similarly, define 
+
+ci = X
+
+> 0≤j≤i
+
+ψ(pi) (14) as the cumulative sum of the state-embeddings ψ(pj ). Then, ai = ao + ( wTa ci)va, and 
+
+˜oi = ψ(pi)T ao + ψ(pi)T (wTa ci)va = ψ(pi)T ao + ( ψ(pi)T va) · (cTi wa).
+
+Let C be the N × d matrix whose ith row is ci. From the equation above, 
+
+˜o = Ψ ao + [Ψ va] ⊙ [Cw a] . (15) As a consequence, our path-dependent linear model can represent any distribution for which the log-odds of the corresponding policies are within the linear space spanned by Ψ and the Hadamard-span of C and Ψ. In other words, let 
+
+C = {v : v = Ψ w for some w} and H = {v : v = ( Ca ) ⊙ (Ψ b) for some a, b}.
+
+In this scenario, the dimension of the range of distributions representable by a Markovian parameterization is dim C,while a path-dependent model is capable of representing distributions in a space with dimension dim( C + H).Hence, dim WP := dim( C + H) ≥ dim C = : dim WM regardless of ψ, and it is clear that dim WP > dim WM
+
+for some ψ; a trivial example is for ψ(pi) = 1d ∈ Rd constant, in which case C = {α1N : α ∈ R} ⊂ RN and 
+
+H = {α 0 . . . N − 1T : α ∈ R}; thus, dim C = 1 and dim( H + C) = 2 .We found the case d = 1 with the natural embedding ψ(pi) = i to be instructive. Under these conditions, C is simply the spanned by N := 0 1 . . . N − 1, while H is the Hadamard product between C = co c1 . . . cN −1
+
+, ci = 
+
+> i(i−1) 2
+
+, and N. Clearly, N and C are linearly independent for N ≥ 3. The interested reader is invited to fill up the details.            
+
+> 1We omit the Nth term from oas αN= 0 (the only possible move at pNis going to qN).
+
+14 Path-dependent Discrete Amortized Inference 
+
+A.2. Proof of Proposition 3.2 
+
+Similarly to the prior section, this proof has two steps: we first demonstrate that each distribution representable by a Markovian parameterization can also be learned by its path-dependent counterpart; then, we show that there exist distributions that can only be learned by the latter. On the one hand, it should be clear that the path-dependent model defined by the recurrent GNN is at least as expressive as its Markovian counterpart. To see this, simply notice that we can zero out the appended (right-most) coordinate of V
+
+in the first GNN layer; in doing so, the resulting model becomes equivalent to that of Equation (6). As a consequence, 
+
+RP (S) ⊆ R M (S).On the other hand, consider the state graph S⋆ in Figure 4. As shown in the main text, a GFlowNet parameterized as in Equation (6) can only sample from an uniform distribution over the terminal states, q1 and q2. In contrast, as the edges 
+
+(a, b ) and (a, c ) have distinct temporal features ( b is modified once during the generative process; c, twice), the actions resulting in q1 and q2 from p are distinguishable by a recurrent GNN. Hence, our path-dependent model can approximate any distribution over {q1, q 2}. That is, RM (S⋆)̸ = RP (S⋆). This concludes our demonstration. 
+
+A.3. Proof of Proposition 4.5 
+
+We proceed with a direct computation of the marginal distribution, p⊺, of each augmented state s⋆ to show that 
+
+p⊺(s⋆) = X 
+
+> τ⇝s⋆
+
+pF (τ |s⋆o) ∝ F (s⋆); 
+
+as the space of terminal objects, X , remains unchanged in the lifted DAG, this implies that the marginal distribution of our path-dependent model matches R on X (up to a normalizing constant). It should be noted that the the number of trajectories for which pF (τ |s⋆o) > 0 is finite in SG ⋆ due to the deterministic nature of the latent dynamical system. (The lack of finiteness is the reason for which designing a stochastic latent dynamical system is significantly harder than a deterministic one—see Section D). Our asumption is that 
+
+F (s⋆i )pF (s⋆i+1: j |s⋆i ) = pB (s⋆i:j−1|s⋆j )F (s⋆j )
+
+for each slice of every trajectory τ = ( s⋆t )Tt=0 . Fix i = 0 . Then, the marginal distribution of s⋆ induced by pF (·| s⋆o) is 
+
+p⊺(s⋆) = X   
+
+> τ:s⋆o⇝s⋆
+
+pF (τ |s⋆o) = X   
+
+> τ:s⋆o⇝s⋆
+
+pB (τ |s⋆) · F (s⋆)
+
+F (s⋆o) .
+
+Obviously, P    
+
+> τ:s⋆o→s⋆
+
+pF (τ |s⋆) = 1 , as s⋆o is the only absorbing state for the Markov chain induced by the backward policy on SG ⋆. This can also be seen by a recursive characterization of this sum. Indeed, let Q(s⋆o) = 1 and 
+
+Q(g⋆) = X   
+
+> τ:s⋆o⇝g⋆
+
+pB (τ |g⋆)
+
+for each state g⋆ on the lifted DAG. Then, 
+
+Q(s⋆) = X   
+
+> τ:s⋆o⇝s⋆
+
+pB (τ |s⋆) = X
+
+> g⋆∈Pa( s⋆)
+
+pB (g⋆|s⋆) X   
+
+> τ:s⋆o⇝g⋆
+
+pB (τ |g⋆) = X 
+
+> g⋆∈Pa( ss⋆)
+
+pB (g⋆|s⋆)Q(g⋆).
+
+Since P  
+
+> g⋆∈Pa( ss⋆)
+
+pB (g⋆|s⋆) = 1 , the above equation implies that Q := ( Q(g⋆)) g⋆∈S ⋆∪X is the eigenvector of a stochastic matrix corresponding to the unit eigenvalue. By the finiteness of the DAG, Q = 1 is the unique eigenvector (due to the boundary conditions, Q(s⋆o) = 1 , as s⋆o is an absorbing state for the backward policy). Formally, by writing Q = MQ for a stochastic matrix M, we may re-index the nodes of the underlying DAG in topological order. In doing so, M becomes upper-triangular, and the value of Q can be uniquely characterized via backward induction, given the boundary conditions on s⋆o.All in all, we observe that 
+
+p⊺(s⋆) = F (s⋆)
+
+F (s⋆o)
+
+X   
+
+> τ:s⋆o⇝s⋆
+
+pB (τ |s⋆) ∝ F (s⋆).
+
+Corollaries 4.6, 4.7, B.1 follow directly from Proposition 3.2. In fact, Corollary 4.7 entails Corollary 4.6, and the global minima in Corollary B.1 satisfy either Corollary 4.6 or 4.7. 15 Path-dependent Discrete Amortized Inference 
+
+A.4. Proof of Proposition 4.8 
+
+Before diving into a formal demonstration of the forward policy’s path-independence, the reader should recall the graphical model in Figure 1b. If pB is independent of {Wt}t≥1, so is pF —as both induce the same distribution over trajectories when the (trajectory or contrastive) balance condition is satisfied. As a consequence, pF should also be independent of 
+
+{Wt}t≥1. The proof below builds on this intuition: we compute the joint distribution over trajectories induced by pF and convert it into a pB -induced joint distribution through the TB condition. Then, we marginalize out all states following a given transition (st, s t+1 ) to show that the probability of going from st to st+1 does not depend on the states preceding st.For conciseness, let ¯S = S∪X and ¯S⋆ = S⋆∪X . Let pB : ¯S⋆×S ⋆ → [0 , 1] and ˜pB : ¯S×S → [0 , 1] be the backward policies from Proposition 4.8, which satisfy pB (s⋆t |s⋆t+1 ) = ˜ pB (st|st+1 ) for s⋆t = ( st, W t) ∈ S ⋆ and (s⋆t )T −1 
+
+> t=0
+
+∈ (S⋆)T −1 × X as a valid trajectory in SG ⋆. Under these conditions, recall that a forward policy abiding by the CB condition also satisfies the TB condition (da Silva et al., 2024a). Consequently, we henceforth assume that there is a Z⋆ such that 
+
+Z⋆ Y 
+
+> 0≤t≤T−1
+
+pF (s⋆t+1 |s⋆t ) = R(sT ) Y 
+
+> 0≤t≤T−1
+
+pB (s⋆t |s⋆t+1 ) = R(sT ) Y 
+
+> 0≤t≤T−1
+
+˜pB (st|st+1 ) (16) for each complete trajectory (s⋆t )Tt=0 on the lifted DAG SG ⋆. Also, recall that there are policies pS and pW such that 
+
+pF (s⋆t+1 |s⋆t ) = pS (st+1 |st, W t) · pW (Wt+1 |st+1 , W t); 
+
+pW (Wt+1 |st+1 , W t) is either 1 or 0—depending on whether Wt+1 = Wt + ϕ(Wt, s t+1 ) or not. As Equation (16) holds only for trajectories in SG ⋆, pW (Wt+1 |st, W t) = 1 and 
+
+Z⋆ Y 
+
+> 0≤t≤T−1
+
+pS (st+1 |st, W t) = R(sT ) Y 
+
+> 0≤t≤T−1
+
+˜pB (st|st+1 ). (17) We will show that pF (s⋆t+1 |s⋆t ) is path-independent; equivalently, that Wt does not depend on the path leading to s⋆t . In doing so, we define ˜pF (st+1 |st) = pF (st+1 |st, W t) for this particular Wt, concluding the demonstration. For this, let 
+
+ξ⋆ = (s ⋆t )l−1 
+
+> t=0
+
+be a (possibly incomplete) trajectory, ξ = (s t)l−1
+
+> t=0
+
+, and pB (ξ⋆) := ( R(sT )/Z⋆)pB (ξ⋆|sT ) according to the factorization in Equation (16). Importantly, the result is trivial for l = 1 , as Wo is fixed. From now on, assume l ≥ 2. In this context, it is straightforward to see that 
+
+pS (sl|ξ⋆) = pF (s⋆l , ξ ⋆)
+
+pF (ξ⋆) =
+
+P    
+
+> τ:s⋆l⇝X
+
+pF (ξ⋆, s ⋆l , τ )
+
+P    
+
+> τ′:s⋆l−1⇝X
+
+pF (ξ⋆, τ ′) ;
+
+τ : s⋆l ⇝ X refers to the space of trajectories starting at s⋆l and ending on any x ∈ X . Consequently, 
+
+pS (sl|ξ⋆) = 
+
+P   
+
+> τ:sl⇝X
+
+˜pB (ξ, s l, τ )
+
+P    
+
+> τ′:sl−1⇝X
+
+˜pB (ξ, τ ′)
+
+by Equation (16); trajectories τ : sl ⇝ X inhabit the unlifted DAG. Since ˜pB (ξ, s l, τ ) = ˜ pB (ξ|sl−1) · ˜pB (sl−1, τ ) and 
+
+˜pB (ξ, τ ′) = ˜ pB (ξ|sl−1) · ˜pB (sl−1, τ ′),
+
+pS (sl|sl−1, W l−1) = pS (sl|ξ⋆) = ˜pB (ξ|sl−1) P   
+
+> τ:sl⇝X
+
+˜pB (sl−1, τ )˜pB (ξ|sl−1) P    
+
+> τ′:sl−1⇝X
+
+˜pB (τ ′) = ˜ pB (sl−1|sl)
+
+P   
+
+> τ:sl⇝X
+
+˜pB (τ )
+
+P    
+
+> τ′:sl−1⇝X
+
+˜pB (τ ′) = : ˜ pF (sl|sl−1).
+
+That is, pS (sl|ξ⋆) depends only on sl−1 and sl—and not on the past latent dynamical system {Wt}t≥0. This characterizes the Markovianity of pF (with respect to the natural filtration of the unlifted state space). 
+
+## B. Learning a recurrent flow 
+
+This section provides further details on the learning of a recurrent policy network—i.e., a policy pF on the lifted DAG of Definition D.1 satisfying either Corolalry 4.7 or 4.6. We also elaborate on the connection between our path-dependent algorithm and the flow network analogy that has been used to characterize GFlowNets. 16 Path-dependent Discrete Amortized Inference         
+
+> (a) Path-dependent. (b) Markovian.
+> Figure 8. Multi-gated flow network interpretation for path-dependent (a) and Markovian (b) amortized samplers. Under our framework, each node sends a variable amount of flow to its children, depending on the flow’s past trajectory (e.g., either green or red for x1’s parent). In both cases, the flow reaching each terminal state (x1, x 2, x 3)is the same; see Section 4 for details.
+
+On the flow network analogy. An important contribution of Bengio et al. (2021)’s seminal work on GFlowNets was the proposed physical interpretation of sampling as a flow assignment problem. Under this epistemology, the unnormalized distribution R(x) of a terminal state x ∈ X is viewed as the amount of flow that should be transported from the initial state (so) to x through the edges of the state graph; see (Kim et al., 2024b, Figure 2) and Figure 8b. Interestingly, Figure 8a shows that our proposed framework can also be interpreted as learning a flow assignment in a multi-gated flow network, in which each node can send a variable amount of flow to its children depending on the value of the latent variable W of the lifted state graph (Definition D.1). Drawing on this, the reader is invited to notice that many of the recent algorithmic improvements for GFlowNets (e.g., (Kim et al., 2024a; Malik et al., 2023; Lau et al., 2023; 2024; Kim et al., 2025a)) can be easily adapted to our setting. We discussed some of them in Section 4 in the main text and in Section E in the supplement (below). 
+
+Learning a recurrent policy network. For completeness, we also elaborate on the search for policies pF and pB
+
+satisfying any of the introduced balance conditions in . To achieve this, we simply minimize the expectation of the log-squared difference between the left- and right-hand sides in Proposition 4.5 via stochastic gradient descent. As the corresponding stochastic programming problems have already been introduced and studied elsewhere (Bengio et al., 2021; Malkin et al., 2022; 2023; Madan et al., 2022; da Silva et al., 2024a; Hu et al., 2024b; Zhang et al., 2023a) in the context of Markovian samplers, they are only briefly described in the following corollary of Proposition 4.5. 
+
+Corollary B.1 (Learning objectives) . Let pE be an exploratory policy 2, which may depend on pF (e.g., an ϵ-greedy policy: 
+
+pE (·| s) = (1 − ϵ)pF (·| s) + ϵp U (·| s), with pU as the uniform policy). Then, the unrestricted global optima of each of the following objective functions over all policies respectively satisfy the TB (Corollary 4.6), and CB (Corollary 4.7) conditions. 1. (TB loss). Let Z = F (s⋆o) be the initial state’s flow. Then, 
+
+LTB (pF , p B , Z ) = Eτ ∼pE
+
+"
+
+log Zp F (τ |s⋆o)
+
+pB (τ |x)R(x)
+
+2#
+
+2. (CB loss). Due to the variance identity for i.i.d. squared differences (Richter et al., 2020; Zhang et al., 2023b), 
+
+LCB (pF , p B ) = E 
+
+> τ,τ ′∼pE
+
+"
+
+log pF (τ |s⋆o)pB (τ ′|x′)R(x′)
+
+pB (τ |x)pF (τ ′|s⋆o)R(x)
+
+2#
+
+= 2Var τ ∼pE
+
+
+
+log pF (τ |s⋆o)
+
+pB (τ |x)R(x)
+
+
+
+in which x, x ′ denote the terminal states of τ, τ ′.
+
+Importantly, Corollary B.1 ensures that the transition dynamics for both {st}t≥1 and {Wt}t≥1 in Figure 1b can be jointly learned by minimizing a single stochastic objective. Also, it is worth noticing that the simplicity of the above formulation is only possible due to determinisitic nature of the latent transitions. When the {Wt}t≥1 follows a stochastic rule, the state       
+
+> 2An exploratory policy is a policy assigning positive probability to each children of the state graph at every state. Under the formalism of Section D, this means that the corresponding kernel PEis mutually absolutely continuous with respect to base measure κF.
+
+17 Path-dependent Discrete Amortized Inference 
+
+space ceases to be countable; as a consequence, a rigorous treatment of the resulting method depends on a more sophistcated mathematical formalism—see Section D. Intriguingly, our analysis intentionally avoids considering the sampling on non-acyclig environment, e.g., (Brunswic et al., 2024; Morozov et al., 2025). That said, our path-dependent framework can be naturally extended to this broader setting. In fact, we believe that the latent dynamical system can be naturally used for biasing the amortized sampler towards shorter trajectories in the context of cyclic generation—which is an interesting direction for future research. 
+
+## C. Related works 
+
+A systematic study of amortized neural samplers for discrete and compositional spaces was initiated by the introduction of Generative Flow Networks (GFlowNets; Bengio et al., 2021). Originally, GFlowNets were proposed as a diversity-seeking reinforcement learning algorithm (Bengio et al., 2021; 2023). Soon after Bengio et al. (2021)’s seminal work, GFlowNets were successfully applied to molecule and biological sequence discovery (Bengio et al., 2021; Jain et al., 2022; Wang et al., 2023; Nica et al., 2022), structure learning (Deleu et al., 2022; 2023), combinatorial optimization (Zhang et al., 2023a;b; 2025), phylogenetic inference (Zhou et al., 2024), and fine-tuning of large language models (Hu et al., 2024a; Venkatraman et al., 2024). In parallel, there has been a significant effort in developing algorithmic improvements for reducing GFlowNet’s sample complexity. These approaches have focused on improved credit assignment via reward shaping (Pan et al., 2023b;a), more effective learning objectives (Madan et al., 2022; Deleu et al., 2024), and heuristics for enhancing exploration of high-probability regions (Kim et al., 2024b; 2025b) and shortening the trajectory length (Boussif et al., 2024; Silva et al., 2025b) for reduce complexity. Given Proposition 4.5, we notice that our method complements—rather than substitutes—these techniques. On top of this, there has also been a growing body of literature aimimg to build a principled framework for understanding GFlowNets through the lens of optimization (Yu, 2025), expressivity (Silva et al., 2025a), and generalization (Shen et al., 2023b; Atanackovic & Bengio, 2024). In (Silva et al., 2025a), in particular, it has been shown for the problems described Section 5 that the flow-consistency in subgraphs (FCS), 
+
+FCS( p, q ) = EB:= {x1,...,x B }∼ r
+
+ 12
+
+X
+
+> 1≤i≤B
+
+p(xi)
+
+p(B) − q(xi)
+
+q(B)
+
+ = EB∼ r [TV( p|B, q |B)] , (18) in which p, q, and r are distributions, B is a constant, and p(B) = P 
+
+> x∈B
+
+p(x), and p|B is the restriction of p on B, provides a reliable measurement for the goodness-of-fit of GFlowNets, with a (Spearman) correlation of over 90% with the TV distance between the learned and target distributions on the entire space; we followed the instructions in (Silva et al., 2025a, Section E) for evaluating FCS . Interestingly, our sampling algorithm is reminiscent of Gibbs sampling (Jones & Hobert, 2001; Gelfand & Smith, 1990), implementing a systematic scannig strategy for state modification: (s, ω ) → (s′, ω ) → (s′, ω ′).
+
+## D. Stochastic latent dynamical system  
+
+> Figure 9. Illustration of Definition D.1. We endow each node in the unlifted DAG (recall Definition 2.1) with a latent and stochastic random variable (in red).
+
+This section builds on the framework of Lahlou et al. (2023) to expand our path-dependent algorithm in Figure 1b to the setting in which the latent dynamical system {Wt}t≥1 evolves according to a stochastic rule. The resulting lifted DAG, defined below, is illustrated in Figure 9. Contrarily to our exposition in Section 4.1, in which we solely aimed to sample from a distribution over X , we presently focus in sampling from a joint distribution π(x, ω ) over X and a user-defined set Ω such that the marginal of π over X matches our target distribution ( R, in the main text). 
+
+Definition D.1. Let ( ¯S, ΣS ) and (Ω , ΣΩ) be measurable topological spaces with Borel σ-algebras Σ and ΣΩ, respectively. Also, let ν be a positive probability measure on the product space ( ¯S × Ω, Σ) , in which Σ is the σ-algebra induced by the product ΣS × ΣΩ. Let S⋆ = ¯S × Ω be the lifted state space . We define ¯S = {so} ∪ S ∪ X , in which {so} and X are special open sets referred to respectively as initial and terminal states . We assume the existence of forward κF : S⋆ → M (Σ) and backward 
+
+κB : S⋆ → M (Σ) kernels mapping each s⋆ ∈ S ⋆ to a probability measure over Σ and satisfying the following properties. 1. (Duality). ν(d s)κF (s, ds′) = ν(d s′)κB (s′, ds) on Σ|({so}∪S )×Ω × Σ|(S∪X )×Ω.2. (Forward absorption). There exists a N ∈ N for which κNF (s, X × Ω) = 1 for all s ∈ ({so} ∪ S ) × Ω, in which 18 Path-dependent Discrete Amortized Inference 
+
+κNF (s, B ) = R 
+
+> S⋆
+
+κF (s, ds′)κN −1 
+
+> F
+
+(s′, B ) is recursively defined. Also, κF (x⋆, {x} × Ω) = 1 ν-almost surely for 
+
+x⋆ ∈ { x} × Ω and x ∈ X and κF (s, (S ∪ X ) × Ω) = 1 for every s ∈ S ⋆.3. (Reachability). For each measurable B ∈ Σ, there is an integer k ∈ N such that R
+
+> S⋆o
+
+ν(d s⋆o)κkF (s⋆o, B ) > 0, in which 
+
+S⋆o = {so} × Ω.4. (Backward absorption). S⋆o is the only absorbing set for κB , i.e., κB (s⋆o, S⋆o ) = 1 ν-almost surely for s⋆o ∈ S ⋆o . Also, 
+
+κB (s⋆, ( ¯S \ X ) × Ω) = 1 ν-almost surely for s⋆ ∈ S ⋆, in particular, κB leaves X ⋆ ν-almost surely. 5. (Continuity). Both s 7 → κF (s, B ) and s 7 → κB (s, B ) are continuous functions (wrt given topology) for all B ∈ Σ.6. (Absolute continuity). Both κF (s, ·) and κB (s, ·) are absolutely continuous wrt ν for all s ∈ S ⋆.7. (ν-nondegeneracy). For each s ∈ S ⋆, if κB (s, E ) > 0 for some E ∈ Σ, then κB (s, ˜E) > 0 for every measurable subset ˜E ⊆ E with ν( ˜E) > 0.Definition D.1 characterizes a lifted DAG equipped with a continuous and stochastic latent variable inhabiting a set Ω.Before proceeding, we recall that Σ|A is the restriction of the σ-algebra Σ to the measurable set A; since σ-algebras are closed for intersection, this is well-defined. Given a measure ξ over Σ|{so}× Ω, our objective is that the marginal distribution over X × Ω induced by a (learned) kernel PF : S⋆ → M (Σ) absolutely continuous wrt κF matches a given (perhaps unnormalized) target Π : Σ |X × Ω → [0 , 1] . In other words, 
+
+Z
+
+> {so}× Ω
+
+ξ(d s⋆o)P NF (so, B ) = Π( B)
+
+for each B ∈ Σ|X × Ω. When there exist probability measures R : Σ S |X → [0 , 1] and PΩ : Σ Ω → [0 , 1] such that 
+
+Π( BS × BΩ) = R(BS )PΩ(BΩ) for BS × BΩ ∈ Σ, the condition above ensures that the marginal distribution of 
+
+ξ(d s⋆o)κF (s⋆o, B ) over X when the latent variable in Ω is marginalized out matches R(B). It remains to be answered how to learn such a κF and ξ and how to define PΩ. We will comment on these facts in passing below. Towards this objective, we first state a few general facts about the lifted continuous DAG in Definition D.1. We start by showing that X × Ω is a finite absorbing state for κF ; in lieu of the statement below, we say that κF is a finitely absorbing kernel with horizon N .
+
+Lemma D.2. Let X ⋆ = X × Ω. Then, κnF (s, X ⋆) = 1 for all n ≥ N .Proof. We proceed by simple induction. The base case, κNF (s, X ⋆) = 1 , follows from the definition. Assume that 
+
+κnF (s, X ⋆) = 1 for some n ≥ N . Then, 
+
+κn+1  
+
+> F
+
+(s, X ⋆) = 
+
+Z
+
+> S⋆
+
+κF (s, ds′)κnF (s′, X ⋆) = 
+
+Z
+
+> S⋆
+
+κF (s, ds′) = 1 .
+
+By induction, κnF (s, X ⋆) = 1 for all n ≥ N .We also demonstrate that the duality in Definition D.1 holds for trajectories. 
+
+Lemma D.3. ν(d s1) Qni=1 κF (si, dsi+1 ) = ν(d sn+1 ) Qni=1 κB (si+1 , dsi) for each n ≥ 2 on Σ({so}∪S )×Ω ×
+
+ ×ni=2 ΣS× Ω
+
+ × Σ(S∪X )×Ω.Proof. We will show that this holds for n = 2 , and then proceed inductively. For conciseness, let A = {so} ∪ S and 
+
+B = S ∪ X . For any measurable function f : K2 → R for K2 = ( A × Ω) × (S × Ω) × (B × Ω) ,
+
+Z
+
+> K2
+
+f (s1, s 2, s 3)ν(d s1)κF (s1, ds2)κF (s2, ds3) = 
+
+Z
+
+> K2
+
+f (s1, s 2, s 3)ν(d s2)κB (s2, ds1)κF (s2, ds3)=
+
+Z
+
+> K2
+
+f (s1, s 2, s 3)ν(d s3)κB (s3, ds2)κB (s2, ds1)
+
+19 Path-dependent Discrete Amortized Inference 
+
+by duality. Inductively, assume that the identity holds for n. Then, let f : Kn+1 → R be any real-valued measurable function, in which Kn+1 = ( A × Ω) × (S × Ω) n × (B × Ω) . As such, 
+
+Z
+
+> Kn+1
+
+f (s1, . . . , s n+2 )ν(d s1)
+
+> n+1
+
+Y
+
+> i=1
+
+κF (si, dsi+1 ) = 
+
+Z
+
+> Kn+1
+
+f (s1, . . . , s n+2 )ν(d sn+1 )
+
+> n
+
+Y
+
+> i=1
+
+κB (si+1 , dsi)κF (sn+1 , dsn+2 )=
+
+Z
+
+> Kn+1
+
+f (s1, . . . , s n+2 )ν(d sn+2 )
+
+> n+1
+
+Y
+
+> i=1
+
+κB (si+1 , dsi),
+
+in which the first equality follows from the induction hypothesis (and from the measurability of fsn+2 : Kn → R,
+
+fs+2 (s1, . . . , s n+1 ) := f (s1, . . . , s n+2 )) and the second, from the duality between κF and κB in Σ|S× Ω × Σ|(S∪X )×Ω. As 
+
+f was chosen arbitrarily, we verified that ν(d s1) Qni=1 κF (si, dsi+1 ) = ν(d sn+1 ) Qni=1 κB (si+1 , dsi) for each n ≥ 2 on 
+
+Σ({so}∪S )×Ω ×  ×ni=2 ΣS× Ω
+
+ × Σ(S∪X )×Ω.In view of Lemma D.3, we recursively define the operation κ◦nF (s, A ) for s ∈ ({so} ∪ S ) × Ω and A ∈ Σ|(S∪X )×Ω as 
+
+κ◦nF (s, A ) = 
+
+Z
+
+> (S× Ω)
+
+κ◦(n−1)  
+
+> F
+
+(s, ds′)κF (s′, A ),
+
+and analogously for κB . Under these conditions, ν(d s)κ◦nF (s, ds′) = ν(d s′)κ◦nB (s′, ds) on Σ({so}∪S )×Ω × Σ(S∪X )×Ω.Clearly, κnF (s, A ) ≥ κ◦n(s, A ) for each n, s, and A, and the reachability condition in Definition D.1 implies that there is a k for each measurable E ⊆ S ⋆ such that R
+
+> S⋆o
+
+ν(d s⋆o)κ◦kF (s⋆o, E ) > 0. We will show that κ◦nB (s, ·) is both absolutely continuous and non-degenerate with respect to ν.
+
+Lemma D.4. For each integer n ≥ 1 and s ∈ S ⋆, κ◦nB (s, ·) is ν-nondegenerate and absolutely continuous with respect to ν.Proof. We proceed by induction. Define κ◦1 
+
+> B
+
+(s, ·) := κB (s, ·). By definition, κB (s, ·) is both absolutely continuous and non-degenerate with respect to ν. Assume that κ◦n(s, ·) also satisfies these properties for a n ≥ 1. Then, for each measurable A,
+
+κ◦n+1  
+
+> B
+
+(s, A ) := 
+
+Z
+
+> S× Ω
+
+κB (s, ds′)κ◦nB (s′, A ).
+
+For absolute continuity, notice that ν(A) = 0 implies κ◦nB (s, A ) = 0 by our induction hypothesis. Hence, κ◦n+1  
+
+> B
+
+(s, A ) = 0 .That is, κ◦n+1  
+
+> B
+
+(s, ·) is absolutely continuous with respect to ν. For nondegeneracy, let E ⊆ S ⋆ measurable be such that 
+
+κ◦n+1  
+
+> B
+
+(s, E ) > 0. Then, there is a set D with positive κB (s, ·)-measure such that κ◦nB (s′, E ) > 0 for every s′ ∈ D. By induction hypothesis, if ˜E ⊆ E is a measurable subset of E such that ν( ˜E) > 0, then κ◦nB (s′, ˜E) > 0 for each s′ ∈ D.Consequently, κ◦n+1  
+
+> B
+
+(s, ˜E) > 0. Inductively, we have shown that κ◦n+1  
+
+> B
+
+(s, ·) is ν-nondegenerate. The next lemma shows that, when starting at X × Ω, a Markov chain following κB reaches {so} × Ω in at most N steps. The intuition is that, were this not the case, the chain would arrive at some set B ∈ Σ|S× Ω in N steps with positive probability. As each set B is reachable from {so} × Ω with positive probability, we would by duality be able to construct a 
+
+κF -based Markov chain starting at {so} × Ω that would, with positive probability, remain outside X × Ω after N steps. This contradicts the above lemma. As a consequence, κB is also a finitely absorbing kernel with horizon N .
+
+Lemma D.5. κNB (x⋆, {so} × Ω) = 1 for each x⋆ ∈ { x} × Ω and x ∈ X .Proof. Assume for contradiction that κNB (x⋆, S⋆o ) < 1 for some x⋆. We will show that there is a positive-measure at-least-
+
+N -sized trajectory from S⋆o to a subset of S⋆ \ X ⋆. By Lemma D.2, however, such a trajectory cannot exist. To start with, Lemma D.3 ensures that κ◦NB (x⋆, S⋆o ) ≤ κNB (x⋆, S⋆o ) < 1. As κ◦NB (x⋆, S⋆o ) < 1, κ◦NB (x⋆, (S⋆ \ S ⋆o )) > 0. By definition, 
+
+κ◦NB (x⋆, (S⋆ \ S ⋆o )) := 
+
+Z
+
+> S× Ω
+
+κB (x⋆, ds)κ◦N −1 
+
+> B
+
+(s, S⋆ \ S ⋆o ) = 
+
+Z
+
+> S× Ω
+
+κB (x⋆, ds)κ◦N −1 
+
+> B
+
+(s, S⋆ \ S ⋆o ) > 0.
+
+As s 7 → κ◦N −1 
+
+> B
+
+(s, S⋆ \ S ⋆o )) is a non-negative and continuous function, the equation above implies that there is an open set with positive κB (x⋆, ·)-measure D for which κ◦N −1 
+
+> B
+
+(s, S⋆ \ S ⋆o ) > 0 for all s ∈ D. By the (contraposition of) absolute con-tinuity, D has also ν-positive measure. Also, D ⊆ S × Ω due to the integration domain. Fix s ∈ D. Then, there is an measur-able set E ⊆ S for which κ◦N −1 
+
+> B
+
+(s, E ) > 0. By continuity, there is a neighborhood ˜D ⊆ D of s for which κ◦N −1 
+
+> B
+
+(s, E ) > 0
+
+20 Path-dependent Discrete Amortized Inference 
+
+for all s ∈ ˜D. By reachability, there is a k for which R
+
+> S⋆o
+
+ν(d s⋆o)κ◦kF (s⋆o, E ) > 0. By Lemma D.3, since E ⊆ (S ∪ X ) × Ω,
+
+Z
+
+> S⋆o
+
+ν(d s⋆o)κ◦kF (s⋆o, E ) = 
+
+Z
+
+> E
+
+ν(d s)κ◦kB (s, S⋆o ) > 0.
+
+Again, by the non-negativity and continuity of s 7 → κ◦kB (s, S⋆o ), there is a set ˜E ⊆ E for which κ◦kB (s, S⋆o ) > 0 for all 
+
+s ∈ ˜E, and ˜E has positive ν-measure. In other words, a Markov chain following κB moves from ˜D to ˜E in N − 1 steps, and from ˜E to S⋆o in k ≥ 1 steps (recall that κ◦N −1 
+
+> B
+
+(s, ˜E) > 0 for all s ∈ ˜D since ˜E is a measurable subset of E with positive ν-measure—by ν-nondegeneracy; see Lemma D.4). By duality and Lemma D.3, 
+
+0 = 
+
+Z
+
+> S⋆o
+
+ν(d s⋆o)κN +k−1 
+
+> F
+
+(s⋆o, ˜D) ≥
+
+Z
+
+> S⋆o
+
+ν(d s⋆o)κ◦N +k−1 
+
+> F
+
+(s⋆o, ˜D)=
+
+Z
+
+> ˜D
+
+ν(d s⋆)κ◦N +k−1 
+
+> B
+
+(s⋆, S⋆o )=
+
+Z
+
+> ˜D
+
+ν(d s⋆)
+
+Z
+
+> S
+
+κ◦N −1 
+
+> B
+
+(s⋆, ds⋆′
+
+)κ◦kB (s⋆′
+
+, S⋆o )
+
+≥
+
+Z
+
+> ˜D
+
+ν(d s⋆)
+
+Z
+
+> ˜E
+
+κ◦N −1 
+
+> B
+
+(s⋆, ds⋆′
+
+)κ◦kB (s⋆′
+
+, S⋆o ) > 0,
+
+since κ◦kB (s, S⋆o ) is a strictly positive function on ˜E and both ˜D and ˜E are positive sets wrt their corresponding measures. The initial equality follows from Lemma D.2 since ˜D ∈ S ⋆ \ X ⋆. This contradiction ensures that κNB (x⋆, S⋆o ) = 1 for all x⋆.Similarly to Lemma D.2, κN +kB (x⋆, S⋆o ) = 1 for each k ≥ 0. This is the content of the next lemma. 
+
+Lemma D.6. Let S⋆o = {so} × Ω. Then, κnB (x⋆, S⋆o ) = 1 for all x⋆ ∈ X ⋆ and n ≥ N .Proof. We proceed as in Lemma D.2—by induction. By Lemma D.5, κNB (x⋆, S⋆o ) = 1 . Assume that κnB (x⋆, S⋆o ) = 1 for some n ≥ N . Then, 
+
+κn+1  
+
+> B
+
+(x⋆, S⋆o ) = 
+
+Z
+
+> S⋆
+
+κnB (x⋆, ds)κB (s, S⋆o ) = 
+
+Z
+
+> S⋆o
+
+κnB (x⋆, ds)κB (s, S⋆o ).
+
+As S⋆o is an absorbing set for κB , κB (s, S⋆o ) = 1 for each s ∈ S ⋆o ν-almost surely. Due to absolute continuity, κB (s, S⋆o ) = 1 
+
+κB (x⋆, ·)-almost surely for s ∈ S ⋆o . Consequently, 
+
+κn+1  
+
+> B
+
+(x⋆, S⋆o ) = 
+
+Z
+
+> S⋆o
+
+κnB (x⋆, ds)κB (s, S⋆o ) = 
+
+Z
+
+> S⋆o
+
+κB (x⋆, ds) = κB (x⋆, S⋆o ) = 1 .
+
+Inductively, κnB (x⋆, S⋆o ) = 1 for all n ≥ N .Notably, Definition D.1 and the ensuing lemmas provide a complete characterization of a lifted pointed DAG with a continuous latent state. Curiously, our assumptions in Definition D.1 differ slightly from that of Lahlou et al. (2023, Definition 1), for instance, we assume that {so} is an absorbing set for κB , while Lahlou et al. (2023) establishes that κB (so, ·) is the trivial (null) measure. Below, we explain how an amortized sampler over the lifted space in Definition D.1 can be learned. Aftewards, we elaborate on the instantiation of our proposed framework for the L INES environment described in Section 3. 
+
+Learning an amortized sampler. In pratice, we learn kernels PF (s, ·) and PB (s, ·) absolutely continuous with respect to 
+
+κF (s, ·) and κB (s, ·), respectively, and a measure ξ on S⋆o absolutely continuous with respect to ν. Given a target measure 
+
+Π over X ⋆ absolutely continuous with respect to ν, our objective is to search for a triple of ξ, PF , and PB satisfying 
+
+ξ(d s⋆o)P NF (s⋆o, dx) = Π(d x)P NB (x, ds⋆o).
+
+In doing so, we verify that, for each measurable B,
+
+Z
+
+> S⋆o
+
+ξ(d s⋆o)P NF (s⋆o, B ) = 
+
+Z
+
+> B
+
+Π(d x)P NB (x, S⋆o ).
+
+21 Path-dependent Discrete Amortized Inference 
+
+Since PB (x, ·) ≪ κB (x, ·), an argument similar to that of Lemma D.4 shows that P NB (x, ·) ≪ κNB (x, ·). By Lemma D.5, 
+
+κNB (x, S⋆o ) = 1 ; hence, κNB (x, (S⋆o )c) = 0 and P NB (x, (So)c) = 0 . That is, P NB (x, (S⋆o )c) = 1 since P NB (x, ·) is a probability measure. Thus, Z
+
+> S⋆o
+
+ξ(d s⋆o)P NF (s⋆o, B ) = 
+
+Z
+
+> B
+
+Π(d x)P NB (x, S⋆o ) = Π( B).
+
+From an implementation perspective, we represent PF , PB , ξ, and Π with their densities pF , pB , π, and ξ relatively to κF ,
+
+κB , ν, and ν, respectively. When π is known only up to a normalizing constant, π(x) = Z ˜π(x), we also estimate Z. By parameterizing pF , PB , ξ, and Z with neural networks, learning is based on the minimization of the expected trajectory balance loss, 
+
+L(so, s 1, . . . , s N ) = 
+
+log ξ(so) + log Y 
+
+> 0≤i≤N−1
+
+pF (si, s i+1 ) − log Z − log ˜ π(sN ) − log Y 
+
+> 0≤i≤N−1
+
+pB (si+1 , s i)
+
+
+
+> 2
+
+,
+
+with respect to a exploratory policy PE (absolutely continuous with respect to κF ) via stochastic gradient descent. By Lemma D.2, sN ∈ X ⋆ almost surely due to PE ≪ κF .In conclusion, we also present a simple instantiation of Definition D.1 for concreteness. 
+
+Example D.7 (Stochastic latent dynamical system for the L INES environment) . Illustratively, consider Ω = Rd, S = P \{ po},
+
+X = Q, and so = po in Figure 2 with step size M = 1 . Under these conditions, S is a topological measurable space equipped with the discrete topology, while Ω is a Euclidean space endowed with the Lebesgue measure. Also, Σ is the 
+
+σ-algebra induced by the product of the σ-algebras of these measurable spaces, which is uniquely defined since both S and 
+
+Ω are σ-finite. Naturally, for s⋆ = ( pi, ω ) ∈ S ⋆, κF (s⋆, ·) is supported on {qi, p i+1 } × Rd, and κB (s⋆, ·) is supported on 
+
+{pi} × Rd. In pratice, we could parameterize pF at s⋆i = ( si, ω i) and s⋆i+1 = ( si+1 , ω i+1 ) as 
+
+log pF (s⋆i , s ⋆i+1 ) = log pF,ω (( si+1 , ω i), ω i+1 ) + log pF,s (( si, ω i), s i+1 ),
+
+in which pF,ω (( si+1 , ω i), ·) = N (ϕ(si+1 , ω i), σ 2) is parameterized as a Gaussian distribution and pF,s (( si, ω i), s i+1 ) = 
+
+Categorical (ψ(si, ω i)) , with ϕ and ψ as neural networks. Similarly, ξ(so) could be parameterized as a (mixture of) Gaus-sian(s), similarly to Lahlou et al. (2023). On top of that, π(x, ω ) = Zr (x) · N (ω|μ, Λ) , with r as an unnormalized target distribution. Intuitively, this Gaussian-extended distribution would smooth up the landscape of the target and potentially facil-itate the learning of an accurate sampler. That said, we leave a comprehensive investigation of this effect to future endeavors. 
+
+## E. Distributed and Streaming Inference in Path-dependent Models 
+
+The composable nature of amortized discrete samplers (Garipov et al., 2023) allows for the implementation of effective divide-and-conquer algorithms for streaming and distributed learning (da Silva et al., 2024a). In this section, we expand on the analysis in Section B to show that the existing techniques for non-centralized learning of amortized Markovian samplers can be seamlessly adapted to our path-dependent setting. Towards this objective, we recall the core assumption of such methods. 
+
+Assumption E.1 (Factorizable target distribution) . Let {Rt}t≥1 be a sequence of functions Rt : X → R+. We assume that the target distribution, R : X → R+, can always be represented as R(x) := QTt=1 Rt(x) for some T ∈ N.Assumption E.1 simply states that the target distribution can be factorized into the product of independent functions. In the context of Bayesian inference, X might be thought of as the parameter space and {Rt}t≥1 as the sequence of sub-posteriors 
+
+induced by a independent stream of data {D t}t≥1, i.e., R1(x) := ℓ(D1|x)p(x) and Rt(x) := ℓ(Dt|x) for t > 1, in which ℓ is a likelihood function and p is a prior distribution. When each Rt is expensive to evaluate (e.g., due to the size of Dt), learning a sampler for the full posterior R(x) := QTt=1 Rt(x) can be infeasible. Under these conditions, prior work has demonstrated that parallely learning small samplers for each Rt and subsequently combining them in a centralized fashion can be done efficiently. Nextly, we demonstrate that this approach can be naturally accommodated into our path-dependent framework. 
+
+Proposition E.2 (Distributed Amortized Sampling) . Let {Rt}1≤t≤T be a sequence of T target distributions. Also, let 
+
+(p(t) 
+
+> F
+
+, p (t) 
+
+> B
+
+, R t)Tt=1 be a set of path-dependent amortized samplers abiding by Proposition 4.5 (with respect to their respective targets). Assume that (pF , p B ) satisfies 
+
+ pF (τ |s⋆o)
+
+pB (τ |x)
+
+  Y
+
+> 1≤t≤T
+
+p(t) 
+
+> F
+
+(τ ′|s⋆o)
+
+p(t) 
+
+> B
+
+(τ ′|x′)
+
+ =
+
+ Y
+
+> 1≤t≤T
+
+p(t) 
+
+> F
+
+(τ |s⋆o)
+
+p(t) 
+
+> B
+
+(τ |x)
+
+ pF (τ ′|s⋆o)
+
+pB (τ ′|x)
+
+
+
+(19) 22 Path-dependent Discrete Amortized Inference 
+
+for each pair of complete trajectories (τ, τ ′) ending at (x, x ′) on the lifted DAG (see Definition D.1). Then, the marginal distribution of pF over X matches QTt=1 Rt up to a constant, i.e., P  
+
+> τ⇝x
+
+pF (τ |s⋆o) ∝ QTt=1 Rt(x) for each x ∈ X .
+
+Proposition E.3 (Streaming Amortized Sampling) . Let {Rt}t≥1 be an unbounded sequence of target distributions. On top of that, let {(p(t) 
+
+> F
+
+, p (t) 
+
+> B
+
+, R t)}t≥1 be a sequence of amortized samplers recursively abiding by 
+
+p(T ) 
+
+> F
+
+(τ |s⋆o)
+
+p(T ) 
+
+> B
+
+(τ |x)
+
+!
+
+RT (x′) · p(T −1)  
+
+> F
+
+(τ ′|s⋆o)
+
+p(T −1)  
+
+> B
+
+(τ ′|x′)
+
+!
+
+= RT (x) · p(T −1)  
+
+> F
+
+(τ |s⋆o)
+
+p(T −1)  
+
+> B
+
+(τ |x)
+
+!
+
+p(T ) 
+
+> F
+
+(τ ′|s⋆o)
+
+p(T ) 
+
+> B
+
+(τ ′|x)
+
+!
+
+(20) 
+
+for each T > 1 and trajectory pairs (τ, τ ′) ending at (x, x ′), and assume that (p(1)  
+
+> F
+
+, p (1)  
+
+> B
+
+, R 1) satisfies the condition in Proposition 4.5. Then, the marginal distribution of each p(T ) 
+
+> F
+
+over X matches QTt=1 Rt for T ≥ 1 (see Proposition E.3). 
+
+Both Propositions E.2 and E.3 follow directly from Proposition 4.5. In particular, Proposition E.3 can be verified through a simple induction argument. From a learning perspective, Proposition E.2 suggests an divide-and-conquer algorithm for sampling from a target distribution R satisfying Assumption E.1: we first train each p(t) 
+
+> F
+
+parallely for 
+
+1 ≤ t ≤ T , and subsequently learn a pF by minimizing the expected log-squared difference between the left- and right-hand-sides in Equation (19). Similarly, Proposition E.3 highlights that an iterative algorithm that updates the current model (p(T −1)  
+
+> F
+
+, p (T −1)  
+
+> B
+
+) according to Equation (20) results in an unbiased sampler for the product target distribution. In doing so, we avoid repeated evaluations of Rt for each t < T when learning an amortized sampler in a streaming fashion. 
+
+## F. Additional Experiments & Further Details 
+
+This section provides further details on the implementation for our experiments, along with a set of additional experiments for confirming our hypothesis that the path-dependent parameterization results in a better goodness-of-fit to the target distribution. 
+
+F.1. Implementation details Computer code. We provide computer code for reproducing our experiments in the supplement. We wrote both the environment and the deep neural networks based on highly-optimized JAX primitives (Bradbury et al., 2018). Our experiments were executed in a computer equipped with a 64GB AMD MI210 GPU. 
+
+Models, optimizer, hyperparameters. We used standard hyperparameters for our experiments (Viviano et al., 2025). In particular, in Section 5, our Markovian models were parameterized with 3-layer (leaky) ReLU networks. The hidden layer’s size of both the Markovian and the path-dependent was chosen to ensure that the resulting neural networks would be similarly sized (in terms of the number of parameters). We used AdamW (Loshchilov & Hutter, 2019) with a learning rate of 10 −3 for the policy’s parameters and, when needed, a learning rate of 10 −1 for the log Z parameter. Also, we minimized the variance loss for the sequence- and set-based environments, and the TB loss otherwise (see Corollary B.1), for estimating the param-eters of the policies. We followed the experimental setup of Silva et al. (2025a) for the graph-structured tasks in Section 3. 
+
+Defining the SRWM. We used the normalized ELU link function σ described in Equation (23) and, to mitigate per-step computation cost, used a smaller ( d = 32 ) dimension for the latent dynamical system, the output of which went through a single-layer perceptron. The reason for this is that the the cost of our SRWM is dominated by the O(d3) matrix multiplication required by the rotation matrix. More specifically, let Wt and yt = Wtψ(st) be as in Equation (9). To compute pF (·| st, Wt), we introduce WMLP ,1 ∈ RdMLP ×d and WMLP ,2 ∈ RdMLP ×dout and evaluate pF (·| st, Wt) as 
+
+Softmax( WMLP ,2LeakyReLU( WMLP ,1yt) ⊙ m(st)) ,
+
+in which we set α = 10 −2 for LeakyReLU( x), dout is given by the environment, and m(st) ∈ { 1, −∞} dout is a masking function delineating the permissible transitions at st—as in Equation (3). Importantly, we empirically observed that reducing d negligibly affected learning convergence, but substantially improved computation efficiency. 
+
+F.2. Additional experiments 
+
+We complement our analysis in Section 5 with further experiments on standard tasks for GFlowNets. 23 Path-dependent Discrete Amortized Inference 10 3 10 4 10 5 10 6     
+
+> Number of parameters
+> 0.00 0.05 0.10
+> Total Variation
+> 10 310 410 510 6
+> Number of parameters
+> 0.00.110 410 510 6
+> Number of parameters
+> 0.10.2
+> Markovian Path-dependent
+
+Figure 10. TV distance to the target for varying model sizes for the sequence environment. We show that our path-dependent parameterization based on the modified SRWM architecture consistently outperforms its Markovian counterpart (based on a 3-layer ReLU network). In each case, we increased the parameter count by expanding the latent dimension—e.g., d in Equation (9). See Section 5. Markovian Path-dependent Target distribution 
+
+(a) Results for the standard hypergrid. 0 5000 10000     
+
+> Training steps
+> 024
+> Average of Top-20 R(x)  ×10 6Sequences (Synthetic)
+> 010000 20000
+> Training steps
+> 01
+> Hypergrid (16x16)
+> Path-dependent Markovian
+
+(b) Mode discovery for each parameterization. 
+
+Figure 11. (left) Our path-dependent parameterization improves goodness-of-fit for the standard 16 ×16 hypergrid task. (right) By learning a latent dynamical system, we also improve exploration of high-probability regions, as measured by the average R(x) of the 20 most probable encountered states during training. (We consider the Syn-8 environment introduced in Table 2 in (b)). 
+
+Table 3. Goodness-of-fit for a Markovian and path-dependent parameterizations for the preference learning task in terms of the TV distance to the target. 
+
+Sample size Markovian Path-dependent 50 0.135 ±0.022 0.097 ±0.016 
+
+100 0.177 ±0.035 0.128 ±0.046 
+
+150 0.274 ±0.074 0.236 ±0.092 
+
+Preference learning (da Silva et al., 2024b). We consider the problem of approximating a posterior distribution over the parameters of an integer-valued linear model for preference learning (Cole, 1993). Briefly, each object i has a set of binary features, xi ∈ { 1, 0}d, and the probability of object i being preferred over j is modelled by 
+
+p(i ≻ j|w) = σ  wT (xi − xj ), with w ∈ {− m, −m + 1 , . . . , m }
+
+for some positive integer m. We set an uniform prior over w. As we show in Table 3 in the supplement, our model also provides a better approximation than its Markovian counterpart for this problem for different sample sizes (we fix both d = 8 and m = 4 ). 
+
+GridWorld (Bengio et al., 2021). We show in Figure 11a a 2-dimensional grid environment with a target distribution defined for a point (x, y ) by 
+
+R(x, y ) = 10 −3 + 2 · r1(x) · r1(y) + 0 .5 · r2(x) · r2(y),
+
+in which r1(x) := [ n(x) > 0.6] · [n(x) > 0.8] , r2(x) = [ x > 0.5] , and n(x) = |2x/H−1 − 1| for a H-sized grid; · 7 → [·]
+
+is Inverson bracket, which corresponds to 1 if the evaluated expression is true and 0 otherwise. This R is a standard in GFlowNet evaluation, e.g., (Malkin et al., 2023; Pan et al., 2023b). Notably, our path-dependent model also provides a better goodness-of-fit to the target in this scenario—which corroborates our observations in Section 5. On top of this, Figure 11 also indicates our approach improves state space exploration. 
+
+Table 4. Distance to the target distribution for the task of bit sequence generation. 
+
+Seq. Size Markovian Path-dependent 16 0.025 ±0.001 0.001 ±0.000 
+
+32 0.057 ±0.001 0.002 ±0.000 
+
+64 0.064 ±0.005 0.002 ±0.000 
+
+Bit sequences. We have also run experiments on the generation of bit sequences, which is a standard benchmark for GFlowNets (e.g., Malkin et al. (2022); Tiapkin et al. (2024); Silva et al. (2025b)). Towards this objective, we considered sequences of size S ∈{16 , 32 , 64 }. We adopted the target distribution proposed in Malkin et al. (2022, Section 5.3.1), and followed the experimental setup in (Silva et al., 2025b). Results in Table 4 show that our approach also provides a better goodnesss-of-fit to the target distribution for this task. 24 Path-dependent Discrete Amortized Inference Markovian Path-dependent Target 
+
+(a) RINGS .Markovian Path-dependent Target (b) SINUSOIDAL .
+
+Figure 12. Results for Lazy Random Walk . A path-dependent parameterization yields a better distributional approximation than a Markovian one for both the R INGS (left) and S INUSOIDAL (right) targets, which we describe in Equations (21) and (22). 0 5000 10000 15000 
+
+> Training steps
+> 0.00 0.25 0.50 0.75 1.00
+> Total variation
+> R-SRWM R-SRWM w/ identity link R-SRWM w/o rotation matrix
+
+(a) GridWorld (16 ×16). 0 5000 10000 15000  
+
+> Training steps
+> 0.00 0.25 0.50 0.75 1.00
+> Total variation
+> R-SRWM R-SRWM w/ identity link R-SRWM w/o rotation matrix
+
+(b) Lazy Random Walk (R INGS ). 
+
+Figure 13. The rotation matrix plays a key role in accelerating learning convergence . While both the chosen link function σ
+
+(Equation (23)) and the rotation matrix R are beneficial for training, removing R effectively hinders training. 
+
+Lazy Random Walk. We evaluate our algorithm on the Lazy Random Ralk (LRR) task, which has also been considered by Dall’Antonia et al. (2026). Similarly to the GridWorld, the sampler starts at 0 ∈ Rd and, at each step, updates its current state s as s ← s + v, with v ∈ { e1, . . . , ed, 0} and ei as the i-column of the d-dimensional identity matrix. In contrast to the GridWorld, however, the generative process does not stop when the transition corresponding to 0 is realized; instead, it proceeds for exactly T steps. From a fundamental standpoint, this ensures the underlying stochastic process is aperiodic, and we empirically found that such a generative process is less prone to collapse than the one in Figure 11a. In this context, we augmented the state s with the current time-step t, (s, t ), and restricted the sampler to [−M, M ]d. As such, the terminal set is X = {(s, T ) : s ∈ [−M, M ]15 }. We parameterized t with Fourier’s positional encoding (Vaswani et al., 2023). Additionally, we considered the R INGS and S INUSOIDAL target distributions, depicted in Figure 12(a-b) (right), defined by 
+
+RRings (s) = 0 .6 · exp {− 10( ∥˜s∥ − 0.2) 2} + 0 .3 · exp {− 10( ∥˜s∥ − 0.9) 2}, (21) in which ˜s = M −1s ∈ [−1, 1] and ∥ · ∥ is the Euclidean norm, and 
+
+RSinusoidal (s) = cos( s2). (22) Intuitively, both target distributions require the sampler to perform significantly different actions at similar states. Under this condition, as we illustrated in Figure 5, learning convergence is hampered by state aliasing. Results for the LRR task are shown in Figure 12, confirming the higher-quality goodness-of-fit of our path-dependent parameterization. 
+
+Table 5. FCS for the Ising model simulation. 
+
+d Markovian non-Markovian 36 0.15 ±0.03 0.06 ±0.01 
+
+64 0.20 ±0.02 0.08 ±0.01 
+
+Ising model. We further evaluate our approach in the simulation of the Ising model, which is a common benchmark for discrete sampling in the literature (e.g., (Zhang et al., 2022; Liu et al., 2024)). Simply put, the state space is 
+
+{− 1, 1}d, with −1 and 1 representing a particle’s spin, and the (unnormalized) target distribution is 
+
+log R(x) = xT h + 12 xT Jx ,
+
+with x ∈ {− 1, 1}d and h ∈ Rd and J ∈ Rd×d fixed. Intuitively, −1/2xT Jx represents the energy associated to the particles’ pairwise interactions, and −xT h measures the energy from an external magnetic field. We let J = vv T − diag( vv T ) for 25 Path-dependent Discrete Amortized Inference 0 5000 10000 15000         
+
+> Training steps
+> 0.00 0.25 0.50 0.75 1.00
+> Total variation
+> Markovian PD (GRU) PD (LSTM) PD (R-SRWM)
+> (a) GridWorld (16 ×16). 05000 10000 15000
+> Training steps
+> 0.00 0.25 0.50 0.75 1.00
+> Total variation
+> Markovian PD (GRU) PD (LSTM) PD (R-SRWM) (b) Lazy Random Walk (R INGS ).
+> Figure 14. Our SRWM leads to faster convergence than gated RNNs. In contrast to LSTM and GRU, our SRWM-based policy network promotes the diversity of the model’s hidden representations—via the rotation matrix—reducing aliasing and accelerating convergence.
+
+v ∼ U ({v ∈ Rd : ∥v∥2 = 1 }), representing a ferromagnetic system (i.e., the pairwise-interaction energy is minimized when the particles are spin-aligned), and h ∼ N (0, I). In Table 5, we selected d ∈ { 36 , 64 } and averaged the FCS for both the Markovian and path-dependent samplers across three independent runs. Again, we observed our non-Markovian parameterization to find a better approximation to the target distribution than its Markovian counterpart. 
+
+F.3. Ablation studies Rotation matrix & link function. Our parameterization for the learned latent dynamical system, based on a self-referential weight matrix, has two primary components: a rotation matrix ( R) and a link function ( σ). As in (Irie et al., 2022), we set 
+
+σ(x) = ELU( x) + 1 
+
+1T ELU( x) + d (23) for x ∈ Rd and 1 as the d-dimensional vector of ones. (ELU, applied element-wise, is defined by x 7 → x if x ≥ 0
+
+and x 7 → exp {x} − 1 if x < 0). To better understand the effect of these design choices over the effectiveness of our path-dependent parameterization, we show in Figure 13 the TV distance of our model after (i) removing the rotation matrix and (ii) setting an identity link function. We consider the Lazy Random Walk (R INGS ) and GridWorld (Figure 7) domains, for which this metric can be tractably computed. Remarkably, both experiments confirm that the rotation matrix plays a pivotal role in accelerating learning convergence—and that the link function, despite beneficial, is of relatively little importance. This corroborates our mechanical intuition that, by rotating the underlying weight matrix’s eigenvectors, the rotation matrix effectively mitigates state aliasing. 
+
+Comparison against gated RNNs. As mentioned, we compared our modified SRWM against conventional gataed RNNs, including LSTM (Hochreiter & Schmidhuber, 1997) and GRU (Cho et al., 2014), for parameterizing the latent dynamical system, and found our SRWM to be far more effective in speeding up learning convergence in many tasks. We illustrate this in Figure 14. The reason for this is that, differently from LSTM and GRU, our SRWM has a built-in mechanism—the rotation matrix, as explained—for mitigating state aliasing. 26
