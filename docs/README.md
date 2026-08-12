@@ -6,35 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-11
-- 运行时间：2026-08-11 21:24:59 UTC
+- 最新运行日期：2026-08-12
+- 运行时间：2026-08-12 21:12:02 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：0
-- 速读区：4
+- 本次总论文数：2
+- 精读区：1
+- 速读区：1
 
 ### 今日简报（AI）
-今日速读4篇论文，聚焦深度学习不确定性估计与概率算子学习，暂无精读。  
-最值得关注的是7.0分的《Tracing sources of epistemic uncertainty》，其线性化估计器可区分同质/异质不确定性，另有6.0分的路径依赖离散推理与随机输入场算子学习可供参考。  
-建议优先精读不确定性溯源一文，其余两篇可作扩展了解，后续可补充arXiv链接与复现代码。
-- 详情：[/202608/11/README](/202608/11/README)
+今日精读1篇、速读1篇，聚焦不确定性建模下的生成与回归新方法。最值得关注的是ELVAE（8.0分），将证据学习融入变分自编码器，实现不确定性感知生成；Fisher8（7.0分）则从输出层Fisher几何角度稳定异方差回归。下一步可围绕ELVAE在低置信度样本筛选或鲁棒生成任务中做实验验证。
+- 详情：[/202608/12/README](/202608/12/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [ELVAE: Evidential Learning-Based Variational Autoencoder for Uncertainty-Aware Generation](/202608/12/2608.10398v1-elvae-evidential-learning-based-variational-autoencoder-for-uncertainty-aware-generation)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：证据学习变分自编码器通过精确ELBO目标提供显式潜在不确定性
 
 ### 速读区论文标签
-1. [Tracing sources of epistemic uncertainty in deep learning predictions: homo- and hetero-scedastic linearized estimators](/202608/11/2608.07630v1-tracing-sources-of-epistemic-uncertainty-in-deep-learning-predictions-homo--and-hetero-scedastic-linearized-estimators)  
+1. [Fisher8: Stabilizing Neural Heteroscedastic Regression via Output-Layer Fisher Geometry](/202608/12/2608.10374v1-fisher8-stabilizing-neural-heteroscedastic-regression-via-output-layer-fisher-geometry)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：利用近似Fisher信息矩阵进行深度学习不确定性量化，区分认知与偶然不确定性
-2. [Path-dependent Discrete Amortized Inference](/202608/11/2608.08644v1-path-dependent-discrete-amortized-inference)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：针对非归一化后验的摊销推断
-3. [Two-Step MV-DeepONet: Probabilistic Operator Learning for Uncertainty Propagation Driven by Random Input Fields](/202608/11/2608.09071v1-two-step-mv-deeponet-probabilistic-operator-learning-for-uncertainty-propagation-driven-by-random-input-fields)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：深度神经网络中的概率算子学习与不确定性量化
-4. [Personalized Federated Learning via Variance-Aware Nonparametric Empirical Bayes](/202608/11/2608.09074v1-personalized-federated-learning-via-variance-aware-nonparametric-empirical-bayes)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：面向个性化联邦深度学习的经验贝叶斯方法，估计客户端参数的共享先验。
+   evidence：利用输出层Fisher几何稳定预测不确定性的训练
 
 
 <div class="dpr-home-promo-card">
