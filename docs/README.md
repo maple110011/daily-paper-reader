@@ -6,26 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-12
-- 运行时间：2026-08-12 21:12:02 UTC
+- 最新运行日期：2026-08-13
+- 运行时间：2026-08-13 21:06:12 UTC
 - 运行状态：成功
-- 本次总论文数：2
+- 本次总论文数：3
 - 精读区：1
-- 速读区：1
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读1篇、速读1篇，聚焦不确定性建模下的生成与回归新方法。最值得关注的是ELVAE（8.0分），将证据学习融入变分自编码器，实现不确定性感知生成；Fisher8（7.0分）则从输出层Fisher几何角度稳定异方差回归。下一步可围绕ELVAE在低置信度样本筛选或鲁棒生成任务中做实验验证。
-- 详情：[/202608/12/README](/202608/12/README)
+今日精读聚焦粒子平均场变分推断在非强凸下的稳定性，另有图VAE标签聚合与分布偏移自诊断两篇速读。最值得关注的是精读论文，突破了强凸假设，为变分推断的收敛性给出更普适的保证；图VAE也给出噪声标签聚合的新思路。建议普通读者优先精读该推断论文理解理论边界，速读论文可作应用参考。
+- 详情：[/202608/13/README](/202608/13/README)
 
 ### 精读区论文标签
-1. [ELVAE: Evidential Learning-Based Variational Autoencoder for Uncertainty-Aware Generation](/202608/12/2608.10398v1-elvae-evidential-learning-based-variational-autoencoder-for-uncertainty-aware-generation)  
+1. [Stability of Finite-Batch Particle Mean-Field Variational Inference Beyond Strong Convexity](/202608/13/2608.11486v1-stability-of-finite-batch-particle-mean-field-variational-inference-beyond-strong-convexity)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：证据学习变分自编码器通过精确ELBO目标提供显式潜在不确定性
+   evidence：对有限批量粒子平均场变分推断的稳定性分析，属于近似推断技术，适用于深层贝叶斯模型
 
 ### 速读区论文标签
-1. [Fisher8: Stabilizing Neural Heteroscedastic Regression via Output-Layer Fisher Geometry](/202608/12/2608.10374v1-fisher8-stabilizing-neural-heteroscedastic-regression-via-output-layer-fisher-geometry)  
+1. [Dual-Primal Graph VAEs for Noisy Label Aggregation](/202608/13/2608.11473v1-dual-primal-graph-vaes-for-noisy-label-aggregation)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：利用输出层Fisher几何稳定预测不确定性的训练
+   evidence：使用图VAE将真实标签作为潜变量，对深度学习模型进行变分推断。
+2. [From Uncertainty to Failure Attribution: Self-Diagnosing Models for Failure Attribution under Distribution Shift](/202608/13/2608.07953v1-from-uncertainty-to-failure-attribution-self-diagnosing-models-for-failure-attribution-under-distribution-shift)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：研究分布漂移下的预测不确定性与失效归因，属于深度学习不确定性估计，虽未显式使用贝叶斯方法，但主题高度相关。
 
 
 <div class="dpr-home-promo-card">
