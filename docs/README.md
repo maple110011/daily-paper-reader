@@ -6,29 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-13
-- 运行时间：2026-08-13 21:06:12 UTC
+- 最新运行日期：2026-08-14
+- 运行时间：2026-08-14 20:53:11 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：1
-- 速读区：2
+- 本次总论文数：1
+- 精读区：0
+- 速读区：1
 
 ### 今日简报（AI）
-今日精读聚焦粒子平均场变分推断在非强凸下的稳定性，另有图VAE标签聚合与分布偏移自诊断两篇速读。最值得关注的是精读论文，突破了强凸假设，为变分推断的收敛性给出更普适的保证；图VAE也给出噪声标签聚合的新思路。建议普通读者优先精读该推断论文理解理论边界，速读论文可作应用参考。
-- 详情：[/202608/13/README](/202608/13/README)
+今日速读 1 篇论文，聚焦 GENERIC 动力学中的不确定性量化方法。  
+最值得关注的是结构保持策略在保物理约束下的数值表现（7.0/10）。  
+建议进一步了解该方法对热力学一致性与长期稳定性验证的实际效果。
+- 详情：[/202608/14/README](/202608/14/README)
 
 ### 精读区论文标签
-1. [Stability of Finite-Batch Particle Mean-Field Variational Inference Beyond Strong Convexity](/202608/13/2608.11486v1-stability-of-finite-batch-particle-mean-field-variational-inference-beyond-strong-convexity)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：对有限批量粒子平均场变分推断的稳定性分析，属于近似推断技术，适用于深层贝叶斯模型
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Dual-Primal Graph VAEs for Noisy Label Aggregation](/202608/13/2608.11473v1-dual-primal-graph-vaes-for-noisy-label-aggregation)  
+1. [Structure-preserving uncertainty quantification for GENERIC dynamics](/202608/14/2608.12624v1-structure-preserving-uncertainty-quantification-for-generic-dynamics)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：使用图VAE将真实标签作为潜变量，对深度学习模型进行变分推断。
-2. [From Uncertainty to Failure Attribution: Self-Diagnosing Models for Failure Attribution under Distribution Shift](/202608/13/2608.07953v1-from-uncertainty-to-failure-attribution-self-diagnosing-models-for-failure-attribution-under-distribution-shift)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：研究分布漂移下的预测不确定性与失效归因，属于深度学习不确定性估计，虽未显式使用贝叶斯方法，但主题高度相关。
+   evidence：面向强约束深度科学模型的轻量化epinet不确定性量化框架
 
 
 <div class="dpr-home-promo-card">
