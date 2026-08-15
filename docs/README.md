@@ -6,26 +6,27 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-14
-- 运行时间：2026-08-14 20:53:11 UTC
+- 最新运行日期：2026-08-15
+- 运行时间：2026-08-15 19:31:10 UTC
 - 运行状态：成功
-- 本次总论文数：1
+- 本次总论文数：2
 - 精读区：0
-- 速读区：1
+- 速读区：2
 
 ### 今日简报（AI）
-今日速读 1 篇论文，聚焦 GENERIC 动力学中的不确定性量化方法。  
-最值得关注的是结构保持策略在保物理约束下的数值表现（7.0/10）。  
-建议进一步了解该方法对热力学一致性与长期稳定性验证的实际效果。
-- 详情：[/202608/14/README](/202608/14/README)
+今日速读2篇论文，暂无精读，重点覆盖大规模表格数据推断与随机场分布重建两大方向。最值得关注的是《Balanced Adaptive Prototype Selection》提出可扩展TabPFN的自适应原型选择方案，为大规模表格数据提供高效推断思路；另一篇则用局部Sinkhorn框架解决多维随机场的条件分布重建。建议下一步精读前者，深入理解其原型平衡策略在真实数据集上的表现。
+- 详情：[/202608/15/README](/202608/15/README)
 
 ### 精读区论文标签
 - 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Structure-preserving uncertainty quantification for GENERIC dynamics](/202608/14/2608.12624v1-structure-preserving-uncertainty-quantification-for-generic-dynamics)  
+1. [Balanced Adaptive Prototype Selection for Scalable TabPFN Inference on Large-Scale Tabular Data](/202608/15/2608.12989v1-balanced-adaptive-prototype-selection-for-scalable-tabpfn-inference-on-large-scale-tabular-data)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：面向强约束深度科学模型的轻量化epinet不确定性量化框架
+   evidence：通过原型选择实现TabPFN（一种贝叶斯深度学习模型）的可扩展推理
+2. [A Local Sinkhorn Framework for Conditional Distribution Reconstruction of Multidimensional Random Fields](/202608/15/2608.11613v1-a-local-sinkhorn-framework-for-conditional-distribution-reconstruction-of-multidimensional-random-fields)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：面向随机神经网络的分布匹配目标，与深度概率模型近似推断相关
 
 
 <div class="dpr-home-promo-card">
