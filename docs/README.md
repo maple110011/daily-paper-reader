@@ -6,41 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-20
-- 运行时间：2026-08-20 20:49:10 UTC
+- 最新运行日期：2026-08-21
+- 运行时间：2026-08-21 19:13:43 UTC
 - 运行状态：成功
-- 本次总论文数：7
-- 精读区：4
-- 速读区：3
+- 本次总论文数：4
+- 精读区：2
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读聚焦增材制造与蛋白质工程两大领域，筛选出7篇论文其中2篇获9分高分。最值得关注的是熔融沉积成型工艺的质量不确定性多目标优化，以及多任务贝叶斯神经网络在蛋白质设计中的突破。建议优先精读这两篇高分论文，速读可略过低分项以节省时间。
-- 详情：[/202608/20/README](/202608/20/README)
+今日精读2篇、速读2篇，重点关注星系形态分类与概率时间序列预测两大方向。最值得看的是两篇8分论文：前者引入不确定性建模应对分布外检测，后者提出上下文感知对比VAE提升预测可靠性。下一步可结合自身兴趣，优先精读这两篇论文并尝试复现其核心实验。
+- 详情：[/202608/21/README](/202608/21/README)
 
 ### 精读区论文标签
-1. [Multi-Objective Optimization Under Uncertainty of Part Quality in Fused Filament Fabrication](/202608/20/2608.18429v1-multi-objective-optimization-under-uncertainty-of-part-quality-in-fused-filament-fabrication)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：使用贝叶斯神经网络对制造过程进行不确定性量化
-2. [Multitask Bayesian Neural Networks for Multiparameter Protein Engineering](/202608/20/2608.18604v1-multitask-bayesian-neural-networks-for-multiparameter-protein-engineering)  
-   标签：评分：9.0/10、query:bayes-dl
-   evidence：将贝叶斯神经网络应用于多参数蛋白质工程，系统比较不同贝叶斯参数化策略。
-3. [Quantifying uncertainty in the neutron-star equation of state using point estimates and posterior distributions](/202608/20/2608.19019v1-quantifying-uncertainty-in-the-neutron-star-equation-of-state-using-point-estimates-and-posterior-distributions)  
+1. [Galaxy Morphology Classification: Uncertainty Modeling and Out of Distribution Detection](/202608/21/2608.16654v1-galaxy-morphology-classification-uncertainty-modeling-and-out-of-distribution-detection)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：利用贝叶斯和神经网络（MLP）框架对中子星状态方程进行不确定性量化，并指出点估计的局限。
-4. [Scalable Amortized Variational Inference for Non-Poisson Buy-'Til-You-Die Models](/202608/20/2608.19022v1-scalable-amortized-variational-inference-for-non-poisson-buy-til-you-die-models)  
+   evidence：使用蒙特卡洛Dropout近似贝叶斯推断进行星系形态分类的不确定性量化
+2. [CLaST: Context-aware Contrastive VAE for Probabilistic Time Series Forecasting](/202608/21/2608.20025v1-clast-context-aware-contrastive-vae-for-probabilistic-time-series-forecasting)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：面向概率客户生命周期价值模型的可扩展摊销变分推断，支持百万级客户推断
+   evidence：结合对比学习的深度变分自编码器用于概率预测
 
 ### 速读区论文标签
-1. [A Critical Synthesis of Uncertainty Quantification and Foundation Models for Semantic Segmentation](/202608/20/2608.18709v1-a-critical-synthesis-of-uncertainty-quantification-and-foundation-models-for-semantic-segmentation)  
+1. [Exact Algebraic Computation of Learning Coefficients for Two-Dimensional Singular Models](/202608/21/2608.20183v1-exact-algebraic-computation-of-learning-coefficients-for-two-dimensional-singular-models)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：对分割基础模型进行不确定性量化方法的系统评估，解决过度自信和领域偏移问题
-2. [Boosting Data Augmentation with Stochastic Weight Averaging](/202608/20/2608.14373v1-boosting-data-augmentation-with-stochastic-weight-averaging)  
+   evidence：精确计算奇异模型（如深度网络）的学习系数，支持 WBIC 近似贝叶斯推断。
+2. [On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity](/202608/21/2608.14895v1-on-waic-for-dependent-data-a-covariance-corrected-framework-with-linear-time-complexity)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：随机权重平均是深度网络的低成本近似推断/集成技术，与贝叶斯深度学习相关。
-3. [On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity](/202608/20/2608.14895v1-on-waic-for-dependent-data-a-covariance-corrected-framework-with-linear-time-complexity)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：将贝叶斯模型选择准则WAIC扩展到依赖数据，可用于评估贝叶斯深度模型。
+   evidence：贝叶斯模型选择准则WAIC推广至相依数据
 
 
 <div class="dpr-home-promo-card">
