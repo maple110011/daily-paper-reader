@@ -6,32 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-21
-- 运行时间：2026-08-21 19:13:43 UTC
+- 最新运行日期：2026-08-22
+- 运行时间：2026-08-22 20:31:54 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：2
-- 速读区：2
+- 本次总论文数：3
+- 精读区：0
+- 速读区：3
 
 ### 今日简报（AI）
-今日精读2篇、速读2篇，重点关注星系形态分类与概率时间序列预测两大方向。最值得看的是两篇8分论文：前者引入不确定性建模应对分布外检测，后者提出上下文感知对比VAE提升预测可靠性。下一步可结合自身兴趣，优先精读这两篇论文并尝试复现其核心实验。
-- 详情：[/202608/21/README](/202608/21/README)
+今日共速读3篇论文，暂无精读，筛选效率较高。  
+最值得关注的是《Large Discovery Models》（7.0分），聚焦模型驱动的开放式搜索；另两篇涉及时间序列预测与依赖数据WAIC修正。  
+建议下一步优先精读最高分论文，并留意其方法能否迁移到你的研究场景。
+- 详情：[/202608/22/README](/202608/22/README)
 
 ### 精读区论文标签
-1. [Galaxy Morphology Classification: Uncertainty Modeling and Out of Distribution Detection](/202608/21/2608.16654v1-galaxy-morphology-classification-uncertainty-modeling-and-out-of-distribution-detection)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：使用蒙特卡洛Dropout近似贝叶斯推断进行星系形态分类的不确定性量化
-2. [CLaST: Context-aware Contrastive VAE for Probabilistic Time Series Forecasting](/202608/21/2608.20025v1-clast-context-aware-contrastive-vae-for-probabilistic-time-series-forecasting)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：结合对比学习的深度变分自编码器用于概率预测
+- 本次无精读推荐。
 
 ### 速读区论文标签
-1. [Exact Algebraic Computation of Learning Coefficients for Two-Dimensional Singular Models](/202608/21/2608.20183v1-exact-algebraic-computation-of-learning-coefficients-for-two-dimensional-singular-models)  
+1. [Large Discovery Models: Empirically-grounded Model-Based Open-Ended Search](/202608/22/2608.15669v1-large-discovery-models-empirically-grounded-model-based-open-ended-search)  
    标签：评分：7.0/10、query:bayes-dl
-   evidence：精确计算奇异模型（如深度网络）的学习系数，支持 WBIC 近似贝叶斯推断。
-2. [On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity](/202608/21/2608.14895v1-on-waic-for-dependent-data-a-covariance-corrected-framework-with-linear-time-complexity)  
+   evidence：将深度生成模型与贝叶斯非参数代理模型结合以实现校准的不确定性
+2. [On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity](/202608/22/2608.14895v1-on-waic-for-dependent-data-a-covariance-corrected-framework-with-linear-time-complexity)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：贝叶斯模型选择准则WAIC推广至相依数据
+   evidence：面向相依数据的协方差校正WAIC，可迁移到深度贝叶斯模型评估
+3. [Prediction Inference of Time Series with Standard ReLU Deep Neural Networks](/202608/22/2608.15362v1-prediction-inference-of-time-series-with-standard-relu-deep-neural-networks)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：构建深度神经网络时间序列预测的预测区间，量化未来波动与估计不确定性
 
 
 <div class="dpr-home-promo-card">
