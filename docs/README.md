@@ -6,37 +6,34 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-25
-- 运行时间：2026-08-25 20:46:53 UTC
+- 最新运行日期：2026-08-26
+- 运行时间：2026-08-26 22:09:56 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：1
-- 速读区：4
+- 本次总论文数：4
+- 精读区：2
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读1篇、速读3篇，共完成5篇论文筛选，其中一篇获8.0高分推荐。  
-最值得关注的是《Know What You Don't Flow》（8.0/10），聚焦“未知边界”的建模与利用，显著优于其余6.0分速读论文。  
-建议优先深入精读这篇高分工作，并顺带浏览三篇6.0分速读论文作为背景拓展。
-- 详情：[/202608/25/README](/202608/25/README)
+今日精读聚焦高维输出空间的联合不确定性与信号检测任务，共梳理4篇论文。  
+最值得关注两篇8分工作：相关性的联合不确定度建模，以及去噪分数匹配驱动的理想观察者近似。  
+建议优先精读这两篇，速读部分可略览稳健滤波与张量协方差的研究方向。
+- 详情：[/202608/26/README](/202608/26/README)
 
 ### 精读区论文标签
-1. [Know What You Don't Flow](/202608/25/2608.21509v1-know-what-you-dont-flow)  
+1. [It depends: Incorporating correlations for joint aleatoric and epistemic uncertainties of high-dimensional output spaces](/202608/26/2608.24518v1-it-depends-incorporating-correlations-for-joint-aleatoric-and-epistemic-uncertainties-of-high-dimensional-output-spaces)  
    标签：评分：8.0/10、query:bayes-dl
-   evidence：贝叶斯归一化流在粒子物理中实现校准的不确定性量化
+   evidence：面向深度学习高维输出的联合偶然与认知不确定性量化
+2. [Score-Based Ideal Observer Approximation via Denoising Score Matching for Signal-Known-Exactly Detection Tasks](/202608/26/2608.24768v1-score-based-ideal-observer-approximation-via-denoising-score-matching-for-signal-known-exactly-detection-tasks)  
+   标签：评分：8.0/10、query:bayes-dl
+   evidence：利用深度分数生成模型近似贝叶斯理想观察者，属于贝叶斯深度学习方法在检测中的应用
 
 ### 速读区论文标签
-1. [Guidance for Prior Change via Density Ratio Estimation](/202608/25/2608.21729v1-guidance-for-prior-change-via-density-ratio-estimation)  
+1. [Fixed-structure Gaussian Mixture Filtering with Robust Measurement Updates under Outliers](/202608/26/2608.19895v1-fixed-structure-gaussian-mixture-filtering-with-robust-measurement-updates-under-outliers)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：使用摊销生成模型和密度比引导的近似贝叶斯推断
-2. [Joint Causal Structure and Cluster Discovery Using Variational Inference](/202608/25/2608.22212v1-joint-causal-structure-and-cluster-discovery-using-variational-inference)  
+   evidence：基于变分贝叶斯近似的鲁棒高斯混合滤波
+2. [Equivariant Covariance Tensors: Guaranteed SPD Uncertainty for Tensor-Valued Geometric Learning](/202608/26/2608.24386v1-equivariant-covariance-tensors-guaranteed-spd-uncertainty-for-tensor-valued-geometric-learning)  
    标签：评分：6.0/10、query:bayes-dl
-   evidence：变分推断用于潜在聚类与因果结构的联合推断
-3. [Variational Bayesian Inference for the Spectral Structure of LISA Noise](/202608/25/2608.22245v1-variational-bayesian-inference-for-the-spectral-structure-of-lisa-noise)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：随机梯度变分贝叶斯后验逼近
-4. [Nearest-Neighbor Non-Gaussian Processes for Geostatistical Modeling](/202608/25/2608.22422v1-nearest-neighbor-non-gaussian-processes-for-geostatistical-modeling)  
-   标签：评分：6.0/10、query:bayes-dl
-   evidence：基于归一化流的贝叶斯非高斯过程后验计算
+   evidence：针对张量值几何深度学习提出保证SPD协方差的不确定性量化框架。
 
 
 <div class="dpr-home-promo-card">
