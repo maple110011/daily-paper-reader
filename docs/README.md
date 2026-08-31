@@ -6,28 +6,28 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-30
-- 运行时间：2026-08-30 21:59:33 UTC
+- 最新运行日期：2026-08-31
+- 运行时间：2026-08-31 23:56:33 UTC
 - 运行状态：成功
 - 本次总论文数：1
-- 精读区：1
-- 速读区：0
+- 精读区：0
+- 速读区：1
 
 ### 今日简报（AI）
-今日精读 1 篇论文，聚焦离线轨迹规划，评分 8.0，值得关注。
+今日仅速读1篇论文，无精读，重点在语义通信方向。
 
-贝叶斯流网络被用于离线轨迹规划，其概率建模与规划结合的思路是最大亮点。
+最值得关注的是《Significance-Driven Semantic Communication》（6.0/10），探讨以“重要性”驱动的语义通信设计。
 
-建议先了解贝叶斯流网络基础，再对比传统规划方法理解其优势。
-- 详情：[/202608/30/README](/202608/30/README)
+建议普通读者先浏览该文摘要与结论，理解核心思路即可，无需深入细节。
+- 详情：[/202608/31/README](/202608/31/README)
 
 ### 精读区论文标签
-1. [Bayesian Flow Networks for Offline Trajectory Planning](/202608/30/2608.25163v1-bayesian-flow-networks-for-offline-trajectory-planning)  
-   标签：评分：8.0/10、query:bayes-dl
-   evidence：将贝叶斯流网络应用于离线轨迹规划
+- 本次无精读推荐。
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [Significance-Driven Semantic Communication](/202608/31/2608.28441v1-significance-driven-semantic-communication)  
+   标签：评分：6.0/10、query:bayes-dl
+   evidence：在深度学习收发器中使用了变分信息瓶颈
 
 
 <div class="dpr-home-promo-card">
