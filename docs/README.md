@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-09 ~ 2026-09-07</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 22 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>10</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-07 14:09:38 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-07 23:31:02 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>本期共处理22篇论文，精读10篇、速读12篇，重点聚焦概率编程与仿真推断的前沿进展。</p>
-<p>最值得关注的是两篇9分精读：LazyHMC把哈密顿蒙特卡洛扩展到惰性无限维概率程序，另一篇则揭示跳出先验训练可显著提升仿真推断的鲁棒性。</p>
-<p>建议普通读者优先浏览这两篇精读，速读中的Path-dependent离散摊销推断与扩散拟蒙特卡洛也值得顺带一瞥。</p>
+<p>今日共读8篇论文，精读5篇、速读3篇，主题聚焦贝叶斯方法与MCMC算法。</p>
+<p>最值得精读的是曲线重建/点云分析的贝叶斯MCMC方法，以及用分段确定性马尔可夫过程加速贝叶斯变量选择，均获8.0分。</p>
+<p>速读里偏好投票的精确MCMC与可扩展伪后验也值得一瞥，可沿着贝叶斯计算与采样效率继续深入。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs">LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Don&#x27;t Cut Corners: How Training Outside the Prior Makes Simulation-Based Inference More Robust">Don&#x27;t Cut Corners: How Training Outside the Prior Makes Simulation-Based Inference More Robust</span></li><li><span class="dpr-home-dashboard-paper-title" title="On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity">On WAIC for Dependent Data: A Covariance-Corrected Framework with Linear-Time Complexity</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian methods and Markov chain Monte Carlo algorithms for curve reconstruction and point cloud data analysis">Bayesian methods and Markov chain Monte Carlo algorithms for curve reconstruction and point cloud data analysis</span></li><li><span class="dpr-home-dashboard-paper-title" title="Accelerating Bayesian Variable Selection using Piecewise Deterministic Markov Processes">Accelerating Bayesian Variable Selection using Piecewise Deterministic Markov Processes</span></li><li><span class="dpr-home-dashboard-paper-title" title="Patch-Based Diffusion Reconstruction for Accelerated Cardiac Cine">Patch-Based Diffusion Reconstruction for Accelerated Cardiac Cine</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>6</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Path-dependent Discrete Amortized Inference">Path-dependent Discrete Amortized Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="VIDS-Seg: Towards Reliable Uncertainty Quantification in Pediatric Cardiac Ultrasound Segmentation">VIDS-Seg: Towards Reliable Uncertainty Quantification in Pediatric Cardiac Ultrasound Segmentation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Diffusion Quasi-Monte Carlo">Diffusion Quasi-Monte Carlo</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When Metropolis and Hastings Meet Bradley and Terry: Exact MCMC From Preference Voting">When Metropolis and Hastings Meet Bradley and Terry: Exact MCMC From Preference Voting</span></li><li><span class="dpr-home-dashboard-paper-title" title="Subsampled Pseudo-posteriors for Scalable Bayesian Moment-condition Inference">Subsampled Pseudo-posteriors for Scalable Bayesian Moment-condition Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion">Denoising as Projection: Constrained Optimization with Gradient-Guided Diffusion</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>7</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 </div>
 
