@@ -1,0 +1,2876 @@
+Title: LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs
+
+URL Source: https://arxiv.org/pdf/2608.08588v1
+
+Published Time: Tue, 11 Aug 2026 01:12:45 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 
+
+MARIA-NICOLETA CRĂCIUN, University of Oxford, UK 
+
+C.-H. LUKE ONG, Nanyang Technological University, Singapore 
+
+TOM SCHRIJVERS, KU Leuven, Belgium 
+
+SAM STATON, University of Oxford, UK Hamiltonian Monte Carlo (HMC) is a successful generic inference method in probabilistic programming, but in its ordinary formulation it needs gradients and finite-dimensional parameter spaces. In Haskell, lazy evaluation lets probabilistic programs express stochastic processes and other non-parametric Bayesian models over implicit infinite-dimensional spaces. This paper develops new formulations of gradient-based HMC for this infinite-dimensional setting, via lazy evaluation. For automatic differentiation, we provide an analysis based on a new notion of “piecewise analytic under cylindrical analytic partition” (PACAP), to show that even if a program is infinite-dimensional and defined lazily, the gradient of the likelihood function is finitely supported. For the Monte Carlo method itself, we develop several HMC variants and a No-U-Turn Sampler that operate over the infinite-dimensional parameter space but are still productive because of lazy evaluation. Experiments cover Gaussian mixture clustering, random walks, and piecewise-constant regression with Poisson-process changepoints. CCS Concepts: • Mathematics of computing → Markov-chain Monte Carlo methods ; Nonparametric statistics; Stochastic processes; • Software and its engineering → Functional languages ; • Theory of computation → Denotational semantics ; Program analysis .Additional Key Words and Phrases: probabilistic programming, Hamiltonian Monte Carlo, lazy evaluation, au-tomatic differentiation, measure-theoretic semantics, non-parametric Bayesian inference, No-U-Turn Sampler 
+
+ACM Reference Format: 
+
+Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton. 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs. Proc. ACM Program. Lang. 10, ICFP, Article 298 (August 2026), 41 pages. https://doi.org/10.1145/3828696 
+
+1 Introduction 
+
+Probabilistic programming (e.g. [3, 27]) is a method for Bayesian statistical modelling by writing programs. Recall that Bayes’ law specifies how to calculate the posterior probability, in terms of a prior probability and the likelihood of observations. Probabilistic programming is often treated as a declarative programming method: the statistician declares a prior and likelihood by writing a high level program, and a generic inference method (such as a Monte Carlo method) is then used to provide samples from the posterior. Infinite or unbounded dimensions in a parameter space is often called ‘non-parametric’ statistics (for a broad overview, see e.g. [23]). For example, in a clustering problem we would like to group data points into clusters; in the non-parametric setting we want to explore the number of clusters, 
+
+Authors’ Contact Information: Maria-Nicoleta Crăciun, University of Oxford, Oxford, UK, maria.craciun@cs.ox.ac.uk; C.-H. Luke Ong, Nanyang Technological University, Singapore, Singapore, luke.ong@ntu.edu.sg; Tom Schrijvers, KU Leuven, Leuven, Belgium, tom.schrijvers@kuleuven.be; Sam Staton, University of Oxford, Oxford, UK, sam.staton@cs.ox.ac.uk. 
+
+This work is licensed under a Creative Commons Attribution 4.0 International License. © 2026 Copyright held by the owner/author(s). ACM 2475-1421/2026/8-ART298 https://doi.org/10.1145/3828696 Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. arXiv:2608.08588v1 [stat.ML] 9 Aug 2026 298:2 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 
+
+and we do not want to fix in advance how many clusters there are. Similarly in many models based on a stochastic process, such as a random walk, the process on the face of it goes on forever, or with infinite resolution. Non-parametric statistics is often well suited to programming, because the programming notations can more clearly express the complex dynamics than informal statistical notations. 
+
+The problem: generic inference over non-parametric models. Although probabilistic programming provides an elegant declarative framework for specifying statistical models, generic inference over non-parametric models is notoriously difficult. Hamiltonian Monte Carlo (HMC) simulation is arguably the most successful generic inference method, and is widely considered responsible for the uptake of Bayesian statistics in practice. However, HMC fundamentally relies on gradients and finite-dimensional parameter spaces, and so does not directly apply to non-parametric models. We can identify three existing approaches to this challenge: 
+
+• Truncation by hand: Approximate the infinite dimensional structure by a finite dimensional one. For example, an infinite-dimensional Gaussian process is replaced by a high dimensional multivariate Gaussian. We can then employ well understood generic inference methods for finite dimensions, including HMC. This approach is most widely used in practice. However, the approach is not compositional: the truncation bounds must be carefully adjusted across the whole model. 
+
+• Dynamic dimensions: As a program runs, keep track of which dimensions are actually needed at any point, adding new dimensions as necessary. This avoids approximation. But the model is less purely declarative, as it explicitly tracks the dimension count and changes to dimensions. Nonetheless, this is a common approach in the probabilistic programming community [19, 20, 25, 30, 32, 33]. 
+
+• Lazy use of infinite dimensions: The statistical model and inference take place in the context of an infinite dimensional parameter space. Of course, no generic inference method can explicitly track infinitely many dimensions. However, lazily, at the last minute, we notice that only a finite subset of dimensions are actually needed for the calculation, and we use that structure to provide samples from the posterior. This lazy approach has been demonstrated [10] for a simple Metropolis-Hastings simulation, and [7] for discrete programs. However, these methods do not use gradient information, and so they do not benefit from the efficiency that makes HMC so effective in practice. In summary, the existing approaches either sacrifice compositionality (truncation), declarativeness (dynamic dimensions), or efficiency (gradient-free lazy methods). What is missing is a way to bring the power of gradient-based HMC to the lazy, infinite-dimensional setting. 
+
+Our solution: Lazy Hamiltonian Monte Carlo. In this paper we demonstrate that HMC can be applied directly to the infinite dimensional parameter spaces where non-parametric statistical models naturally live, by evaluating lazily. The main technical contribution is to structure the Hamiltonian so that the acceptance ratio, ostensibly an infinite product over all dimensions, collapses to a finite product: the gradient has finite support, and the unvisited dimensions cancel. Our lazy HMC method operates over programs in the LazyPPL library (§2), which has an implicit infinite dimensional parameter space and allows explicit types of infinite dimensional stochastic processes. 
+
+Lazy Hamiltonian Monte Carlo in a Nutshell. At a high level, HMC simulation provides a Markov chain whose stationary distribution is the posterior distribution of the statistical model. It can be regarded as the combination of the following three ideas:  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:3
+
+(1) Gradient descent: the log-likelihood function R𝑛 → R or unnormalized density is a function of the parameters; here the dimension of the parameter space is 𝑛 . We can optimize this by gradient descent. (2) Momentum: gradient descent alone provides a sequence of samples but this does not converge to the posterior and may not explore all modes. To deal with this, we regard a particle following a gradient trajectory and endow it with momentum, moreover, this momentum changes randomly over time. At each step, this Hamiltonian dynamics is typically simulated by a leapfrog integrator. (3) Metropolis correction: The discretization error from the leapfrog integrator is corrected for by randomly either accepting or rejecting each proposed sample, according to the Metropolis-Hastings acceptance ratio. Extending each of these ideas to the infinite-dimensional lazy setting requires new contributions, which we summarize as follows: (1) Infinite-dimensional automatic differentiation (§3.1, §3.3). In the lazy situation, the log-likelihood function now has an infinite dimensional domain, e.g. RN → R. Although we can lazily maintain an infinite dimensional stream of parameters, we cannot hope to make a gradient step in an infinite dimensional direction. We introduce a smoothness condition, PACAP, guaranteeing that the gradient is non-zero in only a finite subset of the dimensions, and we show that it holds for a core calculus of programs. We find these gradients using automatic differentiation, adapting a recent idea based on sparse-map Nagata numbers to this infinite-dimensional setting. (2) Lazy No-U-Turn Sampler (§D.1). HMC performance is sensitive to the number of leapfrog steps, which is typically mitigated by switching to the No-U-Turn Sampler (NUTS). We develop lazy versions of this too. (3) Lazy Metropolis-Hastings correction (§4.5). The Metropolis-Hastings ratio naturally involves an infinite number of terms, one for each dimension. We carefully choose the momentum and structure the Hamiltonian so that all but a finite number of these cancel. Although this requires some care, there are various options, and we propose three different ways of doing this. In §5 we give a detailed worked example, piecewise-constant regression, illustrating how the leapfrog integrator and dimension changes interact. (4) Experimental evaluation (§6). We implement lazy HMC and lazy NUTS as an extension to the LazyPPL library and evaluate them on non-parametric models from the literature, includ-ing geometric distributions, random walks, and clustering. There is no standard benchmark suite for non-parametric statistics, but our experiments provide empirical evidence that the methods work as intended. 
+
+2 Overview of Lazy Probabilistic Programming 
+
+In this section we give an overview of lazy probabilistic programming, illustrating through examples how laziness enables non-parametric statistical models. We then identify where the existing gradient-free inference methods for this setting fall short, and preview how lazy HMC addresses these limitations. We use the syntax of the LazyPPL library [10] for Haskell. We do not assume very much familiarity with Haskell, but the key idea is that within a do block for the probability monad Prob ,we have, in effect, a domain specific language for probabilistic programming. Haskell’s lists are not necessarily finite, and so random lists amount to random processes. Thus the key starting point of non-parametric statistics, that the dimension of the parameter space is unknown or unbounded, is mapped to the programming concept of laziness.  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:4 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+We consider three kinds of example: sequences and geometric distributions (§2.1); random walks (§2.2); and non-parametric clustering (§2.3). 
+
+2.1 Examples: IID Sequences and Geometric Distributions 
+
+We assume a built in primitive uniform :: Prob RealNum that produces a random real number uniformly between 0 and 1. We can then write a recursive program that produces an infinite stream of uniform random samples. These will be independent and identically distributed (IID). 
+
+  
+
+> 1
+
+iiduniform :: Prob [RealNum]  
+
+> 2
+
+iiduniform = do { x ← uniform ; xs ← iiduniform ; return (x : xs) } 
+
+ 
+
+(For now, the reader can assume RealNum=Double , but in Section 3.3 we will generalize this for automatic differentiation.) In Haskell, lists can be infinite, and this recursive program describes a random infinite list. (Haskell uses lazy evaluation: values are computed only when needed, so only the elements actually accessed will be generated.) This amounts to what would be written in statistics as “ 𝑥 𝑛 ∼ 𝑈 (0, 1) iid (for all 𝑛 ∈ N)”. More generally, we can define a function 
+
+  
+
+> 1
+
+iid p :: Prob a → Prob [a]  
+
+> 2
+
+iid p = do { x ← p ; xs ← iid p ; return (x : xs) } 
+
+ 
+
+that transforms any probability distribution into an IID sequence, so that iid uniform = iiduniform .This ‘IID sequence’ is idiomatic in statistics. For a first example, for any 𝑝 ∈ ( 0, 1), we can consider the Bernoulli distribution 
+
+  
+
+> 1
+
+bernoulli :: RealNum → Prob Bool  
+
+> 2
+
+bernoulli p = do { x ← uniform ; return (x < p) } 
+
+ 
+
+which gives true or false with probability 𝑝 . A sequence of IID Bernoulli trials can then be given by 
+
+iid (bernoulli p) .The geometric distribution with mean 1 
+
+> 𝑝
+
+is typically defined as the time of the first success in the random sequence. As a program: 
+
+Listing 1. Geometric distribution   
+
+> 1
+
+geometric :: RealNum → Prob Int  
+
+> 2
+
+geometric p = do { xs ← iid (bernoulli p) ; let (Just n) = findIndex id xs ;  
+
+> 3
+
+return (1+n) } 
+
+ 
+
+As an aside we recall that, as is well known, the geometric distribution can be written without an explicit infinite sequence, as follows: 
+
+  
+
+> 1
+
+geometricStrict p = do x ← bernoulli p  
+
+> 2
+
+if x then return 1 
+
+> 3
+
+else do { n ← geometricStrict p ; return (1 + n) } 
+
+ 
+
+The transformation from geometric to geometricStrict in effect manually propagates the evaluation of the lazy evaluation of the infinite stream xs . The number of random choices remains unknown and unbounded. 
+
+2.2 Examples: Random Walks 
+
+We next consider random walks, which are random sequences of positions. We will work with random walks where the steps are uniformly distributed, for which we first consider a more general uniform distribution:  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:5
+
+  
+
+> 1
+
+uniformRange :: RealNum → RealNum → Prob RealNum  
+
+> 2
+
+uniformRange a b = do { x ← uniform ; return (a + (b-a)*x) } 
+
+ 
+
+In statistics, this would be written as 𝑈 (𝑎, 𝑏 ). We can then define a random walk by first sampling all the steps IID, and then combining them, together with a starting position in [0, 3].
+
+  
+
+> 1
+
+walk :: Prob [RealNum]  
+
+> 2
+
+walk = do { start ← uniformRange 0 3 ; steps ← iid (uniformRange (-1) 1) ;  
+
+> 3
+
+return (scanl (+) start steps) } 
+
+ 
+
+Here, recall that scanl (+) produces the cumulative sums, i.e., the list of intermediate results. An equivalent way of describing this distribution on sequences adds the steps at each point, as is well known: 
+
+  
+
+> 1
+
+walkFrom :: RealNum → Prob [RealNum]  
+
+> 2
+
+walkFrom start = do { next ← uniformRange (start-1) (start+1) ;  
+
+> 3
+
+rest ← walkFrom next ; return (next : rest) } 
+
+ 
+
+Here we will consider a puzzle that also involves tracking the distance travelled (odometer): 
+
+  
+
+> 1
+
+walkOdo :: Prob ([RealNum],[RealNum])  
+
+> 2
+
+walkOdo = do { start ← uniformRange 0 3 ; steps ← iid (uniformRange (-1) 1) ;  
+
+> 3
+
+return (scanl (+) start steps , scanl (+) 0 (map abs steps))} 
+
+ 
+
+Notice that this is a random pair of sequences, representing position and distance travelled respec-tively. But the pair itself is not independent, which is clear from the type. 
+
+Observations and Measures. We use the distribution walkOdo to phrase the puzzle from [19]. The walker will rest when either they reach home (position ≤ 0) or they have travelled further than distLim . When they first rest, their distance from home is roughly 1.1. What is the posterior distribution on starting positions? 
+
+Listing 2. Random walk model   
+
+> 1
+
+walkModel :: RealNum → Meas RealNum  
+
+> 2
+
+walkModel distLim = do  
+
+> 3
+
+(xs,ds) ← sample walkOdo  
+
+> 4
+
+let (Just(_,finalDistance)) = find (\(x,d) → x ≤ 0 || d ≥ distLim) (zip xs ds) in  
+
+> 5
+
+scoreLog (normalLogPdf 1.1 0.1 finalDistance)  
+
+> 6
+
+return (head xs) 
+
+ 
+
+In this example, we have included an observation by switching from the probability monad, Prob ,to the measures monad, Meas . There is a coercion sample :: Prob a → Meas a , but the measures monad also allows scoreLog :: RealNum → Meas () , which scores (or weights) by the likelihood of the observation. In this case, the rough distance of 1.1 from home is modelled by a normal distribution with standard deviation 0.1. Although walkOdo is infinite, find forces only a finite prefix: the odometer accumulates i.i.d. positive increments, so almost surely exceeds distLim after finitely many steps, where evaluation stops. As explained in [10], the distinction between Prob and Meas is helpful because recursion in the 
+
+Prob monad can be lazy, allowing us to build the random infinite sequences that are idiomatic in statistics, lazily ignoring any random elements that are not needed, but recursion in the Meas 
+
+monad is not lazy, because we cannot ignore any observations. This is not really a limitation: an  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:6 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+observation must terminate to contribute a score, so observing an infinite computation is impossible in any PPL, while the laziness LazyPPL adds in the Prob layer is extra expressivity. 
+
+2.3 Example: Clustering with a Gaussian Mixture 
+
+Our final illustration is a clustering model, based on an example from [33, §3]. The number 𝑘 of clusters is unknown, but the prior is that it is Poisson distributed. 
+
+               
+
+> 1clusters :: Prob [RealNum]
+> 2clusters = do m←poisson 9
+> 3let k=m+1 in
+> 4mapM (\n →uniformRange (20*(n-1)/k) (20*n/k)) [1..k]
+
+ 
+
+Here mapM is a Haskell library routine that recurses over the given list using the monadic computation. (We elide coercions between integers and real numbers.) Note that the number of points returned is not known nor bounded. We next define a basic clustering model by treating the points xs ← clusters as the means of Gaussian distributions. This uses a Gaussian mixture density: 𝑝 (𝑦 |xs ) = Í𝑘 −1  
+
+> 𝑖 =01
+> 𝑘
+
+𝑓 (𝑦, xs!!i ),where k=(length xs) and 𝑓 (𝑦, 𝑥 ) = 1√2𝜋 ∗1.52 exp (− (𝑥 −𝑦 )2 
+
+> 2∗1.52
+
+) is the normal density, for fixed standard deviation 1 .5. A standard clustering inference model scores a dataset according to this density function, pro-viding the inferred centres of the clusters: 
+
+                
+
+> 1clustering :: [RealNum] →Meas [RealNum]
+> 2clustering dataset = do xs ←sample clusters
+> 3mapM (\y →scoreLog (log (p(y|xs)))) dataset
+> 4return xs
+
+ 
+
+Above, the program phrase (log (p(y|xs))) is pseudocode, the actual code takes some care over addition in the log domain, as is standard. This clustering model is a very simple model based on the leading example in [33], to illustrate the idea. More general models would also infer the variance, and infer different ratios in different clusters. This example is already non-parametric, since the number of clusters is inferred. More advanced non-parametric clustering models include Dirichlet process models, which can still be expressed within this language. 
+
+2.4 Recap of the Probability and Measures Monads, and the Goal of Monte Carlo 
+
+Probability theory typically starts from some underlying probability space or seed space Ω, which is equipped with a probability measure 𝑝 . A random variable in a space a is a measurable function 
+
+𝑋 : Ω → a. A random variable induces a probability measure on a itself, by pushing forward, 𝑋 ∗𝑝 ;this is the law of 𝑋 . Often we are interested in achieving samples from the distribution 𝑋 ∗𝑝 , but the underlying space is still important and useful in Markov Chain Monte Carlo (MCMC) simulation. 
+
+2.4.1 Normalization and MCMC. Recall that a probability measure on Ω is normalized, that is to say, 𝑝 (Ω) = 1. An unnormalized measure 𝑞 has 𝑞 (Ω) ≠ 1. Provided 𝑞 (Ω) ∉ {0, ∞} , we can form a normalized, probability measure 𝑞 (−)   
+
+> 𝑞 (Ω)
+
+. The problem is that the normalization constant 𝑞 (Ω) is very difficult or impossible to calculate exactly in general. Nonetheless, sampling from the normalized form of 𝑞 is very important, for example many Bayesian inference problems are of this form. The starting point for MCMC simulation is to have an unnormalized measure 𝑞 on Ω (and hence an unnormalized pushforward measure on a), and to provide a Markov chain that gives samples from the corresponding normalized probability distribution but without first calculating 𝑞 (Ω). 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:7
+
+2.4.2 Score Functions and Unnormalized Densities. A typical way to express an unnormalized distribution is as a function 
+
+𝑙 : Ω → [ 0, ∞] (1) on the underlying probability space. If ∫ 𝑙 d𝑝 = 1, then this is the density for a probability measure, and if not, it is merely a density for an unnormalized measure. Many situations in Bayesian statistics refer to the likelihood 𝑓 (𝑑 |𝑥 ) of a datapoint 𝑑 as a function of its parameters 𝑥 . For fixed parameters, the function 𝑓 (−| 𝑥 ) is a normalized density, but in Bayesian inversion the datapoint is fixed and the parameters vary; the function 𝑓 (𝑑 |−) is an unnormalized density. If 𝑝 (or 𝑋 ∗𝑝 ) is the prior belief, and 𝑙 : Ω → [ 0, ∞] determines the likelihood of the data, then the Bayesian posterior is proportional to the unnormalized measure 𝑞 = 𝑝 𝑙 induced by the density 𝑙 , where ∫ 𝑘 (𝜔 ) 𝑞 (d𝜔 ) = ∫ 𝑘 (𝜔 ) 𝑙 (𝜔 ) 𝑝 (d𝜔 ) for all measurable 𝑘 : Ω → [ 0, ∞] .
+
+2.4.3 LazyPPL Implementation. The idea of LazyPPL is to fix a probability space Ω with a measure-preserving isomorphism Ω  Ω × Ω. Thus the source of randomness can always be split in two. The probability monad is then implemented as Prob a = ( Ω → a) , and the monadic sequencing works by splitting Ω, and the correct recursive behaviour for infinite lists follows. A convenient example is Ω = RN∗
+
+, infinite rose trees. Thus the sample space is naturally infinite dimensional, but this is not a problem in practice because it is explored lazily. The measure monad includes observations via scoring and unnormalized densities, such as the  
+
+> scoreLog
+
+of walkModel and clustering , or (1). This monad can be implemented as the writer monad transformer, Meas a = Ω → ([ 0, ∞] , a), providing both the result in a and the unnormalized density. The LazyPPL library, then, provides a compositional language for building measures in Prob a 
+
+and Meas a . It comes with basic Metropolis-Hastings MCMC simulators that convert type Meas a 
+
+to a stream of samples. 
+
+2.5 Towards Gradient-Based Inference in the Lazy Setting 
+
+The lazy approach to probabilistic programming allows models with infinite-dimensional parameter spaces to be expressed compositionally, as illustrated above. The LazyPPL library includes a lazy Metropolis-Hastings sampler (lazyLMH) that operates over these infinite-dimensional spaces without gradient information. As discussed in the introduction, gradient-based methods like HMC can be applied to non-parametric models via truncation or dynamic dimension tracking, but these approaches sacrifice compositionality or declarativeness respectively. The aim of this paper is to show that gradient-based HMC can work directly in the lazy infinite-dimensional setting, preserving the compositional benefits. This is not straightforward. Even defining what a ‘gradient’ means over an infinite-dimensional space requires care, and the Metropolis-Hastings correction, which involves a product over all dimensions, appears to involve infinitely many terms (in fact it collapses to a finite product, as we explain next). Consider again the random walk model (Listing 2). The infinite sequence of steps produces an infinite-dimensional state space. As we demonstrate in Sec. 6 (Fig. 3b), our lazy HMC meth-ods successfully sample from the posterior of this model, despite operating over a truly infinite-dimensional space, and gradient information allows for more efficient exploration than the gradient-free lazyLMH method. The key insight enabling this is that, although the parameter space is infinite dimensional, the gra-dient of any program with a PACAP likelihood (Def. 1) is non-zero in only finitely many dimensions. This means we can perform HMC-style leapfrog steps over only the relevant dimensions, while the infinitely many remaining dimensions are handled lazily. Moreover, on unvisited coordinates the  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:8 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+leapfrog involution acts as a rotation preserving the standard-normal density, so the corresponding factors in the Metropolis-Hastings acceptance ratio cancel, leaving a finite product. 
+
+Structure of the rest of the paper. Sec. 3 develops the smoothness theory and automatic differenti-ation needed for gradients over infinite-dimensional seed spaces. Sec. 4 presents the lazy HMC algorithm, with three variants for handling the infinite-dimensional Metropolis-Hastings correction. Sec. D generalizes this to the No-U-Turn Sampler (lazy NUTS), which adaptively sets the trajectory length. Finally, Sec. 6 evaluates the methods on the models introduced in this section. 
+
+3 Smoothness and Automatic Differentiation with Infinite Dimensional Seed Spaces 
+
+Having motivated the need for gradient-based inference in the lazy setting (§2), we now address the first technical challenge: computing gradients over infinite-dimensional seed spaces. We introduce a smoothness condition, PACAP, and prove compositionally that it holds for a core calculus covering primitive recursion and corecursion; for programs involving unbounded search, such as the geometric distribution of §2, PACAP can also be established by an explicit partition of the seed space. For Hamiltonian Monte Carlo (Sec. 4) we need the gradient of the unnormalized density 𝑙 : Ω →[0, ∞] from (1), where the seed space Ω is infinite dimensional. This leads to two tasks: 
+
+• We need to establish a useful notion of gradient for 𝑙 . Although we want to consider infinite dimensional systems, in finite time we can only ever inspect finitely many dimensions; although we do not expect to bound the number of dimensions, we can still show that ‘locally’ a function only depends on finitely many dimensions (‘cylindrical’), and so locally (in a sense we make precise below) factors through a projection, Ω → R𝑛 → R.This local approach is inspired by earlier analysis of the definable functions 𝑓 : NN → N.These are known to be locally dependent on finitely many dimensions, which amounts to topological continuity in that setting (e.g. [18]); topological continuity is too strong in the real-valued setting. 
+
+• If locally the function only uses finitely many dimensions, and yet the number of dimensions used overall is not bounded, there must be discontinuity or non-smooth points in Ω where the number of relevant dimensions changes. These might play an important role. For example, even in the geometric distribution (§2.1), the sample from the geometric distribution is the number of dimensions used, and so it is very important that it is allowed to change. These non-smooth points could be problematic for gradient methods, but we show that they form a measure zero set: there is no chance of actually reaching a non-smooth point, in that the gradient exists almost everywhere. This analysis is subtle: as [15] have shown, ‘almost surely smooth functions’ are not closed under composition. We follow that work by focusing on analytic functions and analytic partitions, but now extended to the infinite dimensional setting. A final important high level point is that in the course of a finite computation, we will call 𝑙 with various arguments, although these might not be known in advance. Locally, each of these function calls will be dependent on finitely many dimensions; there is no harm in over-approximating this to say that from the perspective of all the function calls in one run of the computation, the function 𝑙 
+
+itself only depends on finitely many dimensions. 
+
+3.1 Smoothness Guarantees 
+
+3.1.1 Functions That Are PACAP: Piecewise Analytic Under Cylindrical Analytic Partition. We intro-duce a notion of piecewise smoothness for functions on the seed space, so that we can consider derivatives. Because plain notions of piecewise-smooth are not compositional [15], we adopt a more refined notion that is stable under composition, following [13, 15]. Moreover, we guarantee  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:9
+
+that locally the functions are cylindrical, in the sense that they are only dependent on finitely many dimensions. This makes implementation easier, and is computationally natural over an infinite dimensional structure – an output only depends on a finite part of its input. Let A be a countable set of ‘addresses’, indexing the coordinates of the seed space. We refer to a coordinate of a particular seed as a ‘site’. For example, we could let A = N∗, the set of finite lists of natural numbers, so that addresses correspond to nodes of a rose tree (a tree with countably infinite branching and infinite depth). We think of X = RA as a space of seeds, for example with the product normal distribution N ( 0, 1)⊗ A . So if A = N∗, then X comprises rose trees where each node contains a real number. Recall that a function is analytic if its Taylor series converges to the function in some neighbourhood of every point; analytic functions are smooth. Definition 1. A subset 𝑈 of X is an analytic cylinder if there exist 
+
+• a finite set 𝐵 ⊆ A of addresses, and open 𝑉 ⊆ R𝐵 ;
+
+• finite sequence of analytic functions 𝑔 1, . . . , 𝑔 𝑛 : 𝑉 → R, such that 
+
+𝑈 = {𝑥 ∈ X | 𝑥 |𝐵 ∈ 𝑉 & 𝑔 1 (𝑥 |𝐵 ) ≤ 0 & . . . & 𝑔 𝑛 (𝑥 |𝐵 ) ≤ 0}.We call 𝐵 a support of 𝑈 . Note that strict inequalities 𝑔 (𝑥 |𝐵 ) < 0 can be absorbed into the open set 
+
+𝑉 (replace 𝑉 by 𝑉 ∩ 𝑔 −1 ((−∞ , 0)) ), so the non-strict form 𝑔 𝑖 ≤ 0 suffices to express both strict and non-strict constraints (cf. [13, Lemma B.3]). A subset of X is c-analytic if it is a countable disjoint union of analytic cylinders. A function 𝑓 : 𝑈 → R with c-analytic domain is defined to be PACAP if there exists 
+
+• a countable partition 𝑈 = Ò∞ 
+
+> 𝑖 =1
+
+𝑈 𝑖 into analytic cylinders, with given supports 𝐵 𝑖 ⊆ A ;
+
+• for each 𝑖 , an analytic function 𝑓 𝑖 : 𝑉 → R where 𝑉 ⊆ R𝐵 𝑖 is open such that 𝑈 𝑖 ⊆ 𝑉 × RA\ 𝐵 𝑖 
+
+and 𝑓 (𝑥 ) = 𝑓 𝑖 (𝑥 |𝐵 𝑖 ) when 𝑥 ∈ 𝑈 𝑖 .Example 1. Let A = N. A function 𝑐 : R𝑛 → R is PAP (piecewise analytic on an analytic partition) [13, 15] if R𝑛 can be partitioned into finitely many analytic sets 𝑃 𝑗 = {𝑦 ∈ 𝑉 𝑗 | ℎ1 (𝑦 ) ≤ 
+
+0, . . . } (with 𝑉 𝑗 ⊆ R𝑛 open, ℎ𝑖 : 𝑉 𝑗 → R analytic), together with analytic functions 𝑐 𝑗 : 𝑉 𝑗 → R such that 𝑐 = 𝑐 𝑗 on 𝑃 𝑗 . Every PAP function R𝑛 → R induces a PACAP map X → R𝑛 → R by composition. The function 𝑓 : X → R given by 𝑓 (𝑥 1, . . . , 𝑥 𝑛 , . . . ) = Í∞ 
+
+> 𝑖 =1
+
+2−𝑖 arctan (𝑥 𝑖 ) is not PACAP, be-cause its result depends on every input dimension; such functions lie outside our scope, since the likelihood is then not finitely computable. 
+
+3.1.2 A Core Calculus for Establishing PACAP. To establish PACAP-ness compositionally, we introduce a simple core lambda calculus with a real numbers type, function types, finite product types, and countable sum types. 
+
+𝑒 :: = 𝑥 | 𝜆𝑥 :𝜏 .𝑒 | 𝑒 𝑒 | ( 𝑒, 𝑒 ) | 𝜋 𝑗 𝑒 | () | inj 𝑖 𝑒 (𝑖 ∈ 𝐼 ) | case 𝑒 of (inj 𝑖 𝑥 ⇒ 𝑒 𝑖 )𝑖 ∈𝐼 
+
+𝜏, 𝜐 :: = 𝜏 → 𝜐 | 𝜏 × 𝜐 | 1 | Í𝑖 ∈𝐼 𝜏 𝑖 | real 
+
+The typing rules are standard: 
+
+Γ(𝑥 ) = 𝜏 
+
+Γ ⊢ 𝑥 : 𝜏 
+
+Γ, 𝑥 : 𝜏 1 ⊢ 𝑒 : 𝜏 2
+
+Γ ⊢ 𝜆𝑥 :𝜏 1.𝑒 : 𝜏 1 → 𝜏 2
+
+Γ ⊢ 𝑒 1 : 𝜏 1 → 𝜏 2 Γ ⊢ 𝑒 2 : 𝜏 1
+
+Γ ⊢ 𝑒 1 𝑒 2 : 𝜏 2 Γ ⊢ () : 1 
+
+Γ ⊢ 𝑒 : 𝜏 1 × 𝜏 2
+
+Γ ⊢ 𝜋 𝑗 𝑒 : 𝜏 𝑗 
+
+Γ ⊢ 𝑒 1 : 𝜏 1 Γ ⊢ 𝑒 2 : 𝜏 2
+
+Γ ⊢ ( 𝑒 1, 𝑒 2) : 𝜏 1 × 𝜏 2
+
+Γ ⊢ 𝑒 : 𝜏 𝑖 
+
+Γ ⊢ inj 𝑖 𝑒 : Í𝑗 ∈𝐼 𝜏 𝑗 
+
+Γ ⊢ 𝑒 : Í𝑗 ∈𝐼 𝜏 𝑗 {Γ, 𝑥 : 𝜏 𝑖 ⊢ 𝑒 𝑖 : 𝜏 }𝑖 ∈𝐼 
+
+Γ ⊢ case 𝑒 of (inj 𝑖 𝑥 ⇒ 𝑒 𝑖 )𝑖 ∈𝐼 : 𝜏 
+
+We also include standard functions as constants, such as exp, sin, log, +, ×, typed as appropriate, 
+
+Γ ⊢ 𝑐 : real × · · · → real . We assume each constant denotes a total PAP function (Example 1); this covers all analytic functions as well as functions like log and abs (extended to total functions, e.g. log (𝑥 ) = 0 for 𝑥 ≤ 0).  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:10 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+We interpret types as sets, in a standard way: 
+
+Jreal K = R J1K = 1 J𝜏 1 × 𝜏 2K = J𝜏 1K × J𝜏 2K JÍ𝑗 ∈ 𝐽 𝜏 𝑗 K = Ò𝑗 ∈ 𝐽 J𝜏 𝑗 K J𝜏 1 → 𝜏 2K = (J𝜏 1K → J𝜏 2K).We then interpret typing contexts Γ = (𝑥 1:𝜏 1, . . . , 𝑥 𝑛 :𝜏 𝑛 ) as sets of valuations, i.e. products JΓK =
+
+J𝜏 1K × · · · × J𝜏 𝑛 K, and every typed term Γ ⊢ 𝑒 : 𝜏 induces a function J𝑒 K : JΓK → J𝜏 K in a standard way (e.g. [24, 31]). The countable sum types include every countable set 𝐼 as a type, via Í𝑖 ∈𝐼 1. In particular we have a type of booleans {tt , ff }, a type of natural numbers N, and a type of lists of natural numbers N∗.We have a type of infinite streams, (N → real ), and a type of lazy rose trees, (N∗ → real ).Although countable sum types cannot be directly coded on a computer, countable case analysis gives a simple calculus that subsumes primitive recursion (over N) and corecursion (into streams 
+
+N → real ), and many of our statistical models fit inside this calculus; in practice, Haskell’s general recursion is used to describe the resulting infinite terms finitely. Programs involving unbounded search, such as findIndex and find , go beyond this calculus, but their PACAP property can be verified directly. See Sec. B for details. Theorem 2. If 𝑓 : J(A → real ) → real K is definable then it is PACAP. 
+
+(Here A is a type since it is countable, via Í𝑎 ∈ A 1, and JA → real K = RA .) Proof. We prove this by infinitary logical relations; the proof is reminiscent of [2, 14]. For each type 𝜏 and each c-analytic set 𝑈 we define a relation P𝑈 𝜏 ⊆ J𝜏 K𝑈 , by induction on structure of types: 
+
+P𝑈  
+
+> real
+
+= {𝑓 : 𝑈 → R | 𝑓 is PACAP }P𝑈  
+
+> 1
+
+= {() : 𝑈 → 1} (all) 
+
+P𝑈 𝜏 1 ×𝜏 2 = {( 𝑓 1, 𝑓 2) | 𝑓 1 ∈ P 𝑈 𝜏 1 & 𝑓 2 ∈ P 𝑈 𝜏 2 }P𝑈 Í𝑖 ∈𝐼 𝜏 𝑖 = {Ò𝑖 ∈𝐼 𝑓 𝑖 | 𝑈 = Ò𝑖 ∈𝐼 𝑈 𝑖 & ∀𝑖 ∈ 𝐼 . 𝑈 𝑖 c-analytic & 𝑓 𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏 𝑖
+
+}P𝑈 𝜏 1→𝜏 2 = {𝑓 : 𝑈 → J𝜏 1K → J𝜏 2K | ∀ c-analytic 𝑈 ′ ⊆ 𝑈 , ∀𝑔 ∈ P 𝑈 ′ 
+
+> 𝜏 1
+
+. (𝜆𝑢. 𝑓 (𝑢 )( 𝑔 (𝑢 ))) ∈ P 𝑈 ′ 
+
+> 𝜏 2
+
+}
+
+We prove the following ‘fundamental lemma’, by induction on the structure of typing derivations: If 𝑥 1 : 𝜏 1, . . . , 𝑥 𝑛 : 𝜏 𝑛 ⊢ 𝑒 : 𝜏 and given c-analytic 𝑈 and 𝑓 1 ∈ P 𝑈 𝜏 1 , . . . , 𝑓 𝑛 ∈ P 𝑈 𝜏 𝑛 
+
+then we have 𝜆𝑢. J𝑒 K(𝑓 1 (𝑢 ), . . . , 𝑓 𝑛 (𝑢 )) ∈ P 𝑈 𝜏 . (2) The full proof, which uses auxiliary lemmas on support enlargement, intersection, restriction, gluing, and composition, is given in Sec. A. In the function-type clause the subsets 𝑈 ′ range over c-analytic subsets of 𝑈 ; no restriction of 𝑓 is involved, since for 𝑢 ∈ 𝑈 ′ ⊆ 𝑈 the value 𝑓 (𝑢 ) ∈ J𝜏 1K → J𝜏 2K
+
+is just 𝑓 evaluated pointwise. As 𝑔 (𝑢 ) ∈ J𝜏 1K for 𝑔 ∈ P 𝑈 ′ 
+
+> 𝜏 1
+
+, the map 𝜆𝑢. 𝑓 (𝑢 )( 𝑔 (𝑢 )) : 𝑈 ′ → J𝜏 2K
+
+is well-typed, and the clause asks that it lie in P𝑈 ′ 
+
+> 𝜏 2
+
+. This quantification over subsets is a Kripke refinement [2, 14], needed for the restriction and lambda cases. The main result then follows from this lemma (2). For if ⊢ 𝑒 : (A → real ) → real then by the special case of the lemma with empty context, the constant function 
+
+𝜆𝑢. J𝑒 K is in PRA
+
+> ( A→ real )→ real
+
+. (3) By expanding the definitions, the identity function id RA is in PRA
+
+> A→ real
+
+. Therefore, using (3) and expanding the definition of PRA
+
+> ( A→ real )→ real
+
+, putting 𝑓 1 as the identity function, we have 
+
+𝜆𝑢. J𝑒 K(𝑢 ) ∈ P RA 
+
+> R
+
+, so J𝑒 K is PACAP. □ 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:11
+
+3.2 Representing the Probability and Measures Monads in the Core Lambda Calculus 
+
+We can define the probability monad in our calculus, by 
+
+Prob (𝜏 ) = (( N∗ → real ) → 𝜏 ) return Prob = 𝜆𝑥 .𝜆𝑡 . 𝑥 : 𝜏 → Prob (𝜏 )
+
+bind Prob = 𝜆𝑝.𝜆𝑓 .𝜆𝑡 .𝑓 (𝑝 (𝜆 𝑗 .𝑡 (𝚤 1 𝑗 )))( 𝜆 𝑗 .𝑡 (𝚤 2 𝑗 )) : Prob (𝜏 ) → ( 𝜏 → Prob (𝜐 )) → Prob (𝜐 )
+
+where 𝚤 1, 𝚤 2 : N∗ → N∗ are two maps with disjoint range. In this way, sequencing splits the random seed space. As in LazyPPL [10], this monad does not immediately satisfy the identity and associativity laws for monads in the usual theory of equality for the calculus here. Rather, it satisfies the associativity laws in a suitable semantics where we identify random variables by their law (e.g. [10, 11, 13]). Since we do not need to fully formalize a denotational semantics of the language for what follows, we omit the details here. We can also define the measure monad, which accumulates the unnormalized density, using the standard writer monad transformer: 
+
+Meas (𝜏 ) = (Prob (real × 𝜏 )) return Meas = 𝜆𝑥 . return Prob (1, 𝑥 ) : 𝜏 → Meas (𝜏 )
+
+bind Meas = 𝜆𝑝.𝜆𝑓 . bind Prob 𝑝 (𝜆𝑞. bind Prob (𝑓 (𝜋 2 𝑞 )) ( 𝜆𝑟 . return Prob (( 𝜋 1 𝑞 ) ∗ ( 𝜋 1 𝑟 ), 𝜋 2 𝑟 ))) 
+
+: Meas (𝜏 ) → ( 𝜏 → Meas (𝜐 )) → Meas (𝜐 )
+
+The point is that PACAP is a sufficient condition for lazy HMC. The clustering, step regression, and polynomial regression models are all definable in the core calculus, and hence PACAP by Thm. 2; the geometric and random walk models involve unbounded search, but their PACAP property can be verified directly (Sec. B). Once we know that the likelihood is PACAP, it follows that at almost every seed the likelihood is locally analytic and depends on only finitely many coordinates, so its gradient is well-defined and finitely supported (the boundaries between analytic pieces form a measure-zero set). This is exactly the property exploited by the HMC methods of Sec. 4. 
+
+3.3 Implementation of Automatic Differentiation in Haskell 
+
+We automatically propagate the derivatives of functions by automatic differentiation, using the sparse map version of the Nagata numbers from [28]. This works even for infinite dimensional spaces, as we now explain. Recall that a naive approach to dual number forward-mode AD (e.g. [14, 26]) would replace a function 𝑓 : R𝑛 → R by its dual number form, ¯𝑓 : R𝑛 × R𝑛 → R2 and the partial derivative     
+
+> 𝜕𝑓 (𝑥 1...𝑥 𝑛 )
+> d𝑥 𝑖
+
+is given by 𝜋 2 ◦ ¯𝑓 (− , 𝑒 𝑖 ) : R𝑛 → R where 𝑒 𝑖 is the one-hot vector. We can then find the gradient at a point by forming a vector of all the partial derivatives. In the infinite dimensional setting, we consider functions of the form 𝑓 : RA → R (for A = N∗
+
+or N, the set of all dimensions). From Theorem 2, it is plausible that we can take a step in the direction of the gradient at any given point: the function 𝑓 will locally only depend on finitely many dimensions, and so the gradient at any point will only be non-zero at finitely many dimensions. However, a naive forward-mode AD (see e.g. [14, 26]) would work in terms of the dual number form 𝑓 ′ : RA × RA → R2, from which we can again find the gradients by passing in one-hot vectors, but it is not obvious how to actually find out which of the infinitely-many dimensions have non-zero gradient, and so it is not clear how to take a gradient step. To circumvent this problem, we follow [28] and switch from the ordinary dual numbers view to one in which a number is represented by a pair (𝑥, 𝑚 ) where 𝑥 ∈ R and 𝑚 : A → R is a map. We write R = R × RA for these ‘Nagata numbers’. Now a function 𝑓 : RA → R is transformed by automatic differentiation into a function 𝑓 ′ : R A → R . For any ®𝑥 ∈ RA , we have 𝑓 ′ (𝜆𝑖. (𝑥 𝑖 , 𝑒 𝑖 )) ∈ R , 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:12 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+for which the first component is 𝑓 ( ® 𝑥 ), and the second component is a map A → R, assigning the gradient at each address. The source-to-source transformation from 𝑓 : RA → R to ¯𝑓 : R A → R is totally automatic in Haskell, simply by defining R as an instance of the Floating type class. The final trick is to note that, for all relevant (𝑥, 𝑚 ) ∈ R , the map 𝑚 is sparse, i.e. zero except at finitely many points. For this reason we can use a sparse map datatype for this, and this sparse map datatype allows us to inspect its domain of definition. We can then discover the dimensions in A
+
+that are relevant to the gradient of 𝑓 at ®𝑥 ∈ RA by inspecting the domain of the sparse map arising from ¯𝑓 (𝜆𝑖. (𝑥 𝑖 , 𝑒 𝑖 )) . Even though this question requires infinitely many 𝑥 𝑖 ’s and 𝑒 𝑖 ’s, Haskell’s lazy evaluation will ensure that only the relevant dimensions are inspected. This sparse map approach with Nagata numbers was proposed by [28] to connect to the efficien-cies of reverse mode automatic differentiation in a purely functional setting: rather than computing one directional derivative at a time (as in standard forward-mode AD), the full gradient is computed in a single pass, which in finite dimensions is the key advantage of reverse mode. In the infinite dimensional setting, this is not merely an efficiency gain but essential : standard forward-mode AD would require infinitely many passes (one per dimension) to recover the gradient, whereas the Nagata approach discovers the finitely many relevant dimensions automatically. We use this throughout the HMC methods of Sec. 4. 
+
+4 Lazy HMC: Lazy Hamiltonian Monte Carlo Simulation 
+
+With automatic differentiation over infinite-dimensional structures in hand, via the PACAP analysis and laziness of the previous section, we turn to the Monte Carlo method, providing a correctness framework for HMC-based inference on rose-tree states arising from lazy probabilistic programs. 
+
+The key insight. The main difficulty in applying HMC to lazy probabilistic programs is that the state space is infinite dimensional. A trace contains an unbounded collection of random seeds, and so a naive HMC update would appear to require both an infinite dimensional gradient and an infinite product in the acceptance ratio used for correction. The key observation is that neither computation is actually infinite for the programs considered in this paper. By the PACAP analysis of Sec. 3, at almost every trace the likelihood is locally analytic and depends only on finitely many visited sites . These visited sites are the coordinates whose values are actually read when evaluating the likelihood function on the given trace. Moreover, laziness ensures that only those sites needed along the leapfrog trajectory (defined in Sec. 4.3) are ever sampled. Together with a carefully modified HMC integrator, the infinite product in the acceptance ratio collapses to a finite product over sites visited during the trajectory, and the unvisited dimensions cancel exactly. Thus each lazy HMC proposal is computed by a finite procedure: (1) sample an infinite momentum rose tree lazily, so that momentum values are generated only when demanded (2) evaluate the likelihood and gradient only at the finitely many sites needed by the trajectory (3) collect the finite set of sites visited during the trajectory (4) keep the HMC update on the visited sites that was computed during the trajectory (5) choose the update on all unvisited sites so their contributions cancel in the acceptance ratio. The purpose of this section is to make this argument precise. We use the involutive MCMC framework as the correctness principle: if a proposal is generated by a measurable involution and the acceptance ratio uses the corresponding change-of-measure term, then the resulting Markov kernel preserves the target distribution. Our framework A (Sec. 4.4) does not prescribe a unique proposal involution. It only states sufficient conditions under which the infinite-dimensional acceptance  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:13
+
+ratio reduces to a finite product. Our different lazy HMC variants instantiate the framework but satisfy the conditions in different ways: 
+
+• lazyHMC1 (Sec. 4.5): uses a rotation -based position update. Because the standard normal is rotationally symmetric, the momentum density at unvisited sites is unchanged by the update, so those dimensions cancel immediately from the acceptance ratio. Only the addresses with non-zero gradient need to be tracked so no full visited-site bookkeeping is required. This is the simplest, most purely functional variant. 
+
+• lazyHMC2 (Sec. 4.6): uses a different Hamiltonian splitting inspired by [4]. The position update is again rotation-based, so it shares lazyHMC1’s cancellation. It can be preferable when the prior’s geometry interacts poorly with lazyHMC1’s step size parameterisation. 
+
+• lazyHMC3 (Sec. 4.7): uses the standard HMC leapfrog integrator, whose position update is a translation . Translations do not preserve the standard normal, so unvisited sites no longer cancel automatically. To restore cancellation, the involution must apply a corrective measure-preserving map to unvisited sites, which requires knowing the full set of visited sites 𝑣 (q, p) (not just the gradient-support 𝑢 ). This requires an extra 𝑂 (𝐿 ) pass to collect visited thunks (a larger constant, same asymptotics). 
+
+• lazyNUTS (Sec. D.1): adapts the No-U-Turn sampler to the lazy setting, eliminating the need to hand-tune the trajectory length 𝐿 .Sec. 6 shows that no single variant dominates across all models. The step regression model of Sec. 5 is the running illustration throughout this section. There, the parameter space contains infinitely many changepoint positions and segment heights, yet any evaluation of the likelihood on a concrete dataset only touches the finitely many segments that overlap the observed 𝑥 -range (Fig. 1). A reader who finds the formal development of this section dense is encouraged to read Sec. 5 in parallel. The section is structured as follows. Sec. 4.1 to 4.3 recall background on Markov kernels and stationarity, the iMCMC framework, and HMC. Sec. 4.4 then presents Framework A as an instance of iMCMC on rose trees, and Sec. 4.5 to 4.7 derive HMC-inspired methods whose correctness follows from it. We also briefly discuss lazyNUTS (Sec. D.1). 
+
+4.1 Markov Kernels and Stationarity 
+
+Let (X, ΣX, 𝜇 X) be a 𝜎 -finite measure space and let 𝑙 : X → R≥0 be the (unnormalized) density of the target distribution with respect to 𝜇 X. The aim is to produce Markov chains (q(𝑖 ) )𝑖 =0,1,... 
+
+with q(𝑖 ) ∈ X which converge to the target distribution, i.e. the draws are eventually distributed according to the target. This is done by constructing a Markov kernel (also known as probability kernel) 𝜅 : X × ΣX → [ 0, 1] which assigns to each current state a probability distribution over next states. One step of the Markov chain then corresponds to drawing the next state q′ from the kernel given the current state q by sampling from 𝜅 (q, ·) .For the chain to converge, the kernel has to be stationary with respect to the target measure, i.e. it leaves the target measure invariant: ∫ 
+
+> X
+
+𝜅 (q, 𝐴 )𝑙 (q)𝜇 X (dq) = ∫ 
+
+> 𝐴
+
+𝑙 (q)𝜇 X (dq). Intuitively, if the current state is distributed according to the target, then after one step it still is. Invariance alone does not guarantee convergence; that requires further assumptions such as irreducibility and aperiodicity, which are not typically established in full generality for probabilistic programming systems. Our correctness results therefore focus on proving invariance for the HMC-related kernels we define, and we evaluate mixing empirically in Sec. 6. Convergence rate is a separate question: it depends on the target’s geometry, with no single theorem covering all targets [17]. Since laziness changes only when dimensions are evaluated, not the target geometry, standard HMC tuning guidance carries over.  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:14 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+4.2 Background on Involutive Markov Chain Monte Carlo 
+
+Involutive MCMC (iMCMC) [1, 8, 20, 22] is a general framework for constructing valid MCMC kernels with the use of an auxiliary random variable and an involutive function, which is a function whose inverse is itself. In particular, we will focus on the presentation of iMCMC introduced by [8]. Algorithms that can be generalized by iMCMC include MH, HMC, LMH, Reversible jump (see [22]). Let (Y, ΣY, 𝜇 Y) be the 𝜎 -finite measure space of the auxiliary variable p. For each q ∈ Supp (𝑙 ), the auxiliary distribution has probability density 𝑝 q : Y → R≥0 with respect to 𝜇 Y. Consider the state space (S, ΣS, 𝜇 S) with S = {( q, p) ∈ X × Y | 𝑙 (q)𝑝 q (p) > 0}, ΣS = {𝐴 ∩ S | 𝐴 ∈ ΣX ⊗ ΣY } and 𝜇 S =
+
+𝜇 X × 𝜇 Y. The target distribution on the joint space has (unnormalized) density 𝑤 (q, p) = 𝑙 (q)𝑝 q (p).We also require an involution 𝐼 : S → S, i.e., 𝐼 −1 = 𝐼 , with the property that the Radon-Nikodym derivative d (𝜇 S ◦ 𝐼 −1)/ d𝜇 S : S → [ 0, ∞) exists. The involution structure simplifies the construction and verification of a reversible Metropolis–Hastings correction, which guarantees the correct stationary distribution (see [8] for details). One trivial example would be the identity involution, which always proposes the same value q. Even though this kernel is stationary it will not produce a chain which converges to the correct distribution. 
+
+iMCMC. Each iteration starts with a value for q and draws a value for p from the auxiliary distribution 𝑝 q (p) of p given q. The involution 𝐼 is then applied on (q, p) in order to get the proposed state (q′, p′). For correctness, an accept/reject step is needed. The ratio compares how likely the proposed state is under the target distribution versus the current state, correcting for any asymmetry in the proposal distribution. With some probability, the proposed q′ is accepted and returned, otherwise it is rejected and q is returned instead. One iteration of iMCMC given q, 𝑝 q, 𝑙, 𝜇 X, 𝜇 Y, 𝐼 does: (1) sample p ∼ 𝑝 q
+
+(2) get proposed state (q′, p′) = 𝐼 (q, p)
+
+(3) with probability ˜ 𝛼 (q, p) = min {1, 𝛼 (q, p)} accept and return q′, otherwise return q.The acceptance ratio is: 
+
+𝛼 (q, p) = 𝑤 (q′, p′)
+
+𝑤 (q, p) ·
+
+ d(𝜇 S ◦ 𝐼 −1)
+
+d𝜇 S
+
+
+
+(q, p).
+
+Let 𝜅 : X × ΣX → [ 0, 1] (see Sec. C.1) be the probability kernel resulting from one iteration of iMCMC. Informally, 𝜅 (q, 𝐴 ) gives the probability of starting with a position q and after one iMCMC iteration returning a position in 𝐴 .Proposition 1. (iMCMC stationarity [8]) The kernel 𝜅 is stationary with respect to the target distribution, i.e. for any 𝐴 ∈ ΣX we have ∫ 
+
+> X
+
+𝜅 (q, 𝐴 )𝑙 (q)𝜇 X (dq) = ∫ 
+
+> 𝐴
+
+𝑙 (q)𝜇 X (dq).
+
+4.3 Background on Hamiltonian Monte Carlo 
+
+HMC is a popular MCMC method that uses Hamiltonian dynamics on an augmented state space to propose the next sample. We give a brief description of HMC here, for more details see [5, 16, 21]. Since we are looking at the standard HMC in this subsection our target (unnormalized) density 𝑙 
+
+is defined on the finite dimensional space (R𝑛 , ΣR𝑛 , Leb 𝑛 ). Suppose 𝑙 is continuously differentiable. 
+
+Physical intuition. Imagine placing a frictionless particle on a surface whose height at position q
+
+equals the potential energy 𝑈 (q) = − log 𝑙 (q). The particle naturally slides toward low-potential regions, i.e. toward regions of high 𝑙 , but without momentum it stops at a local mode. To explore the surface better, we periodically give the particle a random momentum kick and let it slide for a while before reading its new position. The momentum kick helps HMC explore the target distribution far more efficiently than random-walk Metropolis. The momentum is usually standard 𝑛 -dimensional  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:15
+
+normal. This gives the kinetic energy 𝐾 : R𝑛 → R with 𝐾 (p) = − log 𝜑 𝑛 (p) = Í𝑛 𝑖 =1 p2 
+
+> 𝑖
+
+/2. The Hamiltonian of the system is given by 𝐻 : R2𝑛 → R with 𝐻 (q, p) = 𝑈 (q) + 𝐾 (p). Hamiltonian equations describe how the position q and momentum p change over time: dq
+
+d𝑡 = 𝜕𝐻 𝜕 p = p, dp
+
+d𝑡 = − 𝜕𝐻 𝜕 q = −∇ 𝑈 (q).
+
+where 𝜕𝐾 /𝜕 p = p since 𝐾 (p) = Í𝑖 p2 
+
+> 𝑖
+
+/2. HMC makes use of the Hamiltonian motion of the particle to propose the next position. This is done by sampling the momentum p from 𝜑 𝑛 and then simulating the trajectory of the particle with initial position q. After some time 𝑡 , the particle will have momentum p′ and position q′, which will be the proposed position. The canonical distribution corresponding to 𝐻 on the state space (R2𝑛 , ΣR2𝑛 , Leb 2𝑛 ) is given by 
+
+𝜁 (q, p) = exp (− 𝐻 (q, p)) = 𝑙 (q)𝜑 𝑛 (p). Hence, having draws {( q𝑖 , p𝑖 )} 𝑖 =1,... from 𝜁 and discarding the draws for the momentum p𝑖 , gives us position draws {q𝑖 }𝑖 =1,... from our target distribution 𝑙 .
+
+The leapfrog integrator (kick–drift–kick). In almost all cases the Hamiltonian equations cannot be solved exactly, so we discretize time with the leapfrog integrator. One step of size 𝜖 alternates updating the momentum and the position: (1) Half-kick : update momentum using the gradient of the potential for half a step, 𝜙 𝑃 𝜖 /2 (q, p) =
+
+(q, p − 𝜖  
+
+> 2
+
+∇𝑈 (q)) .(2) Drift : update position using the new momentum, 𝜙 𝑄 𝜖 (q, p) = (q + 𝜖 p, p).(3) Half-kick : update the momentum again for half a step, 𝜙 𝑃 𝜖 /2 (q, p) = (q, p − 𝜖  
+
+> 2
+
+∇𝑈 (q)) .One full leapfrog step is 𝜓 = 𝜙 𝑃 𝜖 /2 ◦𝜙 𝑄 𝜖 ◦𝜙 𝑃 𝜖 /2, and 𝐿 steps give Ψ(𝐿 ) = 𝐹 ◦𝜓 𝐿 , where 𝐹 (q, p) = (q, −p)
+
+is the momentum flip needed for reversibility. We omit step-size 𝜖 and step count 𝐿 from the notation when fixed. The symmetric kick-drift-kick form of the leapfrog integrator is needed for reversibility: after negating the momentum, the same update can be run backwards. This would not be true if a simpler form like kick-drift was used. Reversibility and volume preservation are key properties of Hamiltonian dynamics. They are central to the proof that the HMC transition leaves the target distribution invariant. The leapfrog integrator is used because it preserves these properties: Proposition 2. [21] The HMC leapfrog integrator is reversible, i.e. Ψ(𝐿 ) = (Ψ(𝐿 ) )−1 and volume preserving, i.e. (Leb 2𝑛 ◦ ( Ψ(𝐿 ) )−1)( 𝐴 ) = Leb 2𝑛 (𝐴 ) for any measurable 𝐴 ∈ ΣR2𝑛 .HMC as part of iMCMC. We follow the structure of the iMCMC framework from Sec. 4.2 with the target distribution on the space (R𝑛 , ΣR𝑛 ) given by the density 𝑙 with respect to the Lebesgue Leb 𝑛 
+
+measure. The momentum variable is the auxiliary variable from the iMCMC framework with the 
+
+𝑛 -dimensional normal N𝑛 as the auxiliary distribution, which has density 𝜑 𝑛 with respect to the Lebesgue measure. The target density on the joint state space (R2𝑛 , ΣR2𝑛 ) is given by the density 𝜁 
+
+with respect to Leb 2𝑛 . Our involution now is the leapfrog integrator Ψ(𝐿 ) .One iteration of HMC given position q, 𝜑 𝑛 , 𝑙, Ψ(𝐿 ) does: (1) sample p ∼ 𝜑 𝑛 
+
+(2) get proposed position and momentum (q′, p′) = Ψ(𝐿 ) (q, p)
+
+(3) with probability min {1, 𝛼 (q, p)} accept and return q′, otherwise return q.
+
+Now we just have to make sure the correct acceptance ratio is used:  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:16 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+Proposition 3. The probability kernel resulting from HMC is stationary with respect to the target density 𝑙 , if the acceptance ratio is given by: 
+
+𝛼 (q, p) = 𝑙 (q′)𝜑 𝑛 (p′)
+
+𝑙 (q)𝜑 𝑛 (p) .
+
+Proof. The proof follows by Prop. 1 and the fact that leapfrog preserves volume (contributing a Radon–Nikodym factor of 1). See Sec. C.2 for details. □
+
+The acceptance ratio deduced here corresponds to the usual HMC acceptance ratio (see for example [21]). If we could simulate the trajectory of the particle exactly we would always accept the proposed position. That is because Hamiltonian dynamics keeps 𝐻 invariant ( 𝑑𝐻 𝑑𝑡 = 0) which would give 𝛼 (q, p) = 1. So the acceptance ratio is needed to correct for the approximation error introduced by the numerical integrator. 
+
+Example: Harmonic Oscillator. Consider the case of the Harmonic Oscillator with Hamiltonian 
+
+𝐻 (q, p) = q2 
+
+> 2
+
++ p2 
+
+> 2
+
+. The exact flow map is 𝜙 𝜃 (q, p) = (cos (𝜃 )q + sin (𝜃 )p, − sin (𝜃 )q + cos (𝜃 )p), so applying it will always preserve the Hamiltonian. We will make use of this in the following sections. 
+
+4.4 Framework A: Hamiltonian Monte Carlo on Rose Trees in General 
+
+Section overview. A rose tree is an infinite map q : A → R from a countable address set A (e.g. 
+
+A = N∗, the set of finite lists of natural numbers) to the reals; it represents the full (lazy) parameter state of a probabilistic program. (In step regression, for example, q stores the infinite stream of changepoints and the infinite collection of segment heights, indexed by a path in A.) The challenge is that the iMCMC acceptance ratio formally involves a product over all of A,which is infinite. Framework A shows how that product collapses to a finite one, provided the involution 𝐼 satisfies the three Conditions A1 to A3 below. The key output is Thm. 3. The three lazy HMC variants below are all instances of Framework A: Prop. 5 verifies Conditions A1 to A3 for lazyHMC1, and Sec. 4.6 and 4.7 give the corresponding arguments for lazyHMC2 and lazyHMC3. Readers mainly interested in the algorithmic construction may skip the measure-theoretic details and continue from Sec. 4.5. 
+
+Site measures. Let (𝑋, Σ𝑋 , 𝜇 𝑋 ) and (𝑌, Σ𝑌 , 𝜇 𝑌 ) be two measure spaces with 𝜇 𝑋 and 𝜇 𝑌 probability measures. For simplicity we take 𝑋 and 𝑌 to be measurable subsets of R with Borel 𝜎 -algebras 
+
+Σ𝑋 = {𝐴 ∩ 𝑋 | 𝐴 ∈ ΣR } and Σ𝑌 = {𝐴 ∩ 𝑌 | 𝐴 ∈ ΣR }, where ΣR is the Borel 𝜎 -algebra of R.Assume 𝜇 𝑋 and 𝜇 𝑌 are absolutely continuous with respect to the Lebesgue measure and let 𝜑 𝑋 and 
+
+𝜑 𝑌 denote the corresponding derivatives. Let (𝑋 𝑛 , Σ𝑋 𝑛 , 𝜇 𝑋 𝑛 ) be the product measure space with 
+
+Σ𝑋 𝑛 = Σ⊗𝑛 𝑋 = {𝐴 ∩ 𝑋 𝑛 | 𝐴 ∈ ΣR𝑛 } and measure 𝜇 𝑋 𝑛 = 𝜇 ⊗𝑛 𝑋 . We similarly define (𝑌 𝑛 , Σ𝑌 𝑛 , 𝜇 𝑌 𝑛 ).
+
+Rose trees measures. Let (X, ΣX) be the measurable space of the rose trees where each node contains a real number: X = 𝑋 A . The 𝜎 -algebra ΣX is the 𝜎 -algebra generated by cylindrical sets, i.e. sets of this form: {q ∈ X | ( q𝑖 1 , . . . , q𝑖 𝑛 ) ∈ 𝐴 } with 𝑖 1, . . . , 𝑖 𝑛 ∈ A and 𝐴 ∈ Σ𝑋 𝑛 . The measure 𝜇 X on X is the countably-infinite product measure of (𝑋, Σ𝑋 , 𝜇 𝑋 ), given by the Kolmogorov extension theorem. This means that 𝜇 X ({ q ∈ X | ( q𝑖 1 , . . . , q𝑖 𝑛 ) ∈ 𝐴 }) = ∫  
+
+> 𝑋 𝑛
+
+[( q𝑖 1 , . . . , q𝑖 𝑛 ) ∈ 
+
+𝐴 ]𝜇 𝑋 (dq𝑖 1 ) . . . 𝜇 𝑋 (dq𝑖 𝑛 ) = 𝜇 𝑋 𝑛 (𝐴 ), where {q ∈ X | ( q𝑖 1 , . . . , q𝑖 𝑛 ) ∈ 𝐴 } are the rose trees for which we restrict the values at nodes 𝑖 1, . . . , 𝑖 𝑛 to be in the measurable set 𝐴 ∈ Σ𝑋 𝑛 . 𝜇 X is a probability measure. Similarly for the momentum rose trees, we get the measure space (Y, ΣY, 𝜇 Y) with 𝜇 Y as the countably-infinite product measure of (𝑌, Σ𝑌 , 𝜇 𝑌 ).
+
+Target and auxiliary distributions. Let 𝑙 : X → R≥0 be the density of the unnormalized target distribution on X defined by the program. We assume that 𝑙 is PACAP (see Sec. 3). The target  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:17
+
+unnormalized measure is then 𝜇 𝑙 (𝐴 ) = ∫ [q ∈ 𝐴 ]𝑙 (q)𝜇 X (dq), for any measurable 𝐴 ∈ ΣX. Let the normalized target measure be 𝜈 (·) = 𝜇 𝑙 (·)   
+
+> 𝜇 𝑙 (X)
+
+. The auxiliary variable p has density 𝑝 q (p) = 1 w.r.t. 𝜇 Y.
+
+State space. Let X × Y be the state space composed of position and momentum pairs, equipped with the 𝜎 -algebra ΣX ⊗ ΣY and measure 𝜇 X × 𝜇 Y. We are now considering only the pairs for which 𝑙 (q) > 0, i.e. let S = Supp (𝑙 ) × Y with 𝜎 -algebra ΣS = {𝐴 ∩ S | 𝐴 ∈ ΣX ⊗ ΣY } and measure 
+
+𝜇 S = 𝜇 X × 𝜇 Y, where Supp (𝑙 ) = {q ∈ X | 𝑙 (q) > 0}. Since 𝑝 q (p) = 1, the target density on the joint space simplifies to 𝑤 (q, p) = 𝑙 (q).Let 𝑓 : X → 𝑍 be the result function described by the given probabilistic program. The samples of X can be pushed-forward to 𝑍 .
+
+Framework A. One iteration given position q, 𝜇 Y, 𝜇 𝑋 , 𝜇 𝑌 , 𝑙, 𝐼, 𝑣 does: (1) sample p ∼ 𝜇 Y lazily (since only finitely many components of the infinite-dimensional p are accessed, we sample each component on-demand) (2) get proposed position and momentum (q′, p′) = 𝐼 (q, p)
+
+(3) with probability min {1, 𝛼 (q, p)} accept and return q′, otherwise reject and return q.
+
+Involution conditions. For the acceptance ratio to exist and be computable, we assume the follow-ing sufficient properties. These conditions are abstract here, but Prop. 5 shows that they hold for the lazy HMC construction below. Suppose there exist a measurable function 𝑣 : S → P 𝑓 𝑖𝑛 (A) and measure preserving (w.r.t. the Lebesgue measure) involutions 𝐼 ′ : R2 → R2 and 𝐼 𝑇 : R2|𝑇 | ⇀ R2|𝑇 |
+
+for all 𝑇 ∈ P 𝑓 𝑖𝑛 (A) which satisfy the following conditions: (A1) (Visited set is a cylinder.) If (q, p) ∈ 𝑣 −1 (𝑇 ) then {( x, y) ∈ S | x𝑇 = q𝑇 , y𝑇 = p𝑇 } ⊂ 𝑣 −1 (𝑇 )
+
+(equivalently, 𝑣 −1 (𝑇 ) is a cylinder set with base 𝐶 𝑇 ∈ ΣR2|𝑇 | ). (A2) (Involution decomposes along visited/unvisited split.) For all 𝑇 ∈ P 𝑓 𝑖𝑛 (A) and (q, p) ∈ 𝑣 −1 (𝑇 ):
+
+(q′ 
+
+> 𝑇
+
+, p′ 
+
+> 𝑇
+
+) = 𝐼 𝑇 (q𝑇 , p𝑇 ) and (q′ 
+
+> 𝑖
+
+, p′ 
+
+> 𝑖
+
+) = 𝐼 ′ (q𝑖 , p𝑖 ) for all 𝑖 ∈ A \ 𝑇 , where (q′, p′) = 𝐼 (q, p).(A3) (Unvisited sites preserve density.) 𝜑 𝑋 (𝑞 ′)𝜑 𝑌 (𝑝 ′) = 𝜑 𝑋 (𝑞 )𝜑 𝑌 (𝑝 ), where (𝑞 ′, 𝑝 ′) = 𝐼 ′ (𝑞, 𝑝 ).
+
+Step regression example. In the step regression model of Sec. 5, the address set A contains addresses 𝑎 𝑗 , 𝑏 𝑗 for 𝑗 = 1, 2, . . . , where q𝑎 𝑗 is the seed used to generate the 𝑗 th segment height and q𝑏 𝑗 is the seed used to generate the 𝑗 th exponential increment of the changepoint process. For a given trace the visited set 𝑇 contains the addresses of those sites used by the finitely many segments that overlap the observed 𝑥 -range (see Fig. 1). Condition A1 then says that any other rose tree agreeing with q on those visited sites visits the same set 𝑇 : the values of the unvisited sites cannot change which segments overlap the data. Condition A2 says that the proposed state is obtained by running a finite-dimensional involution on the visited sites, while each unvisited site 𝑎 𝑘 or 𝑏 𝑘 (for 𝑘 beyond the segments that cover the data) is transformed independently by 𝐼 ′.Finally, Condition A3 says that this independent transformation 𝐼 ′ leaves the prior density on those unvisited sites unchanged, so their contributions cancel in the acceptance ratio. 
+
+Acceptance ratio. We can reduce the Radon-Nikodym derivative needed in the acceptance ratio to a ratio of finite products (the proof can be found in Prop. 12): Proposition 4. Let (q′, p′) = 𝐼 (q, p), then 𝜇 S - almost everywhere we have: 
+
+ d(𝜇 S ◦ 𝐼 −1)
+
+d𝜇 S
+
+
+
+(q, p) =
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) .
+
+Theorem 3. Consider the following acceptance ratio in Framework A: 
+
+𝛼 (q, p) = 𝑤 (q′, p′)
+
+𝑤 (q, p) ·
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) = 𝑙 (q′)
+
+𝑙 (q) ·
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) . 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:18 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+Then the resulting kernel is stationary with respect to the target measure 𝜈 .
+
+The proof follows by Prop. 4 and Prop. 1. 
+
+Visited sites. Since 𝑙 is PACAP, there exists a countable partition X = ⊎∞
+
+> 𝑖 =1
+
+X𝑖 into analytic cylinders with given finite supports 𝑇 𝑖 ⊂ A with the following property. For each 𝑖 , there exists an analytic function 𝑙 𝑖 : 𝑉 → R, where 𝑉 ⊆ R𝑇 𝑖 is open such that X𝑖 ⊆ 𝑉 × RA\ 𝑇 𝑖 and 𝑙 (q) = 𝑙 𝑖 (q𝑇 𝑖 )
+
+when q ∈ X𝑖 . Let 𝑣 𝑙 : X → P 𝑓 𝑖𝑛 (A) be the function given by 𝑣 𝑙 (q) = 𝑇 𝑖 if q ∈ X𝑖 . This is measurable because each analytic cylinder X𝑖 is a cylinder set in X, hence in ΣX. We call 𝑣 𝑙 the visited sites 
+
+function as, given a rose tree q, it tells us it is enough to ‘visit’ the sites with addresses 𝑣 𝑙 (q) to compute 𝑙 (q), i.e. the values at the sites are needed for the computation. For step regression, 𝑣 𝑙 (q) is the set of changepoint and height addresses used by the segments that overlap the data (see Fig. 1). 
+
+The gradient maps. Moreover, we can define the measurable map 𝐺 : X → RA such that for q ∈
+
+X𝑖 ∩Supp (𝑙 ) we have 𝐺 (q) = x with x𝑇 𝑖 = −∇ log 𝑙 𝑖 (q𝑇 𝑖 ) and x𝑗 = 0 for any 𝑗 ∈ A \ 𝑇 𝑖 . If q ∉ Supp (𝑙 )
+
+we let 𝐺 (q) be the rose tree with all its nodes equal to 0. Let 𝑇 be a finite subset of A and consider the set 𝑣 −1 
+
+> 𝑙
+
+(P ( 𝑇 )) of positions for which the visited sites form a subset of 𝑇 . Then 𝑣 −1 
+
+> 𝑙
+
+(P ( 𝑇 )) can be written as the union of the analytic cylinders X𝑛 𝑖 with supports 𝑇 𝑛 𝑖 ⊆ 𝑇 : 𝑣 −1 
+
+> 𝑙
+
+(P ( 𝑇 )) = ⊎∞
+
+> 𝑖 =1
+
+X𝑛 𝑖 .Hence, 𝑣 −1 
+
+> 𝑙
+
+(P ( 𝑇 )) = {q | q𝑇 ∈ 𝐷 𝑇 } for some measurable set 𝐷 𝑇 ∈ Σ𝑋 |𝑇 | . Then there exists a measurable map 𝐺 𝑇 : 𝐷 𝑇 → RA such that for any q ∈ 𝑣 −1 
+
+> 𝑙
+
+(P ( 𝑇 )) we get 𝐺 (q) = 𝐺 𝑇 (q𝑇 ).In the following sections we present different methods inspired by the HMC integrator. 
+
+4.5 LazyHMC1: First Instantiation of Framework A 
+
+Let 𝜇 𝑋 , 𝜇 𝑌 be the probability measures given by the standard normal distribution N ( 0, 1), so 𝜑 𝑋 
+
+and 𝜑 𝑌 are the probability density function of N ( 0, 1). Fix 𝜃 ∈ ( 0, 𝜋 /2) and let 𝜖 𝑞 = sin (𝜃 ) and 
+
+𝜖 𝑝 = tan (𝜃 /2). Consider the following maps: 
+
+𝜓 = 𝜙 𝑃 𝜖 𝑝 ◦ 𝜙 𝑄 𝜖 𝑞 ◦ 𝜙 𝑃 𝜖 𝑝 , 𝐹 (q, p) = (q, −p)
+
+𝜙 𝑃 𝑡 (q, p) = (q, p − 𝑡 q − 𝑡𝐺 (q)) , 𝜙 𝑄 𝑡 (q, p) = (q + 𝑡 p, p).
+
+The added term 𝑡 q is to account for the gradient of the log prior probability for each site, as each site is sampled from the normal distribution N ( 0, 1). Let 𝜏 : R2 → R2 be the clockwise rotation by 
+
+𝜃 : 𝜏 (𝑞, 𝑝 ) = (cos (𝜃 )𝑞 + sin (𝜃 )𝑝, − sin (𝜃 )𝑞 + cos (𝜃 )𝑝 ). The constants 𝜖 𝑞 = sin 𝜃 and 𝜖 𝑝 = tan (𝜃 /2)
+
+are chosen so that, on any site with 𝐺 (q)𝑎 = 0, the leapfrog step 𝜓 acts on (𝑞 𝑎 , 𝑝 𝑎 ) as 𝜏 (Prop. 8). 
+
+Visited sites of trajectories. Let 𝑣 : S → P 𝑓 𝑖𝑛 (A) be given by 𝑣 (q, p) = ∪𝐿 𝑖 =0𝑣 𝑙 (q(𝑖 ) ), where 
+
+(q(𝑖 ) , p(𝑖 ) ) = 𝜓 𝑖 (q, p) (for 𝑖 = 0, . . . , 𝐿 ) are the states in the trajectory after 𝐿 leapfrog steps starting from (q, p). The function 𝑣 tells us which sites need to be visited in both q and p in order for the weight 𝑙 (q(𝐿 ) ) of the final position to be computed. Notice that 𝑣 (q, p) = 𝑣 (𝐹 ◦ 𝜓 𝐿 (q, p)) since 𝐿 
+
+leapfrog steps from 𝐹 ◦ 𝜓 𝐿 (q, p) give the same positions p(𝑖 ) in the trajectory. For each position 
+
+q(𝑖 ) we only need to visit sites in 𝑣 𝑙 (q(𝑖 ) ) to compute 𝑙 (q(𝑖 ) ) and hence 𝐺 (q(𝑖 ) ).
+
+Constructing the involution on S. It is easy to check that the map 𝐹 ◦𝜓 𝐿 is an involution on X × Y.However, even if (q, p) ∈ S, applying 𝐹 ◦ 𝜓 𝐿 on it might give us a state (q(𝐿 ) , p(𝐿 ) ) in X × Y \ S,i.e. 𝑙 (q(𝐿 ) ) = 0. Since we want to have an involution on S, i.e. on the states which have non-zero probability, we can define 𝐼 : S → S the following way: 
+
+𝐼 (q, p) :=
+
+(
+
+(𝐹 ◦ 𝜓 𝐿 )( q, p) if (𝐹 ◦ 𝜓 𝐿 )( q, p) ∈ S
+
+𝐾 (q, p) otherwise , 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:19
+
+where 𝐾 (q, p) = (q′, p′) with (q′, p′)𝑣 (q,p) = (q, p)𝑣 (q,p) and (q′, p′)A\ 𝑣 (q,p) = (𝐹 ◦ 𝜓 𝐿 )( q, p)A\ 𝑣 (q,p) .From the definition of 𝑣 and 𝑣 𝑙 it follows that if 𝑙 (q) > 0 then also 𝑙 (q′) > 0, so 𝐾 (q, p) is in S. Since 
+
+𝑣 (𝐾 (q, p)) = 𝑣 (q, p) we have that 𝐾 is an involution on the measurable set S \ ( 𝐹 ◦𝜓 𝐿 )−1 (X × Y \ S).Proposition 5. 𝐼 satisfies the Conditions A1 to A3. 
+
+Proof. We give the intuition for each condition, the full argument can be found in Sec. C.4. 
+
+Condition A3. On any coordinate 𝑗 outside 𝑣 (q, p) the gradient 𝐺 (q(𝑖 ) )𝑗 is 0 for every 𝑖 , so the leapfrog step 𝜓 acts on the 𝑗 -th coordinate as the rotation 𝜏 . After 𝐿 steps and the momentum flip, the induced map on each unvisited site is 𝐼 ′ = 𝐹 ′ ◦ 𝜏 𝐿 , which preserves both Lebesgue measure and the normal product density 𝜑 𝑋 × 𝜑 𝑌 . Hence the unvisited-site factors cancel in the acceptance ratio. 
+
+Condition A1. Let 𝑇 be a finite subset of A and let (q, p) ∈ S with 𝑣 (q, p) = 𝑇 . By induction on 𝑖 ,the trajectory coordinates (q(𝑖 ) 
+
+> 𝑇
+
+, p(𝑖 ) 
+
+> 𝑇
+
+) depend only on (q𝑇 , p𝑇 ), since the gradient at each step is supported in 𝑇 = 𝑣 (q, p). So 𝑣 −1 (𝑇 ) is a cylinder set determined by its 𝑇 -coordinates. 
+
+Condition A2. The previous two observations combine to give a clean decomposition: on the visited coordinates 𝐼 restricts to the finite-dimensional measure-preserving involution 𝐼 𝑇 = 𝐹 𝑇 ◦ 𝜓 𝐿 𝑇 
+
+on 𝐶 𝑇 , and on each unvisited coordinate 𝐼 acts independently as 𝐼 ′. □
+
+Let 𝑢 (q, p) = { 𝑗 ∈ A | ∃ 𝑖 ∈ { 0, . . . , 𝐿 }, 𝐺 (q(𝑖 ) )𝑗 ≠ 0} be the function that gives the sites 𝑗 
+
+for which at least one position q′ in the trajectory has the property that 𝐺 (q′)𝑗 ≠ 0. Notice that 
+
+𝑢 (q, p) ⊆ 𝑣 (q, p) and 𝑢 (q, p) = 𝑢 (𝐼 (q, p)) . For example, we might have 𝑗 ∈ 𝑣 (q, p) \ 𝑢 (q, p) if site 𝑗 
+
+corresponds to a variable which has constant 𝑙 for different branches, so 𝑗 would be visited. 
+
+Acceptance ratio. By Thm. 3 using the following acceptance ratio 
+
+𝛼 (q, p) = 𝑙 (q′)
+
+𝑙 (q) ·
+
+Î𝑗 ∈𝑣 (q,p) 𝜑 𝑋 (q′ 
+
+> 𝑗
+
+)𝜑 𝑌 (p′ 
+
+> 𝑗
+
+)
+
+Î𝑗 ∈𝑣 (q,p) 𝜑 𝑋 (q𝑗 )𝜑 𝑌 (p𝑗 ) ,
+
+where (q′, p′) = 𝐼 (q, p) results in a kernel that is stationary with respect to the target distribution. If 𝑗 ∈ 𝑣 (q, p) \ 𝑢 (q, p), then 𝐺 (q(𝑖 ) )𝑗 = 0 for all 𝑖 ∈ { 0, . . . , 𝐿 } so (q′ 
+
+> 𝑗
+
+, p′ 
+
+> 𝑗
+
+) = 𝐼 ′ (q𝑗 , p𝑗 ). This means that (𝜑 𝑋 × 𝜑 𝑌 )( 𝐼 ′ (q𝑗 , p𝑗 )) = (𝜑 𝑋 × 𝜑 𝑌 )( q𝑗 , p𝑗 ). Hence, the acceptance ratio can be simplified (it is enough to know 𝑢 instead of 𝑣 ): 𝛼 (q, p) = 𝑙 (q′ )  
+
+> 𝑙 (q)
+
+·               
+
+> Î𝑗 ∈𝑢 (q,p)𝜑 𝑋 (q′
+> 𝑗 )𝜑 𝑌 (p′
+> 𝑗 )
+> Î𝑗 ∈𝑢 (q,p)𝜑 𝑋 (q𝑗 )𝜑 𝑌 (p𝑗 )
+
+.
+
+Implementation details. As discussed in Sec. 3.3 we are able to get the sites on which the gradient of log 𝑙 is not zero and the values of the gradient for those sites. Therefore, for any position q we can get the set 𝑢 𝑙 (q) which contains the sites for which the gradient of log 𝑙 (q) is not zero. So we can construct 𝑢 (q, p) = ∪𝑖 ∈ { 0,...,𝐿 }𝑢 𝑙 (q(𝑖 ) ). Therefore, there is no need to know 𝑣 for this method. 
+
+Note on 𝐾 . If we had proposed a state that is not in S, the acceptance ratio would have been 0 so the proposed state would be rejected and the state (q, p) would be returned instead. This would be the same as proposing (q, p) from the start. Hence, intuitively, we would like 𝐾 to be the identity, which is what we do in the implementation. This also makes 𝐼 an involution that satisfies the required properties, but we chose the different 𝐾 to make the presentation easier to follow. 
+
+Note on 𝐼 . An alternative way of defining 𝐼 is to let it be the identity for states (q, p) for which any of 𝐹 ◦ 𝜓 𝑖 (q, p) is not in S for 𝑖 = 1, . . . , 𝐿 . This would correspond to rejecting if along the trajectory we encounter a position that is not in the support of 𝑙 .
+
+Note on the choice of 𝐼 ′. One can notice that we could have chosen any 𝐼 ′ that is a Leb 2 preserving involution with (𝜑 𝑋 × 𝜑 𝑌 )( 𝑞, 𝑝 ) = (𝜑 𝑋 × 𝜑 𝑌 )( 𝐼 ′ (𝑞, 𝑝 )) (see Sec. 4.7) to use on the sites which are not visited. However, 𝐼 ′ might then disagree with 𝐹 ◦ 𝜓 𝐿 on the sites not visited: we may have  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:20 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+(𝐹 ◦𝜓 𝐿 )( q, p)𝑗 ≠ 𝐼 ′ (q𝑗 , p𝑗 ) for some 𝑗 ∈ A \ 𝑣 (q, p). This would mean that we need to know 𝑣 (q, p)
+
+(not only 𝑢 (q, p)) to apply 𝐼 ′ on these sites. This is the case with the method in Sec. 4.7. 
+
+4.6 LazyHMC2: Framework A with a Different Hamiltonian Splitting 
+
+We are now considering a different 𝜓 , inspired by the HMC integrator resulting from a different splitting of the Hamiltonian [4]. Fix 𝜃 > 0. Then 𝜓 = 𝜙 𝑃 𝜃 /2 ◦ 𝜙 𝑄,𝑃 𝜃 ◦ 𝜙 𝑃 𝜃 /2 with: 
+
+𝜙 𝑃 𝑡 (q, p) = (q, p − 𝑡𝐺 (q)) 
+
+𝜙 𝑄,𝑃 𝑡 (q, p) = (cos (𝑡 )q + sin (𝑡 )p, − sin (𝑡 )q + cos (𝑡 )p)
+
+The rest of the setup is the same as in Sec. 4.5. The key difference from lazyHMC1 is that the position–momentum update step 𝜙 𝑄,𝑃 is a joint rotation rather than a pure position drift. Notice that if 𝑗 ∉ 𝑣 (q, p) then 𝜓 (q, p)𝑗 = 𝜏 (q𝑗 , p𝑗 ), the same rotation 𝜏 as in Sec. 4.5. Proposition 6. 𝐼 (defined using the new 𝜓 ) satisfies Conditions A1 to A3. 
+
+Proof. Both 𝜙 𝑃 𝑡 , 𝜙 𝑄,𝑃 𝑡 act site-wise: each site’s update uses only that site’s own (q𝑗 , p𝑗 ), connected to other sites solely through the gradient 𝐺 , which is supported on 𝑇 = 𝑣 (q, p). This site-wise struc-ture is all that Condition A1 needs, so the cylinder argument of Prop. 5 applies the same here. On an unvisited site 𝑗 we have 𝐺 (q(𝑖 ) )𝑗 = 0, so the momentum kick 𝜙 𝑃 is the identity there and 𝜓 reduces to its middle factor 𝜙 𝑄,𝑃 𝜃 , which is directly the rotation 𝜏 . Since 𝜏 is a rotation it preserves 𝜑 𝑋 ×𝜑 𝑌 , giving Condition A3 for 𝐼 ′ = 𝐹 ′ ◦ 𝜏 𝐿 . The map 𝜓 𝑇 is still volume preserving, so 𝐼 𝑇 = 𝐹 𝑇 ◦ 𝜓 𝐿 𝑇 is a measure-preserving involution and 𝐼 decomposes as required for Condition A2. The details are in Sec. C.5. □
+
+4.7 LazyHMC3: Framework A with the Usual Leapfrog Integrator 
+
+The original HMC integrator (§4.3) can also be used for the visited sites. But since the kernel outputs the full rose tree, the unvisited coordinates must be changed carefully: leaving them untouched or copying them arbitrarily would break the Markov chain. We must also know which sites are visited to include them in the acceptance ratio, unlike the methods in Sec. 4.5 and 4.6, where the addresses of non-zero-gradient sites along the trajectory suffice. Fix 𝜖 > 0 and let one step be 𝜓 = 𝜙 𝑃 𝜖 /2 ◦ 𝜙 𝑄 𝜖 ◦ 𝜙 𝑃 𝜖 /2, where 𝜙 𝑃 𝑡 , 𝜙 𝑄 𝑡 are defined as in Sec. 4.5. Again, 
+
+𝑋, 𝑌, 𝜇 𝑋 , 𝜇 𝑌 , 𝑣 are defined the same as in Sec. 4.5. Notice that if 𝑗 ∈ 𝑣 (q, p) and 𝐺 (q(𝑖 ) )𝑗 = 0 for all 
+
+𝑖 ∈ { 0, . . . , 𝐿 } we cannot guarantee that (𝜇 𝑋 × 𝜇 𝑌 )( 𝐼 (q, p)) = (𝜇 𝑋 × 𝜇 𝑌 )( q, p). Therefore, we need to know 𝑣 (q, p) not just 𝑢 (q, p). Moreover, we need to let 𝐼 (q, p)𝑖 = 𝐼 ′ (q𝑖 , p𝑖 ) for any 𝑖 ∈ A \ 𝑣 (q, p),where 𝐼 ′ : R2 → R2 is some Leb 2 preserving involution with (𝜇 𝑋 × 𝜇 𝑌 )( 𝐼 ′ (q, p)) = (𝜇 𝑋 × 𝜇 𝑌 )( q, p)
+
+(e.g. 𝐼 ′ = 𝐹 ′ ◦ 𝜏 , or the identity, which is what we use in our implementation). Because 𝐼 ′ preserves the site density 𝜑 𝑋 × 𝜑 𝑌 , every unvisited coordinate contributes a factor 1 to the acceptance ratio, so the otherwise infinite product collapses to the finite product over the visited sites 𝑣 (q, p).Proposition 7. 𝐼 satisfies Conditions A1 to A3 (see Sec. C.6 for the proof). Implementation details. To compute 𝑣 (q, p) we need to first apply 𝐹 ◦ 𝜓 𝐿 to get the states in the trajectory (q(𝑖 ) , p(𝑖 ) ). Then for each q(𝑖 ) we can determine 𝑣 𝑙 (q(𝑖 ) ) by checking which thunks in the seed have been evaluated, as done for the single-site proposal kernel in [10]. For the sites 𝑗 not in v(q, p) we then need to change q(𝐿 ) 
+
+> 𝑗
+
+, p(𝐿 ) 
+
+> 𝑗
+
+to 𝐼 ′ (q𝑗 , p𝑗 ) before the accept/reject step. 
+
+4.8 LazyNUTS 
+
+HMC’s performance depends on the number of leapfrog steps 𝐿 , which is hard to tune. NUTS addresses this by choosing 𝐿 adaptively via a doubling procedure with a no-U-turn stopping rule.  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:21
+
+We develop a lazy version, lazyNUTS [12], that keeps the doubling procedure and no-U-turn rule but still evaluates only finitely many sites per iteration, using the leapfrog integrator from lazyHMC1 (Sec. 4.5). We give a correctness argument in Sec. D.1: the acceptance ratio is 1 provided the stopping rule yields a start-independent set of proposed states ( Cs = Cs′ ); as with the maximum tree depth in standard NUTS, our cap 𝑀 on the number of proposed states is a practical termination we do not show to preserve this. We also derive Framework B (Sec. D), generalizing all lazy HMC and lazy NUTS versions, in the appendix. 
+
+5 Example: Piecewise-Constant Regression with Poisson-Process Changepoints 
+
+To make the preceding frameworks concrete, we now trace the behaviour of lazy HMC on a single model in detail: a piecewise-constant regression model with Poisson-process changepoints from [10]. For simplicity, we refer to it as the step regression model. Consider a set of synthetic two-dimensional datapoints as shown in Fig. 1. The task is to fit a piecewise-constant function to this dataset. The model first draws a function f from a prior, then observes the likelihood of the dataset being generated by f, after introducing some Gaussian noise. 
+
+Listing 3. Step regression model   
+
+> 1
+
+stepReg :: [(Double, Double)] → Meas (Double → Double)  
+
+> 2
+
+stepReg dataset = do  
+
+> 3
+
+f ← sample (splice (poissonPP 0 0.2) randConst)  
+
+> 4
+
+forM_ dataset (\(x, y) → scoreLog ( normalLogPdf (f x) 0.1 y))  
+
+> 5
+
+return f
+
+ 
+
+Now consider the prior. The splice function builds a piecewise function from a point process generating changepoints and a prior randomFun over the behaviour on each segment. It samples an infinite stream of changepoints xs and, for each, an independent function from randomFun . An input is then evaluated by selecting the segment containing it. 
+
+  
+
+> 1
+
+splice :: Prob [Double] → Prob (Double → Double) → Prob (Double → Double)  
+
+> 2
+
+splice pointProcess randomFun = do  
+
+> 3
+
+xs ← pointProcess  
+
+> 4
+
+fs ← mapM (const randomFun) xs  
+
+> 5
+
+default_f ← randomFun  
+
+> 6
+
+let h [] x = default_f x  
+
+> 7
+
+h ((a,f):rest) x  
+
+> 8
+
+| x ≤ a = f x  
+
+> 9
+
+| otherwise = h rest x  
+
+> 10
+
+return (h (zip xs fs)) 
+
+ 
+
+Since each segment is constant, we use a base prior sampling constant functions: 
+
+  
+
+> 1
+
+randConst :: Prob (Double → Double)  
+
+> 2
+
+randConst = do  
+
+> 3
+
+b ← normal 0 3  
+
+> 4
+
+return (const b) 
+
+ 
+
+The point process is a Poisson process with rate 0 .2 and starting from 0: 
+
+  
+
+> 1
+
+poissonPP :: Double → Double → Prob [Double]  
+
+> 2
+
+poissonPP lower rate = do  
+
+> 3
+
+step ← exponential rate  
+
+> 4
+
+let x = lower + step 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.
+
+298:22 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 2 4 612345     
+
+> e1e2
+> c1= 1 .1
+> c2= 3 .5
+> c3=?
+> t1t2
+> poor fit
+
+(a) q(1) : 2 segments visited                
+
+> c1e1c2e2c3e3
+> · · ·
+> ▼▼▼▼
+> 24612345
+> e2↓
+> c1= 1 .08
+> c2= 3 .38
+> c3= 4 .2
+> t1t2
+
+(b) q(2) : accepted; c3 visited                 
+
+> c1e1c2e2c3e3
+> · · ·
+> ▼▼▼▼▲▼
+> 24612345
+> c1= 1 .05
+> c2= 3 .1
+> c3= 5 .0good fit
+> t1t2
+
+(c) q(3) : accepted; 3 segments                      
+
+> c1e1c2e2c3e3
+> · · ·
+> ▼▼▼▼▼▼
+> ∇ℓ̸= 0 (level ci)∇ℓ= 0 (gap ei)∇ℓ= 0 (not yet visited) newly visited ▼/▲−∇ Udirection
+
+Fig. 1. Dimension change during lazy HMC on the step regression model (§5). (a) Initial state q(1) , where the second changepoint lies to the right of all datapoints. Only two segments are evaluated; later segments are not visited due to lazy evaluation. (b) After five leapfrog steps (shown as a trajectory in (𝑒 2, 𝑐 2)-space in Fig. 2a), the second changepoint 𝑡 2 moves left of the last datapoint, activating a third segment. The previously unused sites 𝑐 3 and 𝑒 3 become visited, increasing the dimensionality of the evaluated state. (c) After a further five leapfrog steps, the segments adjust using the newly available gradient information, resulting in a better fit. Both transitions shown are accepted. See Fig. 2b for additional posterior samples.  
+
+> 5
+
+rest ← poissonPP x rate  
+
+> 6
+
+return (x : rest) 
+
+ 
+
+Note that a draw f from splice contains infinitely many segments. Consequently, the function returned by stepReg (Listing 3) also has infinitely many segments. This does not cause any practical issues, since evaluation is lazy. Only those segments that are required for computing the likelihood or for producing the plots are ever evaluated. For instance, in Fig. 2b, only segments corresponding to input values in the range [− 0.5, 6.5] are actually used. e2      
+
+> c2
+> 3.0 3.5 4.0 3.0 3.5
+> t1+e2≈5.5
+> (visited-set boundary) 3 segments visited 2 segments visited visited set expands
+> ∇Uchanges resample momentum
+> q(1)
+> q(2)
+> q(3)
+
+(a) Illustrative example of lazy HMC trajectory on the step regression model. The values in the (𝑒 2, 𝑐 2)-space correspond to the positions 
+
+q(1) , q(2) , q(3) from Fig. 1, with 5 leapfrog steps between successive positions. 
+
+(b) 100 posterior samples from running lazyHMC1 (𝜖 = 0.01 , 𝐿 = 30 ) on the step regression model thinned every 10 samples after 
+
+10 3 burn-in samples. Fig. 2. Lazy HMC on the step regression model: (a) an illustrative trajectory, and (b) actual posterior samples. 
+
+Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:23 
+
+Lazy HMC on the step regression model. Consider the rose tree q corresponding to the infinite stream of seeds used in a run of the step regression model. We distinguish between the seeds 
+
+q𝑎 𝑗 used to generate the heights of the constant functions and the seeds q𝑏 𝑗 used to generate the exponential increments in the Poisson process for 𝑗 = 1, . . . . Therefore the height of the 𝑗 th constant function segment is 𝑐 𝑗 (q) = 3q𝑎 𝑗 and the 𝑗 th exponential draw is 𝑒 𝑗 (q) = − log cdf N ( 0,1) (q𝑏 𝑗 )/ 0.2where cdf N ( 0,1) is the cumulative distribution function of N ( 0, 1). Hence, the 𝑗 th changepoint is given by 𝑡 𝑗 (q) = Í𝑗 𝑖 =1 𝑒 𝑖 (q) and we can consider 𝑡 0 (q) = 0. Suppose we start from a rose tree q(1) for which the second changepoint 𝑡 2 is greater than the 
+
+𝑥 -value of all datapoints, as shown in Fig. 1(a). In this case, the likelihood 𝑙 is given by: 
+
+𝑙 (q(1) ) =
+
+> 2
+
+Ö
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 𝑐 1 (q(1) ), 0.1)
+
+> 6
+
+Ö
+
+> 𝑖 =3
+
+𝜑 (𝑦 𝑖 | 𝑐 2 (q(1) ), 0.1) =
+
+> 2
+
+Ö
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 1.1, 0.1)
+
+> 6
+
+Ö
+
+> 𝑖 =3
+
+𝜑 (𝑦 𝑖 | 3.5, 0.1).
+
+where (𝑥 1, 𝑦 1) . . . (𝑥 6, 𝑦 6) are the datapoints in increasing 𝑥 -order and 𝜑 (· | 𝜇, 𝑠 ) denotes the density of N ( 𝜇, 𝑠 2). There exists an open set 𝐴 1 containing q(1) such that 
+
+𝑙 (q) =
+
+> 2
+
+Ö
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 𝑐 1 (q), 0.1)
+
+> 6
+
+Ö
+
+> 𝑖 =3
+
+𝜑 (𝑦 𝑖 | 𝑐 2 (q), 0.1)
+
+for all q ∈ 𝐴 1. Thus, two segments are enough to cover the dataset (with respect to the 𝑥 -axis), and the sites 𝑎 𝑖 , 𝑏 𝑖 with 𝑖 ≥ 3 are not visited. Consequently, the gradient at those sites is zero. Moreover, 
+
+𝑙 restricted to the set 𝐴 1 depends only on the sites 𝑎 1 and 𝑎 2. Hence, the gradient at the visited sites 
+
+𝑏 1 and 𝑏 2 is also zero. The second segment in Fig. 1(a) is not a good fit for the 6th datapoint. Fig. 2a shows the trajectory of the pair consisting of the second exponential increment and the second constant height after five leapfrog steps, starting from position q(1) with momentum p(1) .After the fourth leapfrog step, the second changepoint becomes smaller than 𝑥 6. As a result, a third constant function is required in order to evaluate the likelihood contribution of the last datapoint (𝑥 6, 𝑦 6). After the fifth leapfrog step is performed, the new position q(2) (corresponding to Fig. 1(b)) is accepted. The sites that were visited in the intermediary positions computed during the 5 leapfrog steps are the ones corresponding to the first 3 constant function segments, so 
+
+𝑣 (q(1) , p(1) ) = {𝑎 1, 𝑎 2, 𝑎 3, 𝑏 1, 𝑏 2, 𝑏 3 }. However, if we use lazyHMC1 from Sec. 4.5 or lazyHMC2 from Sec. 4.6 it is enough to only include the sites {𝑎 1, 𝑎 2, 𝑎 3 } in the acceptance ratio as they are the only ones for which the gradient of 𝑙 is non-zero. The heights of the first two constant functions have decreased due to the gradient information at sites 𝑎 1 and 𝑎 2, resulting in a better fit. After the changepoint moves left of 𝑥 6, only datapoints 3 , 4, 5 remain in segment 2. Therefore 𝑙 is: 
+
+𝑙 (q) =
+
+> 2
+
+Ö
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 𝑐 1 (q), 0.1)
+
+! 5Ö
+
+> 𝑖 =3
+
+𝜑 (𝑦 𝑖 | 𝑐 2 (q), 0.1)
+
+!
+
+𝜑 (𝑦 6 | 𝑐 3 (q), 0.1)
+
+for q in some open set containing q(2) . In this region, the sites 𝑎 3 and 𝑏 3 become visited, and 𝑎 3 now has a non-zero gradient. After resampling the momentum and performing five additional leapfrog steps, we reach position q(3) corresponding to Fig. 1(c). The segments now provide a better fit, as gradient information from 𝑎 1, 𝑎 2, and 𝑎 3 has been incorporated by the leapfrog integrator. Fig. 2b shows 100 posterior samples obtained by lazyHMC1 on the step regression model. 
+
+𝑙 is PACAP. Let 𝑇 = {( 𝑛 1, . . . , 𝑛 6) ∈ Z6 
+
+> >0
+
+| 𝑛 1 ≤ 𝑛 2 ≤ · · · ≤ 𝑛 6 } be the set of weakly increasing 6-tuples of positive integers. Consider the following countable partition into analytic cylinders of the domain X = RA of 𝑙 : X = ∪𝑡 ∈𝑇 𝑈 𝑡 where 
+
+𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) = {q ∈ X | 𝑡 𝑛 𝑖 −1 (q) < 𝑥 𝑖 ≤ 𝑡 𝑛 𝑖 (q) for 1 ≤ 𝑖 ≤ 6} 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:24 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+for any (𝑛 1, 𝑛 2, . . . , 𝑛 6) ∈ 𝑇 . The set 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) corresponds to all the rose trees for which the 𝑖 th datapoint (𝑥 𝑖 , 𝑦 𝑖 ) is going to be on the 𝑛 𝑖 segment for all 1 ≤ 𝑖 ≤ 6. For each q, each datapoint lies in exactly one segment. Therefore the union X = ∪𝑡 ∈𝑇 𝑈 𝑡 is disjoint. Note that 𝑡 𝑛 𝑖 (q) can be computed using only the sites 𝑏 1, 𝑏 2, . . . 𝑏 𝑛 𝑖 . We let the support of 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) be 𝐵 = {𝑏 1, 𝑏 2, . . . , 𝑏 𝑛 6 } ∪ {𝑎 1, 𝑎 2, . . . , 𝑎 𝑛 6 }. To see why 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) is an analytic cylinder (see Def. 1), consider the analytic functions ℎ𝑛 𝑖 −1 : R𝐵 → R, 𝑔 𝑛 𝑖 : R𝐵 → R given by ℎ𝑛 𝑖 −1 (q𝐵 ) = 𝑡 𝑛 𝑖 −1 (q) − 𝑥 𝑖 and 𝑔 𝑛 𝑖 (q𝐵 ) = 𝑥 𝑖 −𝑡 𝑛 𝑖 (q)
+
+for 1 ≤ 𝑖 ≤ 6. Now let the set 𝑉 = ∩6
+
+> 𝑖 =1
+
+ℎ−1  
+
+> 𝑛 𝑖 −1
+
+((−∞ , 0)) be the open set encoding the strict inequalities: 
+
+𝑉 = {q𝐵 ∈ R𝐵 | ℎ𝑛 𝑖 −1 (q𝐵 ) < 0 for 1 ≤ 𝑖 ≤ 6}. Hence, we can write 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) as: 
+
+𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) = {q ∈ X | q𝐵 ∈ 𝑉 & 𝑔 𝑛 𝑖 (q𝐵 ) ≤ 0 for 1 ≤ 𝑖 ≤ 6}.
+
+Moreover, on 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) we have: 𝑙 (q) = Î6 
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 𝑐 𝑛 𝑖 (q), 0.1). Considering that 𝑐 𝑗 only needs information from the site 𝑎 𝑗 there exists an analytic function 𝑓 : 𝑉 → R given by 𝑓 (q𝐵 ) =
+
+Î6 
+
+> 𝑖 =1
+
+𝜑 (𝑦 𝑖 | 𝑐 𝑛 𝑖 (q𝐵 ), 0.1). Hence, 𝑙 (q) = 𝑓 (q𝐵 ) when q ∈ 𝑈 (𝑛 1,𝑛 2,...,𝑛 6 ) .
+
+6 Experiments 
+
+We implemented the lazy HMC methods (§4.5, §4.6 and §4.7) and lazyNUTS methods (§D.1) as an extension to the LazyPPL library, by also using the automatic differentiation method (§3.3). Our implementation is available at https://github.com/lazyppl-team/lazyhmc. We include the following illustrative experiments that emphasize the non-parametric side of lazy HMC, testing the aspects that standard HMC methods do not typically address. To be clear, we are not evaluating against established benchmarks, since there aren’t really any in the non-parametric setting. Although the experiments here are simple, they nonetheless provide empirical evidence that lazy HMC performs as intended for non-parametric and infinite-dimensional models. In what follows, for the specified step size 𝜖 , we have used a fresh value sampled uniformly at each iteration from [𝜖 /2, 3 · 𝜖 /2]. The maximum number of samples generated in a single iteration of lazyNUTS is denoted by 𝑀 . Imposing a bound 𝑀 on the number of proposed states may seem to go against the adaptive design of NUTS, but in practice NUTS implementations (e.g. Stan) always cap the trajectory via a maximum tree depth. We set 𝑀 mainly for comparability: large enough not to artificially cap the trajectory lengths lazyNUTS explores, while keeping them of a similar order of magnitude to those in the lazy HMC variants. For comparison, we also ran the lazy lightweight Metropolis-Hastings (lazyLMH) method from [10]; this simple method proposes a new rose tree by resampling the value at each site with probability 𝑏 , and does not use gradients at all. We have also compared lazy HMC performance with NP-HMC (the variant presented in [19] which does not include truncation or discontinuous HMC). Posteriors were comparable to our methods. Lazy HMC variants were generally faster, although we observed slower performance on the GMM model, where the bottleneck appears to be the current lack of optimization in LazyPPL’s automatic differentiation implementation. These timings are not perfectly comparable: NP-HMC is implemented in Python, while our methods are implemented in Haskell and LazyPPL’s use of laziness means that models with infinite structure cannot always be expressed identically in both systems. Compare e.g. geometric (natural for lazy HMC) and geometricStrict (suited to NP-HMC). 
+
+Experiment: Geometric distribution. We first sample from the geometric distribution described in Listing 1 with 𝑝 = 0.2. This example shows the methods can handle dimension changes. The methods appear to sample correctly from the distribution, as shown in Fig. 3a, which compares the probability mass estimated from the samples with the ground truth distribution. The total variation distance (TVD) provides a scalar measure of the discrepancy from the ground truth, with values closer to zero indicating better agreement. The TVDs are 0 .0146 (lazyLMH), 0 .034 (NP-HMC), 0 .0198 (lazyNUTS), 0 .0115 (lazyHMC1), 0 .0117 (lazyHMC2), and 0 .0132 (lazyHMC3). The total times were 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.
+
+LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:25 
+
+16 .6 (NP-HMC), 0 .6 (lazyHMC1), 0 .6 (lazyHMC2), 0 .7 (lazyHMC3) and 0 .8 (lazyNUTS) minutes; NP-HMC is at least ten times slower than the lazy variants. 1 2 3 4 5 6 7 8 9 10 x0.00 0.05 0.10 0.15 0.20 probability mass method NPHMC lazyLMH lazyHMC1 lazyNUTS ground truth 
+
+(a) Estimated posterior mass for the Geometric distribution, averaged over 10 runs. Sample sizes per run: 1, 300 for lazyHMC1 , NP-HMC (𝜖 = 0.1, 𝐿 =
+
+15 ), and lazyNUTS (𝜖 = 0.1, 𝑀 = 25); 10 4 for 
+
+lazyLMH (𝑏 = 0.5).0.00 0.25 0.50 0.75 1.00 1.25 1.50 starting point 0.0 0.2 0.4 0.6 0.8 1.0 posterior density method NPHMC lazyLMH lazyNUTS lazyHMC2 lazyHMC1 ground truth 
+
+(b) Kernel density estimate for the random walk model, averaged over 10 runs. Sample sizes per run: 1, 300 for lazyHMC1 , lazyHMC2 , NP-HMC (𝜖 =
+
+0.1, 𝐿 = 5), and lazyNUTS (𝜖 = 0.1, 𝑀 = 25);
+
+2 × 10 4 for lazyLMH (𝑏 = 0.5).Fig. 3. Sampler comparison on the Geometric (left) and random walk (right) models. 
+
+Experiment: Random Walk. We consider the random walk model from [19]. The model is presented in Listing 2. The posterior cannot be computed exactly, so we will use 10 6 importance samples instead of the ground truth. For the lazy HMC, lazyNUTS, and NP-HMC methods, we used a heuristic initialisation procedure to find a starting state closer to the typical set. Specifically, we first ran 100 iterations with the momentum excluded from the acceptance ratio. These iterations were used only for initialisation and were discarded. We then ran the correct kernel for 1300 iterations and discarded the first 20% samples as burn-in. We then ran the correct kernel for the number of iterations specified in Fig. 3b, discarding the first 20% of samples as burn-in for each method as well as a thinning for lazyLMH. The resulting kernel density estimates are shown in Fig. 3b. The upper bound on the number of samples considered per iteration is much larger for lazyNUTS than for the other methods, which makes it slower: lazyNUTS takes 1 .6 minutes (for all chains), compared with 0 .2 minutes for lazyHMC1 and lazyHMC2 and 0 .3 minutes for lazyHMC3. However, lazyNUTS also achieves a much larger effective sample size (ESS), with an ESS of 732 .2 compared with 189 .6 for lazyHMC1, 175 .6 for lazyHMC2 and 231 .9 for lazyHMC3. When computational cost is taken into account, the lazy HMC variants are more efficient, achieving 20 .09, 18 .61 and 15 .09 ESS/s respectively, compared with 7 .73 ESS/s for lazyNUTS. In comparison, NP-HMC is slower than the lazy HMC variants, at 19 total minutes, and has a similar ESS of 213 .2, leading to a much lower efficiency of 0 .18 ESS/s. We emphasise that this model demonstrates some of the core ideas of compositional modelling that are enabled by this lazy approach. Recall that line 3 of the model (Listing 2) produces random infinite sequences: the walk continues forever. This infinite stochastic process determines the infinite-dimensional state space that lazy HMC operates over. Our only observation (line 5) is about the first point the stopping criterion is met. Lazy HMC produces results, despite operating over an infinite dimensional space, because it focuses lazily on the dimensions that are actually needed. 
+
+Experiment: Gaussian mixture model (GMM) with unbounded number of components. We consider the Gaussian Mixture model inspired by [33] in which the number of components is unbounded: 
+
+𝐾 ∼ Poisson (9) + 1, 𝜇 𝑘 ∼ Uniform 
+
+ 20 (𝑘 −1) 
+
+> 𝐾
+
+, 20 𝑘 𝐾 
+
+
+
+, 𝑦 𝑛 ∼ 1
+
+> 𝐾
+
+Í𝐾 𝑘 =1 N ( 𝜇 𝑘 , 1.52).
+
+Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:26 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 3 4 5 6 7 8 9 10 11 12 13 14 15 number of mixture components 0.0 0.1 0.2 0.3 0.4 0.5 posterior density method NPHMC lazyHMC1 lazyHMC2 lazyLMH lazyNUTS ground_truth prior 
+
+Fig. 4. Histogram of the number of components for the GMM, averaged over 10 runs. Sample sizes per run: 
+
+2000 for lazyHMC1, lazyHMC2, NP-HMC (𝜖 = 0.05 , 𝐿 = 20 ), and lazyNUTS (𝜖 = 0.1, 𝑀 = 25); 4 × 10 4 for lazyLMH (𝑏 = 0.5). We discard the first 20% of the samples for each chain. 
+
+for 𝑘 = 1, . . . , 𝐾 . The model is presented in Sec. 2.3. We fix the true number of components to 𝐾 ∗ = 5 and sample the true components means as 
+
+𝜇 ∗ 
+
+> 𝑘
+
+∼ Uniform 
+
+ 20 (𝑘 −1) 
+
+> 5
+
+, 20 𝑘 
+
+> 5
+
+
+
+for 𝑘 = 1 . . . 5. Each point in our synthetic dataset is drawn from the Gaussian mixture with 𝐾 ∗ = 5 components with means 𝜇 ∗
+
+> 1
+
+, . . . 𝜇 ∗ 
+
+> 5
+
+. Concretely, we first sample one component index 𝑘 uniformly from {1, . . . , 5}, and then draw the datapoint from N ( 𝜇 ∗ 
+
+> 𝑘
+
+, 1.52). We split the dataset into 200 points for training and 50 points for testing. The prior (Poisson (9) + 1) on the number of components and the distribution inferred from the posterior samples can be seen in Fig. 4. As the posterior cannot be computed exactly, we again use 10 6
+
+importance samples instead of the ground truth. We also approximate the log pointwise predictive density (LPPD, [29]) for the test dataset {𝑦 1, . . . 𝑦 𝑛 } by Í𝑛 𝑖 =1 log 1
+
+> 𝑁
+
+Í𝑁 𝑗 =1 𝑝 (𝑦 𝑖 | 𝜃 𝑗 ), where 𝜃 𝑗 are the samples from the target posterior. The true LPPD is −143 .73 and the mean and one standard deviation LPPD over the 10 chains for each method is: −147 .74 ± 0.28 (lazyHMC1), −147 .73 ± 0.26 (lazyHMC2), −147 .84 ± 0.10 (lazyNUTS), −147 .62 ± 0.14 (lazyLMH), −147 .75 ± 0.09 (NP-HMC). The total times in minutes across the chains are: 72 (lazyHMC1, lazyHMC2), 129 (lazyNUTS), 41 (lazyLMH), 27 (NP-HMC). 2 3 4 5 6 7 8 9
+
+> degree
+> 0.00 0.25 0.50 0.75
+> posterior density method
+> NPHMC lazyLMH lazyHMC1 lazyNUTS prior
+
+(a) Histogram of the degree in the polynomial model, averaged over 10 runs. Sample sizes per run: 3000 for lazyHMC1 (𝜖 = 0.005 , 𝐿 = 64 ),lazyNUTS (𝜖 = 0.005 , 𝑀 = 26); 10 6 for lazyLMH 
+
+(𝑏 = 0.5). For lazyLMH we thin the chain to ob-tain ∼ 3000 samples. In all cases, only the second half of the samples is used (the first half is dis-carded as burn-in). −2 −1.5 −1 −0.5 0 0.5 1 1.5 2−2 −1 0123train data test data true polynomial lazyLMH lazyNUTS xy
+
+(b) Posterior polynomial fits based on the same post-burn-in samples as in Fig. 5a. For this figure, we further thin all chains by keeping every second sample. Fig. 5. Histogram of sampled polynomial degrees and posterior fits for the polynomial regression model. 
+
+Experiment: Polynomial regression model with unbounded degree. In this example, we generate a synthetic regression dataset from a degree 5 polynomial. We sample 40 training inputs and 25 test 
+
+Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:27  
+
+> Table 1. For the polynomial regression experiment, we report test dataset LPPD and runtime in minutes summed over all chains. LPPD is computed using the same post-burn-in samples as in Fig. 5a. The true test dataset LPPD is 3.82 . Reported runtimes correspond to the full chain execution, including burn-in.
+
+lazyNUTS lazyHMC1 lazyLMH NP-HMC LPPD mean ± std −5.94 ± 2.53 −4.69 ± 2.16 −13 .11 ± 9.72 −7.35 ± 6.16 Time (minutes) 10 .9 23 .2 17 .2 233 .7inputs independently as 𝑥 𝑖 ∼ Uniform (− 2, 2). The outputs are generated from a fixed ground-truth polynomial 𝑃 ∗ of degree 5, corrupted by Gaussian noise: 𝑦 𝑖 ∼ N ( 𝑃 ∗ (𝑥 𝑖 ), 0.25 2). The polynomial 𝑃 ∗
+
+as well as the training and test points can be seen in Fig. 5b. The polynomial prior for our model is: 
+
+𝐷 ∼ Poisson (4) + 1, (𝑎 𝑘 )𝐷 𝑘 =0i.i.d. 
+
+∼ N ( 0, 0.52), 𝑄 (𝑥 ) =
+
+> 𝐷
+
+∑︁ 
+
+> 𝑘 =0
+
+𝑎 𝑘 𝑥 𝑘 .
+
+Since we do not want to constrain the degree 𝐷 of the polynomial we sample it from the Poisson distribution. The coefficients of the polynomial 𝑄 are then sampled from the normal distribution. For each train point (𝑥 𝑖 , 𝑦 𝑖 ), we score the likelihood of it being generated using the polynomial 𝑄 
+
+together with the Gaussian noise: 
+
+𝑦 𝑖 ∼ N ( 𝑄 (𝑥 𝑖 ), 0.25 2).
+
+In Fig. 5a we show the distribution of the degree of the inferred polynomial. While the samples from lazyHMC1 and lazyNUTS concentrate on polynomials of degree 5, those from lazyLMH are stuck mostly with polynomials of degree 7. The performance difference is also visible in Fig. 5b, where the lazyNUTS samples fit the dataset better than the lazyLMH samples. For visual clarity, Fig. 5b shows only lazyNUTS and lazyLMH, since plotting all methods together causes substantial overlap. NP-HMC also has a smaller posterior mass on degree 5 polynomials. Despite similar or longer runtime, lazyLMH and NP-HMC achieve worse LPPD than our methods (Table 1). 
+
+Conclusion. We have given a Hamiltonian Monte Carlo simulation that works over probabilistic programs involving infinite dimensions, by evaluating at the dimensions lazily. The key idea is that the relevant gradient is only non-zero at finitely many dimensions (because the likelihood functions are PACAP, §3) and the acceptance ratio is designed so that the factors corresponding to unused dimensions cancel (§4). To improve on the issues with leapfrog and step size, we also provide a lazyNUTS procedure. Our initial experimentation shows that the performance is good even where the changing dimensions play a big role in the model (§6). However, in the broader context of real-world systems and large non-parametric models, to be clear, we don’t expect a purely declarative approach to be sufficient: the modeller will likely need to guide or interact with the inference engine (e.g. Gen [9]). In our setting this interaction is mostly the familiar one of choosing HMC hyperparameters (step size, trajectory length 𝐿 , or the bound 𝑀 in lazyNUTS) and tuning them to the model at hand; and a natural direction for future work is to incorporate automatic step-size adaptation (such as in [12]), reducing the need for manual tuning. 
+
+Acknowledgments 
+
+We would like to thank Alex Lew, Matthijs Vákár and Fabian Zaiser for valuable discussions and advice. This work was partially supported by the National Research Foundation, Singapore, under its 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.
+
+298:28 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 
+
+RSS Scheme (NRF-RSS2022-009), ERC Grant BLAST, AFOSR under award number FA9550-21-1-0038, and grants from ARIA Safeguarded AI. 
+
+References 
+
+[1] Christophe Andrieu, Anthony Lee, and Samuel Livingstone. 2020. A general perspective on the Metropolis–Hastings kernel. arXiv preprint arXiv:2012.14881 (2020). https://arxiv.org/abs/2012.14881 [2] Gilles Barthe, Raphaëlle Crubillé, Ugo Dal Lago, and Francesco Gavazzo. 2020. On the Versatility of Open Logical Relations - Continuity, Automatic Differentiation, and a Containment Theorem. In Programming Languages and Systems - 29th European Symposium on Programming, ESOP 2020, Held as Part of the European Joint Conferences on Theory and Practice of Software, ETAPS 2020, Dublin, Ireland, April 25-30, 2020, Proceedings (Lecture Notes in Computer Science, Vol. 12075) , Peter Müller (Ed.). Springer, 56–83. doi:10.1007/978-3-030-44914-8_3 [3] Gilles Barthe, Joost-Pieter Katoen, and Alexandra Silva. 2020. Foundations of Probabilistic Programming . Cambridge University Press. doi:10.1017/9781108770750 [4] Alexandros Beskos, Frank J Pinski, Jesús Marıa Sanz-Serna, and Andrew M Stuart. 2011. Hybrid Monte Carlo on Hilbert spaces. Stochastic Processes and their Applications 121, 10 (2011), 2201–2230. doi:10.1016/j.spa.2011.06.003 [5] Michael Betancourt. 2017. A conceptual introduction to Hamiltonian Monte Carlo. arXiv preprint arXiv:1701.02434 
+
+(2017). [6] Nawaf Bou-Rabee, Bob Carpenter, and Milo Marsden. 2024. GIST: Gibbs self-tuning for locally adaptive Hamiltonian Monte Carlo. arXiv preprint arXiv:2404.15253 (2024). [7] Maddy Bowers, Alexander K. Lew, Joshua B. Tenenbaum, Armando Solar-Lezama, and Vikash K. Mansinghka. 2025. Stochastic Lazy Knowledge Compilation for Inference in Discrete Probabilistic Programs. Proc. ACM Program. Lang. 9, PLDI (2025), 1863–1887. doi:10.1145/3729325 [8] Marco Cusumano-Towner, Alexander K. Lew, and Vikash K. Mansinghka. 2020. Automating Involutive MCMC using Probabilistic and Differentiable Programming. arXiv preprint arXiv:2007.09871 (2020). https://arxiv.org/abs/2007.09871 [9] Marco F. Cusumano-Towner, Feras A. Saad, Alexander K. Lew, and Vikash K. Mansinghka. 2019. Gen: a general-purpose probabilistic programming system with programmable inference. In Proceedings of the 40th ACM SIGPLAN Conference on Programming Language Design and Implementation, PLDI 2019, Phoenix, AZ, USA, June 22-26, 2019 , Kathryn S. McKinley and Kathleen Fisher (Eds.). ACM, 221–236. doi:10.1145/3314221.3314642 [10] Swaraj Dash, Younesse Kaddar, Hugo Paquet, and Sam Staton. 2023. Affine Monads and Lazy Structures for Bayesian Programming. Proc. ACM Program. Lang. 7, POPL (2023), 1338–1368. doi:10.1145/3571239 [11] Chris Heunen, Ohad Kammar, Sam Staton, and Hongseok Yang. 2017. A convenient category for higher-order probability theory. In 32nd Annual ACM/IEEE Symposium on Logic in Computer Science, LICS 2017, Reykjavik, Iceland, June 20-23, 2017 . IEEE Computer Society, 1–12. doi:10.1109/LICS.2017.8005137 [12] Matthew D. Hoffman and Andrew Gelman. 2014. The No-U-turn sampler: adaptively setting path lengths in Hamiltonian Monte Carlo. J. Mach. Learn. Res. 15, 1 (2014), 1593–1623. http://dl.acm.org/citation.cfm?id=2638586 [13] Mathieu Huot, Alexander K. Lew, Vikash K. Mansinghka, and Sam Staton. 2023. 𝜔 PAP Spaces: Reasoning Denotationally About Higher-Order, Recursive Probabilistic and Differentiable Programs. In 38th Annual ACM/IEEE Symposium on Logic in Computer Science, LICS 2023, Boston, MA, USA, June 26-29, 2023 . IEEE, 1–14. doi:10.1109/LICS56636.2023.10175739 [14] Mathieu Huot, Sam Staton, and Matthijs Vákár. 2020. Correctness of Automatic Differentiation via Diffeologies and Categorical Gluing. In Foundations of Software Science and Computation Structures - 23rd International Conference, FOSSACS 2020, Held as Part of the European Joint Conferences on Theory and Practice of Software, ETAPS 2020, Dublin, Ireland, April 25-30, 2020, Proceedings (Lecture Notes in Computer Science, Vol. 12077) , Jean Goubault-Larrecq and Barbara König (Eds.). Springer, 319–338. doi:10.1007/978-3-030-45231-5_17 [15] Wonyeol Lee, Hangyeol Yu, Xavier Rival, and Hongseok Yang. 2020. On Correctness of Automatic Differentiation for Non-Differentiable Functions. In Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual , Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin (Eds.). https://proceedings.neurips.cc/paper/2020/ hash/4aaa76178f8567e05c8e8295c96171d8-Abstract.html [16] Benedict Leimkuhler and Sebastian Reich. 2004. Simulating Hamiltonian dynamics . Number 14. Cambridge University Press. doi:10.1017/CBO9780511614118 [17] Samuel Livingstone, Michael Betancourt, Simon Byrne, and Mark Girolami. 2019. On the geometric ergodicity of Hamiltonian Monte Carlo. Bernoulli 25, 4A (2019), 3109–3138. doi:10.3150/18-BEJ1083 [18] John Longley and Dag Normann. 2015. Higher-Order Computability . Springer, Cham. doi:10.1007/978-3-319-21500-6 [19] Carol Mak, Fabian Zaiser, and Luke Ong. 2021. Nonparametric Hamiltonian Monte Carlo. In Proceedings of the 38th International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual Event (Proceedings of Machine Learning Research, Vol. 139) , Marina Meila and Tong Zhang (Eds.). PMLR, 7336–7347. http://proceedings.mlr.press/ Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:29 
+
+v139/mak21a.html [20] Carol Mak, Fabian Zaiser, and Luke Ong. 2022. Nonparametric Involutive Markov Chain Monte Carlo. In International Conference on Machine Learning, ICML 2022, 17-23 July 2022, Baltimore, Maryland, USA (Proceedings of Machine Learning Research, Vol. 162) , Kamalika Chaudhuri, Stefanie Jegelka, Le Song, Csaba Szepesvári, Gang Niu, and Sivan Sabato (Eds.). PMLR, 14802–14859. https://proceedings.mlr.press/v162/mak22a.html [21] Radford M. Neal. 2012. MCMC using Hamiltonian dynamics. (6 2012). doi:10.1201/b10905 [22] Kirill Neklyudov, Max Welling, Evgenii Egorov, and Dmitry P. Vetrov. 2020. Involutive MCMC: a Unifying Framework. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event (Proceedings of Machine Learning Research, Vol. 119) . PMLR, 7273–7282. http://proceedings.mlr.press/v119/neklyudov20a. html [23] Peter Orbanz and Yee Whye Teh. 2010. Bayesian nonparametric models. In Encyclopedia of Machine Learning . Springer, 81–89. doi:10.1007/978-0-387-30164-8_66 [24] John C. Reynolds. 1983. Types, Abstraction and Parametric Polymorphism. In Information Processing 83 (IFIP Congress Series, Vol. 9) , R.E.A. Mason (Ed.). Elsevier Science Publishers B.V., Amsterdam, The Netherlands, 513–523. [25] Daniel M. Roy, Vikash K. Mansinghka, Noah D. Goodman, and Joshua B. Tenenbaum. 2008. A stochastic programming perspective on nonparametric Bayes. In Workshop on Nonparametric Bayes (ICML 2008) . Helsinki, Finland. Filename: RoyManGooTen-ICMLNPB-2008.pdf; MIT. https://danroy.org/papers/RoyManGooTen-ICMLNPB-2008.pdf [26] Amir Shaikhha, Andrew W. Fitzgibbon, Dimitrios Vytiniotis, and Simon Peyton Jones. 2019. Efficient differentiable programming in a functional array-processing language. Proc. ACM Program. Lang. 3, ICFP (2019), 97:1–97:30. doi:10.1145/3341701 [27] Jan-Willem van de Meent, Brooks Paige, Hongseok Yang, and Frank Wood. 2018. An Introduction to Probabilistic Programming. CoRR abs/1809.10756 (2018). arXiv:1809.10756 http://arxiv.org/abs/1809.10756 [28] Birthe van den Berg, Tom Schrijvers, James McKinna, and Alexander Vandenbroucke. 2024. Forward- or Reverse-Mode Automatic Differentiation: What’s the Difference? Science of Computer Programming 231 (2024), 103010. doi:10.1016/j.scico.2023.103010 [29] Aki Vehtari, A Gelman, D Dunson, D Rubin, H Stern, and JB Carlin. 2014. Bayesian data analysis. [30] David Wingate, Andreas Stuhlmüller, and Noah D. Goodman. 2011. Lightweight Implementations of Probabilistic Programming Languages Via Transformational Compilation. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics, AISTATS 2011, Fort Lauderdale, USA, April 11-13, 2011 (JMLR Proceedings, Vol. 15) ,Geoffrey J. Gordon, David B. Dunson, and Miroslav Dudík (Eds.). JMLR.org, 770–778. http://proceedings.mlr.press/ v15/wingate11a/wingate11a.pdf [31] Glynn Winskel. 1993. The formal semantics of programming languages: an introduction . MIT Press, Cambridge, MA, USA. [32] Frank D. Wood, Jan-Willem van de Meent, and Vikash Mansinghka. 2014. A New Approach to Probabilistic Pro-gramming Inference. In Proceedings of the Seventeenth International Conference on Artificial Intelligence and Statistics, AISTATS 2014, Reykjavik, Iceland, April 22-25, 2014 (JMLR Workshop and Conference Proceedings, Vol. 33) . JMLR.org, 1024–1032. http://proceedings.mlr.press/v33/wood14.html [33] Yuan Zhou, Hongseok Yang, Yee Whye Teh, and Tom Rainforth. 2020. Divide, Conquer, and Combine: a New Inference Strategy for Probabilistic Programs with Stochastic Support. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event (Proceedings of Machine Learning Research, Vol. 119) . PMLR, 11534–11545. http://proceedings.mlr.press/v119/zhou20e.html Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:30 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 
+
+A Proof of the Fundamental Lemma (2) , from Thm. 2 
+
+The proof is by induction on typing derivations, and requires preliminary lemmas on support enlargement (Lem. 1), closure under finite intersection (Lem. 2), restriction (Lem. 3), gluing (Lem. 4), and composition (Lem. 5). We note that X = RA is itself an analytic cylinder (with empty support), so c-analytic; and ∅ is c-analytic (the empty union), with P∅ 
+
+> 𝜏
+
+a singleton for every 𝜏 .Lemma 1 (Support enlargement). If 𝑈 is an analytic cylinder with support 𝐵 and 𝐵 ′ ⊇ 𝐵 is finite, then 𝑈 is also an analytic cylinder with support 𝐵 ′.
+
+Proof. Let 𝑉 ⊆ R𝐵 and 𝑔 𝑘 : 𝑉 → R be the open set and constraints for 𝑈 . Let 𝜋 : R𝐵 ′
+
+→ R𝐵 
+
+be the coordinate projection, which is continuous and linear (hence analytic). Take 𝑉 ′ = 𝜋 −1 (𝑉 )
+
+(open since 𝜋 is continuous) and constraints 𝑔 𝑘 ◦ 𝜋 . □
+
+Lemma 2 (Closure under finite intersection). The intersection of two analytic cylinders is an analytic cylinder. Consequently, c-analytic sets are closed under finite intersection. 
+
+Proof. Given analytic cylinders 𝑈 1, 𝑈 2 with supports 𝐵 1, 𝐵 2, enlarge both to the common support 
+
+𝐵 = 𝐵 1 ∪ 𝐵 2 (Lem. 1), then intersect the open sets and concatenate the constraint lists (cf. [13], Cor. B.10 for the finite-dimensional case). For c-analytic closure: if 𝑊 = Ò𝑖 𝐴 𝑖 and 𝑊 ′ = Ò𝑗 𝐶 𝑗 
+
+are c-analytic, then 𝑊 ∩ 𝑊 ′ = Ò𝑖,𝑗 (𝐴 𝑖 ∩ 𝐶 𝑗 ), which is disjoint since the 𝐴 𝑖 and 𝐶 𝑗 are separately disjoint, and is a countable union of analytic cylinders. □
+
+Lemma 3 (Restriction). If 𝑓 ∈ P 𝑈 𝜏 and 𝑈 ′ ⊆ 𝑈 is c-analytic, then 𝑓 |𝑈 ′ ∈ P 𝑈 ′ 
+
+> 𝜏
+
+.
+
+Proof. By induction on 𝜏 . For 𝜏 = real : if 𝑓 is PACAP on 𝑈 with partition {𝐴 𝑘 }𝑘 into analytic cylinders, and 𝑈 ′ = Ò𝑚 𝐶 𝑚 is c-analytic, then 𝑈 ′ = Ò𝑘,𝑚 (𝐴 𝑘 ∩ 𝐶 𝑚 ). Each 𝐴 𝑘 ∩ 𝐶 𝑚 is an analytic cylinder (Lem. 2) with support 𝐵 𝑘 ∪ 𝐷 𝑚 . On this piece, 𝑓 (𝑥 ) = 𝑓 𝑘 (𝑥 |𝐵 𝑘 ), where 𝑓 𝑘 is analytic on some open 𝑉 𝑘 ⊆ R𝐵 𝑘 . By support enlargement (Lem. 1) from 𝐵 𝑘 to 𝐵 𝑘 ∪ 𝐷 𝑚 , the function 𝑓 𝑘 lifts to 𝑓 𝑘 ◦ 𝜋 on the enlarged open set, witnessing PACAP for each piece. Hence 𝑓 |𝑈 ′ is PACAP. The unit and product cases are immediate. For 𝜏 = Í𝑖 ∈𝐼 𝜏 𝑖 : if 𝑓 ∈ P 𝑈 Í𝑖 ∈𝐼 𝜏 𝑖 via partition 𝑈 = Ò𝑖 𝑈 𝑖 , then 
+
+𝑈 ′ = Ò𝑖 (𝑈 𝑖 ∩ 𝑈 ′) where each 𝑈 𝑖 ∩ 𝑈 ′ is c-analytic (Lem. 2), and 𝑓 𝑖 |𝑈 𝑖 ∩𝑈 ′ ∈ P 𝑈 𝑖 ∩𝑈 ′ 
+
+> 𝜏 𝑖
+
+by the induction hypothesis. For 𝜏 = 𝜏 1 → 𝜏 2: any c-analytic 𝑈 ′′ ⊆ 𝑈 ′ is also a c-analytic subset of 𝑈 , so the defining clause for P𝑈 𝜏 1→𝜏 2 directly gives the result. □
+
+Lemma 4 (Gluing). If 𝑈 = Ò𝑖 ∈𝐼 𝑈 𝑖 is a countable partition into c-analytic sets and 𝑓 𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏
+
+for each 𝑖 , then the function 𝑓 defined by 𝑓 (𝑢 ) = 𝑓 𝑖 (𝑢 ) for 𝑢 ∈ 𝑈 𝑖 satisfies 𝑓 ∈ P 𝑈 𝜏 .
+
+Proof. By induction on 𝜏 . For 𝜏 = real : each 𝑓 𝑖 is PACAP on 𝑈 𝑖 ; concatenating their analytic-cylinder partitions gives a PACAP partition of 𝑈 . The unit and product cases are immediate. For 𝜏 =
+
+Í𝑙 ∈𝐼 𝜏 𝑙 : each 𝑓 𝑘 ∈ P 𝑈 𝑘 Í𝑙 ∈𝐼 𝜏 𝑙 
+
+gives a partition 𝑈 𝑘 = Ò𝑙 𝑈 𝑘𝑙 with 𝑔 𝑘𝑙 ∈ P 𝑈 𝑘𝑙  
+
+> 𝜏 𝑙
+
+. Let 𝑊 𝑙 = Ò𝑘 𝑈 𝑘𝑙 for each 
+
+𝑙 ∈ 𝐼 ; each 𝑊 𝑙 is c-analytic (a countable disjoint union of c-analytic sets). Since the 𝑈 𝑘 are pairwise disjoint, so are the 𝑈 𝑘𝑙 across different 𝑘 , giving Ò𝑙 𝑊 𝑙 = Ò𝑘 𝑈 𝑘 = 𝑈 . By the induction hypothesis at 𝜏 𝑙 (gluing the 𝑔 𝑘𝑙 over 𝑊 𝑙 = Ò𝑘 𝑈 𝑘𝑙 ), the resulting function on 𝑊 𝑙 is in P𝑊 𝑙  
+
+> 𝜏 𝑙
+
+. For 𝜏 = 𝜏 1 → 𝜏 2:given c-analytic 𝑈 ′ ⊆ 𝑈 and 𝑔 ∈ P 𝑈 ′ 
+
+> 𝜏 1
+
+, let 𝑈 ′ 
+
+> 𝑖
+
+= 𝑈 ′ ∩ 𝑈 𝑖 , which is c-analytic by Lem. 2. By restriction (Lem. 3), 𝑔 |𝑈 ′ 
+
+> 𝑖
+
+∈ P 𝑈 ′ 
+
+> 𝑖
+> 𝜏 1
+
+. Since 𝑈 ′ 
+
+> 𝑖
+
+⊆ 𝑈 𝑖 is c-analytic and 𝑓 𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏 1→𝜏 2
+
+, we get 𝜆𝑢. 𝑓 𝑖 (𝑢 )( 𝑔 (𝑢 )) ∈ P 𝑈 ′ 
+
+> 𝑖
+> 𝜏 2
+
+. By the induction hypothesis at 𝜏 2 (gluing over 𝑈 ′ = Ò𝑖 𝑈 ′ 
+
+> 𝑖
+
+), 𝜆𝑢. 𝑓 (𝑢 )( 𝑔 (𝑢 )) ∈ P 𝑈 ′ 
+
+> 𝜏 2
+
+. □
+
+Lemma 5 (Composition). If 𝑐 : R𝑛 → R is PAP and 𝑔 1, . . . , 𝑔 𝑛 are PACAP on a c-analytic set 𝑈 ,then 𝑐 ◦ ( 𝑔 1, . . . , 𝑔 𝑛 ) is PACAP on 𝑈 . 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:31
+
+Proof. Since 𝑐 is PAP, there is a finite partition R𝑛 = Ò𝑗 𝑃 𝑗 where each 𝑃 𝑗 is an analytic set with open set 𝑉 𝑗 and constraints ℎ𝑗,𝑖 : 𝑉 𝑗 → R, together with analytic 𝑐 𝑗 : 𝑉 𝑗 → R agreeing with 𝑐 on 𝑃 𝑗 .Let {𝐴 𝑘 }𝑘 be a common refinement of the PACAP partitions of 𝑔 1, . . . , 𝑔 𝑛 , obtained by iterated intersection (Lem. 2); by support enlargement (Lem. 1), on each 𝐴 𝑘 the tuple (𝑔 1, . . . , 𝑔 𝑛 ) is analytic on a common open set 𝑊 𝑘 ⊆ R𝐵 𝑘 . Refine further: 𝐴 𝑘 ∩ ( 𝑔 1, . . . , 𝑔 𝑛 )−1 (𝑃 𝑗 ) is an analytic cylinder with support 𝐵 𝑘 , open set 𝑊 𝑘 ∩ ( 𝑔 1, . . . , 𝑔 𝑛 )| −1 
+
+> 𝐵 𝑘
+
+(𝑉 𝑗 ) (open since (𝑔 1, . . . , 𝑔 𝑛 )| 𝐵 𝑘 is continuous), and constraints consisting of those of 𝐴 𝑘 together with ℎ𝑗,𝑖 ◦ ( 𝑔 1, . . . , 𝑔 𝑛 )| 𝐵 𝑘 (analytic, as a composition of analytic functions on open sets). On each such piece, 𝑐 𝑗 ◦ ( 𝑔 1, . . . , 𝑔 𝑛 )| 𝐵 𝑘 is analytic on the same open set. □
+
+Fundamental lemma (2) , from Thm. 2. If 𝑥 1 : 𝜏 1, . . . , 𝑥 𝑛 : 𝜏 𝑛 ⊢ 𝑒 : 𝜏 and given c-analytic 𝑈 and 
+
+𝑓 1 ∈ P 𝑈 𝜏 1 , . . . , 𝑓 𝑛 ∈ P 𝑈 𝜏 𝑛 , then 𝜆𝑢. J𝑒 K(𝑓 1 (𝑢 ), . . . , 𝑓 𝑛 (𝑢 )) ∈ P 𝑈 𝜏 .
+
+Proof. By induction on the typing derivation of 𝑥 1 : 𝜏 1, . . . , 𝑥 𝑛 : 𝜏 𝑛 ⊢ 𝑒 : 𝜏 . Throughout, write 
+
+𝛾 (𝑢 ) = (𝑓 1 (𝑢 ), . . . , 𝑓 𝑛 (𝑢 )) for the substituted valuation. The real literal ( 𝜆𝑢. 𝑟 is constant, hence PACAP), variable ( 𝜆𝑢. J𝑥 𝑗 K(𝛾 (𝑢 )) = 𝑓 𝑗 ), and unit cases are immediate. 
+
+Lambda. If 𝑒 = 𝜆𝑥 :𝜏 1.𝑒 ′ with Γ, 𝑥 : 𝜏 1 ⊢ 𝑒 ′ : 𝜏 2. Take any c-analytic 𝑈 ′ ⊆ 𝑈 and 𝑔 ∈ P 𝑈 ′ 
+
+> 𝜏 1
+
+. By restric-tion, each 𝑓 𝑗 |𝑈 ′ ∈ P 𝑈 ′ 
+
+> 𝜏 𝑗
+
+. By the induction hypothesis for 𝑒 ′ at 𝑈 ′: 𝜆𝑢. J𝑒 ′K(𝑓 1 (𝑢 ), . . . , 𝑓 𝑛 (𝑢 ), 𝑔 (𝑢 )) ∈ P𝑈 ′ 
+
+> 𝜏 2
+
+. Since J𝜆𝑥 :𝜏 1.𝑒 ′K(𝛾 (𝑢 ))( 𝑔 (𝑢 )) = J𝑒 ′K(𝛾 (𝑢 ), 𝑔 (𝑢 )) , this shows 𝜆𝑢. J𝑒 K(𝛾 (𝑢 )) ∈ P 𝑈 𝜏 1→𝜏 2 .
+
+Application. If 𝑒 = 𝑒 1 𝑒 2 with Γ ⊢ 𝑒 1 : 𝜏 1 → 𝜏 2 and Γ ⊢ 𝑒 2 : 𝜏 1. By the induction hypothesis, ℎ1 :=
+
+𝜆𝑢. J𝑒 1K(𝛾 (𝑢 )) ∈ P 𝑈 𝜏 1→𝜏 2 and ℎ2 := 𝜆𝑢. J𝑒 2K(𝛾 (𝑢 )) ∈ P 𝑈 𝜏 1 . Since 𝑈 is itself c-analytic, instantiating with 𝑈 ′ = 𝑈 and 𝑔 = ℎ2: 𝜆𝑢. ℎ 1 (𝑢 )( ℎ2 (𝑢 )) ∈ P 𝑈 𝜏 2 .The pair and projection cases follow directly from the product-type clause. 
+
+Injection. If 𝑒 = inj 𝑖 𝑒 ′: by the induction hypothesis 𝑔 := 𝜆𝑢. J𝑒 ′K(𝛾 (𝑢 )) ∈ P 𝑈 𝜏 𝑖 . The partition with 
+
+𝑈 𝑖 = 𝑈 and 𝑈 𝑗 = ∅ for 𝑗 ≠ 𝑖 witnesses 𝜆𝑢. J𝑒 K(𝛾 (𝑢 )) ∈ P 𝑈 Í𝑖 ∈𝐼 𝜏 𝑖 , since ∅ is c-analytic and P∅ 
+
+> 𝜏 𝑗
+
+is inhabited. 
+
+Case. If 𝑒 = case 𝑒 ′ of (inj 𝑖 𝑥 ⇒ 𝑒 𝑖 )𝑖 ∈𝐼 with Γ ⊢ 𝑒 ′ : Í𝑖 ∈𝐼 𝜏 𝑖 and Γ, 𝑥 : 𝜏 𝑖 ⊢ 𝑒 𝑖 : 𝜏 for each 𝑖 ∈ 𝐼 .By the induction hypothesis on 𝑒 ′: 𝜆𝑢. J𝑒 ′K(𝛾 (𝑢 )) ∈ P 𝑈 Í𝑖 ∈𝐼 𝜏 𝑖 , giving 𝑈 = Ò𝑖 ∈𝐼 𝑈 𝑖 with each 𝑈 𝑖 c-analytic and ℎ𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏 𝑖
+
+. For each 𝑖 : by restriction, 𝑓 𝑗 |𝑈 𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏 𝑗
+
+for all 𝑗 , and ℎ𝑖 ∈ P 𝑈 𝑖  
+
+> 𝜏 𝑖
+
+. By the induction hypothesis for 𝑒 𝑖 at 𝑈 𝑖 with the extended valuation: 𝜆𝑢. J𝑒 𝑖 K(𝑓 1 (𝑢 ), . . . , 𝑓 𝑛 (𝑢 ), ℎ 𝑖 (𝑢 )) ∈ P 𝑈 𝑖  
+
+> 𝜏
+
+. Since 
+
+J𝑒 K(𝛾 (𝑢 )) = J𝑒 𝑖 K(𝛾 (𝑢 ), ℎ 𝑖 (𝑢 )) for 𝑢 ∈ 𝑈 𝑖 , the result follows from gluing (Lem. 4). 
+
+Constants. A constant 𝑐 : real × · · · → real denotes a total PAP function R𝑛 → R (Example 1). Take c-analytic 𝑈 ′ ⊆ 𝑈 and (𝑔 1, . . . , 𝑔 𝑛 ) ∈ P 𝑈 ′ 
+
+> real ×···
+
+, so each 𝑔 𝑖 is PACAP on 𝑈 ′. By the composition lemma (Lem. 5), 𝜆𝑢. 𝑐 (𝑔 1 (𝑢 ), . . . , 𝑔 𝑛 (𝑢 )) ∈ P 𝑈 ′
+
+> real
+
+. □
+
+B Encoding the Examples and Verifying PACAP 
+
+The core calculus in Sec. 3.1.2 has countable sum types and case analysis but no explicit fixpoint operator. We show here that this suffices to encode primitive recursion and stream corecursion, as used in Sec. 2.1. For the geometric distribution, which involves unbounded search, we verify the PACAP property of the resulting likelihood directly. These encodings are standard in type theory and programming language semantics, but we include them for completeness, in case the relationship between the Haskell examples and the core calculus may not be immediately apparent.  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:32 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+The key observation is that countable case expressions make the syntax infinitary : a single well-typed term may be an infinite (but countably branching) syntax tree. Haskell’s general recursion is used in practice to describe these infinite terms finitely, but the denotational semantics is defined on the infinite terms themselves. 
+
+Primitive recursion over N. Since N = Í𝑛 ∈N 1 is a type in the calculus, countable case analysis directly provides primitive recursion. Given a base case 𝑧 : 𝜏 and a step function 𝑠 : N → 𝜏 → 𝜏 
+
+(both terms in the calculus), the primitive recursor rec (𝑧, 𝑠 ) : N → 𝜏 is: 
+
+rec (𝑧, 𝑠 ) = 𝜆𝑛. case 𝑛 of (inj 𝑖 _ ⇒ 𝑒 𝑖 )𝑖 ∈N
+
+where each branch 𝑒 𝑖 is the 𝑖 -fold syntactic unrolling of 𝑠 : 𝑒 0 = 𝑧 , 𝑒 1 = 𝑠 inj 0 () 𝑧 , 𝑒 2 =
+
+𝑠 inj 1 () ( 𝑠 inj 0 () 𝑧 ), and so on. Each 𝑒 𝑖 is a finite well-typed term of type 𝜏 , built by liter-ally inlining 𝑠 a total of 𝑖 times. No fixpoint combinator is needed; the countable case expression directly enumerates all branches. 
+
+Stream corecursion. A stream of type N → real is a function from N to real . Given a seed 𝑎 : 𝜎 ,a head function ℎ : 𝜎 → real , and a tail function 𝑡 : 𝜎 → 𝜎 , the corecursively defined stream 
+
+unfold (𝑎, ℎ, 𝑡 ) : N → real is: 
+
+unfold (𝑎, ℎ, 𝑡 ) = 𝜆𝑛. case 𝑛 of (inj 𝑖 _ ⇒ ℎ(𝑡 ◦ · · · ◦ 𝑡 
+
+| {z } 
+
+> 𝑖 times
+
+(𝑎 ))) 𝑖 ∈N
+
+That is, the 𝑖 -th branch is the finite term ℎ(𝑡 𝑖 (𝑎 )) , where 𝑡 𝑖 denotes 𝑖 -fold syntactic composition of 
+
+𝑡 .
+
+Models covered by the core calculus. Using primitive recursion and stream corecursion, the following models from Sec. 2 and 6 can be encoded in the core calculus, and are therefore PACAP by Thm. 2: 
+
+• Gaussian mixture clustering (Sec. 2.3). The number of clusters is drawn from a Poisson distribution (a natural number, hence a countable sum type). The function mapM then recurses over the finite list [1..k] , which is primitive recursion over N.
+
+• Step regression (Listing 3). The Poisson point process poissonPP produces an infinite stream of changepoints by stream corecursion (unfold with seed = current position). The function  
+
+> splice
+
+constructs a piecewise function by consuming this stream, also corecursively. 
+
+• Polynomial regression (Sec. 6). The degree is drawn from a Poisson distribution, and the coefficients are sampled by primitive recursion over the resulting finite list. 
+
+Models requiring direct verification. Recall from Listing 1 that the geometric distribution samples an IID Bernoulli sequence and returns the index of the first success. For simplicity, we take A = N
+
+(the monadic seed-splitting into N∗ described in Sec. 3.2 does not affect the argument). The stream iid (bernoulli p) is encoded by a 𝜆 -term that reads off coordinates: 𝜆𝜔.𝜆𝑛. (𝜔 𝑛 <
+
+𝑝 ), of type (N → real ) → ( N → { tt , ff }) , using the PAP comparison constant. (Recall that booleans {tt , ff } = Í𝑏 ∈ { 0,1} 1 are a special case of countable sums.) The functions findIndex and find perform unbounded searches and so cannot be expressed in the core calculus, which for simplicity has no general fixpoint operator. Consequently, Thm. 2 does not directly apply to programs built from these functions, including the geometric distribution (Listing 1) and the random walk model (Listing 2). Nonetheless, the PACAP property of these likelihoods can be verified directly; we illustrate with the geometric distribution. The geometric distribution partitions the seed space RN (up to a measure-zero set) into countably many analytic cylinders: for each 𝑖 ∈ N, the set {𝜔 | 𝜔 0 ≥
+
+𝑝, . . . , 𝜔 𝑖 −1 ≥ 𝑝, 𝜔 𝑖 < 𝑝 } is an analytic cylinder with support {0, . . . , 𝑖 }, since the non-strict  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:33
+
+constraints 𝑝 − 𝜔 𝑗 ≤ 0 are analytic and the strict constraint 𝜔 𝑖 < 𝑝 is absorbed into the open set 𝑉 
+
+(Def. 1). The uncovered set {𝜔 | ∀ 𝑛. 𝜔 𝑛 ≥ 𝑝 } has measure zero under any product measure with 
+
+𝑝 ∈ ( 0, 1). On each cylinder, the geometric distribution returns a fixed natural number, so any likelihood obtained by composing with a scoring function N → real is PACAP by definition. The same cylinder reasoning applies to any program whose likelihood factors through countably many deterministic branches. More generally, programs involving unbounded search go beyond our core calculus. Formal verification of almost-sure termination is an active research area (e.g. [3]). Combining such formal guarantees with PACAP-ness would require an ‘omega-PACAP’ notion, analogous to the 𝜔 -PAP spaces of [13], with recursion via chain-complete partial orders that are compatible with the PACAP structure. For the models considered in this paper, the geometric distribution and random walk involve unbounded search and require the direct cylinder partition verification illustrated above, while the clustering, step regression, and polynomial regression models use only bounded recursion or corecursion and are covered directly by Thm. 2. 
+
+C Additional Proofs and iMCMC Kernel C.1 iMCMC Kernel 
+
+One iteration of the iMCMC algorithm (Sec. 4.2) yields the kernel: 
+
+𝜅 (q, 𝐴 ) =
+
+∫
+
+> Y
+
+
+
+[𝐼 (q, p) ∈ ( 𝐴 ×Y) ∩ S] ˜𝛼 (q, p) + [( q, p) ∈ ( 𝐴 ×Y) ∩ S] ( 1− ˜𝛼 (q, p)) 
+
+
+
+𝑝 q (p)𝜇 Y (dp). (4) Informally, 𝜅 (q, 𝐴 ) tells us the probability of starting with a position q and returning a position in 
+
+𝐴 . The first term of the sum corresponds to accepting the proposed state 𝐼 (q, p), and the second term corresponds to rejecting it and returning the same position q.
+
+C.2 Proof of Prop. 3 
+
+Proof. By Prop. 1, it is enough to let 
+
+𝛼 (q, p) = 𝜁 (q′, p′)
+
+𝜁 (q, p) ·
+
+ d(Leb 2𝑛 ◦ ( Ψ(𝐿 ) )−1)
+
+dLeb 2𝑛 
+
+
+
+(q, p).
+
+Using that the leapfrog integrator Ψ is volume preserving (Prop. 2), i.e. d(Leb 2𝑛 ◦( Ψ(𝐿 ) ) −1 ) 
+
+> dLeb 2𝑛
+
+(q, p) = 1we can simplify 𝛼 :
+
+𝛼 (q, p) = 𝜁 (q′, p′)
+
+𝜁 (q, p) = exp (− 𝐻 (q′, p′)) 
+
+exp (− 𝐻 (q, p)) = 𝑙 (q′)𝜑 𝑛 (p′)
+
+𝑙 (q)𝜑 𝑛 (p) .
+
+□
+
+C.3 Reduction of 𝜓 to 𝜏 on Sites with 0 Gradient 
+
+Proposition 8. For 𝜖 𝑞 = sin 𝜃 and 𝜖 𝑝 = tan (𝜃 /2), the map 𝜓 restricted to any site 𝑎 with 𝐺 (q)𝑎 = 0
+
+equals the rotation 𝜏 .
+
+Proof. At such a site 𝜙 𝑃 𝑡 reduces to (𝑞, 𝑝 ) ↦ → ( 𝑞, 𝑝 − 𝑡𝑞 ), so composing 𝜓 = 𝜙 𝑃 𝜖 𝑝 ◦ 𝜙 𝑄 𝜖 𝑞 ◦ 𝜙 𝑃 𝜖 𝑝 on 
+
+(𝑞 𝑎 , 𝑝 𝑎 ) gives 𝑞 ′
+
+𝑝 ′
+
+
+
+=
+
+ 1 − 𝜖 𝑝 𝜖 𝑞 𝜖 𝑞 
+
+−𝜖 𝑝 (2 − 𝜖 𝑝 𝜖 𝑞 ) 1 − 𝜖 𝑝 𝜖 𝑞 
+
+  𝑞 𝑝 
+
+
+
+.
+
+Since 𝜖 𝑝 𝜖 𝑞 = tan (𝜃 /2) sin 𝜃 = 2 sin 2 (𝜃 /2) = 1 − cos 𝜃 , the diagonal entries equal cos 𝜃 and the top-right entry is sin 𝜃 . Moreover 𝜖 𝑝 (2 − 𝜖 𝑝 𝜖 𝑞 ) = tan (𝜃 /2)( 1 + cos 𝜃 ) = sin 𝜃 , so the bottom-left entry is − sin 𝜃 . The matrix is therefore exactly 𝜏 . □ 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:34 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+C.4 Proof of Prop. 5 
+
+Proof. 
+
+• Condition A3: Let 𝐼 ′ = 𝐹 ′ ◦ 𝜏 𝐿 , where 𝐹 ′ : R2 → R2 is the momentum flip: 𝐹 ′ (𝑞, 𝑝 ) = (𝑞, −𝑝 ).We get that 𝐼 ′ (𝑞, 𝑝 ) = (cos (𝐿𝜃 )𝑞 + sin (𝐿𝜃 )𝑝, sin (𝐿𝜃 )𝑞 − cos (𝐿𝜃 )𝑝 ). 𝐼 ′ is a measure preserving involution (with respect to Leb 2) on R2. Moreover, (𝜑 𝑋 × 𝜑 𝑌 )( 𝑞, 𝑝 ) = (𝜑 𝑋 × 𝜑 𝑌 )( 𝐼 ′ (𝑞, 𝑝 )) .
+
+• Condition A1: Let 𝑇 be a finite subset of A and let (q, p) ∈ S with 𝑣 (q, p) = 𝑇 . This means that 
+
+∪𝐿 𝑖 =0𝑣 𝑙 (q(𝑖 ) ) = 𝑇 , where (q(𝑖 ) , p(𝑖 ) ) = 𝜓 𝑖 (q, p). This implies that in order to compute 𝐺 (q(𝑖 ) )𝑇 
+
+one only needs to know q(𝑖 ) 
+
+> 𝑇
+
+. By induction we can prove that is enough to know q𝑇 , p𝑇 to compute q(𝑖 ) 
+
+> 𝑇
+
+and p(𝑖 ) 
+
+> 𝑇
+
+. So changing the values at any sites A \ 𝑇 in q, p would not change 
+
+(q(𝑖 ) 
+
+> 𝑇
+
+, p(𝑖 ) 
+
+> 𝑇
+
+). Therefore if 𝑣 (q, p) = 𝑇 then {( x, y) ∈ X × Y | ( x𝑇 , y𝑇 ) = (q𝑇 , p𝑇 )} ⊆ 𝑣 −1 (𝑇 ). We can deduce that there exists a measurable set 𝐶 𝑇 ∈ Σ𝑋 |𝑇 | ⊗ Σ𝑌 |𝑇 | such that 𝑣 −1 (𝑇 ) = {( q, p) | (q𝑇 , p𝑇 ) ∈ 𝐶 𝑇 }.
+
+• Condition A2: Consider the following maps with domain and codomain included in R𝑇 :
+
+𝜓 𝑇 = 𝜙 𝑃 𝑇 ◦ 𝜙 𝑄 𝑇 ◦ 𝜙 𝑃 𝑇 , 𝐹 𝑇 (q, p) = (q, −p)
+
+𝜙 𝑃 𝑇 (q, p) = (q, p − 𝜖 𝑝 q − 𝜖 𝑝 𝐺 𝑇 (q)) , 𝜙 𝑄 𝑇 (q, p) = (q + 𝜖 𝑞 p, p)
+
+Since 𝑣 (q, p) = 𝑇 then it is enough to know the value of q(𝐿 ) at sites 𝑇 to check if (𝐹 ◦𝜓 𝐿 )( q, p)
+
+is in S or not. Hence, the map 𝐼 𝑇 : 𝐶 𝑇 → 𝐶 𝑇 is well defined: 
+
+𝐼 𝑇 (q𝑇 , p𝑇 ) :=
+
+(
+
+(𝐹 𝑇 ◦ 𝜓 𝐿 𝑇 )( q𝑇 , p𝑇 ) if (𝐹 ◦ 𝜓 𝐿 )( q, p) ∈ S
+
+(q𝑇 , p𝑇 ) otherwise .
+
+It is easy to check that 𝐼 𝑇 is a measure preserving involution on 𝐶 𝑇 .Since 𝐺 (q(𝑖 ) )𝑗 = 0 for any 𝑗 ∈ A \ 𝑇 we get (q(𝐿 ) 
+
+> 𝑗
+
+, p(𝐿 ) 
+
+> 𝑗
+
+) = 𝐼 ′ (q𝑗 , p𝑗 ). Let (q′, p′) = 𝐼 (q, p),then by definition of 𝐼 , (q′ 
+
+> 𝑗
+
+, p′ 
+
+> 𝑗
+
+) = 𝐼 ′ (q𝑗 , p𝑗 ) for any 𝑗 ∈ A \ 𝑇 .
+
+□
+
+C.5 Proof of Prop. 6 
+
+Proof. 
+
+• Condition A3: On a site 𝑗 with 𝐺 (q(𝑖 ) )𝑗 = 0 for all 𝑖 , the kick 𝜙 𝑃 𝑡 (q, p) = (q, p − 𝑡𝐺 (q)) 
+
+is the identity on the 𝑗 -th coordinate, so 𝜓 = 𝜙 𝑃 𝜃 /2 ◦ 𝜙 𝑄,𝑃 𝜃 ◦ 𝜙 𝑃 𝜃 /2 acts there as its middle factor 𝜙 𝑄,𝑃 𝜃 , i.e. the clockwise rotation 𝜏 by 𝜃 . Let 𝐼 ′ = 𝐹 ′ ◦ 𝜏 𝐿 , where 𝐹 ′ (𝑞, 𝑝 ) = (𝑞, −𝑝 )
+
+is the momentum flip. Then 𝐼 ′ (𝑞, 𝑝 ) = (cos (𝐿𝜃 )𝑞 + sin (𝐿𝜃 )𝑝, sin (𝐿𝜃 )𝑞 − cos (𝐿𝜃 )𝑝 ) is a measure preserving involution (with respect to Leb 2) on R2. Since 𝜏 is a rotation we get 
+
+(𝜑 𝑋 × 𝜑 𝑌 )( 𝑞, 𝑝 ) = (𝜑 𝑋 × 𝜑 𝑌 )( 𝐼 ′ (𝑞, 𝑝 )) .
+
+• Condition A1: As in Sec. C.4, using that the integrator acts site-wise. Let 𝑇 be a finite subset of A and let (q, p) ∈ S with 𝑣 (q, p) = 𝑇 . Both 𝜙 𝑃 and 𝜙 𝑄,𝑃 act site-wise, coupled across sites only through the gradient 𝐺 , which is supported in 𝑇 . By induction it is enough to know q𝑇 , p𝑇 to compute q(𝑖 ) 
+
+> 𝑇
+
+and p(𝑖 ) 
+
+> 𝑇
+
+, so changing the values at sites A \ 𝑇 does not change (q(𝑖 ) 
+
+> 𝑇
+
+, p(𝑖 ) 
+
+> 𝑇
+
+). Therefore there exists a measurable set 𝐶 𝑇 ∈ Σ𝑋 |𝑇 | ⊗ Σ𝑌 |𝑇 | such that 
+
+𝑣 −1 (𝑇 ) = {( q, p) | ( q𝑇 , p𝑇 ) ∈ 𝐶 𝑇 }.
+
+• Condition A2: Let 𝜓 𝑇 , 𝐹 𝑇 , 𝜙 𝑃 𝑇 , 𝜙 𝑄,𝑃 𝑇 : R2|𝑇 | → R2|𝑇 | be the maps 
+
+𝜓 𝑇 = 𝜙 𝑃 𝑇 ◦ 𝜙 𝑄,𝑃 𝑇 ◦ 𝜙 𝑃 𝑇 , 𝐹 𝑇 (q, p) = (q, −p)
+
+𝜙 𝑃 𝑇 (q, p) = (q, p − 𝜃  
+
+> 2
+
+𝐺 𝑇 (q)) , 𝜙 𝑄,𝑃 𝑇 (q, p) = (cos 𝜃 q + sin 𝜃 p, − sin 𝜃 q + cos 𝜃 p). 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:35
+
+Both 𝜙 𝑃 𝑇 and 𝜙 𝑄,𝑃 𝑇 are volume preserving so 𝜓 𝑇 is also volume preserving. Since 𝑣 (q, p) = 𝑇 , it is enough to know q(𝐿 ) at sites 𝑇 to check whether (𝐹 ◦𝜓 𝐿 )( q, p) ∈ S, so the map 𝐼 𝑇 : 𝐶 𝑇 → 𝐶 𝑇 
+
+is well defined: 
+
+𝐼 𝑇 (q𝑇 , p𝑇 ) :=
+
+(
+
+(𝐹 𝑇 ◦ 𝜓 𝐿 𝑇 )( q𝑇 , p𝑇 ) if (𝐹 ◦ 𝜓 𝐿 )( q, p) ∈ S
+
+(q𝑇 , p𝑇 ) otherwise ,
+
+and it is a measure preserving involution on 𝐶 𝑇 . Since 𝐺 (q(𝑖 ) )𝑗 = 0 for any 𝑗 ∈ A \ 𝑇 , we get (q(𝐿 ) 
+
+> 𝑗
+
+, p(𝐿 ) 
+
+> 𝑗
+
+) = 𝐼 ′ (q𝑗 , p𝑗 ). Letting (q′, p′) = 𝐼 (q, p), by definition of 𝐼 we have (q′ 
+
+> 𝑗
+
+, p′ 
+
+> 𝑗
+
+) =
+
+𝐼 ′ (q𝑗 , p𝑗 ) for any 𝑗 ∈ A \ 𝑇 .
+
+□
+
+C.6 Proof of Prop. 7 
+
+Proof. Condition A3 holds by construction: 𝐼 ′ is chosen as a Leb 2-preserving involution with 
+
+(𝜑 𝑋 ×𝜑 𝑌 ) ◦ 𝐼 ′ = 𝜑 𝑋 ×𝜑 𝑌 . Condition A1 is proved by the same induction on the trajectory index as in Prop. 5: the gradient at each step is supported in 𝑇 = 𝑣 (q, p), so (q(𝑖 ) 
+
+> 𝑇
+
+, p(𝑖 ) 
+
+> 𝑇
+
+) depends only on (q𝑇 , p𝑇 )
+
+and 𝑣 −1 (𝑇 ) is a cylinder set. Condition A2 is built into the definition of 𝐼 : on the visited coordinates 𝐼 
+
+restricts to the finite-dimensional leapfrog involution 𝐼 𝑇 = 𝐹 𝑇 ◦ 𝜓 𝐿 𝑇 (measure-preserving by Prop. 2), and on each unvisited coordinate 𝐼 acts independently as 𝐼 ′. □
+
+D Framework B: Generalizing Framework A from Lazy HMC towards Lazy NUTS 
+
+In this section we present a slightly more general framework than the one presented in Sec. 4.4. This framework can still be seen as an instance of the iMCMC framework (Sec. 4.2). The idea is to have multiple involutions and to sample an extra variable that tells us which involution to use. One could see this as the GIST framework [6] which uses Gibbs sampling to tune the HMC hyperparameters to get locally adaptive HMC. NUTS [12] is also part of GIST. We also show in Sec. D.1 how we can construct lazyNUTS on rose trees as part of Framework B. 
+
+Tuning parameters random variable. We augment the state space S with the random variable 𝛽 
+
+which selects the involution to be applied on the state (q, p). Let (B, ΣB, 𝜇 B) be a 𝜎 -finite measure space and for any s ∈ S let 𝑝 (· | s) be the probability density with respect to 𝜇 B from which 𝛽 is sampled given s. Let 𝑊 (s, 𝛽 ) = 𝑤 (s)𝑝 (𝛽 | s) and Z = {( s, 𝛽 ) ∈ S × B | 𝑤 (s)𝑝 (𝛽 | s) > 0} equipped with 𝜎 -algebra ΣZ = {𝐴 ∩ Z | 𝐴 ∈ ΣS ⊗ ΣB } and measure 𝜇 Z = 𝜇 S × 𝜇 B. We will usually denote with s a position-momentum pair (q, p).
+
+Involutions. Our main involution 𝐼 is now defined on Z. We assume 𝐼 : Z → Z is measurable and we can write it as 𝐼 (s, 𝛽 ) = (𝑔 (s, 𝛽 ), ℎ (s, 𝛽 )) with measurable ℎ : Z → B and measurable bijection 
+
+𝑔 : Z → S with measurable inverse. Then, under certain assumptions on measurability and absolute continuity (see Prop. 13 in the Appendix), we have : 
+
+ d𝜇 Z ◦ 𝐼 −1
+
+d𝜇 Z
+
+
+
+(s, 𝛽 ) = ©«
+
+d
+
+
+
+𝜇 S ◦ 𝑔 −1   
+
+> 𝑡 −1
+> s(𝛽 )
+
+
+
+d𝜇 S
+
+ª®®¬
+
+(s)
+
+ d(𝜇 B ◦ 𝑡 −1 
+
+> s
+
+)
+
+d𝜇 B
+
+
+
+(𝛽 ), (5) where 𝑔 𝛽 (s) = 𝑔 (s, 𝛽 ) and 𝑡 s (𝛽 ) = ℎ(𝑔 𝛽 (s)−1, 𝛽 ).
+
+One iteration of a method from Framework B given position q, 𝑝 (· | q, p), 𝜇 𝑋 , 𝜇 𝑌 , 𝑙, 𝐼, 𝛼 does: (1) sample p ∼ 𝜇 Y lazily, sampling each component on-demand (2) sample 𝛽 ∼ 𝑝 (· | q, p)
+
+(3) let (q′, p′, 𝛽 ′) = 𝐼 (q, p, 𝛽 ) 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:36 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+(4) with probability min {1, 𝛼 (q, p, 𝛽 )} accept and return q′, otherwise reject and return q.Let 𝛼 (s, 𝛽 ) = 𝑊 (𝐼 (s,𝛽 ) )   
+
+> 𝑊 (s,𝛽 )
+
+ d𝜇 Z◦𝐼 −1
+
+> d𝜇 Z
+
+
+
+(s, 𝛽 ) , then by Prop. 1 we get the following. Proposition 9. The kernel resulting from Framework B is stationary with respect to the target 𝜈 .
+
+We will now focus on the particular case in which ℎ depends only on 𝛽 for any (s, 𝛽 ) ∈ Z, so 
+
+ℎ : B → B and 𝐼 (s, 𝛽 ) = (𝑔 (s, 𝛽 ), ℎ (𝛽 )) .
+
+Moreover, assume that for each 𝛽 , there exists 𝑣 𝛽 : S → P 𝑓 𝑖𝑛 (A) such that 𝑔 (· , 𝛽 ) is a measure preserving involution that satisfies the conditions stated in Conditions A1 to A3 from Sec. 4.4. Proposition 10. Under the extra assumptions for ℎ and 𝑔 and using the following acceptance ratio in Framework B: 
+
+𝛼 (s, 𝛽 ) = 𝑊 (𝐼 (s, 𝛽 )) 
+
+𝑊 (s, 𝛽 )(𝜑 𝑋 × 𝜑 𝑌 )( 𝑔 (s, ℎ −1 (𝛽 )) 𝑣 ℎ−1 (𝛽 ) (s) )(𝜑 𝑋 × 𝜑 𝑌 )( s𝑣 ℎ−1 (𝛽 ) (s) )
+
+ d(𝜇 B ◦ ℎ−1)
+
+d𝜇 B
+
+
+
+(𝛽 )
+
+we get a stationary kernel with respect to the target measure 𝜈 .
+
+Proof. From Eq. (5) and the fact that 𝐼 (s, 𝛽 ) = (𝑔 (s, 𝛽 ), ℎ (𝛽 )) we get: 
+
+ d𝜇 Z ◦ 𝐼 −1
+
+d𝜇 Z
+
+
+
+(s, 𝛽 ) = ©«
+
+d
+
+
+
+𝜇 S ◦ 𝑔 −1  
+
+> ℎ−1(𝛽 )
+
+
+
+d𝜇 S
+
+ª®®¬
+
+(s)
+
+ d(𝜇 B ◦ ℎ−1)
+
+d𝜇 B
+
+
+
+(𝛽 ).
+
+Since for each 𝛽 , there exists 𝑣 𝛽 : S → P 𝑓 𝑖𝑛 (A) such that 𝑔 (· , 𝛽 ) is a measure preserving involution that satisfies the conditions stated in Conditions A1 to A3 from Sec. 4.4, we can use Prop. 4: 
+
+ d𝜇 Z ◦ 𝐼 −1
+
+d𝜇 Z
+
+
+
+(s, 𝛽 ) = (𝜑 𝑋 × 𝜑 𝑌 )( 𝑔 (s, ℎ −1 (𝛽 )) 𝑣 ℎ−1 (𝛽 ) (s) )(𝜑 𝑋 × 𝜑 𝑌 )( s𝑣 ℎ−1 (𝛽 ) (s) )
+
+ d(𝜇 B ◦ ℎ−1)
+
+d𝜇 B
+
+
+
+(𝛽 ). (6) Then by Prop. 1 and Eq. (6) we get the following: 
+
+𝛼 (s, 𝛽 ) = 𝑊 (𝐼 (s, 𝛽 )) 
+
+𝑊 (s, 𝛽 )(𝜑 𝑋 × 𝜑 𝑌 )( 𝑔 (s, ℎ −1 (𝛽 )) 𝑣 ℎ−1 (𝛽 ) (s) )(𝜑 𝑋 × 𝜑 𝑌 )( s𝑣 ℎ−1 (𝛽 ) (s) )
+
+ d(𝜇 B ◦ ℎ−1)
+
+d𝜇 B
+
+
+
+(𝛽 ).
+
+□
+
+D.1 LazyNUTS: A No-U-Turn Sampler over Infinite Dimensional State Spaces 
+
+Tuning the hyperparameter 𝐿 of number of steps in the HMC algorithm is not trivial. If 𝐿 is too small, then we might get stuck in a local minimum and not explore the whole state space. However, if 𝐿 is too large, we might explore the same area multiple times in one iteration, which is not efficient. NUTS [12] aims to solve this by adaptively setting the path length 𝐿 using the doubling procedure with the no-U-turn criterion as the stopping condition. 
+
+The doubling procedure. Given the initial position-momentum state s, the idea is to construct a set of proposed states Cs from which we sample the next state according to the weights of the states in Cs. In order to preserve detailed balance, Cs is constructed by recursively doubling the trajectory either forwards in time (with probability 1 /2) or backwards in time (with probability 1/2) until the stopping conditions are met. 
+
+Property of Cs. The stopping condition must be chosen such that for any (s′) ∈ C s, the sets Cs
+
+and Cs′ are the same. That means the proposed states set resulting from the doubling procedure would be the same if we were to start with any other state in the set and do the doubling procedure.  
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:37
+
+The no-U-turn criterion. NUTS stops the doubling procedure if the trajectory constructed so far makes a U-turn. Let (x, y) ∈ R2𝑛 and (x′, y′) ∈ R2𝑛 be two states in the trajectory so that the direction is from (x, y) to (x′, y′), i.e. (x′, y′) can be obtained by performing some 𝑖 leapfrog steps from (x, y). The two states satisfy the U-turn criterion if: 
+
+(x′ − x) · y < 0 or (x′ − x) · y′ < 0.
+
+This tells that if we were to move a very tiny step forwards from x′ with momentum y′ or a very tiny step backwards from x with momentum y, we would end up reducing the distance between the positions x and x′. Therefore, a U-turn is made, so the doubling procedure should be stopped. This is checked for certain pairs of states, in such a way that detailed balance holds. For rigorous details and proof of correctness see [12]. 
+
+LazyNUTS setup. Let (B, ΣB, 𝜇 B) be the measure space of the integers together with the counting measure. The hyperparameter will be a number of leapfrog steps, so in this case 𝛽 will be 𝐿 . Writing NUTS as part of Framework B, 𝐿 represents how many leapfrog steps and in which direction we should go from the initial state in order to get to the proposed state. In practice this corresponds to performing the doubling procedure and choosing the next state according to the correct weights. Hence, 𝐿 would be sampled at the end of the doubling procedure from the categorical distribution defined by the weights of the states that are part of the set of proposed states. 
+
+Constructing the involution. Let 𝐼 (𝐿 ) = 𝐹 ◦𝜓 𝐿 be an involution with 𝜓 as defined in Sec. 4.5 together with the corresponding visited sites function 𝑣 𝐿 (q, p) = ∪𝐿 𝑖 =0𝑣 𝑙 (q(𝑖 ) ), where (q(𝑖 ) , p(𝑖 ) ) = 𝜓 𝑖 (q, p).The conditions in Conditions A1 to A3 hold for 𝐼 (𝐿 ) . Notice that the definition of 𝐼 (𝐿 ) also makes sense for 𝐿 < 0: 𝐼 (𝐿 ) = 𝐹 ◦ 𝜓 𝐿 = 𝜓 −𝐿 ◦ 𝐹 . Therefore, the involution 𝐼 (𝐿 ) represents 𝐿 leapfrog steps followed by negation of the momentum in the direction of the momentum if 𝐿 > 0, otherwise, we first negate the momentum and move 𝐿 leapfrog steps. Since (𝐼 (𝐿 ) )−1 = 𝐼 (− 𝐿 ) we get the involution 
+
+𝐼 : S × B → S × B with 𝐼 (q, p, 𝐿 ) = (𝐼 (𝐿 ) (q, p), −𝐿 ).
+
+Distribution of 𝐿 . Suppose we start with an initial state (q, p) and we perform the doubling procedure. Consider the set C(q,p) resulting from the doubling procedure with a suitable stopping condition. Let 𝑉 (C (q,p) ) = ∪(q′,p′ ) ∈ C (q,p) 𝑣 𝑙 (q′) be the set of visited sites in at least one position in 
+
+C(q,p) . We can define the distribution of L as: 
+
+𝑝 (𝐿 | q, p) = 𝑙 (q(𝐿 ) ) Î𝑗 ∈𝑉 ( C (q,p) ) 𝜑 𝑋 (q(𝐿 ) 
+
+> 𝑗
+
+)𝜑 𝑌 (p(𝐿 ) 
+
+> 𝑗
+
+)
+
+Í(q′,p′ ) ∈ C (q,p) 𝑙 (q′) Î𝑗 ∈𝑉 ( C (q,p) ) 𝜑 𝑋 (q′ 
+
+> 𝑗
+
+)𝜑 𝑌 (p′ 
+
+> 𝑗
+
+)
+
+if (q(𝐿 ) , p(𝐿 ) ) ∈ C (q,p) and 𝑝 (𝐿 | q, p) = 0 otherwise, where (q(𝐿 ) , p(𝐿 ) ) = 𝐼 (𝐿 ) (q, p).Proposition 11. Suppose the stopping condition is start-independent, i.e. Cs′ = Cs (hence 𝑉 (C s′ ) =
+
+𝑉 (C s)) for every s′ ∈ C s. Then the acceptance ratio from Prop. 10 is 1.
+
+Proof. Let ℎ(𝐿 ) = −𝐿 , then ℎ is measure preserving with respect to 𝜇 B. Let 𝐿 be such that 
+
+𝐼 (𝐿 ) (( q, p)) ∈ C (q,p) . The acceptance ratio from Prop. 10 can be written as: 
+
+𝛼 (s, 𝐿 ) = 𝑊 (𝐼 (s, 𝐿 )) 
+
+𝑊 (s, 𝐿 )(𝜑 𝑋 × 𝜑 𝑌 )( 𝐼 (𝐿 ) (s, ℎ −1 (𝐿 )) 𝑣 ℎ−1 (𝐿 ) (s) )(𝜑 𝑋 × 𝜑 𝑌 )( s𝑣 ℎ−1 (𝐿 ) (s) )
+
+=
+
+𝑙 (q(𝐿 ) )𝑙 (q) Î𝑗 ∈𝑉 ( C (q(𝐿 ) ,p(𝐿 ) ) ) 𝜑 𝑋 (q𝑗 )𝜑 𝑌 (p𝑗 )
+
+𝑙 (q)𝑙 (q(𝐿 ) ) Î𝑗 ∈𝑉 ( C (q,p) ) 𝜑 𝑋 (q(𝐿 ) 
+
+> 𝑗
+
+)𝜑 𝑌 (p(𝐿 ) 
+
+> 𝑗
+
+)
+
+Î𝑗 ∈𝑣 𝐿 (q,p) 𝜑 𝑋 (q(𝐿 ) 
+
+> 𝑗
+
+)𝜑 𝑌 (p(𝐿 ) 
+
+> 𝑗
+
+)
+
+Î𝑗 ∈𝑣 𝐿 (q,p) 𝜑 𝑋 (q𝑗 )𝜑 𝑌 (p𝑗 )
+
+= 1 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:38 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton
+
+The last step followed from the fact that 𝑣 𝐿 (q, p) ⊂ 𝑉 (C (q,p) ) and for any 𝑗 ∈ 𝑉 (C (q,p) ) \ 𝑣 𝐿 (q, p)
+
+we have 𝜑 𝑋 (q(𝐿 ) 
+
+> 𝑗
+
+)𝜑 𝑌 (p(𝐿 ) 
+
+> 𝑗
+
+) = 𝜑 𝑋 (q𝑗 )𝜑 𝑌 (p𝑗 ). Here we also use 𝑉 (C (q(𝐿 ) ,p(𝐿 ) ) ) = 𝑉 (C (q,p) ), which is the start-independence assumption. □
+
+This corresponds to the fact that there is no more accept/reject state after the doubling procedure (since we sample one of the states in the constructed set and then return it). One iteration of lazyNUTS does the following: 
+
+• sample p ∼ 𝜇 Y lazily, sampling each component on-demand 
+
+• construct C(q,p) using the doubling procedure with suitable stopping conditions. 
+
+• sample the next state ( ˜q, ˜p) from the distribution that assigns for each state (q′, p′) ∈ C (q,p)
+
+the (unnormalized) weight 𝑙 (q′) Î𝑗 ∈𝑉 ( C (q,p) ) 𝜑 𝑋 (q′ 
+
+> 𝑗
+
+)𝜑 𝑌 (p′ 
+
+> 𝑗
+
+)• return ˜ q.
+
+No-U-turn condition in LazyNUTS. To get a stopping condition of the doubling procedure similar to the no-U-turn condition we must take into consideration only finitely many dimensions on which to check if a U-turn was made. In the case in which we know the visited sites for a state, like in Sec. 4.7, the no-U-turn condition takes into consideration all the dimensions corresponding to the visited sites. However, if we do not have access to all the visited sites, we could still check if a U-turn was made using the sites for which the two positions have non-zero gradient. This is the stopping condition that we used in our implementation together with an upper bound 𝑀 on the number of proposed states, usually 𝑀 = 26.Prop. 11 assumes a start-independent set of proposed states. Our implementation checks the no-U-turn criterion only on sites with non-zero gradient and additionally caps the number of proposed states at 𝑀 . The gradient-restricted U-turn check is intended to preserve this invariance; the cap 𝑀 , however, is a practical termination (analogous to the maximum tree depth in standard NUTS implementations) and, like the maximum tree depth, is not guaranteed to preserve it. When 
+
+𝑀 does not bind, the construction coincides with the uncapped doubling for which the invariance holds. 
+
+E Technical Propositions 
+
+Proposition 12.  d(𝜇 S ◦ 𝐼 −1)
+
+d𝜇 S
+
+
+
+(q, p) =
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑣 (q,p) 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) ,
+
+(𝜇 S - almost everywhere), where (q′, p′) = 𝐼 (q, p).
+
+Proof. Let 𝑟 (q, p) =               
+
+> Î𝑖 ∈𝑣 (q,p)𝜑 𝑋 (q′
+> 𝑖 )𝜑 𝑌 (p′
+> 𝑖 )
+> Î𝑖 ∈𝑣 (q,p)𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 )
+
+, where (q′, p′) = 𝐼 (q, p).Let I be a finite subset of A, 𝐵 ∈ ΣR2|I| and let 𝐴 = {( q, p) ∈ S | ( qI, pI ) ∈ 𝐵 }, where qI are the values of the tree q at nodes I. Our aim is to prove that for all such finite cylinder sets 𝐴 we have: 
+
+(𝜇 S ◦ 𝐼 −1)( 𝐴 ) =
+
+∫
+
+> 𝐴
+
+𝑟 (s)𝜇 S (ds). (7) We can partition the state space S = ∪𝑇 ∈ P 𝑓 𝑖𝑛 ( A ) S𝑇 , where S𝑇 = {( q, p) ∈ S | 𝑣 (q, p) = 𝑇 }.We will first fix 𝑇 ∈ P 𝑓 𝑖𝑛 (A) and show that Eq. (7) holds for 𝐴 ∩ S𝑇 . Using property A1 we can write S𝑇 = {( q, p) ∈ S | ( q𝑇 , p𝑇 ) ∈ 𝐶 } for some set 𝐶 ∈ ΣR2|𝑇 | .Let J = I ∪ 𝑇 and 𝑛 = |J | . There exists 𝐷 ∈ ΣR2𝑛 such that 𝐴 ∩ S𝑇 = {( q, p) ∈ S | ( qJ, pJ ) ∈ 
+
+𝐷 }. From property A2 we have that 𝐼 −1 (𝐴 ∩ S𝑇 ) = {( q, p) ∈ S | ( qJ, pJ ) ∈ 𝑓 −1 (𝐷 )} , where 
+
+𝑓 : R2𝑛 → R2𝑛 is given by 𝑓 (q, p)𝑇 = 𝐼 𝑇 (q, p) and 𝑓 (q, p)𝑗 = 𝐼 ′ (q𝑗 , p𝑗 ) for any 𝑗 ∈ J \ 𝑇 . Therefore: 
+
+(𝜇 S ◦ 𝐼 −1)( 𝐴 ∩ S𝑇 ) = (𝜇 𝑋 𝑛 × 𝜇 𝑌 𝑛 )( 𝑓 −1 (𝐷 )) 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.
+
+LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:39 
+
+Notice that for q, p ∈ 𝐴 ∩ S𝑇 , 𝑟 (q, p) only depends on the values (q𝑇 , p𝑇 ). Using Fubini/Tonelli we get: 
+
+∫
+
+> 𝐴 ∩S𝑇
+
+𝑟 (s)𝜇 S (ds) =
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝐷 ]
+
+Î𝑖 ∈𝑇 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑇 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) 𝜇 𝑋 𝑛 (dqJ )𝜇 𝑌 𝑛 (dpJ )
+
+From properties A2, A3 if 𝑣 (q, p) = 𝑇 we have that 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+) = 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) for any 
+
+𝑖 ∈ A \ 𝑇 . Hence, 
+
+∫
+
+> 𝐴 ∩S𝑇
+
+𝑟 (s)𝜇 S (ds) =
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝐷 ]
+
+Î𝑖 ∈𝑇 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈𝑇 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) 𝜇 𝑋 𝑛 (dqJ )𝜇 𝑌 𝑛 (dpJ )
+
+=
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝐷 ]
+
+Î𝑖 ∈ J 𝜑 𝑋 (q′ 
+
+> 𝑖
+
+)𝜑 𝑌 (p′ 
+
+> 𝑖
+
+)
+
+Î𝑖 ∈ J 𝜑 𝑋 (q𝑖 )𝜑 𝑌 (p𝑖 ) 𝜇 𝑋 𝑛 (dqJ )𝜇 𝑌 𝑛 (dpJ )
+
+=
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝐷 ] (𝜑 𝑋 𝑛 × 𝜑 𝑌 𝑛 )( 𝑓 (qJ, pJ )) 
+
+𝜑 𝑋 𝑛 (qJ )𝜑 𝑌 𝑛 (pJ ) 𝜇 𝑋 𝑛 (dqJ )𝜇 𝑌 𝑛 (dpJ )
+
+=
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝐷 ] ( 𝜑 𝑋 𝑛 × 𝜑 𝑌 𝑛 )( 𝑓 (qJ, pJ )) Leb 2𝑛 (dqJ, dpJ )
+
+=
+
+∫
+
+> R2𝑛
+
+[( qJ, pJ ) ∈ 𝑓 −1 (𝐷 )] ( 𝜑 𝑋 𝑛 × 𝜑 𝑌 𝑛 )( qJ, pJ )Leb 2𝑛 (dqJ, dpJ )
+
+= (𝜇 𝑋 𝑛 × 𝜇 𝑌 𝑛 )( 𝑓 −1 (𝐷 )) 
+
+The second to last step is a change of variable using the measure preserving bijection 𝑓 −1 (as both 𝐼 𝑇 and 𝐼 ′ are measure preserving involutions) with respect to the Lebesgue measure on R2𝑛 .Finally, 
+
+(𝜇 S ◦ 𝐼 −1)( 𝐴 ) = (𝜇 S ◦ 𝐼 −1)(∪ 𝑇 ∈ P 𝑓 𝑖𝑛 ( A ) 𝐴 ∩ S𝑇 )
+
+= 𝜇 S (⊎ 𝑇 ∈ P 𝑓 𝑖𝑛 ( A ) 𝐼 −1 (𝐴 ∩ S𝑇 )) 
+
+=∑︁   
+
+> 𝑇 ∈ P 𝑓 𝑖𝑛 ( A )
+
+𝜇 S (𝐼 −1 (𝐴 ∩ S𝑇 )) 
+
+=∑︁   
+
+> 𝑇 ∈ P 𝑓 𝑖𝑛 ( A )
+
+∫
+
+> 𝐴 ∩S𝑇
+
+𝑟 (s)𝜇 S (ds)
+
+=
+
+∫
+
+> 𝐴
+
+𝑟 (s)𝜇 S (ds).
+
+The sets for which this equality holds is a 𝜆 -system which contains the finite cylinder sets; the finite cylinder sets form a 𝜋 -system generating ΣS, so by the 𝜋 -𝜆 theorem the equality holds for all 
+
+𝐴 ∈ ΣS.
+
+□
+
+Proposition 13. Let (𝑋, Σ𝑋 , 𝜇 𝑋 ) and (𝑌, Σ𝑌 , 𝜇 𝑌 ) be two 𝜎 -finite measure spaces and let (𝑍, Σ𝑍 , 𝜇 𝑍 )
+
+be the product measure space with 𝑍 = 𝑋 × 𝑌 . Let 𝑔 : 𝑋 × 𝑌 → 𝑋 and ℎ : 𝑋 × 𝑌 → 𝑌 and involution 
+
+𝑓 : 𝑋 × 𝑌 → 𝑋 × 𝑌 with 𝑓 (𝑥, 𝑦 ) = (𝑔 (𝑥, 𝑦 ), ℎ (𝑥, 𝑦 )) be measurable maps. Let 𝑔 𝑦 : 𝑋 → 𝑋 with 
+
+𝑔 𝑦 (𝑥 ) = 𝑔 (𝑥, 𝑦 ) be a measurable bijection with measurable inverse for each 𝑦 ∈ 𝑌 and assume that the Radon-Nikodym derivative d(𝜇 𝑋 ◦𝑔 −1  
+
+> 𝑦 )
+> d𝜇 𝑋
+
+(𝑥 ) exists (for all 𝑦 ∈ 𝑌 ) and is measurable (as a map from 𝑍 
+
+to R≥0). Then we have the following: (1) The function 𝑡 𝑥 (𝑦 ) = ℎ(𝑔 −1 
+
+> 𝑦
+
+(𝑥 ), 𝑦 ) is a bijection on 𝑌 for each 𝑥 ∈ 𝑋 
+
+Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026. 298:40 Maria-Nicoleta Crăciun, C.-H. Luke Ong, Tom Schrijvers, and Sam Staton 
+
+(2) Assume the maps (𝑥, 𝑦 ) ↦ → 𝑡 𝑥 (𝑦 ) and (𝑥, 𝑦 ) ↦ → 𝑡 −1 
+
+> 𝑥
+
+(𝑦 ) are Σ𝑍 -measurable and the Radon-Nikodym derivative 
+
+ d(𝜇 𝑌 ◦𝑡 −1 
+
+> 𝑥 )
+> d𝜇 𝑌
+
+
+
+(𝑦 ) exists (for all 𝑥 ∈ 𝑋 ) and is measurable (as a map from 𝑍 
+
+to R≥0). Then the following Radon-Nikodym derivative exists: 
+
+ d(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)
+
+d𝜇 𝑋 × 𝜇 𝑌 
+
+
+
+(𝑥, 𝑦 ) =
+
+d(𝜇 𝑋 ◦ 𝑔 −1   
+
+> 𝑡 −1
+> 𝑥 (𝑦 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑥 )
+
+ d(𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑥
+
+)
+
+d𝜇 𝑌 
+
+
+
+(𝑦 ).
+
+(3) If ℎ(𝑥, 𝑦 ) = ℎ(𝑦 ) for all (𝑥, 𝑦 ) ∈ 𝑍 then the Radon-Nikodym derivative simplifies to: 
+
+ d(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)
+
+d𝜇 𝑋 × 𝜇 𝑌 
+
+
+
+(𝑥, 𝑦 ) =
+
+d(𝜇 𝑋 ◦ 𝑔 −1  
+
+> ℎ−1(𝑦 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑥 )
+
+ d(𝜇 𝑌 ◦ ℎ−1)
+
+d𝜇 𝑌 
+
+
+
+(𝑦 ).
+
+Proof. (1) Notice that since 𝑓 is an involution it follows that it is bijective. Fix 𝑥 ∈ 𝑋 .To prove that 𝑡 𝑥 is injective let 𝑡 𝑥 (𝑦 1) = 𝑡 𝑥 (𝑦 2). Since 𝑔 (𝑔 −1 
+
+> 𝑦 1
+
+(𝑥 ), 𝑦 1) = 𝑥 then 𝑓 (𝑔 −1 
+
+> 𝑦 1
+
+(𝑥 ), 𝑦 1) =
+
+(𝑥, ℎ (𝑔 −1 
+
+> 𝑦 1
+
+(𝑥 ), 𝑦 1)) = (𝑥, 𝑡 𝑥 (𝑦 1)) . Similarly, 𝑓 (𝑔 −1 
+
+> 𝑦 2
+
+(𝑥 ), 𝑦 2) = (𝑥, 𝑡 𝑥 (𝑦 2)) . Since (𝑥, 𝑡 𝑥 (𝑦 1)) =
+
+(𝑥, 𝑡 𝑥 (𝑦 2)) we get 𝑓 (𝑔 −1 
+
+> 𝑦 1
+
+(𝑥 ), 𝑦 1) = 𝑓 (𝑔 −1 
+
+> 𝑦 2
+
+(𝑥 ), 𝑦 2). By the injectivity of 𝑓 we get that 𝑦 1 = 𝑦 2,so 𝑡 𝑥 is injective. Let 𝑦 ∈ 𝑌 . Since 𝑓 is surjective, there exists (𝑢, 𝑧 ) ∈ 𝑋 × 𝑌 such that 𝑓 (𝑢, 𝑧 ) = (𝑥, 𝑦 ). This implies 𝑔 (𝑢, 𝑧 ) = 𝑥 . Then 𝑡 𝑥 (𝑧 ) = ℎ(𝑔 −1 
+
+> 𝑧
+
+(𝑥 ), 𝑧 ) = ℎ(𝑢, 𝑧 ) = 𝑦 . Therefore, 𝑡 𝑥 is surjective. (2) Let 𝐴 ∈ Σ𝑋 and 𝐵 ∈ Σ𝑌 . It is enough to show that for any such 𝜇 𝑍 -measurable set 𝐴 × 𝐵 we have: 
+
+(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)( 𝐴 × 𝐵 ) =
+
+∫
+
+> 𝐴 ×𝐵
+
+d(𝜇 𝑋 ◦ 𝑔 −1   
+
+> 𝑡 −1
+> 𝑥 (𝑦 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑥 )
+
+ d(𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑥
+
+)
+
+d𝜇 𝑌 
+
+
+
+(𝑦 ) ( 𝜇 𝑋 × 𝜇 𝑌 )( d𝑥, d𝑦 )
+
+for all such sets 𝐴 × 𝐵 ∈ Σ𝑍 .
+
+(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)( 𝐴 × 𝐵 ) =
+
+∫
+
+> 𝑌
+
+∫
+
+> 𝑋
+
+[𝑔 (𝑥, 𝑦 ) ∈ 𝐴 ] [ ℎ(𝑥, 𝑦 ) ∈ 𝐵 ]𝜇 𝑋 (d𝑥 )𝜇 𝑌 (d𝑦 )
+
+=
+
+∫
+
+> 𝑌
+
+∫ 
+
+> 𝑋
+
+[𝑔 𝑦 (𝑥 ) ∈ 𝐴 ] [ ℎ(𝑥, 𝑦 ) ∈ 𝐵 ]𝜇 𝑋 (d𝑥 )
+
+
+
+𝜇 𝑌 (d𝑦 )
+
+Performing a change of variable 𝑢 = 𝑔 𝑦 (𝑥 ) and using the existence of 
+
+ d(𝜇 𝑋 ◦𝑔 −1 
+
+> 𝑦 )
+> d𝜇 𝑋
+
+
+
+:
+
+(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)( 𝐴 × 𝐵 ) =
+
+∫
+
+> 𝑌
+
+∫ 
+
+> 𝑋
+
+[𝑢 ∈ 𝐴 ] [ ℎ(𝑔 −1 
+
+> 𝑦
+
+(𝑢 ), 𝑦 ) ∈ 𝐵 ] ( 𝜇 𝑋 ◦ 𝑔 −1 
+
+> 𝑦
+
+)( d𝑢 )
+
+
+
+𝜇 𝑌 (d𝑦 )
+
+=
+
+∫
+
+> 𝑌
+
+∫
+
+> 𝑋
+
+[𝑢 ∈ 𝐴 ] [ ℎ(𝑔 −1 
+
+> 𝑦
+
+(𝑢 ), 𝑦 ) ∈ 𝐵 ] d(𝜇 𝑋 ◦ 𝑔 −1 
+
+> 𝑦
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑢 )𝜇 𝑋 (d𝑢 )
+
+!
+
+𝜇 𝑌 (d𝑦 )
+
+=
+
+∫
+
+> 𝑌
+
+∫
+
+> 𝐴
+
+[𝑡 𝑢 (𝑦 ) ∈ 𝐵 ] d(𝜇 𝑋 ◦ 𝑔 −1 
+
+> 𝑦
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑢 )𝜇 𝑋 (d𝑢 )
+
+!
+
+𝜇 𝑌 (d𝑦 )
+
+Swapping the integrals (using Tonelli), then performing a change of variables 𝑧 = 𝑡 𝑢 (𝑦 ) and using the existence of 
+
+ d(𝜇 𝑌 ◦𝑡 −1 
+
+> 𝑢 )
+> d𝜇 𝑌
+
+
+
+we get: 
+
+> Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.
+
+LazyHMC: Hamiltonian Monte Carlo Simulation for Lazy, Infinite Dimensional Probabilistic Programs 298:41 
+
+(( 𝜇 𝑋 × 𝜇 𝑌 ) ◦ 𝑓 −1)( 𝐴 × 𝐵 ) =
+
+∫
+
+> 𝐴
+
+∫
+
+> 𝑌
+
+[𝑧 ∈ 𝐵 ]
+
+d(𝜇 𝑋 ◦ 𝑔 −1    
+
+> 𝑡 −1
+> 𝑢 (𝑧 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑢 )( 𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑢
+
+)( d𝑧 )
+
+!
+
+𝜇 𝑋 (d𝑢 )
+
+=
+
+∫
+
+> 𝐴
+
+∫
+
+> 𝑌
+
+[𝑧 ∈ 𝐵 ]
+
+d(𝜇 𝑋 ◦ 𝑔 −1    
+
+> 𝑡 −1
+> 𝑢 (𝑧 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑢 )
+
+ d(𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑢
+
+)
+
+d𝜇 𝑌 
+
+
+
+(𝑧 )𝜇 𝑌 (d𝑧 )
+
+!
+
+𝜇 𝑋 (d𝑢 )
+
+=
+
+∫
+
+> 𝐴
+
+∫
+
+> 𝐵
+
+d(𝜇 𝑋 ◦ 𝑔 −1    
+
+> 𝑡 −1
+> 𝑢 (𝑧 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑢 )
+
+ d(𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑢
+
+)
+
+d𝜇 𝑌 
+
+
+
+(𝑧 )𝜇 𝑌 (d𝑧 )𝜇 𝑋 (d𝑢 )
+
+=
+
+∫
+
+> 𝐴
+
+∫
+
+> 𝐵
+
+d(𝜇 𝑋 ◦ 𝑔 −1   
+
+> 𝑡 −1
+> 𝑥 (𝑦 )
+
+)
+
+d𝜇 𝑋 
+
+!
+
+(𝑥 )
+
+ d(𝜇 𝑌 ◦ 𝑡 −1 
+
+> 𝑥
+
+)
+
+d𝜇 𝑌 
+
+
+
+(𝑦 )𝜇 𝑌 (d𝑦 )𝜇 𝑋 (d𝑥 )
+
+(3) If ℎ(𝑥, 𝑦 ) = ℎ(𝑦 ) then 𝑡 𝑥 = ℎ so the result follows directly from the previous part. 
+
+□
+
+Received 2026-02-19; accepted 2026-05-13 
+
+Proc. ACM Program. Lang., Vol. 10, No. ICFP, Article 298. Publication date: August 2026.

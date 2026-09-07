@@ -1,0 +1,542 @@
+Title: Exact Global MCMC with Denoising Diffusion
+
+URL Source: https://arxiv.org/pdf/2609.00279v1
+
+Published Time: Wed, 02 Sep 2026 00:13:48 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# EXACT GLOBAL MCMC WITH DENOISING DIFFUSION 
+
+Mitch Hill 
+
+mitchhill128@gmail.com 
+
+# ABSTRACT 
+
+This work shows that diffusion models learned with standard denoising loss can provide effective global MCMC proposals for complex high-dimensional target densities. The method is motivated by the observation that sequentially applying a forward and reverse diffusion process defines a Markov chain with a target stationary distribution for an ideal denoiser trained on samples of the target distribution. This observation can be made exact for any denoiser by applying a Metropolis-Hastings step whose acceptance ratio includes the density of the forward and reverse paths of a discrete time SDE approximation. We therefore propose to train denoising diffusion models on locally convergent MALA samples to learn global MCMC proposals. We call the composition of the global denoiser-based path sampler and a local MALA sampler Denoising Diffusion Monte Carlo (DDMC). Experiments show that DDMC can provide global proposals with high acceptance across a variety of complex target densities. Our results offer preliminary evidence that the established scaling behavior of standard diffusion training transfers directly to exact sampling from high-dimensional unnormalized densities. 
+
+# 1 Introduction 
+
+An ideal diffusion model is already an MCMC sampler. If X is a draw from a target density q, then noising it to 
+
+Y = X + σZ and denoising Y with an ideal reverse process returns a fresh draw from q: the noise-to-denoise map leaves the target invariant. At large σ this process can move freely between regions of the state space that no local sampler can connect. Sampling from unnormalized densities is a core computational problem in Bayesian inference and the physical sciences. Developing samplers that efficiently cover a multi-modal state space while closely adhering to the target density is a central challenge in this setting. Since a trained diffusion model cannot be ideal, a practical sampler needs a way to account for modeling and discretization error in the reverse path. This can be accomplished by applying a natural Metropolis–Hastings (MH) step on the joint density of the discrete diffusion path, which makes the chain exact for any model of the reverse path. An inaccurate model costs acceptance, but the chain remains exact. We investigate training the reverse path model using a standard denoising diffusion loss, which in the ideal case learns a score model which fulfills exact transport from noised to the target density and has been found to be effective in many applications. Obtaining data for denoiser training raises a difficulty. Exact samples from the target are often unavailable, since producing them is the problem being solved. However, locally converged samples are easy to obtain: Metropolis-adjusted Langevin algorithm (MALA) chains launched from many initializations equilibrate within basins at low cost, even though the resulting corpus could weight those basins incorrectly. The same MH step that absorbs model error also absorbs this corpus bias. The path kernel and MALA are then natural partners: the diffusion path proposes global moves between basins that MALA cannot make, while the interleaved MALA steps continually return the chain to the distribution the denoiser was trained on, and in the limit of zero path acceptance the sampler degrades gracefully to plain MALA rather than failing. We call the composed sampler Denoising Diffusion Monte Carlo (DDMC). This training choice is where our approach departs from prior learned samplers, which predominantly train from the unnormalized density itself with variational path-space objectives [1–4]. Metropolis–Hastings corrections of learned diffusion paths, trained variationally, were proposed concurrently and independently by MAD-Path [5] and SPS [6]; we discuss the relationship in Section 3. Variational objectives carry two structural limits: the training signal comes from the model’s own trajectories, so regions the model does not visit provide no gradient, and the objective differentiates arXiv:2609.00279v1 [stat.ML] 31 Aug 2026 Exact Global MCMC with Denoising Diffusion through the sampling trajectory, so training memory grows with the number of noise levels. Denoising regression has neither limit and simply requires pairs of clean and noisy data. Sample-based learning is effective here because data is not the binding constraint: the unnormalized density is a data generator, and cheap, parallel local MCMC manufactures unlimited training samples. Denoising training is also the recipe with the best-established scaling behavior in machine learning [7–9]. Our experiments support this design across Gaussian mixtures, particle potentials, and a 550 -dimensional Bayesian neural network posterior. DDMC matches the energy distribution of ground-truth samples at the measured estimator floor on every target, recovers correct mode weights from training corpora whose weights are significantly biased, and attains the best energy distances among diffusion-based samplers on the standard particle benchmarks. On the 
+
+550 -dimensional posterior, a 305 M-parameter denoiser yields global proposals accepted at rates of 0.13 to 0.28 , and a cold-started chain reaches the equilibrium energy region within one or two proposal rounds. Our contributions are as follows: • DDMC , an exact MCMC sampler whose global proposals come from a standard denoising diffusion model, composed with local MALA steps, requiring no change to the diffusion modeling or learning formulation. • A practical end-to-end recipe : corpus generation from cold starts via calibrated gradient ascent and MALA, moment calibration of the reverse kernel variances, a single-proposal acceptance diagnostic for monitoring training, and an i-SIR extension that amplifies acceptance and sampling efficiency by exploiting modern GPU throughput. • Empirical validation on targets up to d = 550 , including exactness at measured ground-truth floors, repair of mis-weighted training corpora, and accurate modeling of the LJ-55 equilibrium, a benchmark on which prior diffusion-based samplers degrade sharply or fail to train. 
+
+# 2 Background 
+
+2.1 Sampling from Unnormalized Densities 
+
+We consider the problem of drawing samples from a target density q on Rd that is known only up to a normalizing constant. We assume we can evaluate a function ˜q(x) which satisfies 
+
+q(x) = ˜q(x)
+
+Z , Z =
+
+Z
+
+> Rd
+
+˜q(x) d x, (1) where the constant Z is intractable. We further assume access to the gradient ∇ log ˜ q = ∇ log q, often called the score, which is unaffected by the unknown constant. This setting covers Bayesian posteriors, where Z is the marginal likelihood, and Boltzmann distributions ˜q(x) = e−U (x) from statistical physics, where Z is the partition function. 
+
+2.2 Metropolis–Hastings Correction and Local Samplers 
+
+Markov chain Monte Carlo (MCMC) draws samples from q by simulating a Markov chain whose stationary distribution is q. Given any proposal kernel R(x′ | x), the Metropolis–Hastings (MH) correction accepts a proposed move x → x′
+
+with probability 
+
+α(x, x ′) = min 
+
+
+
+1, ˜q(x′) R(x | x′)˜q(x) R(x′ | x)
+
+
+
+, (2) and otherwise leaves the chain at x [10, 11]. The ratio requires only the unnormalized density, and the corrected kernel satisfies detailed balance with respect to q, so q is stationary for any choice of R. The proposal affects how quickly the chain mixes. The Metropolis-adjusted Langevin algorithm (MALA) [12] uses the proposal 
+
+x′ = x + h2
+
+2 ∇ log q(x) + h ξ, ξ ∼ N (0 , I d), (3) that is, Rh(x′ | x) = N
+
+
+
+x′; x + h2 
+
+> 2
+
+∇ log q(x), h 2Id
+
+
+
+, a single Euler–Maruyama step of the overdamped Langevin diffusion, followed by the MH correction (2). In this parameterization h is the standard deviation of the proposal noise, and for well-tuned MALA it sits near the scale of the smallest local standard deviation of the target, so each move is small relative to the global structure of the target. As a result MALA mixes well within a single mode but must cross low-density barriers through many small steps, and the expected time to move between well-separated modes grows exponentially with the barrier height. Gradient-based samplers with longer coherent moves, such as Hamiltonian Monte Carlo [13, 14] and NUTS [15], improve local exploration but share the same limitation: their trajectories follow the energy landscape and do not cross regions of negligible density, so multimodal targets remain out of reach. 2Exact Global MCMC with Denoising Diffusion 
+
+2.3 Denoising Diffusion Models 
+
+We summarize denoising diffusion in the EDM formulation of Karras et al. [16]. Diffusion models operate on the family of smoothed densities qσ = q ∗ N (0 , σ 2Id) across noise levels σ ∈ [σmin , σ max ], where qσmin ≈ q and qσmax is close to the tractable Gaussian N (0 , σ 2max Id) when σmax is large relative to the scale of the data. A denoiser network 
+
+Dθ (y, σ ) is trained by denoising regression on samples X ∼ q:
+
+L(θ) = Eσ
+
+h
+
+λ(σ) EX∼q, Z ∼N (0 ,I d) ∥Dθ (X + σZ, σ ) − X∥2i
+
+, (4) with a weighting λ(σ) and a training distribution over noise levels. The minimizer of (4) is the posterior mean 
+
+D∗(y, σ ) = E[X | X + σZ = y], which is related to the score of the smoothed density by Tweedie’s identity [17], 
+
+∇y log qσ (y) = D∗(y, σ ) − yσ2 , (5) so a trained denoiser estimates the score of qσ at every noise level simultaneously. Training is a simulation-free regression where each update noises a data sample at a single level. 
+
+SDE Sampling and forward/backward path densities. Samples can be generated with a discrete-time SDE approximation in the style of DDPM ancestral sampling [18, 19], whose path densities are available in closed form. Let 
+
+x0, x 1, . . . , x T be states at the ladder levels σmin = σ0 < σ 1 < · · · < σ T = σmax and let ∆2 
+
+> k
+
+= σ2 
+
+> k
+
+− σ2 
+
+> k−1
+
+denote the variance added at level k. Continuous-time denoising training enables the use of any noise schedule {σk}Tk=0 and any number of steps T . The forward process perturbs a clean sample x0 with independent Gaussian increments, 
+
+p(xk | xk−1) = N  xk; xk−1, ∆2
+
+> k
+
+Id
+
+ , (6) so that a draw x0 ∼ q followed by the forward increments (6) has the joint path density 
+
+p(x0: T ) = q(x0) p(x1: T | x0) = q(x0)
+
+> T
+
+Y
+
+> k=1
+
+p(xk | xk−1). (7) The increments telescope, so xk | x0 ∼ N  x0, (σ2 
+
+> k
+
+− σ20 ) Id
+
+: for x0 ∼ q the forward process reproduces the smoothed marginals, xk ∼ qσk up to the negligible σ0 = σmin .Generation starts from xT ∼ N (0 , σ 2max Id) and runs the ladder in reverse using Gaussian transition kernels built from the denoiser, with one evaluation of Dθ per level, 
+
+pθ (xk−1 | xk) = N  xk−1; μθ (xk, σ k), τ 2 
+
+> k
+
+Id
+
+ , μθ (xk, σ k) = αkxk + (1 − αk) Dθ (xk, σ k), (8) with αk = σ2
+
+> k−1
+
+/σ 2
+
+> k
+
+. The mean μθ is the exact posterior mean of xk−1 given xk when the unknown clean sample is replaced by the denoiser estimate Dθ (xk, σ k). The reverse variance τ 2 
+
+> k
+
+is a modeling choice: the DDPM posterior variance τ 2 
+
+> k
+
+= σ2
+
+> k−1
+
+∆2
+
+> k
+
+/σ 2 
+
+> k
+
+and the forward-matched variance τ 2 
+
+> k
+
+= ∆ 2 
+
+> k
+
+are standard, and any positive choice yields a valid sampler. The backward path density is 
+
+pθ (x0: T ) = N  xT ; 0 , σ 2max Id
+
+ TY
+
+> k=1
+
+pθ (xk−1 | xk). (9) We highlight the property that makes these objects useful beyond generation: both the forward path density (7) and the backward path density (9) are products of Gaussian kernels whose means and variances are available in closed form, so the joint density of any given trajectory can be evaluated exactly in either direction with T evaluations of Dθ. No marginal density qσk ever needs to be computed. 
+
+# 3 Method 
+
+The approach in this work is motivated by an observation about the properties of an ideal diffusion model. Consider a target density q over Rd and let qσ be the convolution of q with the Gaussian N (0 , σ 2Id). A diffusion model defines a conditional distribution ρ(x|y, σ ) over endpoints x of the reverse diffusion path starting from y at noise level σ. The diffusion model is ideal if it transports samples from qσ exactly to q: if Y ∼ qσ and ˆX ∼ ρ(·| Y, σ ), then ˆX ∼ q. The distribution ρ(·| y, σ ) is a density on Rd when the reverse path is an SDE and is a Dirac delta when it is a deterministic ODE. Let X ∼ q. Sampling a forward path endpoint Y = X + σZ where Z ∼ N (0 , I d) yields Y ∼ qσ . Sampling 3Exact Global MCMC with Denoising Diffusion the reverse path endpoint ˆX ∼ ρ(·| Y, σ ) defines a Markov transition X → ˆX. If ρ is the conditional distribution of an ideal diffusion model, then ˆX ∼ q. Therefore, for any σ > 0, X → ˆX defines an ergodic Markov chain with stationary distribution q, where ergodicity follows from the fact that the forward pass has full support and the reverse paths preserve support in both the SDE case and ODE case under mild regularity conditions (see Appendix A for more details). Large values of σ should lead to global transitions which are capable of crossing the energy barriers which prevent local samplers from mixing between modes. This natural connection between diffusion modeling and Markov chain sampling prompts the question which is the focus of this work: can denoising diffusion models be used as MCMC samplers which enable efficient global proposals? A variety of prior works have adopted ideas from diffusion modeling to propose diffusion-inspired samplers that differ from the standard denoising diffusion setting [1–4, 20–25]. In this work, we show that the standard version of denoising diffusion typical of image modeling and related applications can provide an exact and powerful MCMC sampler without any changes to the modeling or learning formulation. In practice the diffusion model cannot be ideal and an exact sampler must account for imperfections in the reverse path. This can be accomplished using a Metropolis–Hastings correction on the joint density of a discrete time diffusion path which approximates the SDE solution. We start with the situation discussed above. Let X0 ∼ q, and sample a joint forward path (X0, X 1, . . . , X T −1, X T ) according to (7), which yields XT ∼ qσT as before. Then one can use (8) to sample a reverse path ( ˆX0, ˆX1, . . . , ˆXT −1, X T ) from the shared top point XT . A Metropolis–Hastings correction can be applied to the conditional distribution of V = ( X0, X 1, . . . , X T −1) given XT as follows. By Bayes’ rule, the conditional density of V given XT is 
+
+p(v | xT ) = p(x0:( T −1) | xT ) = p(x0: T )
+
+p(xT ) ∝ q(x0)
+
+> T
+
+Y
+
+> k=1
+
+p(xk | xk−1) (10) which follows from (7). The marginal density p(xT ) is intractable, but xT is held fixed by the move, so it is a constant that will cancel in the MH ratio, as does the normalizing constant of q. The proposed path is drawn from the reverse kernels started at the shared top point XT , so the Markov transition from V to ˆV = ( ˆX0, ˆX1, . . . , ˆXT −1) has a kernel that does not depend on V :
+
+R(ˆ v | v) = pθ (ˆ x0:( T −1) | xT ) = 
+
+> T
+
+Y
+
+> k=1
+
+pθ (ˆ xk−1 | ˆxk), ˆxT = xT , (11) which follows from (9) with the initial Gaussian factor removed since XT is fixed. Plugging (10) and (11) into the Metropolis–Hastings acceptance probability (2) gives 
+
+α(v, ˆv) = min 
+
+(
+
+1, ˜q(ˆ x0) QTk=1 p(ˆ xk | ˆxk−1) QTk=1 pθ (xk−1 | xk)˜q(x0) QTk=1 p(xk | xk−1) QTk=1 pθ (ˆ xk−1 | ˆxk)
+
+)
+
+, ˆxT = xT , (12) which ensures that ( ˆX0, ˆX1, . . . , ˆXT −1, X T ) follows the forward path density (7) since (X0, X 1, . . . , X T −1, X T ) also does by construction: the MH step preserves the conditional distribution given XT , and XT itself is untouched. The marginal of (7) for X0 is q, so that ˆX0 ∼ q. This construction provides a Markov transition X0 → ˆX0 which has stationary distribution q. The chain is ergodic because the composite transition has strictly positive density: the forward increments and reverse kernels are full-support Gaussians, and the acceptance probability is positive wherever ˜q > 0
+
+(Appendix A). An interesting part of this construction is that the Markov chain is an exact sampler for q regardless of the quality of the learned diffusion model pθ , with the caveat that a poorly learned pθ will lead to a frozen chain. We note that the Metropolis–Hastings step (12) was proposed in closely related forms by MAD-Path [5] and SPS [6] concurrently with and independently of the development of this work. These works use a variational objective to train the score function using the target density itself rather than samples from the target density. This works well for targets with simpler geometry but fails to scale to more complex targets (see Section 5). The central contribution of this work is to show that sample-based training of a diffusion denoiser allows us to achieve global proposals with high acceptance for complex target distributions using (12). By situating exact MCMC within the denoising diffusion paradigm, which is known to scale well with data, model size, and compute [7–9, 26, 27], our work offers preliminary evidence that conventional techniques for scaling diffusion models can be naturally transferred to exact sampling from complex high-dimensional unnormalized densities. 
+
+3.1 Denoising Diffusion Monte Carlo (DDMC) 
+
+Since we choose to train pθ using the denoising objective (4), the main design choice for learning the model is choosing how to obtain samples for training. In this work pθ is trained only from samples without any direct knowledge of the 4Exact Global MCMC with Denoising Diffusion target density. Our choice of dataset is motivated by two simple observations. The first is that an unnormalized density is a data generator. It is straightforward to use local MCMC samplers such as MALA to generate an unlimited number of samples which have locally converged in a certain region of the state space. Dataset size can be scaled simply by drawing more samples. The caveat of such a procedure is that regions of the state space which local samplers do not explore will be inaccessible for a diffusion proposal and that the weighting of a corpus of locally converged samples across modes might not represent the ground-truth weighting of modes across the target. The first caveat is strict and shared by all learned neural samplers. The second caveat can be alleviated by MH correction. Since (12) is exact for any 
+
+pθ, this suggests that misweighted modes in the training set can be accommodated at the cost of acceptance provided the misweighting is not too extreme. Based on these observations, we propose Denoising Diffusion Monte Carlo (DDMC): an exact MCMC sampler whose global moves are the path-space MH step (12), driven by a denoiser trained with the standard objective (4) on a corpus of locally converged MALA samples, and whose local moves are MALA steps. Large corpora of locally converged samples can be obtained at a reasonable computational cost. The procedure we use to create a corpus is described in Section 3.2. The DDMC transition kernel is the composition of the diffusion MH step (12) and the MALA kernel: 
+
+KDDMC (x′ | x) = 
+
+Z
+
+> Rd
+
+Kpath (u | x) KNh (x′ | u) d u. (13) 
+
+Kpath is the transition kernel of the bottom path endpoint under one path move: starting from x0 = x, draw the forward path x1: T ∼ p(· | x0), propose a reverse path from the shared top point, and accept or reject with (12), so the new state is ˆx0 on acceptance and x0 otherwise. KNh is the N -fold composition of the MALA kernel Kh from Section 2.2. Upon rejection each kernel places its mass at the current state. Since the path move and every MALA step leave q invariant individually, the composition (13) leaves q invariant. The composition allows the strengths of each kernel component to support the weaknesses of the other. The denoiser is trained on MALA-generated samples, and the MALA steps of each cycle return the chain towards the distribution on which the denoiser was trained. If the path proposal is rejected many times in a row, the MALA steps continue to refine the local state, keeping the chain in configurations the denoiser handles capably. In the limit of zero path acceptance DDMC reduces to plain MALA. The path kernel enables global jumps across basins that are not possible with MALA. This allows the composite sampler to traverse modes where local MALA samples would be trapped indefinitely. 
+
+3.2 Creating a MALA Corpus 
+
+This section describes a generic procedure for creating a large corpus of MALA samples to train a DDMC model. There are two main phases: 1) tuning the MALA step size and discovering the energy spectrum of locally converged MALA states and 2) tuning a producer algorithm to be able to generate new locally converged MALA samples as quickly as possible. In our experiments, all MALA samples used for a training corpus are initialized from either a normal or uniform distribution that spans the high-probability regions of the target density. This choice is made because for the densities in our experiments, we found either that this initialization spanned all modes with a reasonable number of samples in each mode for learning the diffusion, or that the density had an overall unimodal structure where initialization did not affect the regions that MALA was able to explore. This choice has a clear failure case: if the target probability mass is concentrated in a region that cannot be accessed with this initialization, then learning will fail. Addressing this limitation is an important direction left for future work. One possible direction is to use techniques for mapping the basin structure of a target density [28] and to initialize MALA from different parts of the global landscape structure. The first phase calibrates MALA and measures the energy spectrum of locally converged states. From the cold initialization, we run gradient ascent on log ˜ q with Adam until convergence, which locates a set of modes. The MALA step size is then tuned at these modes: we select the largest h whose worst-chain acceptance rate remains within a target band, since curvature differs across modes and a step size tuned on the average acceptance can be far too large for the sharpest basin. Finally, we run MALA from the modes with a per-chain adaptive step size until the mean of log ˜ q
+
+reaches a plateau. This plateau serves two purposes. Its quantiles define a reference energy band that all subsequent convergence checks are measured against, and the adapted step sizes at the plateau provide the sampling step size used for all later MALA legs. The second phase converts this calibration into the cheapest fixed schedule that produces new locally converged samples from the cold initialization. The producer runs gradient ascent followed by MALA, and its one free parameter is how far the ascent is allowed to overshoot the reference band before MALA takes over: the ascent stops at the level 
+
+L(f ) = Lband + f (Lmode − Lband ) for f ∈ [0 , 1] , where f = 0 stops the moment the band’s energy is reached and 
+
+f = 1 descends fully to the mode. Both extremes are defensible a priori: a small f is cheap but a gradient trajectory point at the correct energy is not yet a thermal sample and may not have settled into a basin, while a large f guarantees 5Exact Global MCMC with Denoising Diffusion a genuine mode but pays for the thermal climb twice. We therefore sweep f , running each candidate schedule to the plateau and declaring it valid only if no chain freezes (acceptance above a floor for every chain) and the final energy quantiles match the reference band within tolerance. The cheapest valid schedule, measured in total gradient evaluations per sample, is selected, and its fixed step counts are re-validated on a fresh batch before being executed blindly at scale to produce the corpus. 
+
+3.3 Diagnosing the Learning Procedure 
+
+It is essential to be able to quickly and accurately monitor whether a learned denoiser is a viable MCMC sampler. Having a simple and accurate metric drives decisions about data size, model architecture and size, and the amount of training steps required. In the case of an MH sampler like DDMC, the most important metric is acceptance probability for samples close to equilibrium. However, it is costly to roll out long MCMC trajectories to measure the acceptance probability. Since MALA corpus samples withheld from the training set can be interpreted as approximate equilibrium samples, a single-step proposal gives a reasonable estimate of the path kernel performance during long MCMC runs. The primary metric to diagnose learning is the expected acceptance probability of a single path proposal launched from a held-out state, 
+
+¯α = E min {1, e log r }, (14) where log r is the logarithm of the MH ratio in (12) and the expectation runs over a held-out state x0, its forward path, and one reverse proposal from the shared top point. The log-acceptance ratio decomposes into a target term and a path term, 
+
+log r(v, ˆv) = δq + δpath , (15) 
+
+δq = log ˜ q(ˆ x0) − log ˜ q(x0), (16) 
+
+δpath =
+
+> T
+
+X
+
+> k=1
+
+h
+
+log p(ˆ xk | ˆxk−1) − log p(xk | xk−1)
+
+i
+
++
+
+> T
+
+X
+
+> k=1
+
+h
+
+log pθ (xk−1 | xk) − log pθ (ˆ xk−1 | ˆxk)
+
+i
+
+, (17) with the convention ˆxT = xT as before. The term δq measures whether the endpoint proposal improves on the current state under the target, and δpath compares how well the forward and reverse processes from the starting point and proposal are explained by the learned model. A balance between δpath and δq is needed for chains to move across the entire energy spectrum of equilibrium samples rather than being driven only by δq and freezing at high log q. The behavior of (14) is governed by the right tail of the distribution of log r. To contextualize acceptance, it is helpful to look at both the mean and standard deviation of 
+
+log r across input states and reverse path stochasticity and to visualize a histogram of its distribution. A reasonable acceptance ratio requires a significant amount of probability mass above 0 or within a small range of nats below 0. Both 
+
+δq and δpath are sensitive to parameters of the reverse path, which is discussed in the next section. Histograms of δq ,
+
+δpath , and log r, together with the evolution of their means and of the acceptance (14) over training, are presented for each target in Appendix C. 
+
+3.4 Tuning the Reverse Path 
+
+There are four parameters which require proper tuning to achieve good acceptance rates using (12). These are σmax and 
+
+σmin which are the noise levels of the SDE at the top and bottom respectively of the reverse path, T which is the number of noise levels in the reverse path, and ncal which gives the number of calibration samples used to tune the variances of the reverse path. The parameter σmax affects the ability to propose global moves. If this value is too small, jumps between remote regions of the state space are not possible. An effective value of σmax must be large enough to bridge the state space distance between distinct modes. At noise levels far above the data scale the true reverse transitions are close to Gaussian regardless of model quality, so these levels contribute little to δpath . Setting a value of σmax that is larger than necessary is not a major risk as long as T is sufficiently large. The parameter σmin affects the ability of the reverse path to propose samples which respect the local geometry of the target density. This value must be small enough to land within the thermal shell of the target density. A value of σmin 
+
+that is too small pays a penalty on the δpath term because errors in reverse path values at low noise are amplified by a factor 1/σ 2. Setting σmin to a value that is a few times smaller than the optimal MALA step size is a good initial choice. Sweeping over values in this range and observing the acceptance probability (14) can provide a more precise value. We find that the optimal σmin can be determined using a moderate T and the same value is often effective for larger T .The parameter T affects the ability of the diffusion to accurately model the continuous time SDE of the reverse path. We did not observe risk using large T beyond computational cost provided enough calibration samples are used (see 6Exact Global MCMC with Denoising Diffusion below). The value of T that is required depends on the complexity of the problem. Simpler targets work with smaller T
+
+such as 80 or lower while more complex targets benefit from larger T of 320 or above. It is straightforward to measure the effect of T on log r and choose the smallest T where the benefit to log r begins to saturate. Calibration of the reverse kernel variances plays a critical role in achieving high acceptance. Recall from Section 2.3 that exactness holds for any choice of the reverse variances τ 2 
+
+> k
+
+, so calibration affects only the acceptance rate, never correctness. Given a calibration set of ncal states {x(i)0 }ncal 
+
+> i=1
+
+, we simulate one forward path from each state and set the variance at each level to the mean squared residual of the reverse mean, 
+
+ˆτ 2 
+
+> k
+
+= 1
+
+ncal d
+
+> ncal
+
+X
+
+> i=1
+
+x(i) 
+
+> k−1
+
+− μθ
+
+ x(i) 
+
+> k
+
+, σ k
+
+ 2
+
+, (18) which is the moment-matched variance and is the KL-optimal choice for a Gaussian kernel with mean μθ. The calibration states form a corpus that is separate from both the training set and the held-out states used for the diagnostic (14): calibrating on training states would allow memorized residuals to shrink ˆτk, while calibrating on the diagnostic states would bias the diagnostic itself. The calibration set must be large enough, but the returns to additional calibration data vanish. A mis-calibrated τk
+
+can be costly: any departure from the optimal variance raises the per-level cost in δpath , so estimation noise does not average out across levels but instead accumulates as a downward bias in log r that grows with the number of levels. Too few calibration states therefore depress acceptance in a way that might be mistaken for a deficiency of the learned model. Beyond a sufficient size, however, additional calibration data leaves log r essentially unchanged. In practice we determine the required ncal at a moderately large T by increasing it until the acceptance (14) stops improving, and then use that value for larger T . Finally, calibration is a one-time cost: for a given denoiser and reverse path configuration 
+
+(T, σ max , σ min ), the calibrated variances ˆτ 21: T can be cached and reused for all subsequent sampling runs and evaluations. 
+
+3.5 i-SIR Parallel Proposals to Amplify Acceptance 
+
+The path move considered so far evaluates a single proposal per cycle, so at low acceptance rates most reverse passes are spent on rejected paths. A key structural property of the proposal kernel (11) enables a multiple-proposal extension: 
+
+R(ˆ v | v) depends only on the shared top point XT and not on the current path, so any number of proposals can be drawn independently from the same distribution. This is the setting of iterated sampling importance resampling (i-SIR) [29, 30], closely related to multiple-try Metropolis [31]. Given the current path v and top point xT , we set ˆv(1) = v and draw K − 1 independent reverse paths ˆv(2) , . . . , ˆv(K) ∼
+
+R(· | xT ) to form a pool of K candidates. Each candidate receives an unnormalized importance weight equal to the ratio of the conditional target (10) to the proposal density, 
+
+w(j) = ˜q ˆx(j)0
+
+ Q Tk=1 p ˆx(j) 
+
+> k
+
+| ˆx(j)
+
+> k−1
+
+QTk=1 pθ
+
+ ˆx(j) 
+
+> k−1
+
+| ˆx(j)
+
+> k
+
+ , ˆx(j) 
+
+> T
+
+= xT , (19) and the next state is selected from the pool with probability proportional to w(j). Because the current state is included in the pool and the weights are the exact target-to-proposal ratios, this transition leaves the conditional target invariant by the same argument as the single-proposal case, and exactness again holds for any pθ. The probability of leaving the current state, 1 − w(1) / P 
+
+> j
+
+w(j), is nondecreasing in K, so i-SIR amplifies the movement rate of the path kernel without changing its stationary distribution. The practical motivation for K > 2 is hardware throughput. MCMC is inherently sequential, and a single reverse pass evaluates the denoiser on one state per noise level, which typically leaves a modern GPU far below saturation. The 
+
+K − 1 proposals are mutually independent draws from the same distribution, so they can be generated in one batched reverse pass: until the batch dimension saturates the device, the wall-clock cost of a cycle with K candidates is close to that of a single proposal, while the chance that the pool contains a high-weight candidate grows with K.
+
+# 4 Related Work 
+
+Exact path-space corrections. Accepting or rejecting an entire trajectory to obtain exact samples has a long ancestry. Tempered transitions [32] apply a single acceptance test to a full sequence of annealed moves. The augmented forward/reverse path density at the heart of (12) appears in PDDS [23], where it defines sequential Monte Carlo importance weights rather than a Metropolis–Hastings test. Concurrently with this work, MAD-Path [5] and SPS [6] propose Metropolis–Hastings corrections of learned reverse diffusion paths in a closely related form. Both train 7Exact Global MCMC with Denoising Diffusion the score variationally from the target density. In this work, score models are trained from MALA samples with the standard denoising objective. 
+
+Variational diffusion samplers. A large family of methods trains a diffusion or controlled SDE to sample an unnormalized density by minimizing a path-space divergence, including PIS [1], DDS [2], the log-variance variant [33], the optimal-control formulation of Berner et al. [21], CMCD [3], SCLD [34], adjoint-based samplers [35, 36], and PDNS [4]. These objectives share a structural property that bears on scaling: the training signal comes from trajectories simulated by the current model, so regions the model does not visit provide no gradient. Most members additionally differentiate through the sampling trajectory, so training memory grows linearly in the number of noise levels; recent matching-based objectives [35, 36] remove this memory cost but retain the on-policy training signal. Denoising regression has neither property: it is a simulation-free per-level regression whose data can be generated without limit from the unnormalized density. 
+
+Diffusion samplers with inner Monte Carlo. Another family of diffusion-inspired samplers replaces variational training with Monte Carlo estimation. iDEM [20] trains a network on Monte Carlo estimates of the noised score computed over a replay buffer, while RDMC [22] estimates the denoising posterior mean by sampling and SLIPS [25] runs an inner MCMC chain at every noise level of an observation ladder, both at sampling time without a trained model. None of these applies an exact correction, which can lead to bias on complex targets. DiGS [24] is a relative which does have an exact correction: it noises the state to a single level and samples the denoising posterior with an inner Metropolis-corrected Langevin chain. 
+
+Exact MCMC with learned global proposals. DDMC belongs to a line of work that keeps MCMC exact while learning the global move. Gabrié et al. [37] use normalizing flows as MH proposals and demonstrate the repair of mode weights, and Ex 2MCMC [30] composes global i-SIR proposals, optionally with adaptively trained flows, with local MALA refinement, the local–global pattern that the DDMC kernel (13) follows. Within this line, DDMC replaces the one-shot flow with a diffusion path. A flow proposal requires a tractable Jacobian determinant, tying exactness to invertible architectures, and must bridge noise and target in a single transformation; the path-space construction instead prices the proposal through Gaussian kernel densities, leaving the denoiser architecture unconstrained, and the ladder supplies the gradual annealing that a one-shot map must accomplish at once. Related transport approaches such as NeuTra [38] instead reparameterize HMC with a flow rather than correcting a learned proposal. 
+
+# 5 Experiments 
+
+In this section we apply DDMC to a variety of unnormalized densities. All samples in this section are initialized from the normal or uniform distribution that was used to create the MALA corpus. All chains are run for 10,000 steps across 4 independent seeds for each target. The first 400 steps of each chain are treated as burn-in samples and are not used when reporting metrics. The chains are thinned by taking every fourth sample after burn-in to obtain the final samples from the target density. Evaluations across all targets report the average acceptance ratio, IACT, and the energy Wasserstein-2 distance E(·) W2, computed using the PDNS evaluation code [4]; for particle targets we additionally report the sample Wasserstein-2 distance W2. See Appendix B.2 for more information about metrics. E(·) W2 and 
+
+W2 are computed using reference samples from the literature when available and from our Parallel Tempering (PT) reference samples when unavailable. We also analyze mode occupancy and the probability of transitioning between modes when appropriate. We apply both the MH version of our algorithm from (12) and the i-SIR version of our algorithm from (19) in different scenarios. The results for the MH version are designated as DDMC and the results from the i-SIR version are designated as DDMC K where K is the size of the i-SIR ensemble. Further details such as training and sampling configurations for each target can be found in Appendix B. 
+
+5.1 Mixture of Gaussians 
+
+The first experiment is a proof of concept using the 2D reference distribution examined by iDEM [20] and DiGS [24]. This distribution has 40 evenly weighted mixture components which each have isotropic covariance. It is well-established that local samplers such as MALA and HMC cannot traverse between modes of this target in a realistic timeframe. A uniform distribution over the spread of the Gaussian modes is used to create the MALA corpus. Since MALA cannot cross between modes in this situation and since the corpus weighting is very dissimilar from the ground-truth weighting between modes due to the uniform initialization, this scenario is a proof-of-concept that DDMC can provide a correctly weighted proposal distribution via the MH correction even when its training distribution differs from the target. 8Exact Global MCMC with Denoising Diffusion Table 1: Gaussian mixture results. Both targets are evaluated against exact draws. The GT floor column is the exact-vs-exact E(·) W2 value at n = 2000 , i.e., the value attained when both sample sets are exact draws from the target: DDMC sits at the floor on both targets. The mode-weighting panel shows that the MH correction repairs the mode weights of the training corpus: the DDMC chain recovers the ground-truth weighting even though the corpus is far from it. Modes covered is the minimum over chains, so every chain covers every mode. For MoG-40 all ground-truth weights are equal, so the low-mode occupancy is the least-occupied mode: a minimum over 40 modes that is biased below 1/40 even for exact draws, as the reference column shows. All DDMC entries lie within 2 sd of exact-draw controls at matched effective sample size.                                                                    
+
+> Target daccept ↑IACT ↓E(·)W2↓GT floor
+> MoG-40 20.724 ±0.004 1.14 ±0.04 0.11 ±0.03 0.09 ±0.03
+> GMM-256 256 0.390 ±0.004 3.89 ±0.73 0.71 ±0.25 0.65 ±0.13
+> Low-mode occupancy Target Modes covered TV (corpus) TV (DDMC) DDMC reference GT weight MoG-40 40 /40 0.251 0.074 ±0.017 0.017 ±0.001 0.018 ±0.001 0.025
+> GMM-256 2/20.165 0.014 ±0.010 0.345 ±0.014 0.332 ±0.009 0.333
+
+The second experiment uses the bimodal Gaussian mixture proposed by Grenioux et al. [39]. We only examine their most challenging scenario with d = 256 dimensions and mode separation a = 10 , where the two modes are centered at 
+
+±a1d and have diagonal covariances whose per-coordinate variances interpolate linearly between 0.01 and 0.2. The variances of each mixture component are opposed: the constrained direction of one mode corresponds to the least constrained direction of the other. Furthermore, the mixture has an uneven 1/3 and 2/3 weighting. Our training corpus from random initialization assigns about 50% of mass in each mode, so this situation also allows us to examine whether DDMC can achieve the correct sample weighting between modes. Results are shown in Table 1. In both cases we can achieve high acceptance rate, match the energy spectrum of the target density, and recover the weighting of the ground truth distribution within statistical uncertainty. This corroborates the claim that training on imbalanced MALA samples can still yield an effective global sampler. It is likely that more extreme weighting imbalances would have a negative effect on acceptance probability, and principled techniques for initializing the MALA corpus in a way that approximately covers separated modes are an important direction for future work. 
+
+5.2 Particle Potentials 
+
+This section examines the performance of our sampler on targets which give the potential energy of particle ensembles. This setting allows us to examine targets with a more complex geometry than the Gaussian mixture experiments and allows direct comparison with a variety of diffusion-inspired methods from prior works. Following prior works, the architectures used in these experiments account for symmetries of the potentials, notably invariance to swapping of particle labels and equivariance to particle rotation. See Appendix B.1 for architecture details. The results in Table 2 show that DDMC can effectively model each of these target densities. The E(·) W2 values of DDMC samples sit at or within uncertainty of the ground-truth floor of the published reference samples. The benefit of DDMC is particularly pronounced for LJ-55, which is the most complex target among the three. While DDMC does not match the DW-4 sample distance W2 of the published reference samples, we found that it does match an independent set of equilibrium reference samples generated by parallel tempering: against the PT reference the sample distance falls to 0.31 ± 0.01 for DDMC and 0.33 ± 0.04 for DDMC 33 , at the measured ground-truth floor of 0.31 ± 0.02 for this statistic, while E(·) W2 is unchanged within noise against either reference. This asymmetry indicates that the DW-4 sample-distance gap in Table 2 reflects properties of the published reference rather than error of the sampler. To demonstrate the benefit of using a diffusion denoiser rather than a variational objective for path proposals of the form (12), we investigate the concurrent work MAD-Path [5]. A MAD-Path score model is trained on LJ-55 using the project codebase. We find that the log ˜ q value obtained by MAD-Path samples across training settles around a negative value with a magnitude in the thousands and does not improve to reach the reference range around 325. The result is consistent with the poor performance of DDS and PIS on LJ-55 that was demonstrated in prior work, since these works use a closely related variational objective. This provides preliminary evidence that denoising diffusion leads to a more effective sampler than variational objectives for proposals using (12). Both sample-based denoiser training and 9Exact Global MCMC with Denoising Diffusion Table 2: Evaluation on the particle-based energy functions, following the protocol and presentation of Guo et al. [4]: Wasserstein-2 distances with respect to samples, W2 (↓), and energies, E(·) W2 (↓), at n = 2000 . Baseline values are as reported by Guo et al. [4]; our values are mean ± sd across independent chains, computed with their released evaluation code against the same ground-truth samples. The final row gives the measured ground-truth-vs-ground-truth floor: values at the floor are statistically indistinguishable from exact samples at this sample size. Bold marks the best value in each column, including ties within reported uncertainty.                                                                                                                                                                                                                          
+
+> DW-4 ( d=8 )LJ-13 ( d=39 )LJ-55 ( d=165 )Method W2↓E(·)W2↓W2↓E(·)W2↓W2↓E(·)W2↓
+> PDDS [23] 0.92 ±0.08 0.58 ±0.25 4.66 ±0.87 56 .01 ±10 .80 ——SCLD [34] 1.30 ±0.64 0.40 ±0.19 2.93 ±0.19 27 .98 ±1.26 ——PIS [1] 0.68 ±0.28 0.65 ±0.25 1.93 ±0.07 18 .02 ±1.12 4.79 ±0.45 228 .70 ±131 .27
+> DDS [2] 0.92 ±0.11 0.90 ±0.37 1.99 ±0.13 24 .61 ±8.99 4.60 ±0.09 173 .09 ±18 .01
+> LV-PIS [33] 1.04 ±0.29 1.89 ±0.89 ————iDEM [20] 0.70 ±0.06 0.55 ±0.14 1.61 ±0.01 30 .78 ±24 .46 4.69 ±1.52 93 .53 ±16 .31
+> AS [35] 0.62 ±0.06 0.55 ±0.12 1.67 ±0.01 2.40 ±1.25 4.50 ±0.05 58 .04 ±20 .98
+> ASBS [36] 0.38 ±0.05 0.19 ±0.03 1.59 ±0.00 1.28 ±0.22 4.00 ±0.03 27 .69 ±3.86
+> PDNS [4] 0.51 ±0.04 0.21 ±0.03 1.57 ±0.01 1.01 ±0.18 3.95 ±0.01 21 .97 ±3.14
+> DDMC (ours) 0.50 ±0.05 0.14 ±0.04 1.59 ±0.01 0.42 ±0.09 3.91 ±0.00 1.22 ±0.43
+> DDMC K(ours) 0.50 ±0.05 0.14 ±0.04 1 .58 ±0.00 0.42 ±0.10 3.88 ±0.00 0.83 ±0.31
+> GT floor 0.31 ±0.02 0.12 ±0.03 1.44 ±0.01 0.40 ±0.13 2.57 ±0.04 0.87 ±0.23
+
+Table 3: DDMC chain statistics on particle potentials.                                             
+
+> Target Sampler accept ↑IACT ↓
+> DW-4 DDMC 0.545 ±0.005 1.30 ±0.08
+> DDMC 33 0.941 ±0.002 1.03 ±0.04
+> LJ-13 DDMC 0.277 ±0.006 5.37 ±0.94
+> DDMC 33 0.831 ±0.005 1.37 ±0.04
+> LJ-55 DDMC 0.028 ±0.003 29 .8±6.1
+> DDMC 64 0.342 ±0.004 4.67 ±0.46
+
+density-based variational training are potentially useful realizations of path-space MCMC, and understanding their relative strengths is a valuable direction for future research. 
+
+5.3 Bayesian Neural Network 
+
+The last experiment covers the 550-dimensional Bayesian Neural Network (BNN) target examined by DiGS [24]. We find that the posterior is effectively covered by local MALA sampling. The BNN target therefore serves as a stress test of trainability and exactness at scale rather than of mixing, for which the failure of local samplers is well-documented even in simple situations. The architecture used for this experiment was a DiT [8] that respects the permutation invariance of the hidden labels. This target was the most difficult learning scenario that we examined and required significantly more MALA training samples than the other targets. We saw evidence that a fixed MALA corpus of 6.4M samples eventually led to a model which could no longer improve log r. In particular, δpath drifted in a negative direction and erased gains from δq . To avoid data exhaustion, we trained the DDMC BNN denoiser concurrently with producer workers who were continuously generating new MALA samples. This experiment led to a model which could obtain reasonable acceptance probabilities for global proposals whose samples match the spectrum of a PT reference, as shown in Table 4. This BNN target was originally studied by DiGS, and we compare against DiGS and tuned local samplers on burn-in: the number of steps required to reach the equilibrium energy band from the cold initialization (Table 5). The comparison isolates the difference between global and local moves from a cold start. The first DDMC proposal is accepted with probability near one and carries the chain directly into the equilibrium band, so convergence takes one to two proposal rounds, 2.8–5.5× faster than tuned MALA and 9–18 × faster than DiGS for a single chain. Running the exact released DiGS implementation at its own hyperparameters, we observe negligible acceptance of its global jump throughout sampling ( < 10 −4), so its auxiliary-variable move contributes nothing at this dimension and its burn-in proceeds through its Langevin component alone. The DiGS and MALA rows of Table 5 therefore compare the same underlying local sampler under different settings: our MALA baseline uses a step size adapted to this target, while DiGS runs with 10 Exact Global MCMC with Denoising Diffusion Table 4: DDMC results on the BNN posterior ( d = 550 , K = 32 ), evaluated against the independent pooled parallel tempering reference. The T = 640 row reports mean ± sd across six independent runs; T = 2560 is a single long run. The GT floor column is the PT-vs-PT E(·) W2 value at n = 2000 : the six-run mean sits below the floor, and five of the six runs are individually at or below it.                               
+
+> Sampler accept ↑IACT ↓E(·)W2↓GT floor
+> DDMC 32 (T=640 )0.132 ±0.004 4.87 ±0.27 1.03 ±0.26 1.17 ±0.27
+> DDMC 32 (T=2560 )0.275 3.61 1.37 1.17 ±0.27
+
+Table 5: Burn-in to the equilibrium energy band on the BNN posterior ( d = 550 ). Chains per method start from the cold initialization and a chain is said to be converged when its energy distribution enters the pooled PT reference band. Wall-clock convergence time for 1 chain and a batch of 512 parallel chains on a single A6000 GPU are shown.                       
+
+> Method to converge 1 chain 512 chains DDMC ( T=640 )1–2rounds 18 –36 s403 –806 sMALA (adapted step) 71 ,200 steps 99 s130 sDiGS 129 ,800 steps 330 s356 s
+
+its original parameters and pays the per-step cost of proposing jumps that are never accepted, which explains the gap between the rows. The efficiency comparison depends on the workload: DDMC is the more efficient choice when a small number of chains is needed or when chains are spread across many parallel workers, while a single device batching hundreds of chains favors MALA, whose inexpensive energy evaluations sit far below GPU saturation at batch one and amortize across chains nearly for free (final column of Table 5). We emphasize that the central accomplishment on this target is not throughput but the existence of the proposal itself: exact global proposals accepted at rates above 
+
+10% in 550 dimensions, where global moves without an accurate model are essentially never accepted. We also repeated the test-NLL evaluation from the original DiGS protocol; under that protocol no pair of methods can be statistically separated, and we report it in Appendix B.4 for completeness. 
+
+# 6 Conclusion 
+
+This paper demonstrates that a model trained using denoising diffusion can be directly utilized as an exact global MCMC sampler. Training on local MALA samples and composing the global path proposal with a local MALA proposal leads to a natural synergy between the proposal components where global path proposals obtain states similar to the training distribution from the MALA updates while overcoming the limited local mixing that is typical of MALA and local samplers. We call this composed sampler DDMC. MH correction ensures that chains remain exact even when the MALA corpus mode weighting differs from the ground truth. Experiments across a variety of target densities demonstrate that DDMC can achieve global proposals with high acceptance while adhering closely to the target distribution. The DDMC framework also provides a straightforward mechanism for MCMC samplers to benefit from the scalability of denoising diffusion, which has been extensively studied in the image domain and related applications. Limitations of DDMC include the computational cost of reverse diffusion paths and susceptibility to modeling failure in cases where MALA samples do not cover, or greatly underrepresent, high-probability regions. Reducing sampling computational cost and providing mechanisms to create MALA corpora whose mode weightings are reasonable approximations of the target are important directions for future work. 
+
+# LLM Tool Disclosure 
+
+Large language model assistants (ChatGPT 5.5 from OpenAI, and Claude Opus 4.8, Claude Opus 5, and Claude Fable 5 from Anthropic) were used during this project for writing and editing assistance, literature search, coding support, and checking of derivations and experimental bookkeeping. All research ideas, the method design, and the experimental decisions originated with the author, who reviewed and verified all content of the paper. 
+
+# References 
+
+[1] Qinsheng Zhang and Yongxin Chen. Path integral sampler: a stochastic control approach for sampling. In 
+
+International Conference on Learning Representations , 2022. 11 Exact Global MCMC with Denoising Diffusion [2] Francisco Vargas, Will Grathwohl, and Arnaud Doucet. Denoising diffusion samplers. In International Conference on Learning Representations , 2023. [3] Francisco Vargas, Shreyas Padhy, Denis Blessing, and Nikolas Nüsken. Transport meets variational inference: Controlled Monte Carlo diffusions. In International Conference on Learning Representations , 2024. [4] Wei Guo, Jaemoo Choi, Yuchen Zhu, Molei Tao, and Yongxin Chen. Proximal diffusion neural sampler. In 
+
+International Conference on Learning Representations , 2026. [5] Han Chen, Sifan Liu, and Jun Yang. Markov chain Monte Carlo with diffusion paths. arXiv preprint arXiv:2607.11631 , 2026. [6] Shiyang Chen, Moxian Qian, Gert Aarts, Biagio Lucini, and Kai Zhou. Stochastic path sampler for lattice field theory. arXiv preprint arXiv:2606.13790 , 2026. [7] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat GANs on image synthesis. In Advances in Neural Information Processing Systems , volume 34, pages 8780–8794, 2021. [8] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 4195–4205, 2023. [9] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, Kyle Lacey, Alex Goodwin, Yannik Marek, and Robin Rombach. Scaling rectified flow transformers for high-resolution image synthesis. In 
+
+International Conference on Machine Learning , 2024. [10] Nicholas Metropolis, Arianna W. Rosenbluth, Marshall N. Rosenbluth, Augusta H. Teller, and Edward Teller. Equation of state calculations by fast computing machines. The Journal of Chemical Physics , 21(6):1087–1092, 1953. [11] W. Keith Hastings. Monte carlo sampling methods using markov chains and their applications. Biometrika , 57(1): 97–109, 1970. [12] Gareth O. Roberts and Richard L. Tweedie. Exponential convergence of langevin distributions and their discrete approximations. Bernoulli , 2(4):341–363, 1996. [13] Simon Duane, Anthony D. Kennedy, Brian J. Pendleton, and Duncan Roweth. Hybrid monte carlo. Physics Letters B , 195(2):216–222, 1987. [14] Radford M. Neal. Mcmc using hamiltonian dynamics. In Steve Brooks, Andrew Gelman, Galin L. Jones, and Xiao-Li Meng, editors, Handbook of Markov Chain Monte Carlo , pages 113–162. Chapman & Hall/CRC, 2011. [15] Matthew D. Hoffman and Andrew Gelman. The No-U-Turn sampler: adaptively setting path lengths in Hamiltonian Monte Carlo. Journal of Machine Learning Research , 15(1):1593–1623, 2014. [16] Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine. Elucidating the design space of diffusion-based generative models. In Advances in Neural Information Processing Systems , volume 35, pages 26565–26577, 2022. [17] Bradley Efron. Tweedie’s formula and selection bias. Journal of the American Statistical Association , 106(496): 1602–1614, 2011. [18] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in Neural Information Processing Systems , 33:6840–6851, 2020. [19] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In International Conference on Learning Representations , 2021. [20] Tara Akhound-Sadegh, Jarrid Rector-Brooks, Avishek Joey Bose, Sarthak Mittal, Pablo Lemos, Cheng-Hao Liu, Marcin Sendera, Siamak Ravanbakhsh, Gauthier Gidel, Yoshua Bengio, Nikolay Malkin, and Alexander Tong. Iterated denoising energy matching for sampling from Boltzmann densities. In International Conference on Machine Learning , 2024. [21] Julius Berner, Lorenz Richter, and Karen Ullrich. An optimal control perspective on diffusion-based generative modeling. Transactions on Machine Learning Research , 2024. [22] Xunpeng Huang, Hanze Dong, Yifan Hao, Yi-An Ma, and Tong Zhang. Reverse diffusion Monte Carlo. In 
+
+International Conference on Learning Representations , 2024. [23] Angus Phillips, Hai-Dang Dau, Michael John Hutchinson, Valentin De Bortoli, George Deligiannidis, and Arnaud Doucet. Particle denoising diffusion sampler. In International Conference on Machine Learning , 2024. [24] Wenlin Chen, Mingtian Zhang, Brooks Paige, José Miguel Hernández-Lobato, and David Barber. Diffusive Gibbs sampling. In International Conference on Machine Learning , 2024. 12 Exact Global MCMC with Denoising Diffusion [25] Louis Grenioux, Maxence Noble, Marylou Gabrié, and Alain Oliviero Durmus. Stochastic localization via iterative posterior sampling. In International Conference on Machine Learning , 2024. [26] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 10684–10695, 2022. [27] Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L. Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, Jonathan Ho, David J. Fleet, and Mohammad Norouzi. Photorealistic text-to-image diffusion models with deep language understanding. In Advances in Neural Information Processing Systems , volume 35, pages 36479–36494, 2022. [28] Jonathan P. K. Doye, Mark A. Miller, and David J. Wales. The double-funnel energy landscape of the 38-atom Lennard-Jones cluster. The Journal of Chemical Physics , 110(14):6896–6906, 1999. [29] Christophe Andrieu, Anthony Lee, and Matti Vihola. Uniform ergodicity of the iterated conditional SMC and geometric ergodicity of particle Gibbs samplers. Bernoulli , 24(2):842–872, 2018. [30] Sergey Samsonov, Evgeny Lagutin, Marylou Gabrié, Alain Durmus, Alexey Naumov, and Eric Moulines. Local-global MCMC kernels: the best of both worlds. In Advances in Neural Information Processing Systems , volume 35, pages 5178–5193, 2022. [31] Jun S. Liu, Faming Liang, and Wing Hung Wong. The multiple-try method and local optimization in Metropolis sampling. Journal of the American Statistical Association , 95(449):121–134, 2000. [32] Radford M. Neal. Sampling from multimodal distributions using tempered transitions. Statistics and Computing ,6(4):353–366, 1996. [33] Lorenz Richter and Julius Berner. Improved sampling via learned diffusions. In International Conference on Learning Representations , 2024. [34] Junhua Chen, Lorenz Richter, Julius Berner, Denis Blessing, Gerhard Neumann, and Anima Anandkumar. Sequential controlled Langevin diffusions. In International Conference on Learning Representations , 2025. [35] Aaron J. Havens, Benjamin Kurt Miller, Bing Yan, Carles Domingo-Enrich, Anuroop Sriram, Daniel S. Levine, Brandon M. Wood, Bin Hu, Brandon Amos, Brian Karrer, Xiang Fu, Guan-Horng Liu, and Ricky T. Q. Chen. Adjoint sampling: Highly scalable diffusion samplers via adjoint matching. In International Conference on Machine Learning , 2025. [36] Guan-Horng Liu, Jaemoo Choi, Yongxin Chen, Benjamin Kurt Miller, and Ricky T. Q. Chen. Adjoint Schrödinger bridge sampler. In Advances in Neural Information Processing Systems , 2025. [37] Marylou Gabrié, Grant M. Rotskoff, and Eric Vanden-Eijnden. Adaptive Monte Carlo augmented with normalizing flows. Proceedings of the National Academy of Sciences , 119(10):e2109420119, 2022. [38] Matthew Hoffman, Pavel Sountsov, Joshua V. Dillon, Ian Langmore, Dustin Tran, and Srinivas Vasudevan. NeuTra-lizing bad geometry in Hamiltonian Monte Carlo using neural transport. arXiv preprint arXiv:1903.03704 ,2019. [39] Louis Grenioux, Maxence Noble, and Marylou Gabrié. Improving the evaluation of samplers on multi-modal targets. In ICLR Workshop on Frontiers in Probabilistic Inference: Learning meets Sampling , 2025. [40] Luke Tierney. Markov chains for exploring posterior distributions. The Annals of Statistics , 22(4):1701–1728, 1994. [41] Kerrie L. Mengersen and Richard L. Tweedie. Rates of convergence of the Hastings and Metropolis algorithms. 
+
+The Annals of Statistics , 24(1):101–121, 1996. [42] Charles J. Geyer. Practical Markov chain Monte Carlo. Statistical Science , 7(4):473–483, 1992. 
+
+# A Ergodicity of the Noise-to-Denoise Transition 
+
+The general principle: a Markov kernel that leaves q invariant and whose transition distribution has a component with a density positive at every pair (x, x ′) with ˜q(x′) > 0 is q-irreducible and aperiodic, and therefore ergodic for q [40, 41]. It remains to check positivity in each case. 
+
+SDE case. The forward step Y = X + σZ has the everywhere-positive density N (y; x, σ 2Id), and the reverse pass composes Gaussian kernels with strictly positive variances, so the composite transition density is strictly positive on 
+
+Rd × Rd. The learned means can move the kernels anywhere but cannot remove support. 13 Exact Global MCMC with Denoising Diffusion Table 6: Per-target configuration. “Corpus” is the number of MALA training samples; for the BNN the corpus is refreshed continuously during training from a 6.4M-state seed. “Steps” is the training step of the shipped checkpoint. K
+
+is the i-SIR pool size where pooling is used, N is the number of MALA steps per DDMC cycle, and ncal is the number of held-out states used to calibrate the reverse variances.                                                                                          
+
+> Target dCorpus Architecture Params Steps Tσmax σmin KNncal
+> MoG-40 210M MLP ( 512 ×6)3M 60K 320 0.38 0.005 —20 3072 GMM-256 256 2M token MLP ( 128 ×4)0.9M 50K 320 18.92 0.003 —20 3072 DW-4 84M equivariant DiT ( 256 ×6)7.5M 400K 40 1.62 0.05 33 20 3072 LJ-13 39 4M equivariant DiT ( 256 ×6)7.5M 360K 80 2.93 0.02 33 20 3072 LJ-55 165 6M equivariant DiT ( 256 ×6)7.5M 580K 320 4.0 0.005 64 20 2048 BNN 550 6.4M DiT ( 1024 ×16 )305M 1.4M 640/2560 20.0 0.003 32 1000 3072
+
+ODE case. For every σ > 0, qσ = q ∗ N (0 , σ 2Id) is smooth with a strictly positive density, so the probability-flow velocity field is smooth; by Tweedie’s identity [17] it equals (x − E[X | x]) /σ up to the schedule factor, which has at most linear growth whenever q has sub-Gaussian tails, ruling out finite-time blow-up. The reverse flow between any two positive noise levels is then a diffeomorphism of Rd, and the pushforward of the full-support forward Gaussian through a diffeomorphism retains an everywhere-positive density. Unlike image modeling, where data concentrate near a lower-dimensional manifold, the targets considered here have effective dimension d. Thermal fluctuations give the density full-dimensional support, so no degeneracy arises at small σ.
+
+DDMC transition. Each component of the DDMC cycle leaves q invariant, so the cycle does. The forward increments (6) and reverse kernels (8) are positive-variance Gaussians and the acceptance probability (12) is strictly positive wherever ˜q > 0, so the accepted-move component of the cycle satisfies the positivity condition of the general principle above, and the DDMC chain is ergodic for q.
+
+# B Experimental Details 
+
+B.1 Per-Target Configurations 
+
+Table 6 summarizes the configuration used for each target. Full training configurations, corpus-generation schedules, and evaluation scripts will be released with the code. 
+
+B.2 Metrics 
+
+The energy Wasserstein-2 distance E(·) W2 and the sample Wasserstein-2 distance W2 are computed with the evaluation code released by Guo et al. [4], unmodified, at n = 2000 samples per chain. All metrics are computed per chain and never pooled across chains; the reported uncertainty is the standard deviation across independent chains. Ground-truth floors are measured by evaluating the same metric between two independent reference sample sets at the same n:disjoint splits of a stored reference bank, or fresh exact draws when the target is analytically samplable, averaged over 20 to 50 replicate pairs. The floor is the value of the metric when both sample sets are exact, so results at the floor are statistically indistinguishable from exact sampling at this sample size, and rankings between values inside the floor are not meaningful. The integrated autocorrelation time (IACT) is estimated on the raw energy trace of each chain, in rounds, before thinning, using the initial-positive-sequence estimator of Geyer [42]. IACT measures the number of chain steps needed to obtain one effectively independent sample, so a trace of length n carries roughly n/ IACT independent samples and a value near one indicates nearly independent consecutive states. 
+
+B.3 Reference Samples 
+
+For MoG-40 and GMM-256 the reference is exact draws from the analytically samplable target. For the particle targets the published reference is the iDEM/PDNS ground-truth test split for each system; we verified that the DW-4 split shipped with the PDNS code is byte-identical to iDEM’s. For the BNN the energy marginal is evaluated against a held-out bank of 4,096 MALA states that is disjoint from both the training corpus and the calibration bank. We additionally constructed independent parallel tempering references. DW-4: 12 temperatures ( β from 1.0 to 0.05 ), 
+
+1,536 ,000 states after burn-in, replica swap acceptance 0.72 –0.88 . LJ-55: 24 rungs ( β from 1 to 0.10 ), 96 ,000 states, 
+
+217 hot-to-cold traversals, swap acceptance 0.23 –0.57 . BNN: seven independent PT runs pooled, each with a 40-rung likelihood-only ladder, totaling 2,748 ,992 states with 9,632 hot-to-cold traversals and minimum swap acceptance 0.33 .14 Exact Global MCMC with Denoising Diffusion Table 7: Test NLL on the BNN target under the protocol of Chen et al. [24] (mean ± sd across 4 seeds, expected-NLL estimator). No pair of methods is statistically separable after correcting for multiple comparisons.                               
+
+> Method test NLL ↓wall-clock DiGS 0.229 ±0.020 1032 sMALA (DiGS step size) 0.237 ±0.038 852 sMALA (tuned step size) 0.208 ±0.037 740 sHMC 0.216 ±0.025 526 sDDMC (one proposal +MALA) 0.194 ±0.011 787 s
+
+B.4 Test NLL Under the DiGS Protocol 
+
+The original DiGS evaluation on the BNN target reports test negative log-likelihood under a fixed compute protocol: two chains, 75 recorded samples with 5,000 gradient steps between recordings. We repeat this protocol for five methods across four seeds, running DiGS with its exact released implementation; for DDMC, a single path proposal moves the chain to the equilibrium region (its wall-clock cost is converted to MALA steps and charged against the budget) and MALA is run for the remainder. Results are in Table 7. No pairwise Welch test separates any two methods once multiplicity is accounted for: eight of ten comparisons have p ≥ 0.11 , and the lowest ( p = 0 .029 , DDMC vs. DiGS) does not survive a Bonferroni correction at p < 0.005 . We therefore make no claim that any method outperforms another under this metric. Test NLL is not a sampling-fidelity metric, since it can reward under-dispersed samples, which is why this comparison is reported here rather than in the main text. 
+
+B.5 Compute 
+
+All experiments ran on NVIDIA A6000 GPUs with PyTorch. Path log-densities are accumulated in double precision to obtain a numerically accurate MH acceptance probability. The largest model (BNN, 305M parameters) was trained on two A6000 GPUs for approximately 280 GPU-hours, with corpus production running concurrently on the remaining GPUs of the node. The particle and mixture models ( 0.9M– 7.5M parameters) are one to two orders of magnitude cheaper to train. Sampling for all reported chains used one GPU per chain. 
+
+# C Diagnostic Terms During Training 
+
+The figures below show the diagnostic quantities of Section 3.3 over training for each target: histograms of δq , δpath ,and log r, together with the evolution of their means and of the acceptance ¯α (14). The sampling configurations used for these diagnostics were chosen for monitoring during training and may differ from the inference settings of Section 5; the trends are similar across configurations even when the log r shown in a diagram is not the optimal one. Two empirical observations stand out. First, δpath tends to remain clustered around zero throughout healthy training: the forward and reverse path densities balance early, and the improvement in log r comes from δq , that is, from the diffusion placing its proposal mass closer and closer to the true target. This behavior deserves a closer investigation, which we leave to future work. Second, δq and δpath have a strong negative correlation, which causes the spread of log r to be much tighter than the spread of either component. 15 Exact Global MCMC with Denoising Diffusion 
+
+Figure 1: Training diagnostics for MoG-40. 
+
+Figure 2: Training diagnostics for GMM-256. 16 Exact Global MCMC with Denoising Diffusion 
+
+Figure 3: Training diagnostics for DW-4. 
+
+Figure 4: Training diagnostics for LJ-13. 17 Exact Global MCMC with Denoising Diffusion 
+
+Figure 5: Training diagnostics for LJ-55. 
+
+Figure 6: Training diagnostics for the BNN posterior. 18
