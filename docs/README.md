@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-08</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-08 22:58:30 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:23:18 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共速读1篇论文，聚焦3G探测器中的长持续时间引力波信号。</p>
-<p>最值得看的方向是：快速贝叶斯推断方法在第三代探测器长信号分析中的应用（评分6.0/10）。</p>
-<p>对普通读者，可先了解贝叶斯推断与引力波探测的关联，不必深究算法细节。</p>
+<p>今日推荐16篇论文，其中2篇精读重点聚焦于天文逆问题与贝叶斯推断。最值得关注的是满分10分的弱引力透镜质量映射神经后验估计，以及9分的海外天体表面组成推断。建议优先精读前者，其方法对图像重建类问题有通用借鉴价值。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Neural Posterior Estimation for Tomographic Weak Lensing Mass Mapping">Neural Posterior Estimation for Tomographic Weak Lensing Mass Mapping</span></li><li><span class="dpr-home-dashboard-paper-title" title="TNFlow: Amortized Posterior Inference for Trans-Neptunian Object Surface Composition">TNFlow: Amortized Posterior Inference for Trans-Neptunian Object Surface Composition</span></li><li><span class="dpr-home-dashboard-paper-title" title="An Approximate Bayesian Deep Learning Approach for Uncertainty-aware Differential Emission Measure Estimates in the Solar Corona from the SDO">An Approximate Bayesian Deep Learning Approach for Uncertainty-aware Differential Emission Measure Estimates in the Solar Corona from the SDO</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Fast Bayesian Inference for Long-Duration Gravitational-Wave Signals in 3G detectors">Fast Bayesian Inference for Long-Duration Gravitational-Wave Signals in 3G detectors</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Efficient model exploration with the integrated nested Laplace approximation">Efficient model exploration with the integrated nested Laplace approximation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Deterministic Leave-One-Cluster-Out Cross-Validation for Multilevel Bayesian Structural Equation Models">Deterministic Leave-One-Cluster-Out Cross-Validation for Multilevel Bayesian Structural Equation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Accelerated High-Accuracy Sampling from a Warm Start via the Proximal Bouncy Particle Sampler">Accelerated High-Accuracy Sampling from a Warm Start via the Proximal Bouncy Particle Sampler</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 </div>
 
