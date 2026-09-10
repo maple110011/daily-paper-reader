@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:23:18 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 21:21:43 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日推荐16篇论文，其中2篇精读重点聚焦于天文逆问题与贝叶斯推断。最值得关注的是满分10分的弱引力透镜质量映射神经后验估计，以及9分的海外天体表面组成推断。建议优先精读前者，其方法对图像重建类问题有通用借鉴价值。</p>
+<p>今日精选5篇，精读聚焦贝叶斯深度学习驱动的铜矿三维预测与基于归一化流的无似然推断。最值得看的是地质数据融合钻探靶区定位，以及用归一化流处理讨厌参数这两条主线。普通读者可先读两篇8分精读，再按兴趣扫读CO₂迁移反演与蒙特卡洛、流模型相关速读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Neural Posterior Estimation for Tomographic Weak Lensing Mass Mapping">Neural Posterior Estimation for Tomographic Weak Lensing Mass Mapping</span></li><li><span class="dpr-home-dashboard-paper-title" title="TNFlow: Amortized Posterior Inference for Trans-Neptunian Object Surface Composition">TNFlow: Amortized Posterior Inference for Trans-Neptunian Object Surface Composition</span></li><li><span class="dpr-home-dashboard-paper-title" title="An Approximate Bayesian Deep Learning Approach for Uncertainty-aware Differential Emission Measure Estimates in the Solar Corona from the SDO">An Approximate Bayesian Deep Learning Approach for Uncertainty-aware Differential Emission Measure Estimates in the Solar Corona from the SDO</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian deep learning integration of geophysical and drilling data for 3D prediction of copper mineralization and drill targeting: a case study from the Kogodai prospect, Rudny Altai">Bayesian deep learning integration of geophysical and drilling data for 3D prediction of copper mineralization and drill targeting: a case study from the Kogodai prospect, Rudny Altai</span></li><li><span class="dpr-home-dashboard-paper-title" title="Likelihood-free inference with nuisance parameters through normalizing flows">Likelihood-free inference with nuisance parameters through normalizing flows</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Efficient model exploration with the integrated nested Laplace approximation">Efficient model exploration with the integrated nested Laplace approximation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Deterministic Leave-One-Cluster-Out Cross-Validation for Multilevel Bayesian Structural Equation Models">Deterministic Leave-One-Cluster-Out Cross-Validation for Multilevel Bayesian Structural Equation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Accelerated High-Accuracy Sampling from a Warm Start via the Proximal Bouncy Particle Sampler">Accelerated High-Accuracy Sampling from a Warm Start via the Proximal Bouncy Particle Sampler</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian inversion of multilayer $\mathrm{CO}_2$ migration from seismic plume observations using a graph-based finite-rate invasion-percolation model">Bayesian inversion of multilayer $\mathrm{CO}_2$ migration from seismic plume observations using a graph-based finite-rate invasion-percolation model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Microcanonical Hamiltonian Monte Carlo and the Helmholtz Theorem">Microcanonical Hamiltonian Monte Carlo and the Helmholtz Theorem</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mode Coverage in Normalizing Flow Boltzmann Generators via Log-Ratio Variation">Mode Coverage in Normalizing Flow Boltzmann Generators via Log-Ratio Variation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 
