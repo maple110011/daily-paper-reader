@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-14</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-15</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-14 22:22:27 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-15 21:55:17 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读1篇、速读1篇，重点锁定用4D并行把贝叶斯神经网络推向百亿亿次规模的高保真大气建模研究。最值得看的是这篇9.0分工作如何以4D并行支撑超大规模贝叶斯推断，其次是6.0分的贝叶斯广义泊松矩阵分解中Gibbs采样的应用。普通读者可先读精读文了解并行策略与大气建模的结合，再按兴趣速览矩阵分解方法。</p>
+<p>今日精读2篇、速读4篇，重点聚焦分布偏移下的在线贝叶斯节点分类与多模态贝叶斯推断。最值得看的是两篇9分工作：前者应对归纳图上的分布偏移，后者用流模型做光谱数据融合的摊销贝叶斯推断。普通读者可先从这两篇入手，再按兴趣速读扩散逆问题与大规模时空数据的MCMC加速。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="4D Parallelism Unlocks Exascale Bayesian Neural Networks for High-Fidelity Atmospheric Modeling">4D Parallelism Unlocks Exascale Bayesian Neural Networks for High-Fidelity Atmospheric Modeling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Online Bayesian Node Classification on Inductive Graphs under Distribution Shift">Online Bayesian Node Classification on Inductive Graphs under Distribution Shift</span></li><li><span class="dpr-home-dashboard-paper-title" title="MUSHY: Multimodal Flow-Based Amortized Bayesian Inference for Spectroscopic Data Fusion">MUSHY: Multimodal Flow-Based Amortized Bayesian Inference for Spectroscopic Data Fusion</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Gibbs Sampling for Bayesian Generalized Poisson Matrix Factorization">Gibbs Sampling for Bayesian Generalized Poisson Matrix Factorization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Direct Conditional Transition Sampling for Diffusion Inverse Problems">Direct Conditional Transition Sampling for Diffusion Inverse Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Three Case Studies of Two-stage MCMC for Fast Bayesian Inference of Large Spatio-temporal Data">Three Case Studies of Two-stage MCMC for Fast Bayesian Inference of Large Spatio-temporal Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="RiVaT-Fuse: Reliability-Calibrated Variational Tensor Fusion for Multimodal Prediction under Modality Uncertainty">RiVaT-Fuse: Reliability-Calibrated Variational Tensor Fusion for Multimodal Prediction under Modality Uncertainty</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 

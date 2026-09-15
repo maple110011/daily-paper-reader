@@ -1,0 +1,794 @@
+MUSHY: Multimodal Flow-Based Amortized Bayesian
+Inference for Spectroscopic Data Fusion
+Jeff Shen
+Princeton University
+Princeton, NJ 08540
+shenjeff@princeton.edu
+Abstract
+We are in an era of unprecedented spectroscopic data availability, with surveys
+such as APOGEE, GALAH, and DESI observing millions of stars. However,
+data are heterogeneous and to date, efforts to exploit synergies between surveys
+have been limited. In particular, there is a lack of principled methods that com-
+bine spectroscopic data from different surveys to improve inference of physical
+parameters. In this work we present a new method, MUSHY, for spectroscopic
+data fusion. MUSHY is an amortized Bayesian inference method, using a rectified
+flow model with multimodal inputs to learn a posterior distribution over physical
+parameters. Using synthetic spectra generated via ATLAS12/SYNTHE, including
+realistic instrumental effects and noise, we demonstrate that MUSHY can precisely
+infer physical parameters with well-calibrated posteriors from any combination
+of surveys, with multimodal inputs providing stronger constraints on the posterior
+than single-survey data alone. This work paves the way for principled combination
+of spectroscopic data from heterogeneous sources.
+1
+Introduction
+How do we make the most of the data that we have? We have a wealth of data from the huge number
+of spectroscopic surveys that are currently online [e.g., Majewski et al., 2017, Buder et al., 2021, DESI
+Collaboration et al., 2016], and the amount of heterogeneous data available is only growing as more
+telescopes come online [e.g., Kollmeier et al., 2017]. We would like to infer physical parameters from
+these data in order to gain more insight into, for example, the formation and evolution of the Milky
+Way [Helmi et al., 2018, Rix et al., 2022]. This is typically done by survey-specific pipelines, e.g.,
+ASPCAP for APOGEE [García Pérez et al., 2016], independently for each survey. However, surveys
+often observe the same stars and provide complementary data, so siloed inference is suboptimal. We
+would like to combine data from different surveys to improve our inference.
+Here we present the MUSHY model for doing so. Broadly, MUSHY follows the amortized Bayesian
+inference paradigm, using a rectified flow model with multimodal conditioning to learn a posterior
+distribution over physical parameters given spectra from varying combinations of surveys. At
+inference time, MUSHY can ingest any combination of surveys and rapidly produce a posterior
+distribution that is both well-calibrated and takes advantage of the complementary information from
+the different surveys. To our knowledge, this is the first work to do principled multimodal inference
+for spectroscopic data fusion.
+Related work
+Multimodal models are increasingly used in astrophysics to combine heterogeneous
+data into shared representations [Parker et al., 2024, 2025, Shen et al., 2025, 2026]; we build on one
+of them, the spectral tokenizer of Shen et al. [2025], as our encoder. To turn such representations into
+physical parameters, we use simulation-based inference (SBI), which enables Bayesian inference
+when the likelihood is intractable but data can be simulated from the parameters [Papamakarios and
+arXiv:2609.15945v1  [astro-ph.IM]  14 Sep 2026
+
+
+Murray, 2018, Cranmer et al., 2020, Lueckmann et al., 2021]. Specifically, we perform amortized
+posterior estimation: a conditional generative model is trained on simulated pairs to approximate
+the posterior, so that inference on new data costs a single forward pass [e.g., Radev et al., 2020].
+Spectral [Ting et al., 2019, Ró˙za´nski et al., 2024] and atmospheric [Li et al., 2025] emulators
+approach the problem from the other direction: they replace the expensive simulator with a fast neural
+approximation, making direct fitting with MCMC or optimization more tractable, but still require a
+(possibly still expensive) fit for every star. Amortizing inference removes this per-star cost.
+2
+Data
+Our basic setup is that we have a single underlying physical model, parameterized by θ, that generates
+the data, and we have multiple surveys that provide different views of the data x1, . . . , xn. These
+multiple incomplete views can be generated via a simulator (physics model) S : θ 7→x1, . . . , xn,
+which we assume to be a good approximation of reality (despite the inevitable sim-to-real gap, i.e.,
+imperfectly specified physics).
+Synthetic spectra are generated with ATLAS12 and SYNTHE via pykurucz [Kurucz, 2005, Kim
+and Ting, 2026]. ATLAS12 is responsible for generating the stellar atmosphere model from physical
+parameters, and SYNTHE generates the synthetic spectrum from the stellar atmosphere model. Here
+we select θ to be 21-dimensional: Teff, log g, vmicro, [Fe/H], and 17 [X/Fe] (C, N, O, Na, Mg, Al,
+Si, S, K, Ca, Ti, V, Cr, Mn, Co, Ni, Ce). ATLAS12/SYNTHE gives us a fully self-consistent and
+ab-initio simulator, eliminating the need for the typical interpolation on pre-computed atmosphere
+grids, or emulators for spectral synthesis, both of which can introduce additional errors.
+We generate synthetic spectra for three surveys: APOGEE, GALAH, and DESI. These surveys
+provide complementary information about θ; for example, APOGEE is in the H-band and is sensitive
+to C, N, and α elements, while GALAH is in the optical and is sensitive to Na, V, and Cr. For each θ,
+we generate a synthetic spectrum that covers the wavelength range of all three surveys (358–985 nm
+and 1500–1710 nm) at a high resolution (R = 100,000) and resample it to the native wavelength grids
+of each survey. We use APOGEE DR17 line lists from 1500–1700 nm [Smith et al., 2021], Gaia-ESO
+line lists [Heiter et al., 2021] from 475–690 nm and 840–895 nm, and Kurucz gfall1 elsewhere. We
+simulate instrumental effects and noise to generate synthetic spectra that resemble real survey data
+via donor injection. Each synthetic spectrum is injected into a real “donor” spectrum from the survey,
+which provides the instrument response (e.g., line-spread function), continuum shape, noise level,
+and bad-pixel mask. We repeat this process for 50 realizations per survey per θ.
+The prior over θ is a mixture of a stellar isochrone population, a uniform distribution over the
+parameter box, a small fraction of rare populations (carbon-enhanced, globular-cluster, r-process), as
+well as a small fraction of θ at the pipeline parameters of real survey stars. We generate a training set
+of ∼48K θ with all three surveys, and hold out ∼1% for validation.
+3
+Method
+We adopt an amortized Bayesian inference approach [e.g., Cranmer et al., 2020]. Given our simulator
+S : θ 7→x1, . . . , xn that maps physical parameters θ to multimodal data x1, . . . , xn, we would like
+to learn a posterior distribution p(θ | x1, . . . , xn) over physical parameters given data. Concretely,
+MUSHY is a conditional rectified flow [Liu et al., 2022] with a DiT backbone [Peebles and Xie, 2023].
+Figure 1 shows the architecture of MUSHY, and here we briefly discuss the components and design
+choices.
+A key question is: how do we combine the data from different surveys (x1, . . . , xn) and perform
+inference with any combination/subset of surveys? There are two issues to consider: (1) the data
+from different surveys are heterogeneous, and (2) our conditioning method needs to be flexible to the
+number of surveys present.
+For the first, we use the universal spectral tokenizer from Shen et al. [2025]. This model is pretrained
+in a self-supervised manner on real spectral data (including APOGEE, DESI, and GALAH) and
+is designed to convert the heterogeneous input spectra into a common latent space, which has
+been shown to carry useful information about physical parameters; we can then combine the latent
+1http://kurucz.harvard.edu/linelists.html
+2
+
+
+APOGEE
+GALAH
+DESI
+any subset of surveys
+Spectral
+tokenizer
+pretrained, frozen
+tokens
+Transformer
+encoder
+Rectified flow
+DiT, vϕ(θt, t, C)
+C
+cross-attention
+integrate ODE from t = 0 to 1
+θ0 ∼N(0, I)
+θ1 ∼p(θ | x1, . . . , xn)
+Teff
+log g
+vmicro
+[Fe/H]
+[X/Fe] ×17
+Figure 1: The MUSHY architecture. Spectra from any subset of surveys are encoded by a frozen,
+pretrained spectral tokenizer; the tokens are concatenated and passed through a transformer encoder
+to give the conditioning signal C. A conditional rectified flow with a DiT backbone predicts the
+velocity vϕ(θt, t, C), attending to C through cross-attention. Integrating the ODE from t = 0 to 1
+transports Gaussian noise θ0 to samples from the posterior over the 21 stellar parameters.
+representations by simple concatenation. We use a lightweight transformer encoder on top of the
+conditioning inputs to model interactions between the tokens from the different surveys.
+The second issue we tackle with cross-attention in the DiT backbone, which allows us to condition
+on arbitrary length inputs. The tokens of the observed surveys A are embedded, concatenated and
+encoded into a conditioning sequence C ∈RL×d, L = P
+s∈A Ls. The noisy parameters θt enter the
+DiT as a single token u, which in every block cross-attends to C, with t entering through adaptive
+RMS norm. During training, we use modality dropout to randomly drop a subset of surveys for each
+example, so that the conditioning signal given to the model varies and the model learns to handle any
+combination of surveys.
+Table 1: σMAD of the posterior median on held-out
+data. Subscripts show bootstrap standard errors. Full
+table in Table 2.
+Surveys
+Teff (K) log g
+[Fe/H]
+[Mg/Fe]
+APOGEE 67±3
+0.075±0.003
+0.043±0.002
+0.038±0.002
+GALAH
+49±2
+0.155±0.007
+0.069±0.003
+0.079±0.004
+DESI
+72±4
+0.188±0.009
+0.099±0.005
+0.094±0.005
+All three
+36±2
+0.063±0.002
+0.034±0.002
+0.036±0.002
+We keep the pretrained spectral tokenizer
+frozen and train a small rectified flow on top of
+it. Our model is lightweight: it consists of just
+2 conditioner blocks and 2 DiT blocks, each
+with an embedding dimension of 384 and 8
+attention heads, for a total of 12M trainable
+parameters. It trains in less than 30 minutes
+on one 8×H200 node using a standard v-pred
+parameterization and v-loss objective [e.g., Li
+and He, 2026]. We use an AdamW optimizer
+with (β1, β2) = (0.9, 0.95), weight decay of
+0.1, and a warmup-stable-decay learning rate schedule set to 10% linear warmup and 10% linear
+decay over a total of 20 epochs, with a peak learning rate of 3 × 10−4 [Loshchilov and Hutter, 2019,
+Hu et al., 2024].
+4
+Results
+When we apply MUSHY to held-out simulation stars with known θ, we can compare the inferred
+posterior distribution with the true θ. We quantify the accuracy of the inference by computing
+σMAD = 1.4826 × median(|ˆθ −θtrue|), a robust measure of dispersion where ˆθ is taken to be the
+posterior median and the 1.4826 factor makes σMAD comparable to the standard deviation for a
+Gaussian distribution.
+We show in Table 1 that MUSHY can precisely infer physical parameters with both single-survey
+inputs and multi-survey inputs, and that multi-survey inference always provides stronger constraints
+on the posterior distribution than single-survey inference. In particular, each constituent survey
+provides different constraints on different physical parameters—for example, Teff is best constrained
+by GALAH, while log g is best constrained by APOGEE—and combining them allows us to take the
+best of each survey and improve our inference. In Table 2 in Appendix A, we show the σMAD for all
+3
+
+
+21 parameters. We also show in Figure 5 that the posteriors are generally well-calibrated, with the
+exception of a few elements (K, Ni, Mn) that are mildly overconfident.
+4.0
+4.5
+5.0
+log g
+6250
+6500
+6750
+Teff [K]
+−0.9
+−0.6
+−0.3
+[Fe/H]
+4.0
+4.5
+5.0
+log g
+−0.9
+−0.6
+−0.3
+[Fe/H]
+APOGEE
+GALAH
+DESI
+All three
+truth
+Figure 2: Posteriors for one held-out star under each
+survey alone and all three together. Contours enclose
+68% and 95%; dashed lines mark the truth.
+We show in Figure 2 the posteriors for key
+atmospheric parameters for a single held-out
+star, as estimated under each survey alone
+and all three together; Figure 4 shows all
+21 parameters for the same star. We again
+find that multimodal inference outperforms
+single-survey inference: we obtain tighter
+posteriors that are centered on the truth when
+we combine all three surveys, while single-
+survey posteriors are broader and offset from
+the truth. We can quantify this information
+gain of a given posterior relative to the prior,
+calculated as the ratio of the posterior width
+to the prior width. We do this in Figure 3 and
+find that GALAH gives the narrowest poste-
+riors for Teff, Na, V and Cr, and APOGEE
+for log g, [Fe/H], C, N and most other ele-
+ments; all three together give the narrowest
+posterior for every parameter. Broadly, the
+multi-survey posteriors are narrower than the
+single-survey posteriors, which are in turn
+narrower than the prior, indicating that includ-
+ing more surveys provides more information
+about the physical parameters.
+Teff
+log g
+vmicro
+[Fe/H]
+[O/Fe]
+[Mg/Fe]
+[Si/Fe]
+[S/Fe]
+[Ca/Fe]
+[Ti/Fe]
+[C/Fe]
+[N/Fe]
+[Na/Fe]
+[Al/Fe]
+[K/Fe]
+[V/Fe]
+[Cr/Fe]
+[Mn/Fe]
+[Co/Fe]
+[Ni/Fe]
+[Ce/Fe]
+0.05
+0.1
+0.2
+0.5
+1
+posterior width / prior width
+APOGEE
+GALAH
+DESI
+All three
+Figure 3: Information gain per parameter on held-out data; lower is better. The points show the
+median posterior width over the prior width (information gain), for each survey alone and for all
+three together. A value of 1 means the spectra add nothing to the prior. Multimodal inference always
+provides more information than single-survey inference.
+5
+Conclusion
+We have presented MUSHY, which to our knowledge is the first model to do principled multimodal
+inference for spectroscopic data fusion. Built on an amortized Bayesian inference scheme and stellar
+atmosphere and spectral synthesis simulators, MUSHY is a single network that can precisely infer
+physical parameters with well-calibrated posteriors from arbitrary combinations of surveys and can
+take advantage of the complementary information from the different surveys to improve inference.
+Further, we can quantify the information gain from each survey to understand what each survey
+contributes to the inference of each physical parameter. Tools like MUSHY will be increasingly
+important as the volume of heterogeneous data continues to grow.
+Limitations and future work
+Standard SBI limitations apply: the posteriors are only as good as the
+simulator, and the model has no support for stars outside the simulator’s prior. There is a sim-to-real
+4
+
+
+gap due to missing/misspecified physics in the simulator (e.g., imperfect line list), and real spectra
+are distinguishable from simulated spectra (a real vs simulated classifier achieves greater-than-chance
+accuracy). The simulator’s residuals could perhaps be learned from real spectra and be applied
+as a correction to the simulator. Further, applying the model to real spectra would be the obvious
+and most important next step, with validation of posteriors against reliable external estimates (e.g.,
+asteroseismic log g and open-cluster metallicities).
+Acknowledgments and Disclosure of Funding
+J.S. thanks Lindsay Smith for helpful comments on the manuscript. J.S. is supported by the Natural
+Sciences and Engineering Research Council of Canada (NSERC), funding reference number 587652.
+In addition, the computations in this work were carried out on, and the data hosted on equipment
+supported by the Scientific Computing Core at the Flatiron Institute, a division of the Simons
+Foundation.
+References
+Steven R. Majewski, Ricardo P. Schiavon, Peter M. Frinchaboy, Carlos Allende Prieto, Robert
+Barkhouser, Dmitry Bizyaev, Basil Blank, Sophia Brunner, Adam Burton, Ricardo Carrera, S. Drew
+Chojnowski, Kátia Cunha, Courtney Epstein, Greg Fitzgerald, Ana E. García Pérez, Fred R.
+Hearty, Chuck Henderson, Jon A. Holtzman, Jennifer A. Johnson, Charles R. Lam, James E.
+Lawler, Paul Maseman, Szabolcs Mészáros, Matthew Nelson, Duy Coung Nguyen, David L.
+Nidever, Marc Pinsonneault, Matthew Shetrone, Stephen Smee, Verne V. Smith, Todd Stolberg,
+Michael F. Skrutskie, Eric Walker, John C. Wilson, Gail Zasowski, Friedrich Anders, Sarbani
+Basu, Stephane Beland, Michael R. Blanton, Jo Bovy, Joel R. Brownstein, Joleen Carlberg,
+William Chaplin, Cristina Chiappini, Daniel J. Eisenstein, Yvonne Elsworth, Diane Feuillet,
+Scott W. Fleming, Jessica Galbraith-Frew, Rafael A. García, D. Aníbal García-Hernández, Bruce A.
+Gillespie, Léo Girardi, James E. Gunn, Sten Hasselquist, Michael R. Hayden, Saskia Hekker,
+Inese Ivans, Karen Kinemuchi, Mark Klaene, Suvrath Mahadevan, Savita Mathur, Benoît Mosser,
+Demitri Muna, Jeffrey A. Munn, Robert C. Nichol, Robert W. O’Connell, John K. Parejko, A. C.
+Robin, Helio Rocha-Pinto, Matthias Schultheis, Aldo M. Serenelli, Neville Shane, Victor Silva
+Aguirre, Jennifer S. Sobeck, Benjamin Thompson, Nicholas W. Troup, David H. Weinberg, and
+Olga Zamora. The Apache Point Observatory Galactic Evolution Experiment (APOGEE). The
+Astronomical Journal, 154(3):94, 2017. ISSN 1538-3881. doi: 10.3847/1538-3881/aa784d. URL
+http://dx.doi.org/10.3847/1538-3881/aa784d.
+Sven Buder, Sanjib Sharma, Janez Kos, Anish M Amarsi, Thomas Nordlander, Karin Lind, Sarah L
+Martell, Martin Asplund, Joss Bland-Hawthorn, Andrew R Casey, Gayandhi M De Silva, Valentina
+D’Orazi, Ken C Freeman, Michael R Hayden, Geraint F Lewis, Jane Lin, Katharine J Schlesinger,
+Jeffrey D Simpson, Dennis Stello, Daniel B Zucker, Tomaž Zwitter, Kevin L Beeson, Tobias Buck,
+Luca Casagrande, Jake T Clark, Klemen ˇCotar, Gary S Da Costa, Richard de Grijs, Diane Feuillet,
+Jonathan Horner, Prajwal R Kafle, Shourya Khanna, Chiaki Kobayashi, Fan Liu, Benjamin T
+Montet, Govind Nandakumar, David M Nataf, Melissa K Ness, Lorenzo Spina, Thor Tepper-García,
+Yuan-Sen Ting(), Gregor Traven, Rok Vogrinˇciˇc, Robert A Wittenmyer, Rosemary F G Wyse,
+Maruša Žerjal, and GALAH Collaboration. The GALAH+ survey: Third data release. Monthly
+Notices of the Royal Astronomical Society, 506(1):150–201, July 2021. ISSN 0035-8711, 1365-
+2966. doi: 10.1093/mnras/stab1242. URL https://academic.oup.com/mnras/article/
+506/1/150/6270919.
+DESI Collaboration, Amir Aghamousa, Jessica Aguilar, Steve Ahlen, Shadab Alam, Lori E. Allen,
+Carlos Allende Prieto, James Annis, Stephen Bailey, Christophe Balland, Otger Ballester, Charles
+Baltay, Lucas Beaufore, Chris Bebek, Timothy C. Beers, Eric F. Bell, José Luis Bernal, Robert
+Besuner, Florian Beutler, Chris Blake, Hannes Bleuler, Michael Blomqvist, Robert Blum, Adam S.
+Bolton, Cesar Briceno, David Brooks, Joel R. Brownstein, Elizabeth Buckley-Geer, Angela Burden,
+Etienne Burtin, Nicolas G. Busca, Robert N. Cahn, Yan-Chuan Cai, Laia Cardiel-Sas, Raymond G.
+Carlberg, Pierre-Henri Carton, Ricard Casas, Francisco J. Castander, Jorge L. Cervantes-Cota,
+Todd M. Claybaugh, Madeline Close, Carl T. Coker, Shaun Cole, Johan Comparat, Andrew P.
+Cooper, M. C. Cousinou, Martin Crocce, Jean-Gabriel Cuby, Daniel P. Cunningham, Tamara M.
+Davis, Kyle S. Dawson, Axel de la Macorra, Juan De Vicente, Timothée Delubac, Mark Derwent,
+5
+
+
+Arjun Dey, Govinda Dhungana, Zhejie Ding, Peter Doel, Yutong T. Duan, Anne Ealet, Jerry
+Edelstein, Sarah Eftekharzadeh, Daniel J. Eisenstein, Ann Elliott, Stéphanie Escoffier, Matthew
+Evatt, Parker Fagrelius, Xiaohui Fan, Kevin Fanning, Arya Farahi, Jay Farihi, Ginevra Favole,
+Yu Feng, Enrique Fernandez, Joseph R. Findlay, Douglas P. Finkbeiner, Michael J. Fitzpatrick,
+Brenna Flaugher, Samuel Flender, Andreu Font-Ribera, Jaime E. Forero-Romero, Pablo Fosalba,
+Carlos S. Frenk, Michele Fumagalli, Boris T. Gaensicke, Giuseppe Gallo, Juan Garcia-Bellido,
+Enrique Gaztanaga, Nicola Pietro Gentile Fusillo, Terry Gerard, Irena Gershkovich, Tommaso
+Giannantonio, Denis Gillet, Guillermo Gonzalez-de-Rivera, Violeta Gonzalez-Perez, Shelby Gott,
+Or Graur, Gaston Gutierrez, Julien Guy, Salman Habib, Henry Heetderks, Ian Heetderks, Katrin
+Heitmann, Wojciech A. Hellwing, David A. Herrera, Shirley Ho, Stephen Holland, Klaus Hon-
+scheid, Eric Huff, Timothy A. Hutchinson, Dragan Huterer, Ho Seong Hwang, Joseph Maria Illa
+Laguna, Yuzo Ishikawa, Dianna Jacobs, Niall Jeffrey, Patrick Jelinsky, Elise Jennings, Linhua
+Jiang, Jorge Jimenez, Jennifer Johnson, Richard Joyce, Eric Jullo, Stéphanie Juneau, Sami Kama,
+Armin Karcher, Sonia Karkar, Robert Kehoe, Noble Kennamer, Stephen Kent, Martin Kilbinger,
+Alex G. Kim, David Kirkby, Theodore Kisner, Ellie Kitanidis, Jean-Paul Kneib, Sergey Ko-
+posov, Eve Kovacs, Kazuya Koyama, Anthony Kremin, Richard Kron, Luzius Kronig, Andrea
+Kueter-Young, Cedric G. Lacey, Robin Lafever, Ofer Lahav, Andrew Lambert, Michael Lampton,
+Martin Landriau, Dustin Lang, Tod R. Lauer, Jean-Marc Le Goff, Laurent Le Guillou, Auguste Le
+Van Suu, Jae Hyeon Lee, Su-Jeong Lee, Daniela Leitner, Michael Lesser, Michael E. Levi, Ben-
+jamin L’Huillier, Baojiu Li, Ming Liang, Huan Lin, Eric Linder, Sarah R. Loebman, Zarija Luki´c,
+Jun Ma, Niall MacCrann, Christophe Magneville, Laleh Makarem, Marc Manera, Christopher J.
+Manser, Robert Marshall, Paul Martini, Richard Massey, Thomas Matheson, Jeremy McCauley,
+Patrick McDonald, Ian D. McGreer, Aaron Meisner, Nigel Metcalfe, Timothy N. Miller, Ramon
+Miquel, John Moustakas, Adam Myers, Milind Naik, Jeffrey A. Newman, Robert C. Nichol,
+Andrina Nicola, Luiz Nicolati da Costa, Jundan Nie, Gustavo Niz, Peder Norberg, Brian Nord,
+Dara Norman, Peter Nugent, Thomas O’Brien, Minji Oh, Knut A. G. Olsen, Cristobal Padilla,
+Hamsa Padmanabhan, Nikhil Padmanabhan, Nathalie Palanque-Delabrouille, Antonella Palmese,
+Daniel Pappalardo, Isabelle Pâris, Changbom Park, Anna Patej, John A. Peacock, Hiranya V. Peiris,
+Xiyan Peng, Will J. Percival, Sandrine Perruchot, Matthew M. Pieri, Richard Pogge, Jennifer E.
+Pollack, Claire Poppett, Francisco Prada, Abhishek Prakash, Ronald G. Probst, David Rabinowitz,
+Anand Raichoor, Chang Hee Ree, Alexandre Refregier, Xavier Regal, Beth Reid, Kevin Reil,
+Mehdi Rezaie, Constance M. Rockosi, Natalie Roe, Samuel Ronayette, Aaron Roodman, Ashley J.
+Ross, Nicholas P. Ross, Graziano Rossi, Eduardo Rozo, Vanina Ruhlmann-Kleider, Eli S. Rykoff,
+Cristiano Sabiu, Lado Samushia, Eusebio Sanchez, Javier Sanchez, David J. Schlegel, Michael
+Schneider, Michael Schubnell, Aurélia Secroun, Uros Seljak, Hee-Jong Seo, Santiago Serrano,
+Arman Shafieloo, Huanyuan Shan, Ray Sharples, Michael J. Sholl, William V. Shourt, Joseph H.
+Silber, David R. Silva, Martin M. Sirk, Anze Slosar, Alex Smith, George F. Smoot, Debopam Som,
+Yong-Seon Song, David Sprayberry, Ryan Staten, Andy Stefanik, Gregory Tarle, Suk Sien Tie,
+Jeremy L. Tinker, Rita Tojeiro, Francisco Valdes, Octavio Valenzuela, Monica Valluri, Mariana
+Vargas-Magana, Licia Verde, Alistair R. Walker, Jiali Wang, Yuting Wang, Benjamin A. Weaver,
+Curtis Weaverdyck, Risa H. Wechsler, David H. Weinberg, Martin White, Qian Yang, Christophe
+Yeche, Tianmeng Zhang, Gong-Bo Zhao, Yi Zheng, Xu Zhou, Zhimin Zhou, Yaling Zhu, Hu Zou,
+and Ying Zu. The DESI Experiment Part I: Science,Targeting, and Survey Design. October 2016.
+URL http://arxiv.org/abs/1611.00036.
+Juna A. Kollmeier, Gail Zasowski, Hans-Walter Rix, Matt Johns, Scott F. Anderson, Niv Drory,
+Jennifer A. Johnson, Richard W. Pogge, Jonathan C. Bird, Guillermo A. Blanc, Joel R. Brownstein,
+Jeffrey D. Crane, Nathan M. De Lee, Mark A. Klaene, Kathryn Kreckel, Nick MacDonald,
+Andrea Merloni, Melissa K. Ness, Thomas O’Brien, Jose R. Sanchez-Gallego, Conor C. Sayres,
+Yue Shen, Ani R. Thakar, Andrew Tkachenko, Conny Aerts, Michael R. Blanton, Daniel J.
+Eisenstein, Jon A. Holtzman, Dan Maoz, Kirpal Nandra, Constance Rockosi, David H. Weinberg,
+Jo Bovy, Andrew R. Casey, Julio Chaname, Nicolas Clerc, Charlie Conroy, Michael Eracleous,
+Boris T. Gänsicke, Saskia Hekker, Keith Horne, Jens Kauffmann, Kristen B. W. McQuinn, Eric W.
+Pellegrini, Eva Schinnerer, Edward F. Schlafly, Axel D. Schwope, Mark Seibert, Johanna K. Teske,
+and Jennifer L. van Saders. SDSS-V: Pioneering Panoptic Spectroscopy. 2017. ISSN 0002-7537.
+URL http://arxiv.org/abs/1711.03234.
+Amina Helmi, Carine Babusiaux, Helmer H. Koppelman, Davide Massari, Jovan Veljanoski, and
+Anthony G. A. Brown. The merger that led to the formation of the Milky Way’s inner stellar
+6
+
+
+halo and thick disk. Nature, 563(7729):85–88, November 2018. ISSN 1476-4687. doi: 10.1038/
+s41586-018-0625-x. URL https://www.nature.com/articles/s41586-018-0625-x.
+Hans-Walter Rix, Vedant Chandra, René Andrae, Adrian M. Price-Whelan, David H. Weinberg,
+Charlie Conroy, Morgan Fouesneau, David W. Hogg, Francesca De Angeli, Rohan P. Naidu,
+Maosheng Xiang, and Daniela Ruz-Mieres. The Poor Old Heart of the Milky Way, September
+2022. URL http://arxiv.org/abs/2209.02722.
+Ana E. García Pérez, Carlos Allende Prieto, Jon A. Holtzman, Matthew Shetrone, Szabolcs Mészáros,
+Dmitry Bizyaev, Ricardo Carrera, Katia Cunha, D. A. García-Hernández, Jennifer A. Johnson,
+Steven R. Majewski, David L. Nidever, Ricardo P. Schiavon, Neville Shane, Verne V. Smith,
+Jennifer Sobeck, Nicholas Troup, Olga Zamora, David H. Weinberg, Jo Bovy, Daniel J. Eisenstein,
+Diane Feuillet, Peter M. Frinchaboy, Michael R. Hayden, Fred R. Hearty, Duy C. Nguyen, Robert W.
+O’Connell, Marc H. Pinsonneault, John C. Wilson, and Gail Zasowski. Aspcap: The Apogee
+Stellar Parameter and Chemical Abundances Pipeline. The Astronomical Journal, 151(6):144,
+2016. ISSN 1538-3881. doi: 10.3847/0004-6256/151/6/144. URL http://dx.doi.org/10.
+3847/0004-6256/151/6/144.
+Liam Parker, Francois Lanusse, Siavash Golkar, Leopoldo Sarra, Miles Cranmer, Alberto Bietti,
+Michael Eickenberg, Geraud Krawezik, Michael McCabe, Rudy Morel, Ruben Ohana, Mariel
+Pettee, Bruno Régaldo-Saint Blancard, Kyunghyun Cho, and Shirley and Ho.
+Astroclip: a
+cross-modal foundation model for galaxies. Monthly Notices of the Royal Astronomical Society,
+531(4):4990–5011, June 2024. ISSN 1365-2966. doi: 10.1093/mnras/stae1450. URL http:
+//dx.doi.org/10.1093/mnras/stae1450.
+Liam Parker, Francois Lanusse, Jeff Shen, Ollie Liu, Tom Hehir, Leopoldo Sarra, Lucas Meyer, Micah
+Bowles, Sebastian Wagner-Carena, Helen Qu, Siavash Golkar, Alberto Bietti, Hatim Bourfoune,
+Nathan Casserau, Pierre Cornette, Keiya Hirashima, Geraud Krawezik, Ruben Ohana, Nicholas
+Lourie, Michael McCabe, Rudy Morel, Payel Mukhopadhyay, Mariel Pettee, Bruno Regaldo-Saint
+Blancard, Kyunghyun Cho, Miles Cranmer, and Shirley Ho. Aion-1: Omnimodal foundation
+model for astronomical sciences, 2025. URL https://arxiv.org/abs/2510.17960.
+Jeff Shen, Francois Lanusse, Liam Holden Parker, Ollie Liu, Tom Hehir, Leopoldo Sarra, Lucas Meyer,
+Micah Bowles, Sebastian Wagner-Carena, Sebastian Wagner-Carena, Helen Qu, Siavash Golkar,
+Alberto Bietti, Hatim Bourfoune, Nathan Cassereau, Pierre Cornette, Keiya Hirashima, Geraud
+Krawezik, Ruben Ohana, Nicholas Lourie, Michael McCabe, Rudy Morel, Payel Mukhopadhyay,
+Mariel Pettee, Bruno Régaldo-Saint Blancard, Kyunghyun Cho, Miles Cranmer, and Shirley
+Ho. Universal Spectral Tokenization via Self-Supervised Panchromatic Representation Learning,
+October 2025. URL https://ui.adsabs.harvard.edu/abs/2025arXiv251017959S.
+Jeff Shen, Joshua S. Speagle, and Shirley Ho. Homogeneous Stellar Parameters from Heteroge-
+neous Spectra with Deep Learning. The Astrophysical Journal, 1007:69, August 2026. ISSN
+0004-637X. doi: 10.3847/1538-4357/ae81b3. URL https://ui.adsabs.harvard.edu/abs/
+2026ApJ..1007...69S.
+George Papamakarios and Iain Murray. Fast ϵ-free inference of simulation models with bayesian
+conditional density estimation, 2018. URL https://arxiv.org/abs/1605.06376.
+Kyle Cranmer, Johann Brehmer, and Gilles Louppe. The frontier of simulation-based inference. Pro-
+ceedings of the National Academy of Sciences, 117(48):30055–30062, May 2020. ISSN 1091-6490.
+doi: 10.1073/pnas.1912789117. URL http://dx.doi.org/10.1073/pnas.1912789117.
+Jan-Matthis Lueckmann, Jan Boelts, David S. Greenberg, Pedro J. Gonçalves, and Jakob H. Macke.
+Benchmarking simulation-based inference, 2021. URL https://arxiv.org/abs/2101.04653.
+Stefan T. Radev, Ulf K. Mertens, Andreas Voss, Lynton Ardizzone, and Ullrich Köthe. Bayesflow:
+Learning complex stochastic models with invertible neural networks, 2020. URL https://arxiv.
+org/abs/2003.06281.
+Yuan-Sen Ting, Charlie Conroy, Hans-Walter Rix, and Phillip Cargile. The Payne : Self-consistent
+ab initio Fitting of Stellar Spectra. The Astrophysical Journal, 879(2):69, 2019. ISSN 0004-637X.
+doi: 10.3847/1538-4357/ab2331. URL http://dx.doi.org/10.3847/1538-4357/ab2331.
+7
+
+
+Tomasz Ró˙za´nski, Yuan-Sen Ting, and Maja Jabło´nska. TransformerPayne: Enhancing spectral
+emulation accuracy and data efficiency by capturing long-range correlations, July 2024. URL
+http://arxiv.org/abs/2407.05751.
+Jiadong Li, Mingjie Jian, Yuan-Sen Ting, and Gregory M. Green. Differentiable stellar atmospheres
+with physics-informed neural networks, 2025. URL https://arxiv.org/abs/2507.06357.
+Robert L. Kurucz. ATLAS12, SYNTHE, ATLAS9, WIDTH9, et cetera. Memorie della Societa
+Astronomica Italiana Supplementi, 8:14, January 2005.
+Elliot M. Kim and Yuan-Sen Ting. pykurucz: A pure python reimplementation of kurucz atlas12 and
+synthe for stellar spectrum synthesis, 2026. URL https://arxiv.org/abs/2603.11693.
+Verne V. Smith, Dmitry Bizyaev, Katia Cunha, Matthew D. Shetrone, Diogo Souto, Carlos Al-
+lende Prieto, Thomas Masseron, Szabolcs Mészáros, Henrik Jönsson, Sten Hasselquist, Yeisson
+Osorio, D. A. García-Hernández, Bertrand Plez, Rachael L. Beaton, Jon Holtzman, Steven R. Ma-
+jewski, Guy S. Stringfellow, and Jennifer Sobeck. The apogee data release 16 spectral line list. The
+Astronomical Journal, 161(6):254, May 2021. ISSN 1538-3881. doi: 10.3847/1538-3881/abefdc.
+URL http://dx.doi.org/10.3847/1538-3881/abefdc.
+U. Heiter, K. Lind, M. Bergemann, M. Asplund, Š. Mikolaitis, P. S. Barklem, T. Masseron,
+P. de Laverny, L. Magrini, B. Edvardsson, H. Jönsson, J. C. Pickering, N. Ryde, A. Bayo Arán,
+T. Bensby, A. R. Casey, S. Feltzing, P. Jofré, A. J. Korn, E. Pancino, F. Damiani, A. Lan-
+zafame, C. Lardo, L. Monaco, L. Morbidelli, R. Smiljanic, C. Worley, S. Zaggia, S. Randich,
+and G. F. Gilmore. Atomic data for the <i>gaia</i> -eso survey. Astronomy & Astrophysics,
+645:A106, January 2021.
+ISSN 1432-0746.
+doi: 10.1051/0004-6361/201936291.
+URL
+http://dx.doi.org/10.1051/0004-6361/201936291.
+Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow Straight and Fast: Learning to Generate
+and Transfer Data with Rectified Flow, September 2022. URL http://arxiv.org/abs/2209.
+03003.
+William Peebles and Saining Xie. Scalable Diffusion Models with Transformers, March 2023. URL
+http://arxiv.org/abs/2212.09748.
+Tianhong Li and Kaiming He. Back to basics: Let denoising generative models denoise, 2026. URL
+https://arxiv.org/abs/2511.13720.
+Ilya Loshchilov and Frank Hutter. Decoupled Weight Decay Regularization, January 2019. URL
+http://arxiv.org/abs/1711.05101.
+Shengding Hu, Yuge Tu, Xu Han, Chaoqun He, Ganqu Cui, Xiang Long, Zhi Zheng, Yewei Fang,
+Yuxiang Huang, Weilin Zhao, Xinrong Zhang, Zheng Leng Thai, Kaihuo Zhang, Chongyi Wang,
+Yuan Yao, Chenyang Zhao, Jie Zhou, Jie Cai, Zhongwu Zhai, Ning Ding, Chao Jia, Guoyang Zeng,
+Dahai Li, Zhiyuan Liu, and Maosong Sun. Minicpm: Unveiling the potential of small language
+models with scalable training strategies, 2024. URL https://arxiv.org/abs/2404.06395.
+8
+
+
+A
+Recovery of all parameters
+Table 2: Recovery for all 21 parameters and all seven survey combinations: σMAD of the posterior
+median against the truth, on 882 held-out θ. Lower is better. A+G is APOGEE with GALAH,
+A+D APOGEE with DESI, G+D GALAH with DESI. Teff is in K, vmicro in km/s, the rest in dex.
+Subscripts are bootstrap standard errors over the held-out stars. In each row the lowest value is in
+bold, and entries statistically indistinguishable from it (95% paired bootstrap) are underlined.
+Single survey
+Pair
+Parameter
+APOGEE
+GALAH
+DESI
+A+G
+A+D
+G+D
+All
+Teff (K)
+67±3
+49±2
+72±4
+43±2
+48±2
+43±2
+36±2
+log g
+0.075±0.003
+0.155±0.007
+0.188±0.009
+0.067±0.003
+0.067±0.003
+0.134±0.006
+0.063±0.002
+vmicro (km/s)
+0.172±0.008
+0.163±0.008
+0.208±0.010
+0.142±0.006
+0.160±0.007
+0.159±0.008
+0.140±0.006
+[Fe/H]
+0.043±0.002
+0.069±0.003
+0.099±0.005
+0.035±0.002
+0.040±0.002
+0.061±0.003
+0.034±0.002
+[O/Fe]
+0.072±0.005
+0.095±0.006
+0.116±0.005
+0.066±0.004
+0.073±0.005
+0.090±0.005
+0.065±0.004
+[Mg/Fe]
+0.038±0.002
+0.079±0.004
+0.094±0.005
+0.036±0.002
+0.037±0.002
+0.068±0.003
+0.036±0.002
+[Si/Fe]
+0.032±0.001
+0.059±0.003
+0.073±0.004
+0.032±0.002
+0.031±0.002
+0.060±0.003
+0.030±0.002
+[S/Fe]
+0.075±0.004
+0.141±0.008
+0.153±0.008
+0.066±0.003
+0.069±0.004
+0.134±0.007
+0.066±0.003
+[Ca/Fe]
+0.053±0.004
+0.063±0.003
+0.063±0.003
+0.049±0.002
+0.044±0.002
+0.051±0.003
+0.042±0.002
+[Ti/Fe]
+0.080±0.004
+0.086±0.004
+0.105±0.005
+0.078±0.004
+0.078±0.005
+0.078±0.003
+0.070±0.004
+[C/Fe]
+0.063±0.003
+0.104±0.005
+0.108±0.006
+0.062±0.003
+0.061±0.003
+0.088±0.005
+0.056±0.003
+[N/Fe]
+0.120±0.004
+0.145±0.007
+0.135±0.006
+0.110±0.005
+0.113±0.004
+0.130±0.006
+0.106±0.005
+[Na/Fe]
+0.188±0.010
+0.135±0.006
+0.167±0.007
+0.129±0.006
+0.155±0.007
+0.122±0.006
+0.115±0.005
+[Al/Fe]
+0.053±0.003
+0.098±0.005
+0.129±0.008
+0.052±0.003
+0.052±0.003
+0.100±0.004
+0.051±0.002
+[K/Fe]
+0.159±0.008
+0.137±0.006
+0.179±0.009
+0.132±0.006
+0.157±0.007
+0.138±0.006
+0.134±0.005
+[V/Fe]
+0.218±0.011
+0.158±0.008
+0.214±0.009
+0.154±0.009
+0.207±0.009
+0.153±0.009
+0.153±0.008
+[Cr/Fe]
+0.119±0.005
+0.093±0.004
+0.121±0.006
+0.089±0.004
+0.111±0.005
+0.091±0.004
+0.086±0.004
+[Mn/Fe]
+0.060±0.002
+0.074±0.003
+0.086±0.005
+0.058±0.003
+0.060±0.003
+0.072±0.003
+0.058±0.003
+[Co/Fe]
+0.132±0.006
+0.131±0.006
+0.157±0.008
+0.116±0.006
+0.129±0.007
+0.126±0.007
+0.115±0.005
+[Ni/Fe]
+0.045±0.002
+0.056±0.003
+0.063±0.003
+0.045±0.002
+0.046±0.003
+0.054±0.003
+0.044±0.002
+[Ce/Fe]
+0.221±0.009
+0.250±0.013
+0.285±0.013
+0.212±0.010
+0.214±0.010
+0.235±0.012
+0.206±0.009
+9
+
+
+log g
+vmicro
+[Fe/H]
+[O/Fe]
+[Mg/Fe]
+[Si/Fe]
+[S/Fe]
+[Ca/Fe]
+[Ti/Fe]
+[C/Fe]
+[N/Fe]
+[Na/Fe]
+[Al/Fe]
+[K/Fe]
+[V/Fe]
+[Cr/Fe]
+[Mn/Fe]
+[Co/Fe]
+[Ni/Fe]
+Teff [K]
+[Ce/Fe]
+log g
+vmicro
+[Fe/H]
+[O/Fe]
+[Mg/Fe]
+[Si/Fe]
+[S/Fe]
+[Ca/Fe]
+[Ti/Fe]
+[C/Fe]
+[N/Fe]
+[Na/Fe]
+[Al/Fe]
+[K/Fe]
+[V/Fe]
+[Cr/Fe]
+[Mn/Fe]
+[Co/Fe]
+[Ni/Fe]
+[Ce/Fe]
+APOGEE
+GALAH
+DESI
+All three
+truth
+Figure 4: Posteriors for all 21 parameters of the held-out star in Figure 2, under each survey alone
+and all three together. Contours enclose 68% and 95%. Dashed lines mark the truth. Best viewed
+zoomed in.
+10
+
+
+0.0
+0.5
+1.0
+max dev. 0.13
+APOGEE
+max dev. 0.10
+GALAH
+max dev. 0.09
+DESI
+0.0
+0.5
+1.0
+max dev. 0.13
+All three
+0.0
+0.5
+1.0
+0.0
+0.5
+1.0
+max dev. 0.12
+APOGEE + GALAH
+0.0
+0.5
+1.0
+max dev. 0.13
+APOGEE + DESI
+0.0
+0.5
+1.0
+max dev. 0.09
+GALAH + DESI
+credible level
+empirical coverage
+Figure 5: Empirical calibration plot on the held-out simulations. We compare the specified credible
+interval level (x-axis) against the empirical coverage from our model; lines on one-to-one are
+calibrated and lines below it are overconfident. We show one line per parameter, and a panel for every
+survey combination.
+11
