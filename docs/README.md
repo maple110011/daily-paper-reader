@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-16 21:55:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-17 21:59:32 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日只速读1篇、未做精读：贝叶斯反问题采样新作《Likelihood-Coin Poisson Sampling》拿到6.0/10。</p>
-<p>值得一看的是它主打的“精确采样＋复杂度紧界”思路，属于贝叶斯反问题计算方向。</p>
-<p>普通读者若对采样算法不熟，建议先读摘要确认与自身问题是否相关，再决定要不要深入。</p>
+<p>今天精读2篇、速读3篇，聚焦联邦贝叶斯不确定性与引力波回声探测两个8分方向。最值得看的是后验事件传输实现单轮联邦贝叶斯认证，以及群等变神经后验估计用于引力波回声搜寻。普通读者可先读这两篇精读，再按兴趣扫速读中的扩散采样与在线贝叶斯模型平均。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Certified Uncertainty Propagation in One-Shot Federated Bayesian Models via Posterior Event Transport">Certified Uncertainty Propagation in One-Shot Federated Bayesian Models via Posterior Event Transport</span></li><li><span class="dpr-home-dashboard-paper-title" title="Searching for gravitational wave echo with group equivariant neural posterior estimation">Searching for gravitational wave echo with group equivariant neural posterior estimation</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Likelihood-Coin Poisson Sampling for Bayesian Inverse Problems: Exact Sampling and Sharp Complexity">Likelihood-Coin Poisson Sampling for Bayesian Inverse Problems: Exact Sampling and Sharp Complexity</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physical-State-Guided Diffusion Sampling for Full-Waveform Inversion">Physical-State-Guided Diffusion Sampling for Full-Waveform Inversion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sequential reduction for discrete latent variables in ecological and evolutionary models using RTMB">Sequential reduction for discrete latent variables in ecological and evolutionary models using RTMB</span></li><li><span class="dpr-home-dashboard-paper-title" title="Online Bayesian Model Averaging with Joint Uncertainty Quantification for Models and Regression Coefficients in Binary Regression">Online Bayesian Model Averaging with Joint Uncertainty Quantification for Models and Regression Coefficients in Binary Regression</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 </div>
 
