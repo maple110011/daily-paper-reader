@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-18</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-19</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-18 22:09:54 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-19 21:16:31 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读4篇，聚焦贝叶斯模型更新、AI求解潮流优化与可扩展贝叶斯推断三大方向。最值得关注的是混合不确定性下的贝叶斯模型更新框架，以及用在线机器学习求解含可再生能源的AC最优潮流，两篇均获7.0分。建议普通读者优先从这两篇入手，了解AI与贝叶斯方法如何提升电力系统计算效率。</p>
+<p>今日速读 1 篇、精读挂零，主推一篇用深度学习做澳大利亚大陆尺度概率电阻率成像的 7.0 分论文。 值得看的是它如何把深度学习用于大陆尺度概率成像，并把结果落到地质、地下水与关键矿产三类应用上。 普通读者可先关注这类&quot;AI+地球物理成像&quot;思路，再留意后续是否有区域案例或数据开源可供对照。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Bayesian Model Updating Framework for Systems Under Hybrid Uncertainties via Probability Integral Transform and Maximum Mean Discrepancy">A Bayesian Model Updating Framework for Systems Under Hybrid Uncertainties via Probability Integral Transform and Maximum Mean Discrepancy</span></li><li><span class="dpr-home-dashboard-paper-title" title="PowerModels-ACOPF-AI: On-the-Fly Machine Learning Approach for Solving AC Optimal Power Flow Integrating Renewable Energy Sources">PowerModels-ACOPF-AI: On-the-Fly Machine Learning Approach for Solving AC Optimal Power Flow Integrating Renewable Energy Sources</span></li><li><span class="dpr-home-dashboard-paper-title" title="Compressed Active Subspaces for Scalable Bayesian Inference">Compressed Active Subspaces for Scalable Bayesian Inference</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Continental-scale probabilistic resistivity imaging of Australia using deep learning: Implications for geology, groundwater, and critical minerals">Continental-scale probabilistic resistivity imaging of Australia using deep learning: Implications for geology, groundwater, and critical minerals</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 </div>
 
