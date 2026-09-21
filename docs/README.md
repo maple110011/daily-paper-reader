@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-20</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-21</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-20 21:08:15 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-21 22:26:55 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,8 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 4 篇推荐（精读 0 篇，速读 4 篇）</p>
-<p>速读：《Evaluation of optimisation and Bayesian inference methods for reaction rates in atmospheric chemical mechanisms》（7.0/10）, 《Backward SDEs-based Diffusion for Physics-Constrained Generation》（7.0/10）, 《Optimal Scaling of Langevin Proposals with Generalized Acceptance Rules》（7.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日精选5篇、精读2篇速读3篇，核心围绕贝叶斯分类与模拟推断展开。</p>
+<p>最值得看两篇8分精读：天文</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +79,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian classification of astronomical spectra with class uncertainties">Bayesian classification of astronomical spectra with class uncertainties</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neural composite likelihood estimation: simulation based inference for time series">Neural composite likelihood estimation: simulation based inference for time series</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +92,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Evaluation of optimisation and Bayesian inference methods for reaction rates in atmospheric chemical mechanisms">Evaluation of optimisation and Bayesian inference methods for reaction rates in atmospheric chemical mechanisms</span></li><li><span class="dpr-home-dashboard-paper-title" title="Backward SDEs-based Diffusion for Physics-Constrained Generation">Backward SDEs-based Diffusion for Physics-Constrained Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Optimal Scaling of Langevin Proposals with Generalized Acceptance Rules">Optimal Scaling of Langevin Proposals with Generalized Acceptance Rules</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generative models for simulation based filtering: Formulations and Empirical Comparisons">Generative models for simulation based filtering: Formulations and Empirical Comparisons</span></li><li><span class="dpr-home-dashboard-paper-title" title="Preservation of Log-Concavity and Convergence of Wasserstein-Fisher-Rao Gradient Flows">Preservation of Log-Concavity and Convergence of Wasserstein-Fisher-Rao Gradient Flows</span></li><li><span class="dpr-home-dashboard-paper-title" title="Classification-oriented adaptive sensing via posterior sampling">Classification-oriented adaptive sensing via posterior sampling</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 
