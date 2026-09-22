@@ -1,0 +1,350 @@
+Title: Nii-MALA: A Fast Metropolis-Adjusted Langevin Sampler with Radial Velocity Benchmarks
+
+URL Source: https://arxiv.org/pdf/2609.15112v1
+
+Published Time: Tue, 15 Sep 2026 02:27:49 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+> Draft version September 15, 2026
+> Typeset using L ATEX twocolumn style in AASTeX7.0.1
+
+Nii-MALA : A Fast Metropolis-Adjusted Langevin Sampler with Radial Velocity Benchmarks 
+
+Jian Jiao, 1, 2 Sheng Jin ,1, 2 Wenxin Jiang, 3 and Dong-Hong Wu 1, 2 
+
+> 1Department of Physics, Anhui Normal University, Wuhu 241002, China
+> 2Center for Astrophysics and Astronomical Technology, Anhui Normal University, Wuhu 241002, China
+> 3Department of Statistics and Data Science, Northwestern University, Evanston, IL 60208, USA
+
+ABSTRACT Markov chain Monte Carlo is widely used for model assessment and parameter fitting in astronomy and astrophysics, leading to numerous ready-to-use packages implementing various sampling tech-niques. For large-scale analyses involving many individual targets, computational efficiency becomes paramount, as it dictates the overall runtime. We introduce Nii-MALA , a high-performance C imple-mentation of the Metropolis-Adjusted Langevin Algorithm, which leverages Message Passing Interface for parallelization and incorporates automatic differentiation backends for gradient evaluation. The code offers flexible control via a configuration file, allowing users to specify the proposal step sizes for all model parameters across parallel chains. We validate its effectiveness on 15- and 30-dimensional Gaussian distributions and a bimodal distribution, and further benchmark it against several other codes using radial velocity data from 51 Pegasi b. Our benchmarks confirm the efficiency of Langevin sampling over random-walk sampling in obtaining the effective sample size, particularly as the dimen-sionality of the target function increases. This algorithmic advantage can be effectively leveraged when paired with an efficient automatic differentiation library. However, for complex functions commonly encountered in astronomy—such as radial velocity orbital fitting—the derivative-dependent Langevin sampler shows lower efficiency than parallel tempering or alternative sampling approaches, as revealed by effective sample size analysis. 
+
+Keywords: Algorithms – Computational methods – Radial velocity 
+
+1. INTRODUCTION Markov chain Monte Carlo (MCMC), with an appro-priate choice of transition algorithm, can produce a sta-tionary distribution that closely approximates the target distribution after a sufficient number of sampling steps (N. Metropolis et al. 1953; W. K. Hastings 1970). As a result, it is now a cornerstone of modern astronomi-cal data analysis for both model fitting and parameter estimation. Specifically, for a given astronomical prob-lem, Bayesian inference is employed to derive the pos-terior distribution, which is then sampled via MCMC. The resulting samples are subsequently used for model selection or parameter inference (S. Sharma 2017). How-ever, MCMC encounters substantial difficulties in high-dimensional settings. In such spaces, the high-density posterior regions typically occupy only a small frac-tion of the full parameter volume, which causes naive 
+
+> Corresponding author: Sheng Jin jins@ahnu.edu.cn
+
+random-walk Metropolis (RWM) algorithms to exhibit extremely slow mixing (G. O. Roberts & J. S. Rosenthal 2001; J. C. Mattingly et al. 2012). Moreover, real-world problems frequently feature multimodal posteriors, in which the basic RWM sampler can easily become stuck in a single mode (K. Latuszy´ nski et al. 2025). Astronomy applications frequently encounter multi-parameter posterior distributions. For instance, orbital parameter retrieval for a single-planet system typically requires 7 or more parameters (P. C. Gregory 2005; P. A. Pe˜ na R. & J. S. Jenkins 2025; D. Tan et al. 2026), while a two-planet system roughly doubles this number to 13-15 parameters or more (X. Huang et al. 2025; H.-F. Jia et al. 2026; S. Jin et al. 2026). To address these chal-lenging posteriors, a variety of specialized sampling al-gorithms and software packages have been developed. These include the ensemble affine sampler emcee and its derivatives ptemcee and reddemcee (D. Foreman-Mackey et al. 2013; W. D. Vousden et al. 2016; P. A. Pe˜ na R & J. S. Jenkins 2026); nested sampling methods, which directly provide Bayesian evidence (J. Skilling arXiv:2609.15112v1 [astro-ph.IM] 14 Sep 2026 22004; P. Mukherjee et al. 2006; F. Feroz et al. 2009; J. S. Speagle 2020); and adaptive or automatic parallel tem-pering MCMC (APT-MCMC) schemes (P. C. Gregory 2005; S. Jin et al. 2022; S. Jin et al. 2024; P. A. Pe˜ na R & J. S. Jenkins 2026). Collectively, these powerful methods and tools have proven highly effective in solv-ing challenging sampling tasks in modern astronomy. For exoplanet transit-timing variation (TTV) models, Tuchow et al. (N. W. Tuchow et al. 2019) compared the sampling efficiency of several MCMC methods, in-cluding the Metropolis-Adjusted Langevin Algorithm (MALA), Hamiltonian Monte Carlo (HMC), and affine-invariant ensemble samplers. Although these methods and tools have proven highly successful for analyzing individual targets, the upcoming deluge of data from various missions—such as the high-precision astromet-ric time-series data from Gaia (M. Perryman et al. 2014; C. Lammers & J. N. Winn 2026)—necessitates a re-evaluation of these codes, particularly regarding their efficiency in batch analyses of large numbers of targets. The overall sampling efficiency should be assessed from two complementary perspectives. First, algorith-mic sampling efficiency. For instance, optimal scaling theory shows that, for a broad class of high-dimensional targets, the RWM algorithm is most efficient when tuned to an average acceptance rate of approximately 0.234 (A. Gelman et al. 1996; G. O. Roberts et al. 1997). In contrast, derivative-based algorithms can achieve sub-stantially higher acceptance rates. For example, MALA, which uses gradient information, has an optimal accep-tance rate of about 0.574 for high-dimensional targets (G. O. Roberts & J. S. Rosenthal 1998; N. S. Pillai et al. 2012), while HMC reaches an optimal acceptance rate of 0.65 (R. Neal 2011). The No-U-Turn Sampler (NUTS) adaptively sets the HMC trajectory length (M. D. Hoff-man & A. Gelman 2014). These acceptance rates are tuning diagnostics rather than direct measures of sam-pling efficiency. Second, computational implementation efficiency. Derivative-based methods such as MALA and HMC require extra computations to evaluate gradients, introducing a trade-off that depends on the effective sample size (ESS), autocorrelation, and the cost of the automatic differentiation backend (R. Neal 2011; M. D. Hoffman & A. Gelman 2014; S. Livingstone & G. Zanella 2022). For a retained chain of length N , the ESS es-timates the number of independent draws represented by the correlated samples, while the integrated auto-correlation time (IAT) gives the corresponding correla-tion penalty, with ESS ≈ N/ IAT. Meanwhile, practical implementations of MALA have continued to develop. 
+
+Pigeons.jl supports parallel tempering with MALA (N. Surjanovic et al. 2025), while autoMALA adaptively adjusts the MALA step size (M. Biron-Lattes et al. 2024). Aiming to develop a highly efficient sampling code for batch fitting of a large number of targets, we present Nii-MALA 4, a fast C-language MALA implemen-tation. It combines the message-passing interface (MPI) parallelization framework of the Nii-C code (S. Jin et al. 2024) with automatic differentiation through ADOL-C (A. Griewank et al. 1996; A. Griewank & A. Walther 2008) or the compiler-based Enzyme backend (W. S. Moses & V. Churavy 2020). Furthermore, Nii-MALA 
+
+offers flexible control via a configuration file, allowing users to manually specify proposal scales for all model parameters across parallel chains. We first evaluated its performance on controlled 15- and 30-dimensional Gaus-sian targets and a bimodal distribution. The MALA configurations achieve acceptance rates near 0.57, while RWM is near 0.23. However, acceptance rate alone does not fully reflect sampling efficiency. We therefore com-pare the methods using ESS, IAT, ESS /s , which mea-sures the effective sample size obtained per second of computation, and ESS /10 6, which quantifies the effec-tive sample size per one million sampling iterations at the cold temperature. Furthermore, we carried out benchmarks of Nii-MALA 
+
+with ADOL-C and Enzyme, Nii-C (S. Jin et al. 2024), 
+
+ptemcee (W. D. Vousden et al. 2016), and reddemcee 
+
+(P. A. Pe˜ na R & J. S. Jenkins 2026) using the real-world radial velocity (RV) data of the exoplanet 51 Pe-gasi b (M. Mayor & D. Queloz 1995). The RV bench-mark serves as a real-world comparison of the five tested samplers, using either MALA or RWM configurations. This comparison is intended only as a practical tech-nical guideline for real-world tasks such as orbital pa-rameter fitting in astronomy, with the goal of assisting practitioners in their choice of MCMC software and al-gorithms. This paper is organized as follows. Section 2 de-tails the implementation of MALA within the Nii-MALA 
+
+code. Section 3 presents benchmark results evaluating the code’s effectiveness and the computational efficiency of the tested algorithms and codes. Section 4 concludes with a summary and discussion.  
+
+> 2.
+
+MALA IMPLEMENTATION We consider a target density π on Rd and aim to draw samples from it. Within the Bayesian framework adopted here, π represents the unnormalized posterior, which is proportional to the prior multiplied by the like-lihood.  
+
+> 4https://github.com/jianjiao-ah/Nii-MALA
+
+3Derived from the Langevin stochastic differential equation, MALA is a gradient-based MCMC method whose dynamics feature both a deterministic drift (di-rected by the gradient of the log-target) and stochas-tic Brownian diffusion (P. J. Rossky et al. 1978; G. O. Roberts & R. L. Tweedie 1996). To correct for the bias induced by time-discretization, a Metropolis–Hastings accept/reject step is added, ensuring that the Markov chain preserves the target invariant distribution π (N. Metropolis et al. 1953; W. K. Hastings 1970; G. O. Roberts & J. S. Rosenthal 1998; N. S. Pillai et al. 2012). Let Wt be a standard d-dimensional Brownian motion, that is, a continuous stochastic process with indepen-dent Gaussian increments. The Langevin Itˆ o diffusion associated with the target density π is defined by dXt = ∇ log π(Xt) d t + √2 d Wt, (1) where ∇ log π denotes the gradient of the log-target den-sity. The Itˆ o interpretation specifies how the stochastic integral in Equation (1) is defined (B. Øksendal 2003). Under suitable regularity conditions, the diffusion in (1) admits π as its invariant distribution (G. O. Roberts & R. L. Tweedie 1996). Simulating (1) requires discretizing the continuous-time dynamics. Applying the Euler–Maruyama scheme with step size τ > 0 yields, for t = 0 , 1, 2, . . . , the recur-sion 
+
+Xt+1 = Xt + τ ∇ log π(Xt) + √2τ ξ t, ξt ∼ N d(0 , I d),
+
+(2) where ξt are independent and identically distributed (i.i.d.) random vectors and Nd(0 , I d) denotes the d-dimensional standard Gaussian distribution with zero mean and identity covariance matrix Id.Given the current state x = Xt, a candidate state 
+
+x′ = Xt+1 is generated using Equation (2), where x′ is distributed according to the proposal density q(x′ | x), which is given explicitly (up to a normalizing constant) by 
+
+q(x′ | x) ∝ exp 
+
+
+
+− 14τ ∥x′ − x − τ ∇ log π(x)∥22
+
+
+
+. (3) Here, ∥·∥ 2 denotes the Euclidean ( L2) norm. In gen-eral, this unadjusted Langevin algorithm does not pre-serve π exactly. This bias can be corrected by adding a Metropolis–Hastings accept–reject step to the Langevin update (G. O. Roberts & R. L. Tweedie 1996; G. O. Roberts & J. S. Rosenthal 1998), whereby the proposal 
+
+x′ is accepted with probability 
+
+α(x, x ′) = min 
+
+
+
+1, π(x′) q(x | x′)
+
+π(x) q(x′ | x)
+
+
+
+. (4) The accept–reject decision is then made by drawing a random number ut ∼ U (0 , 1) and comparing it with 
+
+α(x, x ′), where U(0 , 1) denotes the uniform distribution on [0 , 1]. If α(x, x ′) = 1, the proposal is accepted deter-ministically; otherwise, it is accepted with probability 
+
+α(x, x ′). Detailed balance means that the probability flow between any pair of states is equal in both direc-tions. This condition makes the chain reversible and leaves π unchanged by the transition, so that π is the invariant distribution (L. Tierney 1994). For numerical stability, we evaluate the acceptance probability (4) on the logarithmic scale to prevent numerical underflow for very small probabilities. Moreover, to provide users with greater flexibility and control, Nii-MALA runs multiple parallel chains via MPI-based parallelization, where each chain can either evolve independently or incorporate a parallel tempering func-tion if desired. Users can manually specify the pro-posal step sizes for individual parameters in each chain. 
+
+Nii-MALA determines the proposal scale of each param-eter using three control parameters: init gp ratio (ρ), which sets the baseline initial proposal size relative to the prior range; init step para (η), a parameter-wise vector of length equal to the number of parameters; and scale step beta (κ), a chain-wise vector of length equal to the number of parallel chains. For each param-eter dimension j in chain r, the specific proposal scaling is defined as 
+
+sr,j = ( θmax  
+
+> j
+
+− θmin  
+
+> j
+
+) ρ η j κr , (5) where sr,j denotes the proposal scale for the j-th parameter in chain r, ηj is the j-th component of 
+
+init step para , and κr is the r-th component of 
+
+scale step beta , θmax  
+
+> j
+
+and θmin  
+
+> j
+
+are the upper and lower bounds of the prior interval for parameter j, re-spectively. The tested ADOL-C implementation uses reverse mode (version 2.7.3). In its derivative calculations, it records a new tape at each likelihood–gradient call for the 2D, 15D, and 30D targets; for the RV bench-mark, however, it records once and replays a single rank-specific tape. The tested Enzyme implementation uses Enzyme v0.0.289 with LLVM 19.1.1 (W. S. Moses & V. Churavy 2020). For the RV benchmark, both ADOL-C and Enzyme differentiate the likelihood and use a cus-tom reverse rule for the iterative Kepler solver. Adapting Nii-MALA to a new application requires modifying only two files: user prior.c for specifying the prior distributions and user logll grad.cpp for computing the log-likelihood function and its gradient with the selected automatic differentiation backend. 4 
+
+> 3.
+
+BENCHMARKS This section presents a set of benchmarks to demon-strate the effectiveness of the Nii-MALA code. Moreover, we compare the numerical performance of the tested codes and configurations. Our goal is to provide a use-ful reference for future large-scale batch applications in-volving numerous targets, particularly where computa-tional efficiency is paramount. For the benchmarks, we ran parallel MCMC chains in each experiment and com-puted the ESS and IAT based on the cold chains. To evaluate performance, we recorded two metrics: ESS /s 
+
+and ESS /10 6.The first subsection compares the standard RWM sampler with MALA. The second subsection compares the computational efficiency of five sampler configura-tions in an astronomical RV application. 3.1. RWM versus MALA 
+
+Although MALA uses gradient information to im-prove its proposals, calculating the gradient incurs additional computational costs. Here, we use 15-and 30-dimensional Gaussian distributions and a 2-dimensional bimodal distribution to compare the over-all computational efficiency of RWM and MALA, and to explore whether this trade-off is worthwhile. Both samplers—RWM ( Nii-C ) and MALA ( Nii-MALA )—are implemented in C, with Nii-MALA using two different backends—ADOL-C and Enzyme—to test the compu-tational efficiency of different automatic differentiation implementations. For these synthetic benchmarks, the overall proposal scale was adjusted through init gp ratio . The fixed values were 0.002 (15D), 0.0019 (30D), and 0.0054 (2D) for MALA, and 0.0178 (15D), 1.05 (30D), and 0.06 (2D) for RWM. These values were set based on the acceptance rates of test runs. 3.1.1. 15- and 30-dimensional Gaussian 
+
+Our first example considers 15- and 30-dimensional Gaussian distributions of the form: 
+
+π(x) ∝
+
+> d
+
+Y
+
+> i=1
+
+exp −(xi − mi)2 (6) where mi is the center of the i-th coordinate, and we set the dimension to d = 15 and 30. This simple target function serves as a controlled benchmark for comparing the sampling and computa-tional efficiencies of the basic RWM and MALA set-tings. Each chain used 1,000,000 iterations, with the first 200,000 iterations of the cold chain discarded as burn-in. For visual simplicity and to avoid an excessive number of contours, Figure 1 presents only the represen-tative x1–x5 subset of the corner plots for Nii-C (RWM) and Nii-MALA (MALA), demonstrating that both codes recover the 30-dimensional Gaussian target. Table 1 compares the sampling efficiency and runtime of the two codes. All tests were carried out on a HASEE com-puter running Ubuntu 24.04.1 LTS with a 12th Gen In-tel Core i7-12650H processor. For both Gaussian di-mensions, MALA achieves acceptance rates of approxi-mately 57%, while RWM is near 22%. For the Gaussian targets, MALA shows a clear ESS advantage over RWM, and this advantage becomes larger at the higher tested dimension. The median bulk ESS of MALA is about 2.8 times that of RWM in 15 dimensions and about 4.5 times that of RWM in 30 dimensions. The ADOL-C and Enzyme backends use the same MALA settings and give the same ESS values, but Enzyme requires much less runtime. As a result, Enzyme-assisted Nii-MALA 
+
+achieves the highest median ESS /s for both Gaussian tests. These results show that the sampling advantage of MALA becomes more useful at the higher tested dimen-sion when an efficient automatic differentiation backend is used. 3.1.2. Bimodal distribution 
+
+The second test case is a 2-dimensional bimodal distri-bution, comprising a Gaussian component and a curved, crescent-shaped component. Its target density is given by 
+
+π(a, b ) ∝ 12 exp 
+
+"
+
+− a2
+
+1.44 −
+
+ b + 1 + 49 a22
+
+0.1225 
+
+#
+
++ 12 exp −8  a2 + ( b − 2) 2 (7) The first term forms the curved crescent through the quadratic dependence of its center in b on a, whereas the second term is a compact Gaussian centered near (0 , 2). Parallel tempering was enabled in both Nii-C and 
+
+Nii-MALA to facilitate movement between the two com-ponents (S. Jin et al. 2024). Both Nii-MALA (MALA) and Nii-C (RWM) used 2,000,000 iterations per chain, with the first 400,000 it-erations of the cold chain discarded as burn-in. Figure 2 presents the corner plots of the 2-dimensional bimodal target obtained by Nii-MALA and Nii-C , demonstrat-ing that both algorithms successfully recover the target bimodal distribution. Table 1 compares the two samplers in terms of both algorithmic efficiency and computational runtime. Sim-ilar to the Gaussian benchmarks, MALA achieves an acceptance rate of ∼55%, significantly higher than RWM’s ∼23%. RWM has the highest median ESS /s for 5
+
+(a) Nii-MALA (b) Nii-C 
+
+Figure 1. Corner plots for the representative x1–x5 subset of the 30-dimensional Gaussian benchmark, obtained with Nii-MALA 
+
+(MALA) and Nii-C (RWM). Each chain used 1,000,000 iterations, and the first 200,000 iterations (20%) of the cold chain were discarded as burn-in. Full 30-dimensional numerical diagnostics are reported in Table 1. 
+
+Table 1. Runtime and ESS-based efficiency for the synthetic benchmarks.                                                                                           
+
+> Model Method Iterations Runtime (s) Acceptance (%) Min. bulk ESS Median bulk ESS Max. IAT Median ESS/s ESS/10 6
+> 15D Gaussian Nii-MALA (ADOL-C) 1,000,000 11.662 56.951 18,743.28 42,080.57 42.68 3,608.35 42,080.57 15D Gaussian Nii-MALA (Enzyme) 1,000,000 3.638 56.951 18,743.28 42,080.57 42.68 11,566.95 42,080.57 15D Gaussian Nii-C (RWM) 1,000,000 3.526 22.535 5,151.17 14,938.05 155.30 4,236.54 14,938.05 30D Gaussian Nii-MALA (ADOL-C) 1,000,000 20.699 57.079 17,698.51 39,553.81 45.20 1,910.90 39,553.81 30D Gaussian Nii-MALA (Enzyme) 1,000,000 7.283 57.079 17,698.51 39,553.81 45.20 5,430.98 39,553.81 30D Gaussian Nii-C (RWM) 1,000,000 6.935 22.129 8,159.57 8,697.05 98.04 1,254.08 8,697.05 2D bimodal Nii-MALA (ADOL-C) 2,000,000 21.593 55.330 4,983.41 20,640.14 321.07 955.86 10,320.07 2D bimodal Nii-MALA (Enzyme) 2,000,000 2.458 55.376 4,586.05 21,908.74 348.88 8,911.52 10,954.37 2D bimodal Nii-C (RWM) 2,000,000 2.119 22.746 2,470.32 27,631.13 647.69 13,040.98 13,815.57
+
+Note —Iteration counts are reported per chain. ESS and IAT are calculated from the cold chain after discarding its first 20% as burn-in. The final column reports median ESS /10 6, normalized by the sampling iterations at the cold temperature. 
+
+this target, followed by MALA (Enzyme) and MALA (ADOL-C). The median bulk ESS values are 20,640.14, 21,908.74, and 27,631.13 for MALA (ADOL-C), MALA (Enzyme), and RWM, respectively. These results show that RWM gives the highest median ESS and median ESS /s for this bimodal target. The analytic mass of the crescent component is 0.770642. The estimated masses from MALA (ADOL-C), MALA (Enzyme), and RWM are 0.7870, 0.7707, and 0.7772, respectively. The estimated component masses differ from the analytic value by approximately 1.64, 0.01, and 0.66 percentage points for MALA (ADOL-C), MALA (Enzyme), and RWM, respectively. 3.2. Benchmarking RV Fitting 
+
+Here we benchmark the performance and runtime of five configurations using RV data for the exoplanet 51 Pegasi b (M. Mayor & D. Queloz 1995; R. P. Butler et al. 2006), sourced from the NASA Exoplanet Archive 5.The purpose of this benchmark is to compare run-time and sampling efficiency in a real-world astron-omy application. Since Nii-MALA , Nii-C , ptemcee , and 
+
+reddemcee differ in their proposal mechanisms and soft-ware structures, this constitutes a practical runtime benchmark conducted within an actual application on a given machine—rather than an advanced programming-language study or a rigorous algorithmic analysis. Ac-cordingly, we set narrow prior ranges for fitting the RV of 51 Pegasi b, allowing all codes to rapidly locate the density mode and begin sampling in its vicinity. This setup enables us to compare code efficiency in a rela- 
+
+> 5
+
+https://exoplanetarchive.ipac.caltech.edu 6
+
+(a) Nii-MALA (b) Nii-C 
+
+Figure 2. Corner plots for the two-dimensional bimodal benchmark, obtained using Nii-MALA (MALA) and Nii-C (RWM). Each chain used 2,000,000 iterations, and the first 400,000 iterations (20%) of the cold chain were discarded as burn-in. 
+
+tively easy setting, where each code can readily recover the posteriors. The implemented RV model comprises a total of 8 parameters: 
+
+θ = ( P, K, λ, h, k, ˙γ, γ, σ jit ), (8) where P is the orbital period, K is the RV semi-amplitude, λ is the mean longitude at the reference epoch, h = √e sin ω, k = √e cos ω, ˙γ is a linear RV trend, γ is the systemic velocity offset that accounts for the star’s mean RV, and σjit is an additional white-noise jitter term. The eccentricity and argument of periastron are re-covered as 
+
+e = h2 + k2, ω = atan2( h, k ), (9) with the prior constrained to the physical range e < 1. For each observation time ti, where t0 is the first epoch in the data file, we evaluate the mean anomaly 
+
+Mi = 2π(ti − t0)
+
+P + λ − ω, (10) and then solve Kepler’s equation Ei − e sin Ei = Mi
+
+for the eccentric anomaly Ei, and compute the true anomaly νi.The corresponding RV signal at time ti is then given by 
+
+vmod (ti) = K [cos( νi + ω) + e cos ω]+ ˙ γ(ti−t0)+ γ. (11) 
+
+Table 2. Prior distributions of the RV model. Parameter Prior Min Max 
+
+P (days) Uniform 3.0 5.0 
+
+K (m s −1) Uniform 45.0 60.0 
+
+λ (rad) Uniform 0 2πh = √e sin ω Uniform -1.0 1.0 
+
+k = √e cos ω Uniform -1.0 1.0 ˙γ (m s −1 day −1) Uniform -0.01369 0.00274 
+
+γ (m s −1) Uniform -10.0 10.0 
+
+σjit (m s −1) Truncated N (5 , 52) 10 −5 20.0 
+
+Note —The parameters h and k are sampled under the joint constraint h2 + k2 < 1, ensuring that the recovered eccentricity satisfies e < 1. 
+
+Finally, the log-likelihood is given by log L(θ) = − 12
+
+X
+
+> i
+
+
+
+log(2 πs 2 
+
+> i
+
+) + (vi − vmod (ti)) 2
+
+s2
+
+> i
+
+
+
+.
+
+(12) where s2 
+
+> i
+
+= σ2 
+
+> i
+
++ σ2jit , with σi denoting the measurement uncertainties of the observed RV vi.The priors of the 8 parameters are listed in Table 2. We adopt uniform priors over relatively narrow ranges for P, K, λ, h, k, ˙γ, and γ to allow all MCMC codes to rapidly locate the posterior mode, despite their differing sampling algorithms. The jitter prior is a truncated nor-mal distribution with mean 5 m s −1 and standard devia-tion 5 m s −1, truncated to the interval [10 −5, 20] m s −1.7We use four codes, with a total of the five tested configurations: Nii-MALA with ADOL-C, Nii-MALA 
+
+with Enzyme, Nii-C , ptemcee , and reddemcee (S. Jin et al. 2024; W. D. Vousden et al. 2016; P. A. Pe˜ na R & J. S. Jenkins 2026). Nii-C is the direct RWM baseline, while the two Nii-MALA configurations com-pare automatic differentiation backends within the same sampler. ptemcee provides an established ensemble parallel-tempering baseline, and reddemcee represents an astronomy-oriented tempering implementation. All configurations used eight temperature levels and eight worker processes. For Nii-C and the two Nii-MALA runs, we employed eight MPI ranks and 2,000,000 iterations per chain, with the first 500,000 discarded as burn-in. For ptemcee and reddemcee , we used 50 walkers per temperature level, with each walker running 40,000 iter-ations and the first 10,000 discarded as burn-in. These settings match the number of worker processes and the total iterations across the five configurations, providing a consistent basis for comparing their runtime and ESS-based sampling efficiency. We also performed exploratory single-temperature tests with emcee (D. Foreman-Mackey et al. 2013) and 
+
+BlackJAX MALA (A. Cabezas et al. 2024). The emcee 
+
+run used 50 walkers with 40,000 steps per walker and re-quired approximately 342 seconds, while a single-chain 
+
+BlackJAX MALA run required approximately 8 minutes. Both tests failed to recover the correct posterior distri-bution, indicating that the standard settings of these two codes cannot solve the RV fitting problem. For this reason, we do not include these two tests in Table 3. It should be noted that these outcomes should be inter-preted solely within the context of our RV fitting model, rather than as a conclusive assessment of overall code ef-ficiency. All five configurations successfully recovered the or-bital parameters of 51 Pegasi b, as shown in Figure 3. This figure shows superimposed corner plots obtained from MCMC sampling with the five configurations. The agreement among the posterior distributions confirms that all configurations recovered consistent parameters. Table 3 lists the retrieved orbital period, RV semi-amplitude, eccentricity, runtime, and ESS-based effi-ciency for each configuration. Only minor variations are observed in the posterior constraints. In this benchmark, our main focus is the overall com-putational and sampling efficiency of the tested con-figurations in a real-world astronomy application. Ta-ble 3 also lists the recorded runtime. All experiments were carried out on a HASEE computer running Ubuntu 24.04.1 LTS, equipped with a 12th Gen Intel Core i7-12650H processor and 16.0 GiB of memory. The ADOL-C and Enzyme Nii-MALA runs require 3321.02 and 406.01 seconds, respectively. The results show that the Enzyme implementation reduces the runtime of the ADOL-C implementation by a factor of 8.2, in-dicating that selecting a fast automatic differentiation library is critically important in MALA implementa-tion. The recorded runtimes for Nii-C , ptemcee , and 
+
+reddemcee are 216.05, 408.47, and 696.93 seconds, re-spectively. The corresponding median ESS /s values are 2.59, 19.00, 215.14, 114.44, and 51.51 for Nii-MALA 
+
+(ADOL-C), Nii-MALA (Enzyme), Nii-C , ptemcee , and 
+
+reddemcee . Thus, the lower Enzyme runtime improves MALA’s code efficiency substantially relative to ADOL-C, but it does not change the ranking for this RV model. The difference between the two MALA con-figurations shows that the measured runtime depends strongly on the specific automatic differentiation back-end. The ESS /10 6 metric leads to the same conclu-sion: 4,293.07 and 3,857.91 for the two MALA con-figurations, compared with 23,240.14, 23,372.59, and 17,948.61 for Nii-C , ptemcee , and reddemcee . Based on both ESS /s and ESS /10 6, Nii-C , ptemcee , and 
+
+reddemcee achieve higher ESS-based sampling efficiency than the two Nii-MALA configurations in this RV bench-mark. Thus, for the tested RV model, the use of gradi-ent information does not provide an ESS-based efficiency advantage over the non-gradient samplers. Note that the computational efficiency discussed here primarily refers to local posterior sampling and RV like-lihood evaluation, as the prior ranges in our RV-fitting model are narrow and all codes are able to locate the posterior mode quickly. A second aspect of practical sampling performance is global exploration—the ability of an MCMC algorithm to move efficiently between sep-arated high-density regions in complex posterior spaces. We do not explicitly address this aspect in the present benchmark, as it is highly sensitive to the specific prob-lem and the structure of the posterior distribution, mak-ing it difficult to compare codes or draw general conclu-sions from a single test case.  
+
+> 4.
+
+SUMMARY The first aim of this work is to present Nii-MALA , a MALA sampler implemented in C and leveraging an MPI parallel framework, designed to deliver a com-putationally efficient tool for Bayesian inference. The code offers fine-grained control over the proposal scales of all parameters across chains, integrates support for parallel tempering, and supports for the ADOL-C and Enzyme automatic differentiation backends. We vali-date the package through benchmarks on 15- and 30-dimensional Gaussian distributions and a bimodal dis-8
+
+Figure 3. Superimposed corner plot of the eight RV-model parameters for 51 Pegasi b, inferred with Nii-MALA (ADOL-C and Enzyme), Nii-C , ptemcee , and reddemcee .
+
+Table 3. Comparison of the fitted major orbital parameters and sampling efficiency for 51 Pegasi b. 
+
+Sampler P (d) K (m s −1) e Runtime (s) Median ESS Median ESS/s ESS/10 6
+
+Nii-MALA (ADOL-C) 4.23078 +0 .00004  
+
+> −0.00004
+
+55 .694 +0 .544  
+
+> −0.536
+
+0.0094 +0 .0094  
+
+> −0.0065
+
+3321.02 8,586.13 2.59 4,293.07 
+
+Nii-MALA (Enzyme) 4.23078 +0 .00004  
+
+> −0.00004
+
+55 .709 +0 .548  
+
+> −0.545
+
+0.0095 +0 .0095  
+
+> −0.0066
+
+406.01 7,715.81 19.00 3,857.91 
+
+Nii-C 4.23078 +0 .00004  
+
+> −0.00004
+
+55 .677 +0 .567  
+
+> −0.533
+
+0.0095 +0 .0095  
+
+> −0.0066
+
+216.05 46,480.28 215.14 23,240.14 
+
+ptemcee 4.23078 +0 .00004  
+
+> −0.00004
+
+55 .707 +0 .544  
+
+> −0.544
+
+0.0095 +0 .0096  
+
+> −0.0066
+
+408.47 46,745.18 114.44 23,372.59 
+
+reddemcee 4.23078 +0 .00004  
+
+> −0.00004
+
+55 .709 +0 .548  
+
+> −0.544
+
+0.0094 +0 .0095  
+
+> −0.0066
+
+696.93 35,897.21 51.51 17,948.61 
+
+Note —Posterior constraints are the median and 16th–84th percentile interval. The first 25% of the cold-temperature output was discarded before posterior and ESS calculations. Median ESS is calculated from P , K, and e = h2 + k2; ESS /s divides this quantity by runtime. The final column reports median ESS /10 6, normalized by the sampling iterations at the cold temperature. 9tribution, alongside an RV-fitting problem, to demon-strate its effectiveness. The second aim is to compare the computational ef-ficiency of different sampling algorithms and implemen-tations, thereby providing benchmark references for fu-ture large-scale target analyses. Accordingly, we set up two benchmark suites to separately assess efficiency: one comparing MALA against RWM, and the other com-paring five sampler configurations in an RV application. Our conclusions are as follows. I. Derivative-dependent algorithms such as MALA achieve significantly higher acceptance rates than basic RWM sampling ( ∼55–57% vs. ∼22–23%). For the 15- and 30-dimensional Gaussian targets, MALA also achieves higher ESS and lower auto-correlation than RWM, with its ESS advantage be-coming more pronounced as the dimensionality in-creases. Enzyme-assisted Nii-MALA provides the highest median ESS /s in both Gaussian bench-marks, about three times that of the ADOL-C im-plementation. For the bimodal target, however, 
+
+Nii-C achieves the highest median ESS /s , while the MALA configurations show substantially more frequent transitions between the two components. Thus, the practical efficiency of MALA depends on both the target distribution and the computa-tional cost of gradient evaluation. II. Based on the RV-fitting test, all five sampler con-figurations in the formal comparison recover con-sistent posterior constraints for 51 Pegasi b. In terms of runtime, Nii-C is the fastest among the five tested configurations. Compared to Nii-C ,
+
+Nii-MALA (Enzyme) and ptemcee run approxi-mately 2 times slower, reddemcee runs about 3.5 times slower, and Nii-MALA (ADOL-C) runs about 15 times slower. In terms of sampling efficiency, 
+
+Nii-C , ptemcee , and reddemcee achieve higher median ESS /s than the two Nii-MALA configura-tions, and the ESS /10 6 values show the same pat-tern, with Nii-C , ptemcee , and reddemcee again outperforming the two Nii-MALA configurations. Thus, for the tested RV model, the use of gradient information does not provide an ESS-based effi-ciency advantage over the non-gradient samplers. III. The RV benchmark also provides guidance on the practical use of derivative-dependent sampling al-gorithms such as MALA. The automatic differen-tiation backend has a major impact on computa-tional performance: replacing ADOL-C with En-zyme reduces the Nii-MALA runtime from 3321.02 to 406.01 seconds, corresponding to an 8.2-fold speedup. Enzyme provides a similar improvement in the Gaussian benchmarks, reducing the MALA runtime to a level close to RWM while retaining the higher ESS of MALA. These results show that the choice of automatic differentiation library has a major impact on computational cost. In summary, Nii-MALA —with its C-language implementation—serves as a fast MALA code for real-world astronomical applications. The benchmarks show that gradient information can improve sampling effi-ciency, measured as ESS, but whether this advantage translates into shorter runtime depends on the specific characteristics of target distribution and the cost of gradient evaluation. When the improvement in mix-ing outweighs the gradient cost, MALA can provide higher computational efficiency, as demonstrated by the 15- and 30-dimensional Gaussian benchmarks; in other cases, non-gradient samplers can remain more efficient. Therefore, sampler selection for large-scale astronomical applications should be guided by the specific problem at hand, rather than by the mathematical sophistication or algorithmic complexity of the methods. It should be noted that the computational efficiency discussed in this paper is confined to likelihood evalua-tion, as our RV benchmark employs narrow priors that enable all tested codes to readily locate the posterior modes. As for mode-finding performance—which is a central objective of MCMC algorithms—this depends on the specific algorithm and the structure of the pos-terior, and is beyond the scope of this paper. In future work, we plan to investigate the mode-finding capabili-ties of various algorithms using more real-world exam-ples, and to extend Nii-MALA with additional features to handle high-dimensional and challenging posterior dis-tributions. ACKNOWLEDGMENTS We thank the anonymous referee for their constructive comments, which have helped improve this paper. S.J. acknowledges support from the National Natural Sci-ence Foundation of China (Grant No. 11973094) and the Incubation Program of Anhui Normal University (2023GFXK153). D.W. acknowledges support from the National Natural Science Foundation of China (NSFC, Grant No. 12573076). 
+
+## Software: Nii-MALA , Nii-C (S. Jin et al. 2024), 
+
+ptemcee (W. D. Vousden et al. 2016), reddemcee (P. A. Pe˜ na R & J. S. Jenkins 2026) 10 REFERENCES 
+
+Biron-Lattes, M., Surjanovic, N., Syed, S., Campbell, T., & Bouchard-Cˆ ot´ e, A. 2024, in Proceedings of Machine Learning Research, Vol. 238, Proceedings of the 27th International Conference on Artificial Intelligence and Statistics (PMLR), 4600–4608. https://proceedings.mlr.press/v238/biron-lattes24a.html Butler, R. P., Wright, J. T., Marcy, G. W., et al. 2006, The Astrophysical Journal, 646, 505, doi: 10.1086/504701 Cabezas, A., Corenflos, A., Lao, J., & Louf, R. 2024, BlackJAX: Composable Bayesian inference in JAX, doi: 10.48550/arXiv.2402.10797 Feroz, F., Hobson, M. P., & Bridges, M. 2009, MNRAS, 398, 1601, doi: 10.1111/j.1365-2966.2009.14548.x Foreman-Mackey, D., Hogg, D. W., Lang, D., & Goodman, J. 2013, Publications of the Astronomical Society of the Pacific, 125, 306, doi: 10.1086/670067 Gelman, A., Roberts, G. O., & Gilks, W. R. 1996, in Bayesian Statistics 5, ed. J. M. Bernardo, J. O. Berger, A. P. Dawid, & A. F. M. Smith (Oxford University Press), 599–607 Gregory, P. C. 2005, ApJ, 631, 1198, doi: 10.1086/432594 Griewank, A., Juedes, D., & Utke, J. 1996, ACM Transactions on Mathematical Software, 22, 131, doi: 10.1145/229473.229474 Griewank, A., & Walther, A. 2008, Evaluating Derivatives: Principles and Techniques of Algorithmic Differentiation, 2nd edn. (Philadelphia, PA: Society for Industrial and Applied Mathematics), doi: 10.1137/1.9780898717761 Hastings, W. K. 1970, Biometrika, 57, 97, doi: 10.1093/biomet/57.1.97 Hoffman, M. D., & Gelman, A. 2014, Journal of Machine Learning Research, 15, 1593. http://jmlr.org/papers/v15/hoffman14a.html Huang, X., Ji, J., Bao, C., et al. 2025, ApJ, 984, 82, doi: 10.3847/1538-4357/adc444 Jia, H.-F., Jin, S., Wu, D.-H., & Liu, S.-F. 2026, arXiv e-prints, arXiv:2604.09383, doi: 10.48550/arXiv.2604.09383 Jin, S., Ding, X., Wang, S., Dong, Y., & Ji, J. 2022, MNRAS, 509, 4608, doi: 10.1093/mnras/stab3317 Jin, S., Jiang, W., & Wu, D.-H. 2024, The Astrophysical Journal Supplement Series, 274, 10, doi: 10.3847/1538-4365/ad6300 Jin, S., Wu, D.-H., Xu, X.-L., & Ji, J. 2026, arXiv e-prints, arXiv:2604.09268, doi: 10.48550/arXiv.2604.09268 Lammers, C., & Winn, J. N. 2026, AJ, 171, 18, doi: 10.3847/1538-3881/ae21de Latuszy´ nski, K., Moores, M. T., & Stumpf-F´ etizon, T. 2025, arXiv e-prints, arXiv:2501.05908, doi: 10.48550/arXiv.2501.05908 Livingstone, S., & Zanella, G. 2022, Journal of the Royal Statistical Society Series B: Statistical Methodology, 84, 496, doi: 10.1111/rssb.12482 Mattingly, J. C., Pillai, N. S., & Stuart, A. M. 2012, Annals of Applied Probability, 22, 881, doi: 10.1214/10-AAP754 Mayor, M., & Queloz, D. 1995, Nature, 378, 355, doi: 10.1038/378355a0 Metropolis, N., Rosenbluth, A. W., Rosenbluth, M. N., Teller, A. H., & Teller, E. 1953, JChPh, 21, 1087, doi: 10.1063/1.1699114 Moses, W. S., & Churavy, V. 2020, in Advances in Neural Information Processing Systems, Vol. 33 (Curran Associates, Inc.), 12472–12485. https://proceedings.neurips.cc/paper/2020/hash/ 9332c513ef44b682e9347822c2e457ac-Abstract.html Mukherjee, P., Parkinson, D., & Liddle, A. R. 2006, ApJL, 638, L51, doi: 10.1086/501068 Neal, R. 2011, in Handbook of Markov Chain Monte Carlo, 113–162, doi: 10.1201/b10905 Pe˜ na R., P. A., & Jenkins, J. S. 2025, A&A, 704, A323, doi: 10.1051/0004-6361/202554336 Pe˜ na R, P. A., & Jenkins, J. S. 2026, A&A, 706, A323, doi: 10.1051/0004-6361/202556609 Perryman, M., Hartman, J., Bakos, G. ´A., & Lindegren, L. 2014, ApJ, 797, 14, doi: 10.1088/0004-637X/797/1/14 Pillai, N. S., Stuart, A. M., & Thi´ ery, A. H. 2012, Annals of Applied Probability, 22, 2320, doi: 10.1214/11-AAP828 Roberts, G. O., Gelman, A., & Gilks, W. R. 1997, Annals of Applied Probability, 7, 110, doi: 10.1214/aoap/1034625254 Roberts, G. O., & Rosenthal, J. S. 1998, Journal of the Royal Statistical Society: Series B, 60, 255, doi: 10.1111/1467-9868.00123 Roberts, G. O., & Rosenthal, J. S. 2001, Statistical Science, 16, 351, doi: 10.1214/ss/1015346320 Roberts, G. O., & Tweedie, R. L. 1996, Bernoulli, 2, 341, doi: 10.2307/3318418 Rossky, P. J., Doll, J. D., & Friedman, H. L. 1978, Journal of Chemical Physics, 69, 4628, doi: 10.1063/1.436415 Sharma, S. 2017, ARA&A, 55, 213, doi: 10.1146/annurev-astro-082214-122339 11 
+
+Skilling, J. 2004, in American Institute of Physics Conference Series, Vol. 735, Bayesian Inference and Maximum Entropy Methods in Science and Engineering: 24th International Workshop on Bayesian Inference and Maximum Entropy Methods in Science and Engineering, ed. R. Fischer, R. Preuss, & U. V. Toussaint (AIP), 395–405, doi: 10.1063/1.1835238 Speagle, J. S. 2020, MNRAS, 493, 3132, doi: 10.1093/mnras/staa278 Surjanovic, N., Biron-Lattes, M., Tiede, P., et al. 2025, Proceedings of the JuliaCon Conferences, 7, 139, doi: 10.21105/jcon.00139 Tan, D., Ji, J., Bao, C., et al. 2026, Research in Astronomy and Astrophysics, 26, 085005, doi: 10.1088/1674-4527/ae5b55 Tierney, L. 1994, The Annals of Statistics, 22, 1701, doi: 10.1214/aos/1176325750 Tuchow, N. W., Ford, E. B., Papamarkou, T., & Lindo, A. 2019, Monthly Notices of the Royal Astronomical Society, 484, 3772, doi: 10.1093/mnras/stz247 Vousden, W. D., Farr, W. M., & Mandel, I. 2016, Monthly Notices of the Royal Astronomical Society, 455, 1919, doi: 10.1093/mnras/stv2422 Øksendal, B. 2003, Stochastic Differential Equations: An Introduction with Applications, 6th edn. (Berlin, Heidelberg: Springer), doi: 10.1007/978-3-642-14394-6

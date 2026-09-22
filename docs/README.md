@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-21</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-22</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-21 22:26:55 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-22 22:47:10 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,8 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选5篇、精读2篇速读3篇，核心围绕贝叶斯分类与模拟推断展开。</p>
-<p>最值得看两篇8分精读：天文</p>
+<p>今日扫8篇、精读2篇速读6篇，主线聚焦贝叶斯推断在统计建模、宇宙学与物理系统中的落地。</p>
+<p>最值得看精读9.0的《Prior-Amortized In-Context Bayesian Inference for Generalized Linear Mixed-Effects Models》和8.0的《Merlin: Fast and flexible 3x2pt cosmology with simulation-based inference》。</p>
+<p>普通读者可先从7.0的医学影像不确定性量化实操教程《UQMIA》入门，再按兴趣跟进精读两篇。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -82,9 +83,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian classification of astronomical spectra with class uncertainties">Bayesian classification of astronomical spectra with class uncertainties</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neural composite likelihood estimation: simulation based inference for time series">Neural composite likelihood estimation: simulation based inference for time series</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Prior-Amortized In-Context Bayesian Inference for Generalized Linear Mixed-Effects Models">Prior-Amortized In-Context Bayesian Inference for Generalized Linear Mixed-Effects Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Merlin: Fast and flexible 3x2pt cosmology with simulation-based inference">Merlin: Fast and flexible 3x2pt cosmology with simulation-based inference</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -92,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generative models for simulation based filtering: Formulations and Empirical Comparisons">Generative models for simulation based filtering: Formulations and Empirical Comparisons</span></li><li><span class="dpr-home-dashboard-paper-title" title="Preservation of Log-Concavity and Convergence of Wasserstein-Fisher-Rao Gradient Flows">Preservation of Log-Concavity and Convergence of Wasserstein-Fisher-Rao Gradient Flows</span></li><li><span class="dpr-home-dashboard-paper-title" title="Classification-oriented adaptive sensing via posterior sampling">Classification-oriented adaptive sensing via posterior sampling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="UQMIA: An Open, Hands-On Tutorial on Uncertainty Quantification in Medical Imaging Analysis with Large Language Model-Based Assessment of Educational Content">UQMIA: An Open, Hands-On Tutorial on Uncertainty Quantification in Medical Imaging Analysis with Large Language Model-Based Assessment of Educational Content</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Filtering in Physical Systems via Test-time Trained Flow Matching">Bayesian Filtering in Physical Systems via Test-time Trained Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Posterior Learning of Mixed Graphical Models">Bayesian Posterior Learning of Mixed Graphical Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 </div>
 
