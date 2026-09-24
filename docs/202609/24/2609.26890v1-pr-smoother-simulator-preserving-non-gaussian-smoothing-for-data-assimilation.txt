@@ -1,0 +1,1262 @@
+Title: PR-Smoother: Simulator-Preserving Non-Gaussian Smoothing for Data Assimilation
+
+URL Source: https://arxiv.org/pdf/2609.26890v1
+
+Published Time: Thu, 24 Sep 2026 00:09:15 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# PR-Smoother: Simulator-Preserving Non-Gaussian Smoothing for Data Assimilation 
+
+Yuta Tarumi 
+
+iTHEMS RIKEN Kobe, Japan 
+
+yuta.tarumi@riken.jp 
+
+## Abstract 
+
+Many physical data assimilation (DA) workflows require smoothing methods that represent non-Gaussian posteriors over physical state variables, scale to high-dimensional simulators, train from observation windows alone, and remain com-patible with calibration of the prescribed simulator. We introduce PR-Smoother, a simulator-preserving amortized smoother designed for this prescribed-simulator DA regime. Its key design principle is to keep the prescribed simulator explicit in both the evidence lower bound and the variational family: rather than learn-ing replacement dynamics or a learned trajectory prior, PR-Smoother learns only future-conditioned corrections around the prescribed rollout. This yields an explicit non-Gaussian smoothing distribution over physical trajectories and supports joint state, parameter, and sensor-bias learning from observations alone. The varia-tional family contains the exact smoother in deterministic and linear-Gaussian limits. Empirically, PR-Smoother captures multimodal posteriors in 4-dimensional Lorenz–96, remains accurate under ambiguous nonlinear observations and pro-cess noise in 40-dimensional Lorenz–96, and scales to joint state-parameter-bias inference in 16,384-dimensional Kolmogorov flow. 
+
+## 1 Introduction 
+
+Data assimilation (DA) infers latent states from partial, noisy observations under a prescribed dynamical model. Formally, it is filtering or smoothing in state-space models (SSMs) with known dynamics f and observation operator h, typically nonlinear in scientific applications [e.g. Carrassi et al., 2018]. DA underlies reanalysis systems such as ERA5 [Hersbach et al., 2020], which enabled the training of AI-based weather prediction models [Pathak et al., 2022, Bi et al., 2023, Lam et al., 2023]. DA is increasingly used in related domains, including Venusian atmospheric modeling [Sugimoto et al., 2017] and space weather [Lang et al., 2017, Schunk et al., 2021]. In many physical DA settings, replacing the simulator is undesirable. The prescribed dynamics and observation operators (fθ , h θ ) encode prior scientific knowledge, and their parameters θ often carry physical meaning. Many DA settings are observation-only: one has access to Y1: T , but not to state trajectories X1: T for supervision. If θ is unknown, surrogate training requires choosing parameter values to generate synthetic trajectories. Inference remains difficult because nonlinear fθ
+
+and hθ induce smoothing posteriors that are often non-Gaussian and sometimes multimodal, while in high dimensions sequential Monte Carlo is often impractical. Operational methods therefore rely on Gaussian analyses or windowed MAP estimates [Bocquet et al., 2010]. These approximations can work well in near-linear regimes, but become brittle under many-to-one or strongly nonlinear observations, such as saturating radiance operators or scatterometry [Anderson and Järvinen, 1999, Storto, 2016, Geer et al., 2019]. This motivates a physics-preserving alternative that keeps (fθ , h θ )
+
+> Preprint. arXiv:2609.26890v1 [cs.LG] 22 Sep 2026
+
+explicit and differentiable in the objective while using a flexible variational posterior to represent the smoothing distribution. These considerations define a practically important regime of prescribed-simulator DA. In this regime, inference should simultaneously (i) represent non-Gaussian smoothing posteriors in physical space, (ii) scale to high-dimensional systems, (iii) learn from observation windows alone, and (iv) keep the prescribed simulator explicit so that physically meaningful parameters can be estimated. Taken separately, these goals are familiar. Taken together, they exclude many otherwise successful approaches: methods that preserve the simulator typically rely on Gaussian analyses or windowed MAP estimates, whereas methods with richer amortized posteriors often move inference to learned latent states or learned trajectory priors. This paper targets precisely this intersection. We propose Physics Rollout (PR)-Smoother, a simulator-preserving non-Gaussian smoother for prescribed-simulator DA. Its key design choice is to build inference around the simulator rollout itself: rather than learning replacement dynamics or an auxiliary latent transition model, PR-Smoother learns only future-conditioned corrections around fθ (Xt−1). Concretely, it models qϕ(X1 | Y1: T )
+
+with a conditional normalizing flow (NF) and parameterizes each transition qϕ(Xt | Xt−1, Y t:T ) as a future-conditioned Gaussian correction around the simulator rollout. This mirrors the smoother factorization while keeping (fθ , h θ ) explicit in both the evidence lower bound (ELBO) and the variational family, yielding an explicit non-Gaussian density over physical trajectories. Because the prescribed simulator and likelihood remain on-graph throughout training and inference, the same observation-only ELBO also supports joint learning of unknown physical parameters and amortized state inference in a single objective. 
+
+Our contributions are as follows. 
+
+• We introduce PR-Smoother, a simulator-preserving amortized smoother for prescribed-simulator DA. It defines a flexible non-Gaussian density over physical trajectories by com-bining a normalizing-flow initial-state posterior with simulator-rollout-centered transition kernels. The model is trained from observation windows alone using a variational-inference objective, while the prescribed models (fθ , h θ ) remain explicit in the ELBO, enabling calibration of generative-model parameters. • We show that this variational family is well aligned with the target inference problem: it contains the exact smoother in (i) deterministic dynamics limit and (ii) linear-Gaussian limit with the standard universality assumption on NF. • We validate this design across three experiments: controlled multimodality in 4-dimensional Lorenz–96 (Sec. 4.1), ambiguous nonlinear observations and process noise in 40-dimensional Lorenz–96 (Sec. 4.2), and joint state–parameter–bias inference in a 16,384-dimensional Kolmogorov flow from observation windows alone (Sec. 4.3). 
+
+## 2 Related Work 
+
+Simulator-preserving DA in physical space. A first family keeps the prescribed dynamics and ob-servation operators inside inference. This includes 4D-Var and weak-constraint variants, which solve windowed MAP problems [Dimet and Talagrand, 1986, Lewis and Derber, 1985]; ensemble Kalman filters and smoothers, which propagate Gaussian analyses under the prescribed model [Evensen, 1994, Bocquet and Sakov, 2014]; particle/sequential Monte Carlo methods, which target non-Gaussian posteriors using particle representations [Daum and Huang, 2007, Reich, 2013, van Leeuwen et al., 2019]; and nonlinear ensemble-transport smoothers, which use transport-map ensemble updates for non-Gaussian smoothing in physical space [Ramgraber et al., 2023a,b]. Recent learned model-based DA methods also keep the prescribed model in the loop while learning inverse maps, update rules, or solver components [Fablet et al., 2021, Beauchamp et al., 2023, Frerix et al., 2021, Revach et al., 2021, Ni et al., 2022, Xu and Niu, 2024]. In the high-dimensional observation-only settings we study, however, scalable methods in this simulator-preserving regime typically rely on Gaussian analyses, MAP objectives, or learned update components rather than an amortized explicit density over physical trajectories. PR-Smoother instead learns a non-Gaussian smoothing density centered on the prescribed rollout from an observation-only ELBO. 
+
+Latent-space DA and latent SSM inference. A second family gains posterior flexibility by moving inference to a learned latent representation. Amortized VI methods for latent SSMs jointly learn 2transition, emission, and recognition models from observations [Girin et al., 2021, Krishnan et al., 2015, 2017, Karl et al., 2017, Fraccaro et al., 2017, Doerr et al., 2018, Becker et al., 2019]. In DA, latent-space assimilation has used autoencoders, latent surrogates, and learned atmospheric representations [Peyron et al., 2021, Fan et al., 2025]. [Tarumi et al., 2025] is closest in DA spirit: for nonlinear dynamics it constructs a latent space in addition to the physical space and computes the filtering posterior there. These methods gain posterior flexibility and scalability, but they no longer calibrate the prescribed physical operators (fθ , h θ ) directly. PR-Smoother instead keeps the prescribed dynamics and likelihood explicit and represents the smoother directly over physical trajectories. 
+
+Learned-prior and generative DA. A third family learns a trajectory prior or transition model from simulated trajectories and conditions on observations at inference time. Score-based DA learns a score model of state trajectories from simulated segments, while FlowDAS learns stepwise transition dynamics using stochastic interpolants [Rozet and Louppe, 2023, Chen et al., 2025]. These methods are attractive when the goal is to learn a flexible generative prior from the simulator. Our goal is different: in prescribed-simulator DA, the simulator itself is the generative model to preserve. We therefore keep the simulator on-graph and place flexibility only in the smoothing posterior around the prescribed rollout, aligning it with simulator-preserving DA rather than learned-prior simulation-based inference [Cranmer et al., 2020]. 
+
+Relation to generic variational SSM inference. At the inference level, PR-Smoother is related to variational filtering and smoothing for nonlinear SSMs and continuous-time models [Frigola et al., 2014, Hirt and Dellaportas, 2019, Ryder et al., 2018, 2021], sequential VI objectives—including particle-filter bounds, future-likelihood estimators, and twisted smoothing targets—such as FIVO, VSMC, VIFLE, and SIXO [Maddison et al., 2017, Naesseth et al., 2018, Kim et al., 2020, Lawson et al., 2022], and to Gaussian variational state / parameter estimation and system-identification methods [Courts et al., 2023, Dutra, 2025]. Normalizing Kalman Filters also combine NFs with state-space structure to obtain flexible non-Gaussian time-series models with tractable Kalman-style inference, but target transformed linear-Gaussian forecasting models rather than simulator-preserving physical-space DA and parameter calibration [de Bézenac et al., 2020]. PR-Smoother contributes a prescribed-simulator DA instantiation of this broader inference line, targeted at the requirements described in the previous section. Contemporaneously, AFSF [Cui et al., 2026] learns filtering/backward-kernel flows from simulated state–observation trajectories; PR-Smoother trains from observation windows via a prescribed-simulator ELBO. More broadly, Campbell et al. [2021] develop online variational filtering and parameter learning using reverse-time decompositions q(XT |Y1: T ) QT −1 
+
+> t=1
+
+q(Xt|Xt+1 , Y 1: t), and Chagneux et al. [2024] analyze additive smoothing error for this backward family. PR-Smoother uses the complementary forward/future-conditioned factorization q(X1|Y1: T ) QT −1 
+
+> t=1
+
+q(Xt+1 |Xt, Y t+1: T ), which is tailored to prescribed-simulator DA: it allows an expressive NF posterior over X1 while keeping every transition centered on the physical rollout fθ and retaining hθ inside the observation-only ELBO. 
+
+Positioning. PR-Smoother targets prescribed-simulator DA, where fθ and hθ are the scientific model to be calibrated rather than a data generator to be replaced. Classical DA methods satisfy this requirement but typically use Gaussian analyses or windowed MAP estimates. Latent SSM and latent DA methods gain posterior flexibility by learning auxiliary latent dynamics, emissions, or recognition models from observations. This can improve tractability, but the calibrated quantities are no longer the prescribed physical operators (fθ , h θ ) themselves. Learned-prior DA and SBI-style methods train trajectory priors or transition models from simulated states and condition on observations afterward. PR-Smoother contributes a prescribed-simulator DA instantiation of this broader inference line, providing flexible yet scalable smoothing posteriors via normalizing flows, without giving up the prescribed models (fθ , h θ ).33 Method 
+
+3.1 Problem: Prescribed-Simulator Data Assimilation 
+
+We consider a Markovian SSM with prescribed, differentiable dynamics and observation operators: 
+
+Xt+1 = fθdyn (Xt) + ηt, (1) 
+
+Yt = hθobs (Xt) + ξt, (2) where Xt ∈ Rd are latent states, Yt ∈ Rp are observations, and ηt and ξt are process and observation noise, respectively. We assume ηt ∼ N (0 , Q ) and ξt ∼ N (0 , R ) unless stated otherwise. 1 The parameters θdyn and θobs collect unknown physical or bias parameters. With these models, the generative model factorizes as 
+
+pθ (X1: T , Y 1: T ) = p(X1)
+
+> T
+
+Y
+
+> t=2
+
+pθdyn (Xt | Xt−1)
+
+> T
+
+Y
+
+> t=1
+
+pθobs (Yt | Xt), (3) where p(X1) is a prior over the initial state. DA seeks the filtering posterior pθ (XT | Y1: T ) or smoothing posterior pθ (X1: T | Y1: T ) and, when applicable, estimates of the model parameters 
+
+θ = ( θdyn , θ obs ). Because fθdyn and hθobs are nonlinear in general, this posterior is not available in closed form. 
+
+Problem setting. Provided: models (fθ , h θ ), observation data {Y (n)1: T }Nn=1 .
+
+Goal: compute the smoother distribution pθ (X1: T | Y1: T ) and the best parameters θ based on models (fθ , h θ ).The trajectory {X(n)1: T }Nn=1 is not available for training. 
+
+3.2 Method Overview 
+
+PR-Smoother targets prescribed-simulator DA by keeping the original SSM explicit in both the ELBO and the variational family, and learning only future-conditioned corrections around the prescribed rollout. We model qϕ(X1 | Y1: T ) with a conditional NF and qϕ(Xt | Xt−1, Y t:T ) with future-conditioned Gaussian transitions centered at fθdyn (Xt−1), yielding a non-Gaussian smoother in physical state space and enabling learning of θ from observation windows alone. 
+
+3.3 Objective 
+
+For an observation sequence Y1: T we define the ELBO: 
+
+L(θ, ϕ ; Y1: T ) = 
+
+Z
+
+qϕ(X1: T | Y1: T ) log 
+
+ pθ (X1: T , Y 1: T )
+
+qϕ(X1: T | Y1: T )
+
+
+
+dX 1: T , (4) which lower-bounds log pθ (Y1: T ). Given {Y (n)1: T }Nn=1 , we maximize 1
+
+> N
+
+PNn=1 L(θ, ϕ ; Y (n)1: T ) using minibatches, training from observation windows alone under the prescribed SSM. Because θ is shared across sequences, optimizing (4) over θ simultaneously learns the amortized smoother and a maximum-likelihood estimate of the physical parameters. 
+
+3.4 Simulator-Preserving Smoother Construction and ELBO 
+
+We describe two nested simulator-preserving variational families. The deterministic case uses the prescribed rollout directly, so the transition terms cancel in the ELBO (Eq. 9). The noisy case keeps the same rollout-centered structure but adds future-conditioned Gaussian corrections, matching the smoother conditional factorization (Eqs. 11-13).       
+
+> 1More generally, non-Gaussian observation noise can be handled without change, as pθobs (Yt|Xt)appears only in the ELBO and does not constrain qϕ.
+
+43.4.1 Initial-Time Posterior qϕ(X1 | Y1: T )
+
+To enable flexible modeling of the variational distribution, we use a conditional NF for the initial-time posterior qϕ(X1 | Y1: T ). An encoder c = Eϕ(Y1: T ) summarizes observations over T steps. With 
+
+z ∼ N (0 , I ) and a conditional NF gϕ,
+
+X1 = gϕ(z; c), log qϕ(X1 | Y1: T ) = log N (z; 0 , I ) − log det ∂g ϕ
+
+∂z . (5) Eq. (5) provides a computationally efficient way to calculate the KL term in Eq. (9). We use a conditional NF (RealNVP; Dinh et al. 2017) rather than diffusion or flow-matching models mainly because it gives direct access to log qϕ, which we need in the ELBO; see also Appendix C. 
+
+3.4.2 Deterministic Dynamics Model 
+
+When process noise is negligible, we introduce a vanishing-noise transition kernel 
+
+pθdyn ,Q (Xt | Xt−1) = N Xt; fθdyn (Xt−1), Q , (6) and construct the variational posterior by pairing this kernel with the distribution for the first step: 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+pθdyn ,Q (Xt | Xt−1). (7) Because the transition factors in (6) appear identically in both the joint distribution pθ (X1: T , Y 1: T )
+
+(Eq. 3) and qϕ, the log-transition terms cancel in the ELBO for any Q > 0. Taking Q → 0 yields the deterministic rollout 
+
+X1 ∼ qϕ(X1 | Y1: T ), X t+1 = fθdyn (Xt) (1 ≤ t ≤ T −1) (8) so qϕ(X1: T | Y1: T ) is the pushforward of qϕ(X1 | Y1: T ) through fθdyn , and the limiting ELBO is 
+
+Ldet (Y1: T , θ, ϕ ) = 
+
+Z
+
+qϕ(X1: T | Y1: T )
+
+h TX
+
+> t=1
+
+log pθobs (Yt | Xt)
+
+i
+
+dX 1: T − KL  qϕ(X1 | Y1: T ) ∥ p(X1).
+
+(9) 
+
+3.4.3 Noisy Dynamics Model 
+
+With non-negligible process noise, we use a Markov per-step extension. We first factorize the posterior in the forward direction: 
+
+pθ (X1: T | Y1: T ) = pθ (X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+pθ (Xt | X1: t−1, Y 1: T ). (10) By the Markov property of the SSM, 
+
+pθ (Xt | X1: t−1, Y 1: T ) = pθ (Xt | Xt−1, Y t:T ). (11) We mirror this factorization by augmenting qϕ with future-aware noise terms: 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+qϕ
+
+ Xt | Xt−1, Y t:T
+
+, (12) 
+
+qϕ
+
+ Xt | Xt−1, Y t:T
+
+ = N fθdyn (Xt−1)+ mt, S t
+
+, (13) where corrections (mt, S t) depend on the previous state Xt−1 and future observations Yt:T . Transi-tions no longer cancel; the ELBO for this family is 
+
+Lnoisy (Y1: T , θ, ϕ ) = 
+
+Z
+
+qϕ(X1: T | Y1: T )
+
+h TX
+
+> t=1
+
+log pθobs (Yt | Xt)
+
+i
+
+dX 1: T − KL  qϕ(X1 | Y1: T ) ∥ p(X1)
+
++
+
+> T
+
+X
+
+> t=2
+
+Z
+
+qϕ(X1: T | Y1: T ) log 
+
+ pθdyn (Xt | Xt−1)
+
+qϕ(Xt | Xt−1, Y t:T )
+
+
+
+dX 1: T . (14) 5Setting mt = 0 and St = Q recovers the deterministic variational family of Eq. (7), so the noisy-dynamics variant strictly generalizes the deterministic family by adding future-aware Gaussian corrections around fθdyn (Xt−1). For Gaussian transitions Eqs. (6) and (13), each per-step KL is closed-form, encouraging (mt, S t) to match the process noise in the dynamics model. Importantly, these corrections parametrize only the variational posterior; the generative transition pθdyn (Xt | Xt−1)
+
+and therefore the prescribed simulator are used unchanged inside the ELBO (14). 
+
+3.5 Consistency Checks in Tractable Regimes 
+
+Here, we verify that the proposed variational family is posterior-inclusive in two limiting cases. 
+
+Proposition 3.1 (Posterior inclusiveness in two limits) . Assume (i) the conditional flow qϕ(X1 | Y1: T )
+
+can represent any smooth density over X1, and (ii) in the noisy-dynamics variant, the Gaussian corrections qϕ(Xt | Xt−1, Y t:T ) can realize any mean and covariance of the form in Eq. 13. Then, for the SSM in Eqs. (1) -(3) , the exact smoothing posterior pθ (X1: T | Y1: T ) lies in our variational family in two cases: (a) deterministic dynamics Xt+1 = fθ (Xt) and (b) linear-Gaussian SSMs. Hence there exists ϕ⋆ with qϕ⋆ (X1: T | Y1: T ) = pθ (X1: T | Y1: T ) for these cases. 
+
+Proof sketch. In the deterministic case the trajectory is a function of X1, so the smoother is the pushforward of pθ (X1 | Y1: T ); by (i) the flow matches this marginal and, since both models roll out 
+
+Xt+1 = fθ (Xt), we obtain qϕ = pθ. In the linear-Gaussian case, Kalman-RTS smoothing yields Gaussian conditionals pθ (Xt | Xt−1, Y t:T ) in the future-conditioned factorization of Eq. 10, of the form in Eq. 13; by (ii) the corrections in qϕ can reproduce these, yielding qϕ = pθ. Full derivations appear in Appendix A. 
+
+## 4 Experiments 
+
+Experimental design. We test three claims: expressive non-Gaussian smoothing in 4D Lorenz–96 (Sec. 4.1), robustness under ambiguous nonlinear observations and process noise in 40D Lorenz–96 (Sec. 4.2), and scalable joint state–parameter–bias inference in 16,384-D Kolmogorov flow (Sec. 4.3). Training uses only Y1: T ; implementation and runtime details are in Appendix I. Unless otherwise stated, all reported ± values denote mean ± standard deviation over five independent random seeds. 
+
+4.1 Multimodality Test: 4-Dimensional Lorenz-96 
+
+The Lorenz-96 system is defined on a periodic ring of N variables with time evolution 
+
+dx i
+
+dt = ( xi+1 − xi−2) xi−1 − xi + F, i = 1 , . . . , N (15) 
+
+Figure 1: (a) True state 
+
+X1: T (heatmap over time and space). (b) Observa-tions under h(x) = x2
+
+with additive noise σ =3.with cyclic indexing. We take (N, F ) = (4 , 8) for this experiment. Observations are componentwise squares with additive Gaussian noise, 
+
+Yt = X2 
+
+> t
+
++ εt,εt ∼ N (0 , σ 2I), σ = 3 ,
+
+so that x and −x are indistinguishable at a single time point. As a result, the true posterior for one-step smoothing is at most 24-modal. Using the same simulated paths, we study a 1-step smoother p(X10 | Y10 ) and a 10-step smoother p(X10 | Y1:10 ), where the dynamics help resolve the sign ambiguity. We instantiate qϕ(X1 | Y1: T ) with two models: a flow and a diagonal Gaussian. We further compare against a mean-field baseline (MF) that factorizes qϕ(X1: T | Y1: T ) over time and space (see Appendix I for the ELBO), and classical ensemble Kalman methods (EnKF; Evensen 1994, ETKF; Bishop et al. 2001). As a reference “truth,” we run a bootstrap PF with 5 × 10 6 particles to represent p(XT | Y1: T ). We use deterministic PR-Smoother in this experiment; adding process noise would not change the multimodal structure qualitatively and would introduce extra complexity. Noisy variants are evaluated in Sections 4.2–4.3. 61-step 10-step Method ED W1 ED W1
+
+flow 0.20 ± 0.04 0.90 ± 0.09 0.13 ± 0.04 0.22 ± 0.02 
+
+Gauss 1.38 ± 0.24 3.63 ± 0.67 0.19 ± 0.02 0.29 ± 0.01 MF 1.37 ± 0.24 3.62 ± 0.67 0.57 ± 0.05 0.68 ± 0.07 EnKF 0.70 ± 0.09 2.63 ± 0.31 1.42 ± 0.26 2.57 ± 0.58 ETKF 0.70 ± 0.09 2.62 ± 0.32 1.50 ± 0.25 2.90 ± 0.56 
+
+Figure 2: Results for the Lorenz-96 experiments with (N, F ) = (4 , 8) and h(x) = x2, σ = 3 . Panel (a): posterior distributions ptrue (X10 | Y10 ) (“1 step”) and ptrue (X10 | Y1:10 ) (“10 steps”) obtained by PF. Panel (b): variational distributions qϕ(X10 | Y10 ) (“1 step”) and qϕ(X10 | Y1:10 ) (“10 steps”) by our flow model. The table on the right shows quantitative comparisons of algorithms. Fig. 2 compares PF posteriors with PR-Smoother approximations. The one-step PF posterior is bimodal due to the sign ambiguity of h(x) = x2; conditioning on Y1:10 resolves this ambiguity and yields a sharply concentrated distribution. The flow-based qϕ reproduces the same transition from multimodal to concentrated. Quantitatively, it shows the smallest energy distance (ED) and 1-Wasserstein ( W1) distance to the PF reference (Fig. 2, right). Posterior histograms for each method are in Appendix J. 
+
+Takeaways. (1) When information is insufficient (one step), flow-based qϕ represents the required bimodality instead of collapsing to a Gaussian; (2) as information accumulates (ten steps), PR-Smoother uses dynamics to correctly disambiguate and narrows down the variational distribution. 
+
+4.2 Nonlinear Observation Operator and Dynamics Noise Test: 40-Dimensional Lorenz-96 
+
+We consider Lorenz-96 with (N, F ) = (40 , 8) in three settings: linear observations h(x) = x, non-linear observations h(x) = min( x2, 5) , and the same nonlinear observation operator with Gaussian dynamics noise σ = 0 .1 per step. The observation window is set to 50 steps. Observations have additive Gaussian noise σ = 1 . We compare four PR-Smoother variants (Flow/Gauss, with/without noisy-transition corrections) against 4D-Var (10 restarts), IEnKS (Bocquet and Sakov 2014; 512 members), and a MF VI baseline (see Appendix I.2). We report RMSE averaged over state variables and time steps. Noisy-transition variants use isotropic learned scales ( St = σ2 
+
+> S
+
+I, Q = σ2
+
+> Q
+
+I); see Appendix I for details. 
+
+Method Linear Nonlinear Nonlinear, noisy dyn Flow 0.516 ± 0.006 0.738 ± 0.011 0.909 ± 0.015 
+
+Noisyflow 0.287 ± 0.001 0.549 ± 0.084 0.498 ± 0.003 
+
+Gauss 0.597 ± 0.027 0.827 ± 0.009 1.020 ± 0.014 
+
+NoisyGauss 0.343 ± 0.002 0.797 ± 0.019 0.958 ± 0.006 
+
+MF 0.413 ± 0.001 3.170 ± 0.004 3.019 ± 0.030 
+
+4D-Var 0.142 ± 0.004 6.488 ± 0.202 3.516 ± 0.024 
+
+IEnKS 0.176 ± 0.004 5.675 ± 0.175 5.603 ± 0.177 010 20 30 40        
+
+> time
+> truth flow noisyflow
+> 010 20 30 40
+> time
+> obs gauss noisygauss
+> 020
+> space
+> 010 20 30 40
+> time
+> MF
+> 020
+> space
+> IEnKS
+> 020
+> space
+> 4DVar
+> −10 −5 0510
+> −10 −5 0510
+> −10 −5 0510
+> 012345
+> −10 −5 0510
+> −10 −5 0510
+> −10 −5 0510
+> −10 −5 0510
+> −10 −5 0510
+
+Figure 3: Lorenz-96 experiment results. The figure on the right shows reconstructions by methods. The table shows RMSE of samples. 7Fig. 3 reports RMSEs. With linear observations, all methods are stable and IEnKS/4D-Var perform best; the posterior is close to Gaussian, leaving limited headroom for PR-Smoother. Closing the remaining gap would likely require substantial additional training. With nonlinear h(x) = min( x2, 5) ,the observation map is saturating and many-to-one, so single-time data are ambiguous and information must be propagated through time. Gaussian and MF baselines then degrade: IEnKS’ local-Gaussian approximation can lose effective temporal correlations, 4D-Var’s MAP objective becomes highly nonconvex and initialization-sensitive [Andersson et al., 2005, Bonavita et al., 2018], and MF’s factorization precludes trajectory-level dependence. PR-Smoother couples time steps through the prescribed dynamics and performs well under the many-to-one observations. Among PR-Smoother variants, Noisyflow achieves the lowest RMSE across all settings. In the noisy-dynamics dataset (true per-step process noise σTrue  
+
+> Q
+
+= 0 .1), Noisyflow also recovers the noise level at data generation ( ln σQ = −2.29 ± 0.04 vs. ln 0 .1 = −2.30 ; Appendix F, Table 5). Across regimes, Flow outperforms Gauss and Noisyflow outperforms NoisyGauss; moreover, noisy-transition variants improve on their noiseless counterparts even when the data are generated with deterministic dynamics, suggesting that the added flexibility can ease optimization. 
+
+Takeaways. (i) With informative, near-linear observations, classical methods perform best; PR-Smoother offers limited gains without substantial training. (ii) Under ambiguous nonlinear observa-tions, trajectory-level correlations matter: IEnKS and 4D-Var can diverge, whereas PR-Smoother’s dynamics-coupled posterior remains accurate. (iii) Within PR-Smoother, a more flexible variational family (Flow vs. Gauss, especially Noisyflow) further reduces RMSE while still respecting the prescribed physics. 
+
+4.3 High State Dimension and Model Parameter Training Test: Kolmogorov Flow 
+
+We consider a 16,384-dimensional Kolmogorov flow (2-D incompressible Navier–Stokes with sinusoidal forcing; Appendix I.3), on a 128 × 128 grid. We test four observation operators: full (all grid points), half (upper half), sparse (subsampled points), and realistic (mixed dense/sparse coverage). The forcing amplitude F and Reynolds number Re are unknown (true (F, Re ) = (1 .0, 1000) ; init 
+
+(0 .1, 100) ). The observation window is set to 10 steps. Observations include Gaussian noise ( σ = 3 .0)and an additive, time-independent bias field b—drawn once at data generation with bi ∼ N (0 , 32) and shared across all windows (sensor calibration)—yielding 16,386 parameters under “full” observations. truth full half       
+
+> bias (full) sparse realistic
+> −10 010
+> −10 010
+> −10 010
+> −6 −4 −2 0246
+> −10 010
+> −10 010
+> (a) full half
+> sparse realistic
+> −10 010
+> −10 010
+> −10 010
+> −10 010
+> (b) full half
+> sparse realistic
+> −10 010
+> −10 010
+> −10 010
+> −10 010
+> (c)
+
+Figure 4: Panel (a): observation operators in Kolmogorov experiment. Panel (b): inference results of the flow variational family. Panel (c): inference results of the Gauss variational family. Table 1 reports state RMSEs (additional parameter/bias metrics are in Appendix G). Under “full” observations, PR-Smoother achieves state RMSE well below the observation noise level and matches oracle 4D-Var (true parameters and bias field; 10 restarts). IEnKS ( 16 members; localization radius tuned over 32 , 16 , 8, 4 for each observation setting; Appendix I.3; Fig. 8 shows limited gains beyond 
+
+M =16 ) is less competitive in this regime. When jointly estimating the full bias field and physical parameters, 4D-Var was less stable in our setup, and both baselines yielded larger errors. Under “half” observations, both flow- and Gauss-based PR-Smoother recover the state accurately in the observed region, but neither recovers the unobserved half reliably (Gauss oversmooths, while flow remains sharper but inaccurate). In the “sparse” setting, flow-based models still reconstruct the state reasonably well, whereas Gauss-based models deteriorate and can produce extreme log Re 
+
+values. Even for flow models, log Re remains biased, consistent with an identifiability issue: sparse point measurements do not resolve the small-scale structures controlled by the Reynolds number. 8Table 1: State RMSE across observation patterns (lower is better). Full tables with parameter metrics, including |∆ log Re |, are in Appendix G. Method Full Half Sparse Realistic flow 0.28 ± 0.00 2.31 ± 0.09 1.92 ± 0.12 1.60 ± 0.02 
+
+Noisyflow 0.65 ± 0.01 2.16 ± 0.10 2.18 ± 0.11 1.84 ± 0.07 Gauss 0.32 ± 0.00 2.16 ± 0.10 4.95 ± 0.10 2.99 ± 0.13 NoisyGauss 0.70 ± 0.01 2.40 ± 0.10 4.84 ± 0.10 2.91 ± 0.13 MF 0.55 ± 0.17 2.40 ± 0.02 N/A 3.63 ± 0.00 IEnKS 4.04 ± 0.12 4.13 ± 0.18 4.10 ± 0.18 4.02 ± 0.19 4D-Var N/A N/A 4.39 ± 0.15 N/A IEnKS (oracle) 1.54 ± 0.01 5.07 ± 0.30 6.13 ± 0.16 5.23 ± 0.19 4D-Var (oracle) 0.31 ± 0.00 2.42 ± 0.10 3.81 ± 0.14 3.06 ± 0.16 Table 2: Representative parameter-estimation errors in the “realistic” setting (lower is better). Full parameter tables across observation patterns are given in Appendix G.                                                                 
+
+> Method |∆F||∆ log Re |bias flow (2.3 ±1.6) ×10 −30.31 ±0.01 0.57 ±0.02
+> Noisyflow (1 .1±0.7) ×10 −20.91 ±0.03 0.98 ±0.02
+> Gauss 0.07 ±0.01 1.29 ±0.01 0.66 ±0.01
+> NoisyGauss 0.12 ±0.02 1.56 ±0.02 1.06 ±0.01
+> MF 0.75 ±0.00 2.99 ±0.00 0.66 ±0.02
+> IEnKS 0.89 ±0.00 2.31 ±0.00 3.02 ±0.01
+> 4D-Var N/A N/A N/A
+
+In the “realistic” configuration, the flow-based family performs well on both state and parameters: the densely observed subregion identifies F and log Re , while the sparse network provides global coverage so the calibrated dynamics can propagate information across the domain. In the realistic observation setting, deterministic variants (Flow/Gauss) match or outperform noisy-transition variants under a matched wall-clock budget (Table 1, 2; Appendix G for the full parameter learning results), unlike Sec. 4.2. Because the ground-truth dynamics here are deterministic—and are contained in the noisy family as the zero-process-noise limit—we interpret this gap as slower convergence of the larger noisy search space when state, bias, and global parameters are learned jointly. Table 2 reports recovery of F and the bias field. 
+
+Takeaways. (i) PR-Smoother can jointly learn high-dimensional sensor biases and global physical parameters at Kolmogorov scale. (ii) With mixed coverage, dense regions support identifying 
+
+(F, log Re ) and calibrated dynamics transfer this information to sparsely observed regions. (iii) Completely unobserved regions and parameters lacking small-scale observational support (e.g., Re 
+
+in the sparse case) remain difficult due to limited identifiability. 
+
+## 5 Limitations 
+
+We assume a differentiable simulator and observation model (f, h ); otherwise, one may use learned surrogates. As an amortized VI approach, PR-Smoother may exhibit an amortization gap when the inference network is undertrained or faces distribution shift. Appendix H shows that, under a fixed training-compute budget, PR-Smoother remains competitive with oracle 4D-Var even with N = 288 
+
+Kolmogorov-flow windows, though most gains occur by N ≃ 10 5–10 6. A practical mitigation is to use PR-Smoother as a first stage, then run a few per-sequence refinement steps (e.g., 4D-Var) on each sequence. We estimate θ as a point estimate; incorporating θ uncertainty via a prior and variational factor q(θ) is straightforward but outside this paper’s scope. 96 Conclusion 
+
+We introduce PR-Smoother, a simulator-preserving non-Gaussian smoother for prescribed-simulator DA. By learning future-conditioned corrections around the prescribed rollout, PR-Smoother represents multimodal smoothing posteriors directly in physical space while keeping the prescribed dynamics and observation operator explicit inside a single observation-only ELBO for joint state, parameter, and bias learning. Across Lorenz–96 and 16,384-dimensional Kolmogorov flow, it captures multimodal posteriors and scales to high-dimensional nonlinear assimilation. Its broader impact is indirect: scientific deployment still requires domain-specific validation and calibration. 10 References 
+
+Erik Anderson and Heikki Järvinen. Variational quality control. Quarterly Journal of the Royal Meteorological Society , 125(554):697–722, 1999. doi: https://doi.org/10.1002/qj.49712555416. URL https://rmets.onlinelibrary.wiley.com/doi/abs/10.1002/qj.49712555416 .Erik Andersson, Mike Fisher, E. Hólm, L. Isaksen, G. Radnóti, and Y. Trémolet. Will the 4d-var approach be defeated by nonlinearity?, 2005. URL https://www.ecmwf.int/node/7768 .M. Beauchamp, Q. Febvre, H. Georgenthum, and R. Fablet. 4dvarnet-ssh: end-to-end learning of variational interpolation schemes for nadir and wide-swath satellite altimetry. Geoscientific Model Development , 16(8):2119–2147, 2023. doi: 10.5194/gmd-16-2119-2023. URL https: //gmd.copernicus.org/articles/16/2119/2023/ .Philipp Becker, Harit Pandya, Gregor Gebhardt, Cheng Zhao, C. James Taylor, and Gerhard Neumann. Recurrent kalman networks: Factorized inference in high-dimensional deep feature spaces. In Kamalika Chaudhuri and Ruslan Salakhutdinov, editors, Proceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research , pages 544–552. PMLR, 09–15 Jun 2019. URL https://proceedings.mlr.press/v97/becker19a. html .Kaifeng Bi, Lingxi Xie, Hengheng Zhang, Xin Chen, Xiaotao Gu, and Qi Tian. Accurate medium-range global weather forecasting with 3d neural networks. Nature , 619:533–538, 2023. doi: 10.1038/s41586-023-06185-3. URL https://www.nature.com/articles/ s41586-023-06185-3 .Craig H. Bishop, Brian J. Etherton, and Sharanya J. Majumdar. Adaptive sampling with the ensemble transform kalman filter. part i: Theoretical aspects. Monthly Weather Re-view , 129(3):420 – 436, 2001. doi: 10.1175/1520-0493(2001)129<0420:ASWTET>2.0.CO;2. URL https://journals.ametsoc.org/view/journals/mwre/129/3/1520-0493_2001_ 129_0420_aswtet_2.0.co_2.xml .Marc Bocquet and Pavel Sakov. An iterative ensemble Kalman smoother. Quarterly Journal of the Royal Meteorological Society , 140(682):1521–1535, July 2014. doi: 10.1002/qj.2236. URL 
+
+https://inria.hal.science/hal-00918488 .Marc Bocquet, Carlos A. Pires, and Lin Wu. Beyond gaussian statistical modeling in geophysical data assimilation. Monthly Weather Review , 138(8):2997 – 3023, 2010. doi: 10.1175/2010MWR3164. 1. URL https://journals.ametsoc.org/view/journals/mwre/138/8/2010mwr3164.1. xml .M. Bonavita, P. Lean, and E. Holm. Nonlinear effects in 4d-var. Nonlinear Processes in Geophysics ,25(3):713–729, 2018. doi: 10.5194/npg-25-713-2018. URL https://npg.copernicus.org/ articles/25/713/2018/ .Andrew Campbell, Yuyang Shi, Thomas Rainforth, and Arnaud Doucet. Online variational fil-tering and parameter learning. In M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. Wortman Vaughan, editors, Advances in Neural Information Processing Systems , volume 34, pages 18633–18645. Curran Associates, Inc., 2021. URL https://proceedings.neurips.cc/ paper_files/paper/2021/file/9a6a1aaafe73c572b7374828b03a1881-Paper.pdf .Alberto Carrassi, Marc Bocquet, Laurent Bertino, and Geir Evensen. Data assimilation in the geosciences: An overview of methods, issues, and perspectives. WIREs Climate Change , 9 (5):e535, 2018. doi: https://doi.org/10.1002/wcc.535. URL https://wires.onlinelibrary. wiley.com/doi/abs/10.1002/wcc.535 .Mathis Chagneux, Elisabeth Gassiat, Pierre Gloaguen, and Sylvain Le Corff. Additive smoothing error in backward variational inference for general state-space models. Journal of Machine Learning Research , 25(28):1–33, 2024. URL http://jmlr.org/papers/v25/22-1392.html .Siyi Chen, Yixuan Jia, Qing Qu, He Sun, and Jeffrey A Fessler. Flowdas: A stochastic interpolant-based framework for data assimilation, 2025. URL https://arxiv.org/abs/2501.16642 .11 Jarrad Courts, Adrian G. Wills, Thomas B. Schön, and Brett Ninness. Variational system identification for nonlinear state-space models. Automatica , 147:110687, 2023. doi: 10.1016/j.automatica.2022. 110687. Kyle Cranmer, Johann Brehmer, and Gilles Louppe. The frontier of simulation-based inference. 
+
+Proceedings of the National Academy of Sciences , 117(48):30055–30062, 2020. doi: 10.1073/ pnas.1912789117. URL https://www.pnas.org/doi/abs/10.1073/pnas.1912789117 .Tiangang Cui, Xiaodong Feng, Chenlong Pei, Xiaoliang Wan, and Tao Zhou. Amortized filtering and smoothing with conditional normalizing flows, 2026. URL https://arxiv.org/abs/2604. 07169 .Fred Daum and Jim Huang. Nonlinear filters with log-homotopy. In Oliver E. Drummond and Richard D. Teichgraeber, editors, Signal and Data Processing of Small Targets 2007 , volume 6699, page 669918. International Society for Optics and Photonics, SPIE, 2007. doi: 10.1117/12.725684. URL https://doi.org/10.1117/12.725684 .Emmanuel de Bézenac, Syama Sundar Rangapuram, Konstantinos Benidis, Michael Bohlke-Schneider, Richard Kurle, Lorenzo Stella, Hilaf Hasson, Patrick Gallinari, and Tim Januschowski. Normalizing kalman filters for multivariate time series analysis. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Advances in Neural Information Processing Systems , volume 33, pages 2995–3007. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/2020/file/ 1f47cef5e38c952f94c5d61726027439-Paper.pdf .François-Xavier Le Dimet and Olivier Talagrand. Variational algorithms for analysis and assimilation of meteorological observations: theoretical aspects. Tellus A , 38A(2):97–110, 1986. doi: https: //doi.org/10.1111/j.1600-0870.1986.tb00459.x. URL https://onlinelibrary.wiley.com/ doi/abs/10.1111/j.1600-0870.1986.tb00459.x .Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using real NVP. In 
+
+International Conference on Learning Representations , 2017. URL https://openreview.net/ forum?id=HkpbnH9lx .Andreas Doerr, Christian Daniel, Martin Schiegg, Nguyen-Tuong Duy, Stefan Schaal, Marc Toussaint, and Trimpe Sebastian. Probabilistic recurrent state-space models. In Jennifer Dy and Andreas Krause, editors, Proceedings of the 35th International Conference on Machine Learning , volume 80 of Proceedings of Machine Learning Research , pages 1280–1289. PMLR, 10–15 Jul 2018. URL 
+
+https://proceedings.mlr.press/v80/doerr18a.html .Dimas Abreu Archanjo Dutra. Parameterizations for large-scale variational system identification using unconstrained optimization. Automatica , 173:112086, 2025. doi: 10.1016/j.automatica.2024. 112086. Geir Evensen. Sequential data assimilation with a nonlinear quasi-geostrophic model using monte carlo methods to forecast error statistics. Journal of Geophysical Research: Oceans ,99(C5):10143–10162, 1994. doi: https://doi.org/10.1029/94JC00572. URL https://agupubs. onlinelibrary.wiley.com/doi/abs/10.1029/94JC00572 .R. Fablet, B. Chapron, L. Drumetz, E. Mémin, O. Pannekoucke, and F. Rousseau. Learning variational data assimilation models and solvers. Journal of Advances in Modeling Earth Systems ,13(10):e2021MS002572, 2021. doi: https://doi.org/10.1029/2021MS002572. URL https:// agupubs.onlinelibrary.wiley.com/doi/abs/10.1029/2021MS002572 . e2021MS002572 2021MS002572. Hang Fan, Yubao Liu, Yuewei Liu, Zhaoyang Huo, Baojun Chen, and Yu Qin. A novel latent space data assimilation framework with autoencoder-observation to latent space (ae-o2l) network. part ii: Observation and background assimilation with interpretability. Monthly Weather Review , 153 (8):1349 – 1363, 2025. doi: 10.1175/MWR-D-24-0058.1. URL https://journals.ametsoc. org/view/journals/mwre/153/8/MWR-D-24-0058.1.xml .12 Marco Fraccaro, Simon Kamronn, Ulrich Paquet, and Ole Winther. A disentangled recog-nition and nonlinear dynamics model for unsupervised learning. In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, edi-tors, Advances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ 7b7a53e239400a13bd6be6c91c4f6c4e-Paper.pdf .Thomas Frerix, Dmitrii Kochkov, Jamie Smith, Daniel Cremers, Michael Brenner, and Stephan Hoyer. Variational data assimilation with a learned inverse observation operator. In Marina Meila and Tong Zhang, editors, Proceedings of the 38th International Conference on Machine Learning ,volume 139 of Proceedings of Machine Learning Research , pages 3449–3458. PMLR, 18–24 Jul 2021. URL https://proceedings.mlr.press/v139/frerix21a.html .Roger Frigola, Yutian Chen, and Carl E. Rasmussen. Variational gaussian process state-space models. In Z. Ghahramani, M. Welling, C. Cortes, N. Lawrence, and K.Q. Weinberger, ed-itors, Advances in Neural Information Processing Systems , volume 27. Curran Associates, Inc., 2014. URL https://proceedings.neurips.cc/paper_files/paper/2014/file/ 875b60cf697a9e09e12c0f07b982e431-Paper.pdf .A. J. Geer, S. Migliorini, and M. Matricardi. All-sky assimilation of infrared radiances sensitive to mid- and upper-tropospheric moisture and cloud. Atmospheric Measurement Techniques , 12 (9):4903–4929, 2019. doi: 10.5194/amt-12-4903-2019. URL https://amt.copernicus.org/ articles/12/4903/2019/ .Laurent Girin, Simon Leglaive, Xiaoyu Bie, Julien Diard, Thomas Hueber, and Xavier Alameda-Pineda. Dynamical variational autoencoders: A comprehensive review. Foundations and Trends® in Machine Learning , 15(1-2):1–175, 2021. ISSN 1935-8237. doi: 10.1561/2200000089. URL 
+
+http://dx.doi.org/10.1561/2200000089 .Hans Hersbach, Bill Bell, Paul Berrisford, Shoji Hirahara, András Horányi, Joaquín Muñoz-Sabater, Julien Nicolas, Carole Peubey, Raluca Radu, Dinand Schepers, Adrian Simmons, Cornel Soci, Saleh Abdalla, Xavier Abellan, Gianpaolo Balsamo, Peter Bechtold, Gionata Biavati, Jean Bidlot, Massimo Bonavita, Giovanna De Chiara, Per Dahlgren, Dick Dee, Michail Diamantakis, Rossana Dragani, Johannes Flemming, Richard Forbes, Manuel Fuentes, Alan Geer, Leo Haimberger, Sean Healy, Robin J. Hogan, Elías Hólm, Marta Janisková, Sarah Keeley, Patrick Laloyaux, Philippe Lopez, Cristina Lupu, Gabor Radnoti, Patricia de Rosnay, Iryna Rozum, Freja Vamborg, Sebastien Villaume, and Jean-Noël Thépaut. The era5 global reanalysis. Quarterly Journal of the Royal Meteorological Society , 146(730):1999–2049, 2020. doi: https://doi.org/10.1002/qj.3803. URL 
+
+https://rmets.onlinelibrary.wiley.com/doi/abs/10.1002/qj.3803 .Marcel Hirt and Petros Dellaportas. Scalable bayesian learning for state space models using variational inference with smc samplers. In Kamalika Chaudhuri and Masashi Sugiyama, editors, Proceedings of the Twenty-Second International Conference on Artificial Intelligence and Statistics , volume 89 of Proceedings of Machine Learning Research , pages 76–86. PMLR, 16–18 Apr 2019. URL 
+
+https://proceedings.mlr.press/v89/hirt19a.html .Maximilian Karl, Maximilian Soelch, Justin Bayer, and Patrick van der Smagt. Deep variational bayes filters: Unsupervised learning of state space models from raw data. In International Conference on Learning Representations , 2017. URL https://openreview.net/forum?id=HyTqHL5xg .Geon-Hyeong Kim, Youngsoo Jang, Hongseok Yang, and Kee-Eung Kim. Variational inference for sequential data with future likelihood estimates. In Hal Daumé III and Aarti Singh, edi-tors, Proceedings of the 37th International Conference on Machine Learning , volume 119 of 
+
+Proceedings of Machine Learning Research , pages 5296–5305. PMLR, 13–18 Jul 2020. URL 
+
+https://proceedings.mlr.press/v119/kim20d.html .Rahul G. Krishnan, Uri Shalit, and David Sontag. Deep kalman filters, 2015. URL https://arxiv. org/abs/1511.05121 .Rahul G. Krishnan, Uri Shalit, and David Sontag. Structured inference networks for nonlinear state space models. In Proceedings of the Thirty-First AAAI Conference on Artificial Intelligence ,AAAI’17, page 2101–2109. AAAI Press, 2017. 13 Remi Lam, Alvaro Sanchez-Gonzalez, Matthew Willson, Peter Wirnsberger, Meire Fortunato, Ferran Alet, Suman Ravuri, Timo Ewalds, Zach Eaton-Rosen, Weihua Hu, Alexander Merose, Stephan Hoyer, George Holland, Oriol Vinyals, Jacklynn Stott, Alexander Pritzel, Shakir Mohamed, and Peter Battaglia. Learning skillful medium-range global weather forecasting. Science , 382(6677): 1416–1421, 2023. doi: 10.1126/science.adi2336. URL https://www.science.org/doi/abs/ 10.1126/science.adi2336 .Matthew Lang, Philip Browne, Peter Jan van Leeuwen, and Mathew Owens. Data assimilation in the solar wind: Challenges and first results. Space Weather , 15(11):1490–1510, 2017. doi: https:// doi.org/10.1002/2017SW001681. URL https://agupubs.onlinelibrary.wiley.com/doi/ abs/10.1002/2017SW001681 .Dieterich Lawson, Allan Raventós, Andrew Warrington, and Scott Linderman. Sixo: Smoothing inference with twisted objectives. In S. Koyejo, S. Mohamed, A. Agar-wal, D. Belgrave, K. Cho, and A. Oh, editors, Advances in Neural Informa-tion Processing Systems , volume 35, pages 38844–38858. Curran Associates, Inc., 2022. URL https://proceedings.neurips.cc/paper_files/paper/2022/file/ fddc79681b2df2734c01444f9bc2a17e-Paper-Conference.pdf .John M. Lewis and John C. Derber. The use of adjoint equations to solve a variational adjustment problem with advective constraints. Tellus A , 37A(4):309–322, 1985. doi: https://doi.org/10.1111/j. 1600-0870.1985.tb00430.x. URL https://onlinelibrary.wiley.com/doi/abs/10.1111/ j.1600-0870.1985.tb00430.x .Chris J Maddison, John Lawson, George Tucker, Nicolas Heess, Mohammad Norouzi, An-driy Mnih, Arnaud Doucet, and Yee Teh. Filtering variational objectives. In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, ed-itors, Advances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ fa84632d742f2729dc32ce8cb5d49733-Paper.pdf .Christian Naesseth, Scott Linderman, Rajesh Ranganath, and David Blei. Variational sequen-tial monte carlo. In Amos Storkey and Fernando Perez-Cruz, editors, Proceedings of the Twenty-First International Conference on Artificial Intelligence and Statistics , volume 84 of 
+
+Proceedings of Machine Learning Research , pages 968–977. PMLR, 09–11 Apr 2018. URL 
+
+https://proceedings.mlr.press/v84/naesseth18a.html .Xiaoyong Ni, Guy Revach, Nir Shlezinger, Ruud J. G. van Sloun, and Yonina C. Eldar. Rtsnet: Deep learning aided kalman smoothing. In ICASSP 2022 - 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 5902–5906, 2022. doi: 10.1109/ ICASSP43922.2022.9746487. Jaideep Pathak, Shashank Subramanian, Peter Harrington, Sanjeev Raja, Ashesh Chattopadhyay, Morteza Mardani, Thorsten Kurth, David Hall, Zongyi Li, Kamyar Azizzadenesheli, Pedram Hassanzadeh, Karthik Kashinath, and Animashree Anandkumar. Fourcastnet: A global data-driven high-resolution weather model using adaptive fourier neural operators, 2022. URL https: //arxiv.org/abs/2202.11214 .Mathis Peyron, Anthony Fillion, Selime Gürol, Victor Marchais, Serge Gratton, Pierre Boudier, and Gael Goret. Latent space data assimilation by using deep learning. Quarterly Journal of the Royal Meteorological Society , 147(740):3759–3777, 2021. doi: https://doi.org/10.1002/qj.4153. URL 
+
+https://rmets.onlinelibrary.wiley.com/doi/abs/10.1002/qj.4153 .Maximilian Ramgraber, Ricardo Baptista, Dennis McLaughlin, and Youssef Marzouk. Ensemble transport smoothing. part i: Unified framework. Journal of Computational Physics: X , 17: 100134, 2023a. ISSN 2590-0552. doi: https://doi.org/10.1016/j.jcpx.2023.100134. URL https: //www.sciencedirect.com/science/article/pii/S2590055223000124 .Maximilian Ramgraber, Ricardo Baptista, Dennis McLaughlin, and Youssef Marzouk. Ensemble transport smoothing. part ii: Nonlinear updates. Journal of Computational Physics: X , 17: 100133, 2023b. ISSN 2590-0552. doi: https://doi.org/10.1016/j.jcpx.2023.100133. URL https: //www.sciencedirect.com/science/article/pii/S2590055223000112 .14 Sebastian Reich. A nonparametric ensemble transform method for bayesian inference. SIAM Journal on Scientific Computing , 35(4):A2013–A2024, 2013. doi: 10.1137/130907367. URL 
+
+https://doi.org/10.1137/130907367 .Guy Revach, Nir Shlezinger, Ruud J. G. van Sloun, and Yonina C. Eldar. Kalmannet: Data-driven kalman filtering. In ICASSP 2021 - 2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , pages 3905–3909, 2021. doi: 10.1109/ICASSP39728.2021.9413750. François Rozet and Gilles Louppe. Score-based data assimilation. In A. Oh, T. Nau-mann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neu-ral Information Processing Systems , volume 36, pages 40521–40541. Curran Associates, Inc., 2023. URL https://proceedings.neurips.cc/paper_files/paper/2023/file/ 7f7fa581cc8a1970a4332920cdf87395-Paper-Conference.pdf .Thomas Ryder, Dennis Prangle, Andrew Golightly, and Isaac Matthews. The neural moving average model for scalable variational inference of state space models. In Cassio de Campos and Marloes H. Maathuis, editors, Proceedings of the Thirty-Seventh Conference on Uncertainty in Artificial Intelligence , volume 161 of Proceedings of Machine Learning Research , pages 12–22. PMLR, 27–30 Jul 2021. URL https://proceedings.mlr.press/v161/ryder21a.html .Tom Ryder, Andrew Golightly, A. Stephen McGough, and Dennis Prangle. Black-box variational inference for stochastic differential equations. In Jennifer Dy and Andreas Krause, editors, 
+
+Proceedings of the 35th International Conference on Machine Learning , volume 80 of Proceedings of Machine Learning Research , pages 4423–4432. PMLR, 10–15 Jul 2018. URL https:// proceedings.mlr.press/v80/ryder18a.html .R. W. Schunk, L. Scherliess, V. Eccles, L. C. Gardner, J. J. Sojka, L. Zhu, X. Pi, A. J. Mannucci, A. Komjathy, C. Wang, and G. Rosen. Challenges in Specifying and Predicting Space Weather. 
+
+Space Weather , 19(2):e2019SW002404, February 2021. doi: 10.1029/2019SW002404. Andrea Storto. Variational quality control of hydrographic profile data with non-Gaussian errors for global ocean variational data assimilation systems. Ocean Modelling , 104:226–241, August 2016. doi: 10.1016/j.ocemod.2016.06.011. Norihiko Sugimoto, Akira Yamazaki, Toru Kouyama, Hiroki Kashimura, Takeshi Enomoto, and Masahiro Takagi. Development of an ensemble kalman filter data assimilation system for the venusian atmosphere. Scientific reports , 7(1), December 2017. ISSN 2045-2322. doi: 10.1038/ s41598-017-09461-1. Yuta Tarumi, Keisuke Fukuda, and Shin-Ichi Maeda. Deep Bayesian filter for Bayes-faithful data assimilation. In Aarti Singh, Maryam Fazel, Daniel Hsu, Simon Lacoste-Julien, Felix Berkenkamp, Tegan Maharaj, Kiri Wagstaff, and Jerry Zhu, editors, Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research ,pages 59182–59209. PMLR, 13–19 Jul 2025. URL https://proceedings.mlr.press/v267/ tarumi25a.html .Peter Jan van Leeuwen, Hans R. Künsch, Lars Nerger, Roland Potthast, and Sebastian Reich. Particle filters for high-dimensional geoscience applications: A review. Quarterly Journal of the Royal Meteorological Society , 145(723):2335–2365, 2019. doi: https://doi.org/10.1002/qj.3551. URL 
+
+https://rmets.onlinelibrary.wiley.com/doi/abs/10.1002/qj.3551 .Liang Xu and Ruixin Niu. Ekfnet: Learning system noise covariance parameters for nonlinear tracking. 
+
+IEEE Transactions on Signal Processing , 72:3139–3152, 2024. doi: 10.1109/TSP.2024.3417350. 
+
+## Acknowledgments and Disclosure of Funding 
+
+Use unnumbered first level headings for the acknowledgments. All acknowledgments go at the end of the paper before the list of references. Moreover, you are required to declare funding (financial activities supporting the submitted work) and competing interests (related financial activities outside the submitted work). More information about this disclosure can be found at: https: //neurips.cc/Conferences/2026/PaperInformation/FundingDisclosure .15 Do not include this section in the anonymized submission, only in the final paper. You can use the ack environment provided in the style file to automatically hide this section in the anonymized submission. 
+
+## A On the Variational Family Including the True Posterior in Two Limiting Cases 
+
+This appendix shows that our variational family contains the exact smoothing posterior in two important limits: (i) deterministic dynamics and (ii) linear-Gaussian state-space models (LG-SSMs). The arguments rely only on the Markov structure of the model and on the fact that our conditional NF and “shock head” are rich enough to represent the relevant Gaussian conditionals. We use the notation and factorization in Eqs. (1)–(3) and (6)–(12) in the main text. Throughout we assume: • the conditional flow gϕ used in qϕ(X1 | Y1: T ) is expressive enough to represent any smooth posterior density over X1 (a standard universality assumption for NFs), and • the shock head used in qϕ(Xt | Xt−1, Y t:T ) can represent any mean and covariance in the Gaussian family of Eq. (13). Under these assumptions we show that the true smoother pθ (X1: T | Y1: T ) lies in our variational family in the two limits. 
+
+A.1 Deterministic Dynamics 
+
+Consider a SSM with deterministic dynamics 
+
+Xt+1 = fθ (Xt), t = 1 , . . . , T − 1, (16) and observation model Yt ∼ pθ (Yt | Xt) as in Eq. (2). The transition kernel is a Dirac measure 
+
+pθ (Xt | Xt−1) = δ Xt − fθ (Xt−1), (17) or, equivalently, the vanishing-noise limit Q → 0 of Eq. (6). Let Ft : Rd → Rd denote the t-step deterministic rollout, 
+
+F1(x) = x, Ft+1 (x) = fθ (Ft(x)) , Xt = Ft(X1). (18) Thus the entire trajectory X1: T is a deterministic function of the initial state X1. The generative smoothing posterior therefore satisfies 
+
+pθ (X1: T | Y1: T ) = pθ (X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+δ Xt − fθ (Xt−1), (19) i.e., it is exactly the pushforward of the one-step posterior pθ (X1 | Y1: T ) through the deterministic dynamics. Our deterministic variational family (Eqs. 7–9) is 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+pθ, dyn ,Q (Xt | Xt−1), (20) with 
+
+pθ, dyn ,Q (Xt | Xt−1) = N Xt; fθ (Xt−1), Q , (21) and in the Q → 0 limit this reduces to the sampling scheme 
+
+X1 ∼ qϕ(X1 | Y1: T ), Xt+1 = fθ (Xt), t = 1 , . . . , T − 1. (22) Because the δ-factors coincide with those of the generative model, matching the full trajectory posterior reduces to matching the initial-state posterior. By expressivity of the conditional flow, there exists a parameter setting ϕ⋆ such that 
+
+qϕ⋆ (X1 | Y1: T = y1: T ) = pθ (X1 | Y1: T = y1: T ) (23) 16 for any y1: T ∈ supp  pθ (Y1: T ). Plugging this into Eq. (22) shows 
+
+qϕ⋆ (X1: T | Y1: T ) = pθ (X1: T | Y1: T ), (24) so the true deterministic smoother lies in our variational family. In other words, in the deterministic (strong-constraint) limit the only nontrivial posterior degree of freedom is pθ (X1 | Y1: T ), and our conditional flow can represent it exactly; the rest of the trajectory is obtained by the same deterministic rollout in both the generative and variational models. 
+
+A.2 Linear-Gaussian SSMs 
+
+We now consider the classical LG-SSM 
+
+X1 ∼ N (m0, P 0), (25) 
+
+Xt | Xt−1 ∼ N (AX t−1, Q ), t ≥ 2, (26) 
+
+Yt | Xt ∼ N (CX t, R ), t ≥ 1, (27) which is a special case of Eqs. (1)–(3) with fθ (x) = Ax and hθ (x) = Cx . It is well known that in this setting all filtering and smoothing distributions are Gaussian; the forward (Kalman) filter and backward Rauch-Tung-Striebel (RTS) smoother can be derived as Gaussian message passing on the linear factor graph. Our noisy variational family (Sec. 3.4.3) factorizes as 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T )
+
+> T
+
+Y
+
+> t=2
+
+qϕ(Xt | Xt−1, Y t:T ), (28) with 
+
+qϕ(Xt | Xt−1, Y t:T ) = N  Xt; AX t−1 + mt, S t
+
+, (29) where mt = mt(Xt−1, Y t:T ) and St = St(Xt−1, Y t:T ) are produced by the future-aware shock-head network (Sec. C). We show that, in an LG-SSM, the exact conditionals pθ (Xt | Xt−1, Y t:T ) are Gaussian and of the form (29). Combined with the Gaussianity of pθ (X1 | Y1: T ), this implies that the exact smoother belongs to our variational family. 
+
+A.2.1 Gaussian Backward Messages 
+
+Define the backward message 
+
+βt(xt) ∝ pθ (Yt+1: T = yt+1: T | Xt = xt), t = 1 , . . . , T − 1, (30) with terminal condition βT (xT ) ≡ 1. Using the Markov property one obtains the standard backward recursion 
+
+βt(xt) ∝
+
+Z
+
+pθ (xt+1 | xt) pθ (yt+1 | xt+1 ) βt+1 (xt+1 ) d xt+1 . (31) We show by induction that every βt(xt) is (unnormalized) Gaussian in xt.
+
+Base case. βT (xT ) ≡ 1 is a constant function, which we can regard as a Gaussian with zero information (precision) matrix. 
+
+Inductive step. Assume 
+
+βt+1 (xt+1 ) ∝ exp 
+
+
+
+− 12 x⊤
+
+> t+1
+
+Λt+1 xt+1 + η⊤
+
+> t+1
+
+xt+1 
+
+
+
+(32) for some precision matrix Λt+1 ⪰ 0 and vector ηt+1 . In the LG-SSM, the two other factors in Eq. (31) are 
+
+pθ (xt+1 | xt) ∝ exp 
+
+
+
+− 12 (xt+1 − Ax t)⊤Q−1(xt+1 − Ax t)
+
+
+
+, (33) 
+
+pθ (yt+1 | xt+1 ) ∝ exp 
+
+
+
+− 12 (yt+1 − Cx t+1 )⊤R−1(yt+1 − Cx t+1 )
+
+
+
+. (34) 17 The integrand in Eq. (31) is thus the product of three Gaussians in the common variable xt+1 , hence itself an (unnormalized) Gaussian in xt+1 . Integrating a joint Gaussian over xt+1 produces an exponential quadratic function in the remaining variable xt; that is, there exist Λt ⪰ 0 and ηt such that 
+
+βt(xt) ∝ exp 
+
+
+
+− 12 x⊤ 
+
+> t
+
+Λtxt + η⊤ 
+
+> t
+
+xt
+
+
+
+. (35) Thus βt is Gaussian for all t by induction. 
+
+A.2.2 The Conditional p(Xt | Xt−1, Y t:T ) is Gaussian 
+
+Using the backward message, the exact conditional appearing in Eq. (10) can be written as 
+
+pθ (xt | xt−1, y t:T ) ∝ pθ (xt | xt−1) pθ (yt | xt) βt(xt). (36) We have just shown that all three factors are Gaussian in xt. Their product is therefore an (unnormal-ized) Gaussian in xt, so 
+
+pθ (xt | xt−1, y t:T ) = N  xt; μt(xt−1), S t
+
+, (37) with covariance 
+
+St =
+
+
+
+Q−1 + C⊤R−1C + Λ t
+
+−1
+
+, (38) and mean 
+
+μt(xt−1) = St
+
+
+
+Q−1Ax t−1 + C⊤R−1yt + ηt
+
+
+
+. (39) The right-hand side of Eq. (39) is an affine function of xt−1. Hence there exist a matrix Mt and vector bt such that 
+
+μt(xt−1) = Mtxt−1 + bt. (40) Writing Mtxt−1 + bt as 
+
+Mtxt−1 + bt = Ax t−1 +  (Mt − A)xt−1 + bt
+
+| {z }
+
+> =: mt(xt−1)
+
+, (41) we can put Eq. (37) in the same form as our variational transition Eq. (29): 
+
+pθ (xt | xt−1, y t:T ) = N  xt; Ax t−1 + mt(xt−1), S t
+
+. (42) Because the shock head in Eq. (12) is allowed to depend on (Xt−1, Y t:T ), there exists ϕ⋆ such that its outputs (mt, S t) coincide with those in Eq. (42) for all t. In other words, the exact conditional 
+
+pθ (Xt | Xt−1, Y t:T ) is a member of our Gaussian transition family. 
+
+A.2.3 Putting the Pieces Together 
+
+Finally, in an LG-SSM the smoothed marginal over the initial state is also Gaussian: 
+
+pθ (X1 | Y1: T ) = N (m1|T , P 1|T ), (43) with (m1|T , P 1|T ) given by the standard RTS backward recursion on top of the Kalman filter. Since qϕ(X1 | Y1: T ) is parameterized by a conditional NF with Gaussian base distribution, it can represent this Gaussian exactly for some ϕ⋆. Choosing 
+
+qϕ⋆ (X1 | Y1: T ) = pθ (X1 | Y1: T ), (44) 
+
+qϕ⋆ (Xt | Xt−1, Y t:T ) = pθ (Xt | Xt−1, Y t:T ) for t ≥ 2, (45) and plugging into the factorization (28), we obtain 
+
+qϕ⋆ (X1: T | Y1: T ) = pθ (X1: T | Y1: T ), (46) because Eq. (10) implies that the exact smoother admits the same future-conditioned parameterization as our variational family. Thus, for linear-Gaussian SSMs, PR-Smoother’s Markov-structured Gaussian variational family is posterior-inclusive : the exact smoothing posterior lies within the family and can be recovered by choosing the shock-head parameters to reproduce the Gaussian backward messages of the RTS smoother. 18 Algorithm 1 PR-Smoother (training-time inference) 
+
+Input: dataset {Y (n)1: T }Nn=1 ; dynamics fθdyn ; observation operator hθobs ; prior p(X1)
+
+Output: learned parameters (ˆθ, ˆϕ) for amortized smoother q ˆϕ(X1: T | Y1: T )
+
+Initialize θ, ϕ 
+
+repeat 
+
+Sample a minibatch {Y (b)1: T }Bb=1 
+
+for each window Y (b)1: T do 
+
+Encode c(b) ← Eϕ(Y (b)1: T )
+
+Sample X(b)1 ∼ qϕ(· | Y (b)1: T ) via conditional flow gϕ
+
+for t = 1 to T − 1 do 
+
+Predict ˜X(b) 
+
+> t+1
+
+← fθdyn (X(b) 
+
+> t
+
+)
+
+if deterministic (strong-constraint) variant then 
+
+X(b) 
+
+> t+1
+
+← ˜X(b)
+
+> t+1
+
+else 
+
+Sample X(b) 
+
+> t+1
+
+∼ qϕ(· | X(b) 
+
+> t
+
+, Y (b) 
+
+> t+1: T
+
+) (future-aware noisy transition) 
+
+end if end for end for 
+
+Estimate ELBO bL(θ, ϕ ) on the minibatch and take a gradient-ascent step on bL
+
+until convergence 
+
+## B Algorithm 
+
+For an observation window Y1: T , PR-Smoother proceeds as follows. 
+
+## C Architecture for the Anti-Causal Encoder 
+
+Future-aware Transformer encoder. We build per-step “anti-causal” features that summarize only future observations. Let ˜Y be the time-reversed observation sequence. A standard causal Transformer encoder on ˜Y (masking each token to attend only to its past) yields hidden states ˜H. Flipping back to original time, Ht = ˜HT +1 −t depends on Yt:T only. We take per-step contexts ct = WsHt so that ct
+
+summarizes Yt:T . The shock head then defines qϕ(Xt | Xt−1, Y t:T ) = N (fθ (Xt−1) + mt, S t), with 
+
+(mt, S t) predicted from [Xt−1, c t, τ t], where τt = t/T . This preserves model-based transparency— likelihoods are evaluated with hθ , transitions with fθ —while allowing future observations to explain stepwise corrections under a closed-form per-step KL to the physical noise N (0 , Q ).
+
+## D Use of NF over DM or FM 
+
+Diffusion models (DM). Conditional score-based diffusion models can be used to represent qϕ(X1 |
+
+Y1: T ) and are often more permissive geometrically than NFs. However, our training objective requires sample-wise log qϕ. Standard DMs optimize a likelihood bound on data but do not provide tractable posterior density values for arbitrary X1 at test time. One can recover densities through the probability-flow ODE, but this entails solving an ODE and integrating the divergence (e.g., with Hutchinson estimators) per sample. This added NFE (number of function evaluations) materially increases wall-clock cost. 
+
+Flow matching (FM) / continuous normalizing flows (CNF). FM trains an ODE transport whose trajectories allow density tracking via the instantaneous change-of-variables formula. This makes FM more compatible with our ELBO than DMs. The practical trade-off is that evaluating log qϕ
+
+still requires integrating a divergence along the path and sampling requires an ODE solve; both are substantially heavier than a single NF evaluation unless very small NFE integrators are used. 19 E Full ELBO Tables 
+
+Evaluation protocol. We report held-out ELBOs for all variational methods (flow / Gauss / Noisyflow / NoisyGauss / MF). Each entry is computed on a full test sequence (smoothing window) and reported as mean ± std over five random seeds, evaluated on the test set. The ELBO is estimated via Monte Carlo sampling from the variational posterior with one sample. 
+
+Reporting convention. We report the ELBO per sequence (i.e., the ELBO value for a full window, summed over time steps and observed components). Therefore, ELBO magnitudes should be compared only within the same experimental setting (same window length and observation pattern); comparisons across columns with different T or different observation densities are not meaningful. Table 3: Lorenz96, 40D: ELBO for the test set (higher is better).                                                 
+
+> Method Linear Nonlinear Nonlinear, noisy Flow -3287 ±5-3603 ±8-3908 ±12 Noisyflow -3024 ±0-3439 ±72 -3326 ±9
+> Gauss -3378 ±32 -3711 ±6-4051 ±14 NoisyGauss -3055 ±1-3687 ±16 -3991 ±9MF -3519 ±1-4132 ±4-4416 ±3
+
+Table 4: Kolmogorov flow: ELBO for the test set (higher is better) for observation patterns.                                                               
+
+> Method/ELBO Full Half Sparse Realistic flow -259171 ±1214 -129962 ±639 -8062 ±71 -71863 ±363
+> Noisyflow -295524 ±4439 -220524 ±2060 -8865 ±61 -84129 ±664 Gauss -263759 ±628 -134580 ±630 -15280 ±65 -87547 ±320 NoisyGauss -303450 ±2263 -230927 ±1609 -15992 ±66 -95050 ±594 MF -266806 ±398 -140893 ±343 N/A -91767 ±86
+
+## F Trained σQ Values in Noisyflow and Noisygauss Models 
+
+Learned process-noise scale in the noisy-transition variants. In the Lorenz-96 (40D) exper-iments of Sec. 4.2, the noisy-transition variants (Noisyflow/NoisyGauss) treat the process-noise covariance in the generative dynamics as isotropic, p(xt+1 | xt) = N (f (xt), Q ) with Q = σ2
+
+> Q
+
+I, and parameterize the variational transition as qϕ(xt+1 | xt, y t+1: T ) = N (f (xt) + mt, S t) with St = σ2 
+
+> S
+
+I
+
+(shared across time). Both σQ and σS are learned jointly with the inference-network parameters by maximizing the ELBO for each experimental regime. Table 5 reports the resulting ln σQ values (mean ± standard deviation across successful random seeds). 
+
+Interpretation. For the “linear” and “nonlinear” columns, the data are generated with determinis-tic dynamics (no injected process noise), so the corresponding ground-truth value is σTrue  
+
+> Q
+
+= 0 
+
+(reported as ln σTrue  
+
+> Q
+
+= −∞ ). In these deterministic regimes, σQ is not strictly identifiable: within the noisy-transition ELBO, σQ primarily sets the strength of the per-step KL regulariza-tion KL[ qϕ(xt+1 | xt, y t+1: T ) ∥ p(xt+1 | xt)] , so the learned σQ should be read as an effective 
+
+model-error scale selected by the ELBO trade-off rather than as a physical noise estimate. In contrast, in the “noisy dynamics” setting the data are generated with true per-step process noise 
+
+σTrue  
+
+> Q
+
+= 0 .1 (ln σTrue  
+
+> Q
+
+= ln 0 .1 = −2.30 ). Here, Noisyflow recovers the planted noise level (ln σQ = −2.29 ± 0.04 ), while NoisyGauss substantially underestimates it ( ln σQ = −4.61 ± 0.16 ). This diagnostic complements the RMSE results in Fig. 3: the more expressive Noisyflow posterior not only improves state accuracy but also yields more accurate calibration of the process-noise scale under variational-EM training. 20 Table 5: Trained σQ values in the "noisyflow" and "noisygauss" models in Lorenz96 experiments.                         
+
+> Method linear nonlinear noisy dynamics Noisyflow −2.58 ±0.00 −3.59 ±0.53 -2.29 ±0.04
+> NoisyGauss −2.12 ±0.01 −5.06 ±0.08 −4.61 ±0.16
+> True values −∞ −∞ −2.30
+
+Table 6: Parameter estimation errors across observation patterns (lower is better), for the Full and 
+
+Half settings. Three metrics per pattern: |∆F |, |∆ log Re |, and observation bias. If no models out of five initial seeds succeed in training or optimization, the results are treated as N/A. The oracle models are removed because they do not estimate F , log Re , nor the observation bias: they are prescribed.                                                                                                                              
+
+> Full Half Method |∆F||∆ log Re |bias |∆F||∆ log Re |bias flow (3.3 ±3.6) ×10 −40.14 ±0.01 0.53 ±0.01 (1.1 ±0.8) ×10 −30.14 ±0.01 0.53 ±0.01 Noisyflow (6.3 ±1.3) ×10 −30.72 ±0.03 0.94 ±0.03 (1.0 ±0.2) ×10 −20.27 ±0.00 0.96 ±0.03 Gauss (1.1 ±0.3) ×10 −30.23 ±0.00 0.57 ±0.01 (8.8 ±6.4) ×10 −40.27 ±0.00 0.60 ±0.01 NoisyGauss (7.1 ±2.2) ×10 −30.86 ±0.02 0.86 ±0.02 (1.5 ±0.2) ×10 −30.99 ±0.03 1.01 ±0.02 MF (3.4 ±0.1) ×10 −21.82 ±0.01 0.40 ±0.01 0.08 ±0.00 2.44 ±0.00 0.44 ±0.01
+> IEnKS 0.89 ±0.00 2.31 ±0.00 2.84 ±0.01 0.89 ±0.00 2.30 ±0.02 2.96 ±0.01 4D-Var N/A N/A N/A N/A N/A N/A
+
+## G Additional Results for the Kolmogorov Experiments H Compute-budgeted data scaling 
+
+A practical question for amortized smoothing is: how many observation windows are needed to obtain useful performance under a fixed training compute budget? In many deployments, collecting 10 6–
+
+10 7 windows may be impractical. We therefore repeat the Kolmogorov-flow experiment under the 
+
+realistic observation network while subsampling the training set to N ∈ { 2.88 × 10 6 (100%) , 2.88 ×
+
+10 5 (10%) , 2.88 × 10 4 (1%) , 2.88 × 10 3 (0 .1%) , 2.88 × 10 2 (0 .01%) }. To isolate data effects from optimization cost, we keep the number of gradient updates fixed across all settings and increase the number of epochs for smaller datasets. All metrics are computed on a held-out test set. Fig. 6 shows that the Flow variant degrades smoothly as N decreases under compute-budgeted training. Performance with N ≈ 10 5 windows is already close to the main experiment, and the most noticeable increase in state RMSE occurs when going below ≈ 10 4 windows (Fig. 6(a)). Notably, even in the extreme low-data regime N = 2 .88 × 10 2(288) windows, training remains stable and the Flow model’s state RMSE remains below the oracle 4D-Var reference in Fig. 6(a) (dotted line). Figure 5 provides representative reconstructions across dataset sizes and illustrates that the Flow model still recovers coherent large-scale vortical structure at N = 288 (with the Gauss variant shown for comparison). For parameter learning, the forcing amplitude F is robustly estimated across dataset sizes (Fig. 6 c). In contrast, the log Re estimate shows weaker sensitivity (and mild non-monotonicity) across dataset sizes (Fig. 6 d). The bias-field RMSE varies only modestly across N (Fig. 6 e). Overall, these results indicate that on the order of 10 5 windows can suffice for near-main-experiment state accuracy in this setting, while PR-Smoother remains competitive even with 10 2–10 3 windows. 
+
+## I Experimental Settings 
+
+We summarize the experimental settings here. Code for reproducing the experiments is provided as supplementary material. 
+
+Computational resources. We have used two clusters: a cluster of GH200 GPUs and another computer with an RTX5090. Each GPU has memory of 96GB (GH200) or 32GB (RTX5090). 21 truth N=2880000 N=28800 N=288 
+
+obs N=288000 N=2880 gauss 
+
+−10 010 
+
+−10 010 
+
+−10 010 
+
+−10 010 
+
+−10 010 
+
+−10 010 
+
+−10 010 
+
+−10 010 Figure 5: Kolmogorov flow (realistic observation network): qualitative compute-budgeted data scaling. Left column: ground-truth vorticity field (truth) and partial observations under the “realistic” network (obs). Other panels: PR-Smoother reconstructions (Flow variant) on the same held-out window when trained with N ∈ { 2.88 × 10 6, 2.88 × 10 5, 2.88 × 10 4, 2.88 × 10 3, 2.88 × 10 2}
+
+observation windows (panel titles), keeping the number of gradient updates fixed across N (compute-budgeted training). The final panel (“gauss”) shows the diagonal-Gaussian variant of N = 2 .88 × 10 6
+
+for reference. Even at N = 2 .88 × 10 2(288) windows, the Flow model preserves coherent vortical structure; quantitatively, its state RMSE remains below the oracle 4D-Var reference in Fig. 6(a). 10 2 10 3 10 4 10 5 10 6 10 7
+
+> Size of the training set
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> RMSE, state
+> oracle 4DVar main experiment
+
+(a) 10 2 10 3 10 4 10 5 10 6 10 7
+
+> Size of the training set
+> 246810 12
+> -(ELBO) (×10 4) main experiment
+
+(b) 10 2 10 3 10 4 10 5 10 6 10 7
+
+> Size of the training set
+> 0.000 0.002 0.004 0.006 0.008 0.010
+> RMSE, forcing
+> main experiment
+
+(c) 10 2 10 3 10 4 10 5 10 6 10 7
+
+> Size of the training set
+> 0.0 0.1 0.2 0.3 0.4 0.5
+> RMSE, log Re
+> main experiment
+
+(d) 10 2 10 3 10 4 10 5 10 6 10 7
+
+> Size of the training set
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> RMSE, bias
+> main experiment
+
+(e) 
+
+Figure 6: Ablation study results. Panel (a): RMSE of the state inference, (b): ELBO of the test set, (c) RMSE of the estimated forcing parameter F , (d) RMSE of the estimated log-Reynolds number 
+
+log Re , and (e): RMSE of the estimated bias field. The error bars for five initial conditions are smaller than the size of each marker. 22 Table 7: Same as Table 6, but for the Sparse and Realistic settings.                                                                                                                              
+
+> Sparse Realistic Method |∆F||∆ log Re |bias |∆F||∆ log Re |bias flow 0.10 ±0.02 2.47 ±0.02 0.62 ±0.14 (2.3 ±1.6) ×10 −30.31 ±0.01 0.57 ±0.02
+> Noisyflow 0.13 ±0.05 2.80 ±0.02 1.00 ±0.12 (1.1 ±0.7) ×10 −20.91 ±0.03 0.98 ±0.02 Gauss 0.83 ±0.03 18.18 ±0.08 1.46 ±0.10 0.07 ±0.01 1.29 ±0.01 0.66 ±0.01 NoisyGauss 0.66 ±0.07 12.76 ±0.04 1.43 ±0.15 0.12 ±0.02 1.56 ±0.02 1.06 ±0.01 MF N/A N/A N/A 0.75 ±0.00 2.99 ±0.00 0.66 ±0.02 IEnKS 0.89 ±0.01 2.30 ±0.01 3.03 ±0.01 0.89 ±0.00 2.31 ±0.00 3.02 ±0.01 4D-Var 1.35 ±0.19 26.95 ±1.66 3.61 ±0.13 N/A N/A N/A
+
+Hyperparameters for training. For all experiments, we have used Adam optimizer with default parameters. Hyperparameters employed in our experiments are provided in each section in the appendix. Each training is conducted with an RTX5090 (Lorenz96, 4D) or an GH200 GPU (Lorenz96, 40D and Kolmogorov flow). 
+
+Learning rate scheduling. For all the experiments, we warm-up the learning rate from 10 −3 times the maximum lr, and it continuously increases up to the maximum lr for that experiment. The first 1% (Lorenz96) / 5% (Kolmogorov flow) of the total iterations is the warm-up period. Once it reaches the maximum, it continuously decreases exponentially, finishing the training with 0.1 times the maximum lr at the final iteration. 
+
+On the noise covariance matrix St in Eq. (13) For noisyFlow and noisyGauss we parameterize a residual correction mt(xt−1, y t:T ) and use isotropic covariances with learned scales: Q = σ2
+
+> Q
+
+I in the generative dynamics and St = σ2 
+
+> S
+
+I in the residual transition (shared across t). This preserves stability while eliminating manual noise calibration. The construction is nested: when mt ≡ 0 and 
+
+St = Q, the noisy variants reduce exactly to the corresponding flow/Gauss models. Table 8: Dataset summary. 
+
+Xdim steps Ndata,train 
+
+Lorenz-96, 4D 4 1 or 10 1.0 × 10 7
+
+Lorenz-96, 40D 40 50 1.0 × 10 7
+
+Kolmogorov flow 16384 10 2.9 × 10 6
+
+I.1 Lorenz-96, 4D 
+
+Table 9: Training summary for Lorenz-96 (4D) experiment lr batch size Epochs train time per model Flow 5 × 10 −4 102400 100 1hr × 1GPU Gauss 5 × 10 −4 102400 100 1hr × 1GPU Mean Field 5 × 10 −4 102400 100 1hr × 1GPU 
+
+Dataset: For the multimodality experiment in Sec. 4.1 we use the four-dimensional Lorenz-96 system with periodic boundary conditions. The continuous-time dynamics follow 
+
+dx i
+
+dt = ( xi+1 − xi−2)xi−1 − xi + F, i = 1 , . . . , 4,
+
+with cyclic indexing and forcing F = 8 . We do not use any spin-up: the initial condition is drawn directly from a controllable Gaussian prior 
+
+X1 ∼ N (0 , (2 .0) 2I),
+
+23 so each coordinate has mean 0 and standard deviation 2. This prior is used both in the generative model and as the reference prior when evaluating approximate posteriors. The dynamics are integrated deterministically with a fourth-order Runge-Kutta scheme. We use an internal time step internal_dt = 0 .006 and output states every five internal steps, giving an effective observation interval ∆t = 0 .03 . For each draw of X1 we run the simulation for 10 
+
+observation steps, producing a latent path X1:10 = ( X1, . . . , X 10 ).Observations are generated with a componentwise square and additive Gaussian noise, 
+
+Yt = h(Xt) + εt, h(x) = x2, εt ∼ N (0 , σ 2I4),
+
+with observation noise level σ = 3 .0. To probe multimodality, we consider two conditioning problems built from the same simulated paths: a T = 1 setting that uses only the final time step Y10 , and a 
+
+T = 10 setting that uses the full sequence Y1:10 . In both cases the dynamics are strictly deterministic, so all stochasticity comes from the Gaussian prior on X1 and the observation noise. For evaluation, we approximate the “ground truth” posterior p(X1: T | Y1: T ) with a very large bootstrap PF of 5 × 10 6
+
+particles and treat the resulting weighted particle cloud as an empirical reference distribution. 
+
+Models. For the 4-dimensional Lorenz-96 multimodality test in Sec. 4.1 we instantiate PR-Smoother with three variational families for the initial-state posterior qϕ(X1 | Y1: T ): a RealNVP flow ( Flow ), a diagonal Gaussian ( Gauss ), and a MF variational smoother ( Mean-field ). All three share the same deterministic Lorenz-96 dynamics and squared observation operator described above; the only randomness in the model comes from the Gaussian prior on X1 and the Gaussian observation noise. 
+
+Observation encoder (periodic Conv1D). For the 4D Lorenz-96 experiment, we encode the observation window with a periodic 1-D convolutional network Eϕ (Conv1D variant). The input is a minibatch y ∈ RB×T ×4, where T ∈ { 1, 10 } is the window length and the spatial index corresponds to the 4 cyclic Lorenz-96 coordinates. We treat the time axis as channels and convolve along the (cyclic) state axis of length 4 using circular padding. 
+
+Conv trunk. Let h(0) = y. We apply an 8-block residual Conv1D stack with channel schedule 
+
+[T, 128 , 128 , 128 , 128 , 128 , 128 , 128 , C out ],
+
+kernel size k = 3 , stride 1, and circular padding (so the spatial length stays 4 throughout). Each residual block has the form 
+
+u = ReLU(GN(Conv1D( h))) , h ← u + Skip( h),
+
+where GN is GroupNorm with 1 group (equivalently, a per-location normalization over channels), and Skip is identity when the channel counts match and otherwise a 1 × 1 Conv1D projection. 
+
+ScaledTanh head. The conv trunk output is passed through a 1 × 1 Conv1D followed by a softly bounding scaled tanh nonlinearity: 
+
+Head( v) = s tanh( v/s ),
+
+where s > 0 is learnable and initialized to s = 10 . The 1 × 1 head convolution is initialized at zero so the encoder starts near zero output. 
+
+Flow model (RealNVP). For the flow model, we set Cout = 64 , producing features h ∈ RB×64 ×4.We flatten h to RB×256 and apply a 2-layer MLP to obtain a global context c ∈ R256 :
+
+c = MLP(vec( h)) , MLP : 256 → 256 SiLU 
+
+−−−→ 256 .
+
+This context conditions all coupling layers of the conditional RealNVP flow qϕ(x1 | y1: T ) on R4.
+
+Gauss model. For the diagonal-Gaussian model, we set Cout = 2 and interpret the encoder output 
+
+h ∈ RB×2×4 as (μϕ(y1: T ), log σϕ(y1: T )) for each coordinate. We sample x1 = μϕ + σϕ ⊙ ε with 
+
+ε ∼ N (0 , I 4) and evaluate the closed-form diagonal-Gaussian log density. 24 Mean-field model. The Mean-field baseline removes the dynamical coupling from the variational family altogether and factorizes over both time and coordinates: 
+
+qϕ(X1: T | Y1: T ) = 
+
+> T
+
+Y
+
+> t=1 4
+
+Y
+
+> i=1
+
+N xt,i ; μt,i (Y1: T ), σ 2
+
+> t,i
+
+(Y1: T ).
+
+In implementation we reuse the same observation encoder as above, but instead of sampling X1 and pushing it through the dynamics, we attach lightweight MLP heads that take the encoder output and directly produce means and log-standard deviations {μt,i , log σt,i } for each (t, i ). The Lorenz-96 model still enters the training objective through the likelihood p(Y1: T | X1: T ), but the variational posterior no longer enforces the Markov structure of the SSM. This makes the mean-field model a dynamics-agnostic reference for PR-Smoother in the low-dimensional, multimodal Lorenz-96 test. 
+
+Ensemble Kalman filter (EnKF). As a classical Gaussian baseline we use an ensemble Kalman filter (EnKF) built on the same 4D Lorenz-96 dynamics and squared observation operator as in the generative model. We draw an ensemble of initial states {X(n)1 }Nens  
+
+> n=1
+
+i.i.d. from the Gaussian prior 
+
+N (0 , 4I4) and then propagate each member deterministically with the RK4 integrator, using the same time-stepping scheme ( internal_dt = 0 .006 , outputs every five internal steps). At each observation time we apply the nonlinear observation operator h(x) = x2 to the forecast ensemble, compute the sample mean and covariance of both the state and observation ensembles, and perform the standard EnKF analysis update in ensemble space with observation noise covariance R = 9 I4
+
+(corresponding to σ = 3 .0). For the T = 1 setting this reduces to a single forecast-analysis cycle; for T = 10 we run EnKF for ten steps and treat the resulting ensemble of trajectories {X(n)1: T } as approximate samples from the posterior over the path. 
+
+Ensemble transform Kalman filter (ETKF). The ETKF baseline uses the same ensemble setup and dynamical/observation models as EnKF, but performs the analysis step via a deterministic square-root transform instead of perturbing the observations. In each window, we form the forecast ensemble anomalies in state space, map them through the observation operator to obtain observation anomalies, and compute the low-dimensional analysis transform in ensemble space that matches the Kalman posterior covariance. Applying this transform to the anomalies and updating the ensemble mean yields the analysis ensemble without additional observation noise. This typically reduces sampling noise and can give more stable posteriors in low-dimensional settings like the 4D Lorenz-96 system. As with EnKF, we use the ETKF analysis ensemble over the window (either the final time only for 
+
+T = 1 or the full sequence for T = 10 ) as an empirical approximation to the posterior over the states. 
+
+Particle filter (PF). To obtain a high-accuracy reference distribution we run a bootstrap particle filter (PF) with the same prior, dynamics, and observation model. Particles are initialized from 
+
+X(n)1 ∼ N (0 , 4I4), propagated deterministically through the Lorenz-96 integrator, and reweighted at each observation time by the Gaussian likelihood p(Yt | X(n) 
+
+> t
+
+) = N (Yt; h(X(n) 
+
+> t
+
+), 9I4) with 
+
+h(x) = x2. We monitor the effective sample size and resample adaptively to avoid severe weight degeneracy. The resulting weighted particle cloud over X1: T (for T = 1 and T = 10 ) is treated as an empirical approximation to the true posterior p(X1: T | Y1: T ) and is used only for evaluation, i.e., as a “ground truth” reference when comparing the variational posteriors and ensemble Kalman methods in this low-dimensional example. 
+
+Training variables: We do not assume any trainable model parameters in this experiment. Training variables are the parameters in the inference network, i.e., network parameters. 
+
+I.2 Lorenz-96, 40D Dataset: The dataset is synthesized by running simulations starting from a random field X1:
+
+X1,i = 20 ϵi − 10 , ϵi ∼ U [0 , 1] , (47) where i runs from 1 to 40. The time evolution is described by a set of ordinary differential equations: 
+
+dx i
+
+dt = ( xi+1 − xi−2) xi−1 − xi + F, i = 1 , . . . , N (48) 25 Table 10: Training summary for Lorenz-96 experiment lr batch size Epochs train time per model Flow 2 × 10 −4 51200 400 18hr × 1GPU Noisyflow 4 × 10 −4 10240 50 16hr × 1GPU Gauss 2 × 10 −4 51200 400 16hr × 1GPU NoisyGauss 4 × 10 −4 10240 50 11hr × 1GPU Mean Field 2 × 10 −4 51200 400 14hr × 1GPU where we assume F = 8 , N = 40 for our experiments. The time evolution is computed using the fourth-order Runge-Kutta (RK4) method with the step size of 0.006 and observations are produced every 0.03, both in the model time unit. We run the simulation for 100 observation steps (3.0 model time) and discard the first 50 observations (1.5 model time) as the spin-up period. In the noisy dynamics case, we add a noise term at each step. The dynamics equation now reads: 
+
+Xt+1 = f (Xt) + ηt, (49) where f represents the 5 steps of RK4 mapping function and ηt ∼ N (μ = 0 , σ 2 = 0 .12) is the noise term added every t = 0 .03 . This corresponds to the dynamics model of 
+
+p(Xt+1 | Xt) = N [Xt+1 ; f (Xt), Q ], (50) where Q = (0 .1) 2I. The dynamics noise is independent between time steps and the physical grids. We adopt two observation operators to generate the observation data: (i) the linear operator h(Xt) = 
+
+Xt, and (ii) the nonlinear operator h(Xt) = min (X2 
+
+> t
+
+, 5) . Both operators work componentwise. For either setting, we add a noise term ϵt ∼ N (μ = 0 , σ 2 = 1 .02) for the observation process. Noise added at an observation step is independent across steps. 
+
+Models: We have seven models: (i) flow model, (ii) noisy flow model, (iii) Gauss model, (iv) noisy Gauss model, (v) mean-field model, (vi) 4D-Var, and (vii) IEnKS. 
+
+(i) Flow model We use a periodic 1-D conv encoder with global self-attention along the state axis L. Input is y with shape (B, steps, L ), where steps = 50 and L = 40 . Channels progress as [steps, 128 , 128 , 128 , 128 , 128 , 128 , 128 , out _channels ]. Each hidden stage is a residual conv block: Conv1d(k=3, stride=1, circular padding) → LayerNorm(1) → ReLU; the skip is identity when channels match, otherwise a 1 × 1 projection. After selected 128-channel blocks ( attn _at = (2 , 5) )we insert AttnBlock1D, which treats L as the sequence: it transposes (B, C, L ) → (B, L, C ),applies LayerNorm, adds FourierPositionalEncoding1D(C) (sin/cos features tied to L for circular domains), runs MultiheadAttention, adds a residual, applies another LayerNorm and a 2-layer MLP 
+
+(C → 2C → C) with GELU, then adds a second residual and transposes back to (B, C, L ). The stack ends with a 1 × 1 Conv1d to out _channels and a ScaledTanh head initialized with bound 10, which softly bounds outputs while staying near-linear around zero. The design preserves spatial length, uses convolutions for local coupling, and uses attention to mix information globally across L
+
+without downsampling. 
+
+(ii) Noisy-flow model The noisy-flow variant uses exactly the same periodic Conv1D+attention encoder as the flow model to summarize the observations Y1: T , and the same conditional RealNVP flow for the initial state qϕ(X1 | Y1: T ). In addition, we instantiate a “future-aware” Transformer encoder over the observation sequence. This network takes the normalized observations Y1: T and returns per-step context vectors ct for t = 1 , . . . , T − 1. Given a rollout state Xt from the physical dynamics and the context (ct, t/T ), a small CNN/MLP “shock head” outputs a mean and diagonal log-variance for an additive correction δt to the dynamics noise. The full variational family is 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T ) 
+
+> T−1
+
+Y
+
+> t=1
+
+qϕ(δt | Xt, Y t+1: T ), Xt+1 = fθ (Xt) + δt,
+
+with all log-densities and per-step KL terms evaluated in closed form. 26 (iii) Gauss model The Gauss model keeps the same Conv1D+attention encoder but replaces the flow with a diagonal Gaussian posterior for the initial state. The encoder outputs two channels of size 
+
+D = 40 , which are interpreted as a mean and log standard deviation (μ(Y ), log σ(Y )) for each grid point. The variational family for the first time step is 
+
+qϕ(X1 | Y1: T ) = N X1; μ(Y1: T ), diag( σ2(Y1: T )) ,
+
+implemented by a standard reparameterization X1 = μ + σ ⊙ ε, ε ∼ N (0 , I ).
+
+(iv) Noisy-gauss model The noisy-gauss model combines the diagonal-Gaussian initial posterior with the future-aware noisy transition family of Sec. 3.4.3. As in the Gauss model, the encoder produces (μ, log σ) and we sample X1 ∼ N (μ, diag( σ2)) . In addition, the same Transformer future encoder used in the noisy-flow model provides per-step contexts ct from Yt:T . At each time step t,we form a feature vector from (Xt, c t, t/T ) and feed it into a Gaussian shock head, which outputs a mean and diagonal log-variance for a correction δt; this yields 
+
+qϕ(X1: T | Y1: T ) = qϕ(X1 | Y1: T ) 
+
+> T−1
+
+Y
+
+> t=1
+
+N δt; mt(Xt, c t), diag( s2 
+
+> t
+
+(Xt, c t)) , Xt+1 = fθ (Xt) + δt.
+
+The implementation shares the same Transformer and shock head as the noisy-flow model and accumulates the exact log-density of the path under this factorization. 
+
+(v) Mean-field model The mean-field baseline removes the dynamical coupling from the variational family and factorizes over time: 
+
+qϕ(X1: T | Y1: T ) = 
+
+> T
+
+Y
+
+> t=1
+
+qϕ,t (Xt | Y1: T ).
+
+In code, this is implemented by a separate smoother class that uses the same observation encoder family as PR-Smoother but attaches lightweight heads that output (μt, log σt) for each (t, i ) directly, without pushing samples through the dynamics inside qϕ. The physical model fθ is still used in the likelihood and in the ELBO, but the variational posterior no longer enforces the Markov structure of the SSM, making it a useful “dynamics-agnostic” reference for PR-Smoother. 
+
+(vi) 4D-Var model As a variational baseline we implement a windowed 4D-Var solver that keeps the Lorenz-96 dynamics and observation operator on-graph and performs MAP estimation of the latent trajectory. For a window of length T the method optimizes either only the initial state x1 (strong-constraint mode, used when the dynamics are noiseless) or the entire trajectory x1:T (weak-constraint mode, used in the dynamics-noise setting), with the Lorenz-96 ODE integrated between observation times using an RK4 scheme with forcing F=8 and N=40 variables. The objective is the standard quadratic 4D-Var cost: a Gaussian background term on x1 with isotropic prior variance matched to the data generation, a Gaussian observation-misfit term with the same noise variance as in the generative model, and in the weak-constraint case an additional quadratic penalty on model-error increments xt+1-f(xt). Optimization is done in PyTorch via L-BFGS for the strong-constraint case and Adam for the weak-constraint case, unrolling the Lorenz-96 integrator inside the computation graph so that gradients are obtained by automatic differentiation. We use multiple random restarts per window and report the reconstructed trajectory corresponding to the lowest cost as the 4D-Var estimate. 
+
+(vii) IEnKS model The IEnKS baseline follows the iterative ensemble Kalman smoother formula-tion of Bocquet and Sakov [2014], using the same Lorenz-96 dynamics and observation operators as in the main experiment. For each assimilation window, we propagate an ensemble of trajectories through the RK4-discretized Lorenz-96 model and perform fixed-lag smoothing in ensemble space. The augmented state contains only the physical state xt (no bias or parameter components in this experiment); ensemble members are initialized from an isotropic Gaussian prior. At each IEnKS iteration we (i) roll the ensemble forward over the window, (ii) map each member to observation space through h (either identity or the nonlinear h(x) = min (x2, 5)) , (iii) form anomalies and the associ-ated design matrix in ensemble space, and (iv) solve the small linear system (I + D⊤D)δw = D⊤d
+
+to obtain a Gauss-Newton-style update of the ensemble mean and anomalies. No localization is applied since the state dimension is moderate. We use 512 ensemble members for all Lorenz-96 experiments. Sliding this window along the sequence yields an analysis trajectory given by the ensemble mean at each time. 27 Training variables: We do not assume any trainable model parameters in this experiment. Training variables are the parameters in the inference network, i.e., network parameters. 
+
+I.3 Kolmogorov Flow Problem setting. We conduct an experiment on 16,384-dimensional Kolmogorov flow. Kolmogorov flow is a standard 2-D incompressible Navier-Stokes benchmark in a periodic box, driven by a spatially sinusoidal body force. In nondimensional form it reads 
+
+∂tu + ( u · ∇ )u = −∇ p + 1Re ∆u + F sin( ky ) ex, (51) 
+
+∇ · u = 0 . (52) where F is the forcing amplitude, k the forcing wavenumber, and Re the Reynolds number. We use this problem in a 128 × 128 discretization (state dimension 16 , 384 ) to evaluate high-dimensional data assimilation. Table 11: Training summary for Kolmogorov experiment lr batch size Epochs train time per model Flow 3 × 10 −4 288 4 19hr × 1GPU Noisyflow 3 × 10 −4 96 1 20hr × 1GPU Gauss 3 × 10 −4 384 5 19hr × 1GPU NoisyGauss 3 × 10 −4 96 1 20hr × 1GPU Mean Field 3 × 10 −4 384 6 20hr × 1GPU 
+
+Dataset: The Kolmogorov experiment uses the 2-D incompressible Navier-Stokes “Kolmogorov flow” benchmark on a periodic 128 × 128 grid (state dimension 16 , 384 ). The continuous equations are given in Eqs. (51) and (52), with sinusoidal body forcing of amplitude F and Reynolds number Re. We generate trajectories by numerically integrating this system and record windows of T=10 steps; the training set contains approximately 2.9 × 10 6 windows. We consider four observation patterns—full, half, sparse, and mixed realistic coverage—and always add an unknown, per-sensor additive bias as well as i.i.d. Gaussian measurement noise. The true forcing and Reynolds number are F = 1 .0 and Re = 1000 ; all algorithms are initialized at F = 0 .1 and Re = 100 , and we learn these parameters jointly with the state. 
+
+Models. We have seven models: (i) flow model, (ii) noisy flow model, (iii) Gauss model, (iv) noisy gauss model, (v) mean-field model, (vi) 4D-Var, and (vii) IEnKS. All four PR-Smoother variants for Kolmogorov share the same spectral Gaussian prior (see the paragraph below) on the initial state, the Kolmogorov Navier-Stokes dynamics, and the observation likelihood and bias parameterization described above. They differ only in the choice of initial-state posterior qϕ(x1 | y1: T ) and whether the future-aware noisy-dynamics corrections qϕ(xt+1 | xt, y t+1: T ) are enabled. Training hyperparameters for each variant are summarized in Table 11. 
+
+Spectral Gaussian prior on the initial vorticity field. Let x1 ∈ RH×W denote the initial 2-D vorticity field on a periodic H × W grid (in our experiments H = W = 128 ). We use a zero-mean Gaussian prior p(x1) = N (0 , C 0) whose precision is diagonal in the 2-D discrete Fourier basis. Let F denote the unitary 2-D discrete Fourier transform (DFT), and define ˆx1 := F{ x1} ∈ CH×W .For each Fourier mode k = ( kx, k y ) (using FFT frequency indexing), define the (negative) discrete Laplacian eigenvalue 
+
+λ(k) = 4 sin 2(πk x/W ) + 4 sin 2(πk y /H ) . (53) We then define the mode-wise precision (“power”) as 
+
+q(k) =  α + β λ (k) + γ λ (k)2 · b(k), α, β, γ > 0, (54) where b(k) is an optional high-wavenumber “spectral wall”: 
+
+b(k) = 1 + ( B − 1) σ η (r(k) − kcut ), r(k) = 
+
+q
+
+k2 
+
+> x
+
++ k2 
+
+> y
+
+, (55) 28 with σ(·) the logistic sigmoid, and constants kcut = 16 and η = 12 .With these definitions, the log-density is 
+
+log p(x1) = − 12
+
+X
+
+> k
+
+q(k) |ˆx1(k)|2 + 12
+
+X
+
+> k
+
+log q(k) − HW 
+
+2 log(2 π), (56) where the sums range over all discrete Fourier modes. 
+
+Hyperparameters. We parameterize α, β, γ and B in log-space to enforce positivity and initialize 
+
+α = 10 −3, β = 1 , γ = 0 .1, and B = 1 + exp(log 5) ≈ 6; unless stated otherwise, these scalars are optimized jointly with the other generative parameters. 
+
+(i) Flow model. The flow model uses a conditional 2-D NF for the initial state, qϕ(x1 | y1: T ),instantiated as a multi-scale coupling flow acting on the 128 × 128 latent field. The Kolmogorov encoder produces a 2-channel feature map h ∈ RB×2×128 ×128 , which is projected by a 1 × 1
+
+convolution to a 64-channel context map that conditions all coupling layers. Starting from z ∼N (0 , I ), the flow generates x1 = gϕ(z; cglobal ) and returns log qϕ(x1 | y1: T ) via the change-of-variables formula. The dynamics in the variational family are deterministic: trajectories are obtained by rolling x1 forward through the prescribed Kolmogorov integrator xt+1 = fθ (xt) without additional per-step corrections. Thus flow optimizes the deterministic ELBO, in which transition terms cancel and only the spectral prior and observation likelihood appear. 
+
+(ii) Noisyflow model. The noisyflow model uses the same conditional flow qϕ(x1 | y1: T ) as flow for the initial state, but enables the noisy-dynamics variational transitions qϕ(xt+1 | xt, y t+1: T ) at all later steps. In this case the physical dynamics are modeled as pθ (xt+1 | xt) = N (fθ (xt), Q ) with a trainable scalar (or per-pixel) log process-noise scale log σdyn , while the variational transition takes the form 
+
+qϕ(xt+1 | xt, y t+1: T ) = N  fθ (xt) + mt, Σt
+
+.
+
+Future observations yt+1: T are encoded into per-step context maps, which are combined with 
+
+xt and a time encoding and fed to a GaussianShockHead2D producing mean and log-standard-deviation fields for the correction δt. The ELBO now contains a sum of closed-form KL terms 
+
+KL[ qϕ(xt+1 | xt, y t+1: T ) ∥ pθ (xt+1 | xt)] , which regularize the learned corrections (mt, Σt) toward the physical noise while still letting future observations refine the trajectory. 
+
+(iii) Gauss model. The Gauss model keeps the deterministic Kolmogorov rollout but replaces the flow-based initial-state posterior with a diagonal Gaussian. The encoder output h ∈ RB×2×128 ×128 
+
+is interpreted channelwise as per-pixel mean and log-standard deviation, 
+
+(μ, log σ)( i, j ) = h:,:,i,j ,
+
+so that qϕ(x1 | y1: T ) = N  x1; μ(y1: T ), diag( σ2(y1: T ))  factorizes over grid points. Samples x1 are then propagated deterministically with xt+1 = fθ (xt) as in flow. This yields a mean-field style baseline in which all non-Gaussian structure must be represented through the encoder, while the variational family itself remains unimodal. 
+
+(iv) NoisyGauss model. The noisyGauss model combines the diagonal-Gaussian initial posterior of gauss with the noisy-dynamics variational transitions of noisyflow. The first state x1 is drawn from the factorized Gaussian posterior defined by the encoder, and subsequent states follow 
+
+qϕ(xt+1 | xt, y t+1: T ) = N  fθ (xt) + mt, Σt
+
+,
+
+with (mt, Σt) again parameterized by the future-aware context maps and the 2-D Gaussian shock head. The generative prior over transitions is the same Kolmogorov dynamics with Gaussian process noise used in noisyflow, and the ELBO includes the same per-step KL regularization toward the physical noise model. Compared to noisyflow, this variant tests the impact of restricting qϕ(x1 | y1: T )
+
+to a diagonal Gaussian while still allowing future observations to correct the trajectory through noisy dynamics. 29 (v) Mean-Field model The mean-field VI baseline keeps the same Kolmogorov dynamics, observa-tion operators, and trainable parameters (F, Re , biases ) as PR-Smoother, but uses a fully factorized diagonal-Gaussian posterior over the state trajectory. Concretely, it assumes 
+
+qϕ(X1: T | Y1: T ) = 
+
+> T
+
+Y
+
+> t=1
+> H×W
+
+Y
+
+> i=1
+
+N  Xt,i ; mt,i (Y1: T ), s 2
+
+> t,i
+
+(Y1: T ),
+
+so that all spatial and temporal correlations are ignored in qϕ. In implementation, we reuse the Kolmogorov encoders but attach simple heads that output per-pixel means and log-standard deviations for each time step, without pushing samples through the dynamics inside the variational family. The physical Kolmogorov model is still used in the likelihood and in the Gaussian prior on X1, but the posterior no longer enforces the Markov structure of the SSM, making this a “dynamics-agnostic” reference point for PR-Smoother in the high-dimensional Kolmogorov experiment (see Table 11). 
+
+(vi) 4D-Var For the high-dimensional Kolmogorov-flow experiment we also include a 4D-Var baseline that performs joint state, bias, and parameter estimation over each window. The state xt is the 2-D vorticity field on a 128 × 128 grid (flattened to dimension 16,384); the dynamics are given by the incompressible Navier-Stokes “Kolmogorov flow” model with unknown Reynolds number 
+
+Re and forcing amplitude F . For each window, we construct a quadratic 4D-Var cost consisting of (i) a Gaussian prior on the initial state x1 in the same spectral basis as the PR-Smoother prior, (ii) Gaussian priors on the per-sensor additive biases (with variance set to the bias prior used when generating the data), (iii) Gaussian priors on the physical parameters θ = (log Re, F ), and (iv) a Gaussian observation-misfit term matching the noise variance used to synthesize the observations. In the strong-constraint variant (used in our main Kolmogorov results) we treat the dynamics as deterministic and optimize over x1, the spatial bias field, and θ; in the weak-constraint variant the trajectory x1: T is also optimized and a quadratic model-error penalty P 
+
+> t
+
+∥xt+1 − fθ (xt)∥2 is added. Observations under the full / half / sparse / mixed operators are embedded into a full grid with masks, and only observed locations contribute to the likelihood term. All variables are optimized jointly by gradient-based methods (L-BFGS for the strong-constraint solver, Adam for the weak-constraint solver), with the Kolmogorov integrator unrolled inside the graph so that gradients with respect to both the state and θ are obtained by automatic differentiation. We also report an “oracle” 4D-Var variant in which the true physical parameters and the bias parameters are provided and held fixed throughout optimization. Concretely, we remove θ and b
+
+from the decision variables (equivalently omitting the parameter-prior term) and evaluate the unrolled Kolmogorov dynamics with (θ, b ) = ( θ⋆, b ⋆). The resulting oracle objective therefore optimizes only over the flow state (i.e., x1). 
+
+(vii) IEnKS The Kolmogorov IEnKS baseline uses the same implementation as in Appendix I.2 but augments the state with both sensor biases and physical parameters. We use 16 ensemble members for all Kolmogorov experiments. The maximum number of iterations is 100 . In the non-oracle setting, the augmented vector is [xt, b, θ ], where xt is the 16,384-dimensional flow field, b is a per-gridpoint additive bias field (restricted to observed locations under half / sparse / mixed coverage), and 
+
+θ = (log Re, F ) are global parameters. For each window, we draw an ensemble of these augmented states from a factorized Gaussian prior: the initial flow state from the spectral prior, biases from a zero-mean Gaussian with variance matching the bias prior used in data generation, and θ from a broad Gaussian centered at the shared initialization Re = 100 , F = 0 .1. Ensemble members are then propagated through the Kolmogorov dynamics using member-specific parameters passed explicitly to the Kolmogorov solver (non-oracle mode). At each IEnKS iteration we build anomalies of the augmented state and of the corresponding modeled observations, and perform an SDA-style ensemble-space analysis that updates the full augmented state; this yields smoothed estimates of xt,
+
+b, and θ over the window. As with 4D-Var, we also include an “oracle” IEnKS variant in which the true parameters are provided (and, in the oracle setting we report here, the bias field is also provided), so the smoother only estimates the flow state over the window. To mitigate spurious long-range correlations in the high-dimensional Kolmogorov state, we use covariance localization within the ensemble-space analysis in both the oracle and non-oracle settings. We sweep the localization radius kflow_loc_cutoff over 
+
+{4, 8, 16 , 32 } for both settings and report results using the best-performing value. Fig. 7 shows the calibration results for the localization radius. We chose the radius that yielded the lowest state RMSE. 30 Figure 7: Localization radius calibration results for IEnKS. 16 32 48 Ensemble members 0123456RMSE 16 32 48 Ensemble members 0510 15 20 Compute Time (×10 4s) 
+
+Figure 8: IEnKS ensemble-size sensitivity in the “realistic” observation network in the Kolmogorov-flow experiment (oracle setting). Left: mean state RMSE versus the number of ensemble members 
+
+M ∈ { 16 , 32 , 48 }. Right: corresponding wall-clock compute time to run IEnKS on the same evaluation set. Both metrics are averaged over four distinct initial conditions. We additionally report a small ensemble-size sensitivity check M ∈ { 16 , 32 , 48 } in Fig. 8. Given the substantial runtime growth with M , we use M = 16 in all Kolmogorov IEnKS experiments. 
+
+Training variables: Each model is able to model biases in the observations and the model parame-ters ( F and log Re ). Training variables are these model parameters in the generative model as well as the parameters in the inference network, i.e., network parameters. 
+
+I.4 Runtime and Amortization 
+
+PR-Smoother trades a one-time offline training phase for fast amortized test-time smoothing. In this subsection we summarize the runtime characteristics of our implementation and compare the per-window inference cost of PR-Smoother to non-amortized data-assimilation baselines. 
+
+Offline training cost. Tables 9–11 list the training hyperparameters and wall-clock times per variant. Across our experiments, training a single PR-Smoother or baseline variant takes about 1
+
+GPU-hour for the 4D Lorenz-96 multimodality test, between 11 and 18 GPU-hours for the 40D Lorenz-96 experiment, and between 19 and 20 GPU-hours for the Kolmogorov-flow experiment, all on a single GH200 GPU. These costs are incurred once per trained model and can be amortized over a large number of future assimilation windows. 
+
+Per-window inference cost. After training, PR-Smoother performs smoothing on a new observation window with a single forward pass of the encoder and variational networks plus rollout of the physical model. In contrast, 4D-Var and IEnKS solve an optimization for each window separately. Table 12 reports mean wall-clock time per assimilation window for PR-Smoother and for the 4D-Var and IEnKS baselines in representative settings. 31 Table 12: Wall-clock time per assimilation window (seconds). Measurements use batch size 1 and are averaged for five runs. PR-Smoother uses the trained models from Sec. 4. Experiment Method Time / window (s) 40D Lorenz-96, linear obs. PR-Smoother (Flow) 0.37 4D-Var 507.02 IEnKS (512 members) 14.53 40D Lorenz-96, nonlinear obs. PR-Smoother (Flow) 0.38 4D-Var 1480.55 IEnKS (512 members) 14.86 Kolmogorov flow, mixed coverage PR-Smoother (Flow) 1.89 4D-Var (oracle) 121.24 IEnKS (oracle, 16 members, rloc =16) 1779.16 In all cases, the offline training cost is paid once, while the amortized per-window cost of PR-Smoother remains fixed as the number of assimilation windows grows, unlike the non-amortized 4D-Var and IEnKS baselines that must solve a new optimization or smoother problem for each window. 
+
+## J Inference Examples in the Lorenz-96, 4D Experiment 
+
+Here we show histograms for inference results obtained in Lorenz96, 4D experiment. 32 Figure 9: Histograms for the PF model. 33 Figure 10: Histograms for the flow model. 34 Figure 11: Histograms for the gauss model. 35 Figure 12: Histograms for the mean-field model. 36 Figure 13: Histograms for the EnKF model. 37 Figure 14: Histograms for the ETKF model. 38 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: the abstract and introduction state the paper’s actual contributions: a simulator-preserving amortized variational smoother, observation-only training, exactness in deter-ministic and linear-Gaussian limits, and experiments on Lorenz–96 and Kolmogorov flow. The related-work section also appropriately narrows scope by positioning PR-Smoother as a specific design point rather than as the first variational method for SSMs. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: The paper has a dedicated Limitations section. It explicitly discusses the differentiability assumption on (f, h ), amortization gap under undertraining or distribution shift, identifiability limits in sparse-observation settings, and the fact that θ is treated as a point estimate. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes] Justification: Proposition 3.1 states the required expressivity assumptions in the main text, gives a proof sketch there, and points to full derivations in Appendix A. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: The paper gives a concrete reproduction path by specifying the generative setups, architectures, baselines, hyperparameters, hardware, and runtime, and it states that code for reproducing the experiments is provided as supplementary material. That meets the checklist’s “reasonable avenue for reproducibility” standard. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [Yes] Justification: We provide anonymized supplementary code with training, evaluation, and data-generation scripts, dependency specifications, and exact commands needed to reproduce the main experiments and baselines. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes] Justification: The appendix specifies data generation, observation operators, architectures, baseline settings, optimizers, learning-rate schedules, batch sizes, epochs, and runtime summaries for the reported experiments. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? 39 Answer: [Yes] Justification: All reported error values are explicitly defined in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] Justification: the paper reports hardware type and memory (GH200 and RTX5090), per-model training times, and per-window inference runtimes for PR-Smoother and baselines, which is sufficient to understand the compute required for the reported experiments. NeurIPS also asks for this exact kind of information. 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: We reviewed the NeurIPS Code of Ethics and ensured that the work conforms to it. The paper studies simulator-based benchmarks and does not involve human subjects, crowdsourcing, or sensitive real-world data. 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes] Justification: Potential broader impacts are discussed in Sec. 6. The main positive impact is improved uncertainty-aware state estimation and parameter calibration in scientific data-assimilation workflows; the main negative impact is downstream over-trust in high-stakes monitoring or forecasting without domain-specific validation and calibration. 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pre-trained language models, image generators, or scraped datasets)? Answer: [N/A] Justification: The submission does not release a high-risk pretrained model, scraped dataset, or dual-use generative artifact. It studies a simulator-based inference method on synthetic physical benchmarks, so the safeguards question is not applicable here. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [N/A] Justification: This work does not rely on third-party code, data, or model assets requiring license reporting beyond standard software libraries. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: We release an anonymized supplementary code package documenting setup, dependencies, training, data generation, and limitations alongside the new code. 14. Crowdsourcing and research with human subjects 
+
+40 Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A] Justification: The work does not use crowdsourcing or involve human participants. It is evaluated on simulator-generated physical benchmarks only. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A] Justification: The work does not involve human participants, so IRB approval or an equiva-lent review is not applicable. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [N/A] Justification: LLMs are not part of the core method. 41
