@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-24</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-25</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-24 22:04:34 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-25 22:53:36 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>9月24日日报：4篇论文到手，精读2篇，最高分9.0的贝叶斯神经网络在线适应全协方差平滑领跑。</p>
-<p>最值得看的是贝叶斯神经网络在线适应中的全协方差平滑，以及数据同化里的非高斯平滑PR-Smoother；速读可顺带关注扩散路径蒙特卡洛与低场MRI超分。</p>
-<p>普通读者建议先读9.0精读，抓住“在线适应+不确定性平滑”这条线，再按兴趣翻速读。</p>
+<p>今日共生成 5 篇推荐（精读 2 篇，速读 3 篇）</p>
+<p>精读：《FB-GDM: Fully-Bayesian Guided Diffusion Models for High-Dimensional Linear Inverse Problems via Unsupervised Variational Inference》（9.0/10）, 《Simulation-Based Inference and Unbinned Asimov Construction with Hybrid Neural Density Estimation》（8.0/10）</p>
+<p>速读：《Ev-YOLO: Uncertainty-Aware Object Detection via a Unified Evidential Formulation》（7.0/10）, 《Parameter Estimation for the Mixed Fractional Merton Jump Diffusion Model with EM Algorithm》（6.0/10）, 《Direct Message Approximation (DMA): A Consistency-Based Framework for Tractable Approximate Inference on Factor Graphs》（6.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,9 +84,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Full-Covariance Smoothing of Bayesian Neural Networks for Online Adaptation">Full-Covariance Smoothing of Bayesian Neural Networks for Online Adaptation</span></li><li><span class="dpr-home-dashboard-paper-title" title="PR-Smoother: Simulator-Preserving Non-Gaussian Smoothing for Data Assimilation">PR-Smoother: Simulator-Preserving Non-Gaussian Smoothing for Data Assimilation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FB-GDM: Fully-Bayesian Guided Diffusion Models for High-Dimensional Linear Inverse Problems via Unsupervised Variational Inference">FB-GDM: Fully-Bayesian Guided Diffusion Models for High-Dimensional Linear Inverse Problems via Unsupervised Variational Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="Simulation-Based Inference and Unbinned Asimov Construction with Hybrid Neural Density Estimation">Simulation-Based Inference and Unbinned Asimov Construction with Hybrid Neural Density Estimation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +94,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Local Geometric Mixing via Dobrushin Contraction with Applications to Diffusion Path Monte Carlo and the Proximal Sampler">Local Geometric Mixing via Dobrushin Contraction with Applications to Diffusion Path Monte Carlo and the Proximal Sampler</span></li><li><span class="dpr-home-dashboard-paper-title" title="Uncertainty-Aware 3D Residual Wavelet Diffusion for Ultra Low-Field MRI Super-Resolution">Uncertainty-Aware 3D Residual Wavelet Diffusion for Ultra Low-Field MRI Super-Resolution</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Ev-YOLO: Uncertainty-Aware Object Detection via a Unified Evidential Formulation">Ev-YOLO: Uncertainty-Aware Object Detection via a Unified Evidential Formulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Parameter Estimation for the Mixed Fractional Merton Jump Diffusion Model with EM Algorithm">Parameter Estimation for the Mixed Fractional Merton Jump Diffusion Model with EM Algorithm</span></li><li><span class="dpr-home-dashboard-paper-title" title="Direct Message Approximation (DMA): A Consistency-Based Framework for Tractable Approximate Inference on Factor Graphs">Direct Message Approximation (DMA): A Consistency-Based Framework for Tractable Approximate Inference on Factor Graphs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 
