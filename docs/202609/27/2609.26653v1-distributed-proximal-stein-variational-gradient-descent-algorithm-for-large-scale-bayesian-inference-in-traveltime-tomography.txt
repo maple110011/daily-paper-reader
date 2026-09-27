@@ -1,0 +1,1676 @@
+Title: Distributed Proximal Stein Variational Gradient Descent Algorithm for Large-scale Bayesian Inference in Traveltime Tomography
+
+URL Source: https://arxiv.org/pdf/2609.26653v1
+
+Published Time: Wed, 23 Sep 2026 01:48:09 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Distributed Proximal Stein Variational Gradient Descent Algorithm for Large-scale Bayesian Inference in Traveltime Tomography 
+
+## Akshay Vishwakarma a, Kamal Aghazade a, Ali Siahkoohi b and Ali Gholami a,∗
+
+> a
+
+Institute of Geophysics, Polish Academy of Sciences, Warsaw, Poland 
+
+> b
+
+Department of Computer Science, University of Central Florida, Orlando, USA 
+
+A R T I C L E I N F O 
+
+Keywords :Traveltime tomography Computational seismology Distributed optimization ADMM Stein variational gradient descent Uncertainty quantification 
+
+A B S T R A C T 
+
+We present a distributed framework for large-scale Bayesian inverse problems governed by the eikonal equation, with a specific focus on seismic traveltime tomography. Traditional deterministic approaches often fail to provide the uncertainty quantification (UQ) necessary for ill-posed problems, while conventional Bayesian sampling methods such as Markov chain Monte Carlo (MCMC) suffer from the curse of dimensionality and slow convergence in high-dimensional model spaces. The proposed framework addresses these challenges through a three-tier computational strategy. First, we utilize the Fast Marching Method (FMM) to solve the eikonal equation, ensuring high numerical accuracy. Second, we reformulate the global tomographic objective into a decentralized consensus form, allowing the inversion to be decom-posed into independent subproblems solved in parallel via the Alternating Direction Method of Multipliers (ADMM). This architecture eliminates the need for the explicit construction of large-scale sensitivity matrices, significantly reducing the memory footprint for 3D surveys. Finally, we integrate Stein Variational Gradient Descent (SVGD) within the ADMM workers to perform approximate posterior sampling. By evolving a set of model particles along a functional gradient direction that balances data-fitting forces with a repulsive kernel-based diversity force, we obtain an ensemble from which posterior summaries are computed. We derive a data-space Gauss-Newton update using the Woodbury matrix identity to further accelerate the particle evolution in large-scale 3D problems. Numerical experiments on complex 2D and 3D models demonstrate that the algorithm achieves stable convergence, produces high-fidelity velocity reconstructions, and provides posterior uncertainty maps. 
+
+## 1. Introduction 
+
+The solution of high-dimensional inverse problems governed by non-linear partial differential equations (PDEs) is a cornerstone of modern computational science. In these systems, characterizing the inherent ill-posedness and solution non-uniqueness is essential for reliable scientific inference. While deterministic optimization methods seek a single best-fit model, Bayesian inference provides a principled framework for uncertainty quantification (UQ) by representing the solution as a posterior probability distribution conditioned on observed data [47, 20]. Traveltime tomography has a wide range of applications spanning atmospheric science, medical imaging, and geophysics. These applications include the reconstruction of internal temperature and flow fields from boundary measurements [34, 21], as well as imaging the internal structure of the Earth using seismic wave traveltimes recorded at the Earth’s surface [32, 22, 26, 12, 44]. The primary advantage of traveltime-based methods lies in their computational robustness and efficiency compared to wave-equation-based approaches such as full-waveform inversion (FWI) [14]. Energy propagation in this context is governed by the eikonal equation, a non-linear first-order PDE representing the high-frequency approximation of the wave equation. Standard grid-based solvers, such as the Fast Marching Method (FMM), can be applied to efficiently solve the forward problem with 𝑂 (𝑁 log 𝑁 ) computational complexity [44]. Using fast sweeping methods, the problem can be solved with a complexity of 𝑂 (𝑁 ) [60, 13]. While FWI exploits the full information content of seismograms, it is computationally intensive, highly non-linear, and prone to falling into local minima when an accurate initial model is unavailable [52, 33]. In contrast, traveltime tomography is less sensitive to the starting model and can yield stable low-wavenumber models even from low-quality waveforms or sparse data sampling [6, 57]. Such 
+
+> ∗
+
+Corresponding author 
+
+akshay@igf.edu.pl (A. Vishwakarma); aghazade.kamal@igf.edu.pl (K. Aghazade); alisk@ucf.edu (A. Siahkoohi); 
+
+agholami@igf.edu.pl (A. Gholami) 
+
+> ORCID
+
+(s): 0000-0002-2080-9697 (K. Aghazade); 0000-0001-8779-2247 (A. Siahkoohi); 0000-0001-8403-1434 (A. Gholami) 
+
+A PREPRINT Page 1 of 27 arXiv:2609.26653v1 [physics.geo-ph] 22 Sep 2026 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+models provide the essential long-wavelength background model required for the success of high-resolution imaging workflows, such as depth migration and FWI [52, 33]. Despite these advantages, some challenges still remain, specifically, in the inversion part. The primary bottleneck in modern large-scale tomography arises from the prohibitive computational and memory requirements associated with high-dimensional model spaces. For large-scale 3D seismic surveys, the explicit construction and storage of the Gauss-Newton Hessian matrix becomes computationally and memory-prohibitive. While the adjoint-state method [44] has mitigated some memory limitations by allowing for the direct computation of the misfit gradient, the inversion process remains computationally intensive, requiring numerous iterations of forward and adjoint modeling proportional to the number of seismic sources. These challenges are further exacerbated when seeking a Bayesian solution. Recent efforts in distributed tomography have explored various architectures to enhance scalability in deterministic settings [43]. Traveltime tomography is inherently ill-posed and underdetermined. Instability often arises from the clustering of small eigenvalues in the sensitivity operator and the presence of random noise in recorded data [16, 26]. The inherent instability of such inverse problems necessitates the integration of prior information through regularization to ensure stable and physically plausible solutions. While traditional Tikhonov-type 𝓁 2 regularization [48] is widely employed for its computational simplicity, it typically produces biased, over-smoothed reconstructions that smear out sharp structural interfaces and high-resolution details [22]. To achieve high-fidelity results, non-smooth transform-domain sparsity-promoting regularizers such as Total Variation (TV) [40, 16, 26, 8], have become essential for their unique capacity to promote piecewise-smooth model features while preserving sharp physical discontinuities. Incorporation of these functionals introduces the challenge of losing smoothness at certain points. The proximal mappings and variable-splitting methods address this difficulty by decoupling the differentiable data-misfit subproblems from the non-smooth regularization tasks [17]. Another challenge in most current tomographic methods is the lack of uncertainty quantification (UQ) [41]. Relying on a single deterministic model estimate ignores the inherent non-uniqueness of the inverse problem and may lead to overconfident interpretations of the results. Bayesian inference provides a principled framework to address this by representing the solution as a posterior probability distribution conditioned on observed data. However, generating samples from the posterior in high-dimensional model spaces remains a major computational hurdle, particularly when constrained by the non-linear physics of wave propagation. Classical Markov chain Monte Carlo (MCMC) methods [30, 28] are asymptotically exact but inherently sequential, and their mixing degrades in high dimensions [11, 59], rendering them prohibitive at the scale of modern multi-source tomography, where each sample requires one eikonal solve per source. Parametric variational methods [39, 61, 62] sidestep the sequential bottleneck by fitting a trainable family to the posterior, but expose a tradeoff between flexibility and tractability: simple choices such as mean-field Gaussians systematically underestimate uncertainty [59], while expressive alternatives such as normalizing flows [63, 54] require many trainable parameters and face their own optimization challenges. Stein variational gradient descent (SVGD) [25] avoids these parametric restrictions altogether by representing the posterior as an ensemble of particles that it transports toward the target by combining log-posterior gradients with a kernel-based repulsive term, and has shown promise for Bayesian seismic imaging and tomography [58, 59, 10]. A critical obstacle nonetheless arises: SVGD cannot handle the non-smooth regularizers (TV or 𝓁 1 sparsity) that stabilize ill-conditioned tomography, since their log-priors have undefined gradients at the kinks and cannot enter the particle update directly. While derivative-free particle methods such as ensemble Kalman inversion [24], which recasts the inverse problem as an artificial dynamical system and evolves an initial ensemble through Kalman-filter updates driven by its empirical covariance, sidestep this differentiability requirement, they are fundamentally restricted to Gaussian posteriors and therefore cannot capture the multimodality or heavy tails that a Bayesian treatment is meant to reveal. To resolve this challenge, we follow the dual-space framework of Siahkoohi et al. [45], which enables SVGD to sample from otherwise intractable constrained posteriors by relaxing the constraints into auxiliary-variable splits in an augmented Lagrangian (AL) and progressively enforcing them through multiplier updates. We extend this mechanism to both the data constraints and the non-smooth prior: a consensus splitting decouples the per-source data terms, while the prior enters only through a proximal operator, yielding an entirely smooth target distribution amenable to SVGD. In this work, we propose a distributed proximal SVGD algorithm that achieves computational scalability through a variable splitting framework. By reformulating the global tomographic objective into a decentralized consensus form, we utilize the Alternating Direction Method of Multipliers (ADMM) to decompose the multi-source problem into independent subproblems solved in parallel [7, 50, 55]. This architecture enables the particle ensemble to sample from  
+
+> A PREPRINT Page 2 of 27 Distributed proximal SVGD for Bayesian traveltime tomography
+
+posterior distributions constrained by non-differentiable priors while preserving sharp interfaces and edge-enhancing properties. The primary contributions of this paper are: i) The formulation of a distributed proximal SVGD framework for high-dimensional Bayesian inference with non-smooth regularization constraints. ii) The derivation of a data-space Gauss–Newton update using the Woodbury matrix identity, enabling efficient computation of the Gauss–Newton step in data space while significantly reducing the dimensionality of particle evolution. iii) The development of a parallelization strategy that decomposes the multi-source, multi-particle inversion problem into independent source- and particle-specific subproblems. Specifically, for 𝑁 𝑠 sources and 𝑁 𝑝 particles, the framework solves 𝑁 𝑠 × 𝑁 𝑝 mutually independent local subproblems concurrently. iv) An evaluation of the proposed framework in terms of parallel scalability, inversion accuracy, and uncertainty quantification performance on challenging 2D and 3D benchmark problems, including calibration of the particle ensemble against a converged MCMC reference on a 1D problem small enough for the latter to be affordable. The remainder of this paper is organized as follows. In Section 2, we establish the theoretical foundation of the forward problem, detailing the eikonal equation and its numerical solution using the FMM. Section 3 presents our deterministic inversion framework, where the tomographic objective is reformulated into a decentralized consensus form and solved via the ADMM to achieve computational scalability. In Section 4, we extend this architecture to a fully Bayesian setting by integrating a distributed proximal SVGD algorithm, enabling efficient posterior sampling and UQ in high-dimensional spaces. Section 5 evaluates the performance of the proposed framework through a series of numerical experiments on 1D and complex 2D and 3D benchmarks, focusing on reconstruction fidelity, parallel efficiency, and the quality of standard deviation maps. Finally, concluding remarks and directions for future research are provided in Section 6. 
+
+## 2. Theory 
+
+For an isotropic medium characterized by a spatially varying slowness model 𝑚 (𝐱 ) with 𝐱 = ( 𝑥, 𝑦, 𝑧 ), the traveltime field 𝑇 (𝐱 ; 𝐱 𝑠 ) corresponding to a point source located at 𝐱 𝑠 = ( 𝑥 𝑠 , 𝑦 𝑠 , 𝑧 𝑠 ) is governed by the eikonal equation, which represents the high-frequency (ray-theoretical) approximation of the wave equation [32]: 
+
+|∇𝑇 (𝐱 ; 𝐱 𝑠 )|2 = 𝑚 (𝐱 )2 = 1
+
+𝑣 2(𝐱 ) , ∀𝐱 ∈ Ω , (1) subject to the boundary condition 
+
+𝑇 (𝐱 𝑠 ; 𝐱 𝑠 ) = 0 .
+
+Here, ∇ denotes the spatial gradient operator, | ⋅ | represents the magnitude, and 𝑣 (𝐱 ) is the velocity at position 𝐱 . The computational domain is denoted by Ω ⊂ ℝ𝑑 , with 𝑑 = 2 or 3.For each source 𝐱 𝑖 𝑠 , 𝑖 = 1 , ..., 𝑁 𝑠 , and receivers 𝐱 𝑙 𝑟 , 𝑙 = 1 , … , 𝑁 𝑖 𝑟 , the forward operator 𝐺 𝑖 ∶ ℝ𝑁 → ℝ𝑁 𝑖 𝑟 collects the predicted traveltimes, 
+
+[𝐺 𝑖 (𝑚 )] 𝑙 = 𝑇 (𝐱 𝑙 𝑟 ; 𝐱 𝑖 𝑠 ), 𝑙 = 1 , … , 𝑁 𝑖 𝑟 ,
+
+where 𝑁 𝑖 𝑟 is the number of receivers associated with source 𝐱 𝑖 𝑠 . The corresponding measured data are stored in the column vector 𝜏 obs  
+
+> 𝑖
+
+∈ ℝ𝑁 𝑖 𝑟 .
+
+2.1. Model Discretization 
+
+To solve the forward problem for arbitrary source and receiver geometries, the subsurface is parameterized on a regular Cartesian grid. The velocity model 𝑣 (𝐱 ) is discretized as a vector 𝑣 ∈ ℝ𝑁 , where 𝑁 = 𝑁 𝑥 × 𝑁 𝑦 × 𝑁 𝑧 denotes the total number of grid nodes, and 𝑁 𝑥 , 𝑁 𝑦 , and 𝑁 𝑧 are the number of nodes along each spatial dimension. The corresponding slowness model is defined componentwise by 𝑚 𝑗 = 1∕ 𝑣 𝑗 , 𝑗 = 1 , … , 𝑁 . Because source and receiver locations generally do not coincide with grid nodes, interpolation operators are required. In this work, we employ linear interpolation to map quantities between the continuous physical domain and the discrete computational grid.    
+
+> A PREPRINT Page 3 of 27 Distributed proximal SVGD for Bayesian traveltime tomography
+> Figure 1: Acquisition geometry and illumination for the BP 2004 salt benchmark. Top: True velocity model. Receivers (cyan triangles) are deployed along the seafloor at a regular spacing of 1 km, while sources are located at the sea surface. The white curves represent geodesic rays connecting a source located at the top-right corner of the model to each receiver. Bottom: The dimensionless illumination map generated by summing the sensitivity kernels across all source-receiver pairs. Each grid node is normalized by the horizontal grid spacing Δ𝑥 , representing the approximate number of rays per cell. Regions of high intensity (darker colors) indicate well-constrained areas where the subsurface structure is heavily sampled by crossing ray paths.
+
+2.1.1. Fast Marching Method and Calculation of Sensitivities 
+
+We solve the eikonal equation (1) using the second-order FMM, a grid-based numerical algorithm designed to compute first-arrival traveltimes efficiently [37, 42, 49]. The FMM propagates a monotonically advancing wavefront across the computational domain, ensuring causality and unconditional stability. Compared to traditional two-point ray-tracing methods, which may suffer from convergence issues in complex, heterogeneous media, the FMM is highly robust and reliably computes globally minimal traveltimes, even in the presence of strong velocity contrasts and shadow zones. For each source location 𝐱 𝑠 , the eikonal equation is solved on the discretized grid to obtain the traveltime field 
+
+𝑇 (𝐱 ; 𝐱 𝑠 ). This procedure guarantees that the computed traveltimes correspond to the first-arrival solution, thereby avoiding the local minima issues commonly encountered in shooting or bending ray-tracing approaches [32]. Once the traveltime field is available, ray paths can be recovered, if needed, by backtracking from receiver locations to the source 𝐱 𝑠 along the negative gradient of the traveltime field, i.e., −∇ 𝑇 (𝐱 ; 𝐱 𝑠 ). The sensitivity (Jacobian) matrix is constructed by integrating the path length of each ray through the model grid. Specifically, the contribution of each ray segment is accumulated along its trajectory and distributed to the neighboring grid nodes using linear interpolation. 
+
+## 3. Deterministic Inversion Methodology 
+
+Seismic traveltime tomography is typically formulated as an inverse problem that seeks to minimize the discrepancy between observed arrival times and those predicted by a velocity model. When sources are positioned outside the domain of interest and receivers surround the domain (full-boundary acquisition), Klibanov et al. [22] demonstrated that the traveltime inverse problem can be convexified using Carleman-weighted formulations. In this study, however, we consider a more challenging and realistic acquisition geometry commonly encountered in seismic exploration. Specifically, both sources and receivers are located only at the surface, resulting in incomplete illumination of the subsurface. This acquisition geometry creates poorly constrained regions that are not traversed by  
+
+> A PREPRINT Page 4 of 27 Distributed proximal SVGD for Bayesian traveltime tomography
+
+ray paths [32, 26, 12, 44, 16]. Consequently, portions of the model belong to the null space of the forward operator, making regularization essential for obtaining stable and physically meaningful solutions [47]. An example of this challenge is illustrated in Fig. 1 using the 2004 BP salt velocity benchmark model [5]. The velocity model contains sedimentary basins characterized by progressively increasing velocity with depth, as well as high-velocity, high-contrast salt bodies. The model extends over a domain of 67.5 km × 12 km and is discretized with a grid spacing of 25 m. We consider an ultra-long-offset fixed-spread ocean-bottom seismometer (OBS) acquisition geometry consisting of 𝑁 𝑟 = 67 receivers spaced 1 km apart and 𝑁 𝑠 = 450 pressure sources distributed uniformly every 150 m at a depth of 25 m below the sea surface. Figure 1 (top panel) shows the geodesic ray paths connecting a source located at the top-right corner of the model to each receiver (cyan triangles). The bottom panel shows the illumination map (ray density) across the domain for all sources and receivers. As can be seen, the sparse acquisition geometry results in limited ray coverage of the subsurface. Large regions remain weakly illuminated or entirely unsampled, highlighting the ill-posed nature of the inversion problem and the necessity of incorporating appropriate regularization. 
+
+3.1. Global Objective Function 
+
+For a survey involving 𝑁 𝑠 seismic sources, the global inverse problem can be formulated as the following constrained optimization problem: 
+
+minimize  
+
+> 𝑚
+
+(𝐿𝑚 ) subject to 𝐺 𝑖 (𝑚 ) = 𝜏 obs  
+
+> 𝑖
+
+, 𝑖 = 1 , ..., 𝑁 𝑠 , (2) where (𝐿𝑚 ) is a global regularization functional and 𝐺 𝑖 (𝑚 ) is the nonlinear forward operator mapping the model parameters to predicted traveltimes for the 𝑖 -th source. In this formulation, the model 𝑚 is assumed to exhibit certain structural or statistical properties when transformed by a linear analysis operator 𝐿 ∈ ℝ𝑁 ′×𝑁 , referred to as the regularization operator. The rows of 𝐿 typically correspond to basis functions or differential operators, such as wavelets or finite-difference approximations of spatial derivatives (e.g., in Tikhonov or TV regularization) [4, 27, 16]. In many cases, 𝐿 is not invertible, particularly when it represents a derivative operator. In a general form, the regularization term can be expressed as 
+
+(𝐿𝑚 ) = ∑
+
+> 𝑖
+
+𝜙 ([𝐿𝑚 ]𝑖 
+
+),
+
+where 𝜙 (⋅) is a potential function that reflects the assumed prior distribution of the transformed coefficients 𝐿𝑚 . For example, a quadratic potential, 𝜙 (𝑥 ) = 𝑥 2, corresponds to Gaussian priors (Tikhonov regularization), while sparsity-promoting choices such as 𝓁 1 norms, 𝜙 (𝑥 ) = |𝑥 |, correspond to Laplace-type priors [47]. This constrained problem can be solved using the method of multipliers which solves the following saddle-point problem: 
+
+minimize  
+
+> 𝑚
+
+maximize 
+
+> 𝜆 1,...,𝜆 𝑁𝑠
+
+(𝐿𝑚 ) + 
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+⟨𝜆 𝑖 , 𝐺 𝑖 (𝑚 ) − 𝜏 obs  
+
+> 𝑖
+
+⟩ +
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝜇 
+
+2 ‖𝐺 𝑖 (𝑚 ) − 𝜏 obs  
+
+> 𝑖
+
+‖22, (3) where 𝜆 𝑖 denotes the Lagrange multiplier (dual variable) associated with the 𝑖 -th source and 𝜇 > 0 is the penalty parameter. To solve the min-max problem in (3), we use the AL algorithm discussed in detail, e.g., in [35, 31, 7]. Introducing the scaled dual variable 𝜆 𝑖 ← 1 
+
+> 𝜇
+
+𝜆 𝑖 , the AL method alternates between the following two steps until a convergence criterion is satisfied: 1. With the multiplier fixed at its current value 𝜆 𝑘 𝑖 , minimize the AL objective with respect to 𝑚 to obtain the updated model: 
+
+𝑚 𝑘 +1 = arg min 
+
+> 𝑚 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝜇 
+
+2 ‖𝐺 𝑖 (𝑚 ) − 𝜏 obs  
+
+> 𝑖
+
++ 𝜆 𝑘 𝑖 ‖22 + (𝐿𝑚 ), (4) 2. With the model fixed at its updated value 𝑚 𝑘 +1 , perform a gradient-ascent step on the AL objective with respect to 𝜆 :
+
+𝜆 𝑘 +1  
+
+> 𝑖
+
+= 𝜆 𝑘 𝑖 + 𝐺 𝑖 (𝑚 𝑘 +1 ) − 𝜏 obs  
+
+> 𝑖
+
+, 𝑖 = 1 , ..., 𝑁 𝑠 . (5)  
+
+> A PREPRINT Page 5 of 27 Distributed proximal SVGD for Bayesian traveltime tomography
+
+While the unconstrained formulation in (4) provides a straightforward path for model recovery in the presence of noisy data (by selecting a proper value for 𝜇 ), we adopt the constrained formulation and its associated method of multipliers primarily to leverage a dual-grid parameterization strategy that decouples the inversion and forward modeling requirements. In this framework, the primal update in (4) is performed on a coarser inversion grid, which is essential for maintaining computational efficiency and aligning the model’s degrees of freedom with the limited resolving power of the traveltime data. Conversely, the dual update in (5) and the underlying eikonal forward solver utilize a finer grid to guarantee high numerical accuracy and to honor the complex physics of wave propagation. The critical advantage of this constrained approach is the error-correction role played by the Lagrange multipliers, which accumulate the traveltime residuals at each iteration. These multipliers effectively steer the coarse-grid model updates toward feasibility, compensating for the discretization errors inherent in the coarser mesh while allowing the inversion to benefit from the reduced dimensionality and enhanced stability of a lower-parameter space. The description for each step is as follows: • Primal update step Eq. (4): When 𝜆 𝑘 𝑖 = 0 , this subproblem reduces to the classical multi-source traveltime tomography formulation [32]. However, solving this problem presents several challenges: i) For effective regularization strategies such as 𝓁 1-sparsity or TV, the regularization functional  is non-differentiable. Consequently, specialized nonsmooth optimization methods (e.g., proximal algorithms) are required [16, 26]. ii) Even when  is smooth, the associated Gauss–Newton or full-Newton Hessian is defined in the model space and has size 𝑁 × 𝑁 , which becomes computationally prohibitive for large-scale 3D problems [14]. iii) The choice of the strength of the regularization parameter is nontrivial [38]. Its optimal value depends on the noise level 𝜎 and problem scaling, and naive selection often requires multiple costly inversions, making adaptive strategies essential. • Dual update step Eq. (5): This subproblem corresponds to a dual ascent step that updates the Lagrange multipliers to enforce consistency with the traveltime constraints. Specifically, the multipliers accumulate the traveltime residuals and drive the iterates toward feasibility, i.e., 𝐺 𝑖 (𝑚 ) → 𝜏 obs  
+
+> 𝑖
+
+, largely independent of the choice of 𝜇 [31]. However, the rate of convergence is affected by 𝜇 . This property plays a crucial role: it allows relatively small values of 𝜇 to be used to improve the conditioning of the primal subproblem (e.g., stabilizing the Hessian), while still ensuring that the data constraints are satisfied asymptotically through the dual updates. The method of multipliers balances data fitting and regularization through the interaction between primal and dual updates. While the primal step enforces regularization and model smoothness, the dual step progressively corrects constraint violations. Under suitable conditions, this interplay leads to convergence toward a solution that satisfies both the data constraints and the imposed prior [15]. Although the classical formulation remains computationally demanding due to the large-scale nature of the primal subproblem, it provides a natural foundation for distributed and consensus-based extensions. In particular, by introducing auxiliary variables, the problem can be decomposed into smaller source-wise subproblems, enabling parallelization and improved scalability. Generally, it is not necessary to solve the primal subproblem Eq. (4) to full convergence to achieve the convergence of the whole algorithm. Following a diagonalized variant of algorithm [29], we perform only a single iteration of a Gauss-Newton method to partially solve the subproblem in Eq. (4) and hence increase the efficiency while maintaining the desirable properties of the algorithm. We use the first-order approximation, 
+
+𝐺 𝑖 (𝑚 ) ≈ 𝐺 𝑖 (𝑚 𝑘 ) + 𝐽 𝑘 𝑖 [𝑚 − 𝑚 𝑘 ],
+
+where 𝐽 𝑘 𝑖 is the sensitivity matrix (or Jacobian) defined by 
+
+𝐽 𝑘 𝑖 = 𝜕𝐺 𝑖 (𝑚 )
+
+𝜕𝑚 
+
+||||𝑚 =𝑚 𝑘 
+
+.
+
+This allows us to linearize the primal subproblem in Eq. (4): 
+
+𝑚 𝑘 +1 = arg min 
+
+> 𝑚 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝜇 
+
+2 ‖𝐽 𝑘 𝑖 𝑚 − 𝜏 obs  
+
+> 𝑖
+
++ 𝑑 𝑘 𝑖 ‖22 + (𝐿𝑚 ), (6) where 𝑑 𝑘 𝑖 = 𝐺 𝑖 (𝑚 𝑘 ) − 𝐽 𝑘 𝑖 𝑚 𝑘 + 𝜆 𝑘 𝑖 . 
+
+> A PREPRINT Page 6 of 27
+
+Distributed proximal SVGD for Bayesian traveltime tomography 
+
+3.2. Consensus Optimization and Variable Splitting 
+
+To solve the large-scale optimization problem in Eq. (6) efficiently in distributed computing environments, we reformulate it into a global variable consensus form. We introduce 𝑁 𝑠 local copies of the model parameters, 𝑝 𝑖 , each associated with an individual source 𝑖 . These local variables are constrained to match a unique global consensus model 
+
+𝑚 . In addition, we introduce an auxiliary variable 𝑢 = 𝐿𝑚 to decouple the data misfit term from the regularization term. This variable splitting separates the smooth quadratic data-fitting component from the potentially non-smooth regularization functional, enabling the use of efficient proximal algorithms [17, 9]. This reformulation changes the primal subproblem (6) to the following constrained optimization problem: 
+
+minimize {𝑝 𝑖 }, 𝑚, 𝑢 
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝜇 
+
+2 ‖𝐽 𝑘 𝑖 𝑝 𝑖 − 𝜏 obs  
+
+> 𝑖
+
++ 𝑑 𝑘 𝑖 ‖22 + (𝑢 )subject to 𝑝 𝑖 − 𝑚 = 0 , 𝑖 = 1 , … , 𝑁 𝑠 ,𝑢 − 𝐿𝑚 = 0 ,
+
+(7) The AL function associated with (7) is 
+
+({ 𝑝 𝑖 }, {𝑞 𝑖 }, 𝑚, 𝑢, 𝑣 ) = 
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+{ 𝜇 
+
+2 ‖𝐽 𝑘 𝑖 𝑝 𝑖 − 𝜏 obs  
+
+> 𝑖
+
++ 𝑑 𝑘 𝑖 ‖22 + 𝑞 ⊤𝑖 (𝑝 𝑖 − 𝑚 ) + 𝛼 
+
+2 ‖𝑝 𝑖 − 𝑚 ‖22
+
+}
+
++ 𝑣 ⊤(𝑢 − 𝐿𝑚 ) + 𝛽 
+
+2 ‖𝑢 − 𝐿𝑚 ‖22 + (𝑢 )
+
+where 𝑞 𝑖 ∈ ℝ𝑁 , 𝑖 = 1 , ..., 𝑁 𝑠 and 𝑣 are the dual variables associated with the respective constraints, and 𝛼, 𝛽 > 0 are the penalty parameters. The optimization problem is 
+
+minimize  
+
+> {𝑝 𝑖 }, 𝑚, 𝑢
+
+maximize  
+
+> {𝑞 𝑖 }, 𝑣
+
+({ 𝑝 𝑖 }, {𝑞 𝑖 }, 𝑚, 𝑢, 𝑣 ). (8) This optimization problem can be solved efficiently using the scaled form ADMM [7], which decomposes the global optimization problem into a sequence of smaller subproblems associated with different parameter blocks. These subproblems are then solved iteratively in an alternating manner. In the following, we describe the solution strategy for each subproblem in detail. 1. Local model update (worker step): Each source 𝑖 independently solves a damped tomographic problem to generate a local update 𝑝 𝑘 +1  
+
+> 𝑖
+
+:
+
+𝑝 𝑘 +1  
+
+> 𝑖
+
+= arg min 
+
+> 𝑝 𝑖
+
+( 𝜇 
+
+2 ‖𝐽 𝑘 𝑖 𝑝 𝑖 − 𝜏 obs  
+
+> 𝑖
+
++ 𝑑 𝑘 𝑖 ‖22 + 𝛼 
+
+2 ‖𝑝 𝑖 − 𝑚 𝑘 + 𝑞 𝑘 𝑖 ‖22
+
+)
+
+. (9) This update forces the local model to fit the 𝑖 -th source data while remaining in the vicinity of the current global model. The optimality condition for the least-squares problem (35) leads to the following closed-form expression for the local image 𝑝 𝑘 +1  
+
+> 𝑖
+
+:
+
+𝑝 𝑘 +1  
+
+> 𝑖
+
+= 𝑚 𝑘 + ((𝐽 𝑘 𝑖 )⊤𝐽 𝑘 𝑖 + ( 𝛼 ∕𝜇 )𝐼 𝑁 
+
+)−1 [(𝐽 𝑘 𝑖 )⊤(𝜏 obs  
+
+> 𝑖
+
+− 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 ) − ( 𝛼 ∕𝜇 )𝑞 𝑘 𝑖 
+
+] . (10) Using the following Sherman–Morrison–Woodbury (SMW) matrix identity (see Appendix A): 
+
+((𝐽 𝑘 𝑖 )⊤𝐽 𝑘 𝑖 + ( 𝛼 ∕𝜇 )𝐼 𝑁 
+
+)−1 = 𝜇 𝛼 𝐼 𝑁 − 𝜇 𝛼 (𝐽 𝑘 𝑖 )⊤ (
+
+𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + ( 𝛼 ∕𝜇 )𝐼 𝑁 𝑖 𝑟 
+
+)−1 
+
+𝐽 𝑘 𝑖 , (11) gives the following data-space formulation: 
+
+𝑝 𝑘 +1  
+
+> 𝑖
+
+= 𝑚 𝑘 − 𝜇 𝛼 𝑔 𝑘 𝑖 + 𝜇 𝛼 (𝐽 𝑘 𝑖 )⊤ (
+
+𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + ( 𝛼 ∕𝜇 )𝐼 𝑁 𝑖 𝑟 
+
+)−1 
+
+𝐽 𝑘 𝑖 𝑔 𝑘 𝑖 , (12) where 𝑔 𝑘 𝑖 = ( 𝐽 𝑘 𝑖 )⊤(𝐺 𝑖 (𝑚 𝑘 ) − 𝜏 obs  
+
+> 𝑖
+
++ 𝜆 𝑘 𝑖 ) + ( 𝛼 ∕𝜇 )𝑞 𝑘 𝑖 . In this formulation, we only need to invert the data-space Hessian matrix 𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + ( 𝛼 ∕𝜇 )𝐼 𝑁 𝑖 𝑟 , which is of size 𝑁 𝑖 𝑟 × 𝑁 𝑖 𝑟 .
+
+A PREPRINT Page 7 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+2. Global consensus update (master step): The master node collects the local updates and computes a unique global model 𝑚 𝑘 +1 by solving: 
+
+𝑚 𝑘 +1 = arg min 
+
+> 𝑚 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝛼 
+
+2 ‖𝑝 𝑘 +1  
+
+> 𝑖
+
+− 𝑚 + 𝑞 𝑘 𝑖 ‖22 + 𝛽 
+
+2 ‖𝑢 𝑘 − 𝐿𝑚 + 𝑣 𝑘 ‖22. (13) This problem is quadratic in 𝑚 and admits the following closed-form solution obtained from the normal equations: 
+
+(𝛼𝑁 𝑠 𝐼 𝑁 + 𝛽𝐿 ⊤𝐿 ) 𝑚 𝑘 +1 =
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝛼 (𝑝 𝑘 +1  
+
+> 𝑖
+
++ 𝑞 𝑘 𝑖 ) + 𝛽𝐿 ⊤(𝑢 𝑘 + 𝑣 𝑘 ). (14) The resulting linear system corresponds to a Tikhonov-regularized least-squares problem. When 𝐿 represents a convolutional operator (e.g., finite-difference gradients), the system matrix 𝛼𝑁 𝑠 𝐼 𝑁 + 𝛽𝐿 ⊤𝐿 is diagonalizable in the Fourier or DCT domain, allowing the update to be computed efficiently using Fast Fourier Transform (FFT)-based solvers. 3. Global dual update: The auxiliary variable 𝑢 𝑘 +1 is updated via a proximal mapping: 
+
+𝑢 𝑘 +1 = prox 
+
+> 𝛽
+
+(𝐿𝑚 𝑘 +1 − 𝑣 𝑘 ) = arg min 
+
+> 𝑢
+
+(
+
+(𝑢 ) + 𝛽 
+
+2 ‖𝑢 − 𝐿𝑚 𝑘 +1 + 𝑣 𝑘 ‖22
+
+)
+
+, (15) This step corresponds to the proximal operator associated with the regularization functional . It can be computed efficiently and, for many commonly used regularizers (e.g., 𝓁 1-norm or TV), admits closed-form or highly efficient numerical solutions [9]. 4. Dual variable update: Each worker updates its dual variable to enforce the consensus constraint in future iterations: 
+
+𝑞 𝑘 +1  
+
+> 𝑖
+
+= 𝑞 𝑘 𝑖 + 𝑝 𝑘 +1  
+
+> 𝑖
+
+− 𝑚 𝑘 +1 , 𝑖 = 1 , ..., 𝑁 𝑠 ,𝑣 𝑘 +1 = 𝑣 𝑘 + 𝑢 𝑘 +1 − 𝐿𝑚 𝑘 +1 .
+
+(16) (17) Algorithm 1 summarizes the proposed consensus ADMM framework. The method is inherently well-suited for large-scale 2D and 3D traveltime tomography problems. Its main advantages are summarized as follows: • The local model updates are carried out independently by a set of parallel workers, each associated with a source. This decomposition reduces the computational burden of handling large Jacobian matrices, as each worker operates on a data-space Hessian whose size scales with the number of receivers rather than the number of model parameters. Moreover, the Jacobian matrices are sparse and can be computed and applied efficiently even in large-scale 3D settings. • The global consensus update is formulated as a structured linear system that can be solved efficiently using FFT-based methods. • Non-smooth regularization terms are naturally incorporated through proximal operators. This enables the use of advanced regularizers, such as TV, without compromising computational efficiency. 
+
+3.3. Penalty Parameter Selection and Model Initialization 
+
+3.3.1. Adaptive Selection of Penalty Parameters 
+
+The local model update 𝑝 𝑘 +1  
+
+> 𝑖
+
+defined in Eq. (12) corresponds to the solution of the linearized forward problem and depends explicitly on the penalty parameter ratio 𝛾 = 𝛼 ∕𝜇 . A simple and effective rule selects 𝛾 separately at every iteration and every source, 
+
+𝛾 𝑘 𝑖 = 𝛿 𝜌 (𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤), 𝛿 > 0, (18)  
+
+> A PREPRINT Page 8 of 27 Distributed proximal SVGD for Bayesian traveltime tomography
+
+where 𝜌 (⋅) denotes the spectral radius, i.e., the largest eigenvalue of the data-space Gauss-Newton Hessian [e.g., 26]. Alternatively, 𝛾 can be selected using data-driven approaches. A straightforward derivation (Appendix B) shows that the associated traveltime residual can be written as 
+
+𝑟 𝑖 (𝛾 ) = − 
+
+( 1
+
+𝛾 𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + 𝐼 𝑁 𝑖 𝑟 
+
+)−1 [𝜏 obs  
+
+> 𝑖
+
+− 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 + 𝐽 𝑘 𝑖 𝑞 𝑘 𝑖 
+
+] .
+
+Since the matrix 𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ is relatively small, its singular value decomposition (SVD) can be computed efficiently on each local worker. This enables the use of parameter-selection strategies such as generalized cross-validation (GCV) [53] and the residual whiteness principle (RWP) [23, 2, 1] to determine an appropriate value of 𝛾 .
+
+3.3.2. Initial Model Construction 
+
+Due to the inherent nonlinearity of traveltime tomography, an initial model is required to start the inversion, and it plays a critical role in the convergence and reliability of the final solution. Because of the large null space of the forward operator, different initial models may lead to different reconstructed models that fit the observed traveltimes equally well [56]. A commonly used and physically reasonable choice is a laterally homogeneous velocity model with a monotonic increase in velocity with depth 𝑧 . This type of model is generally consistent with geological settings and provides a stable starting point for the inversion. This kind of gradient velocity model offers two main advantages: 1. It is fully described by only two parameters, namely the intercept 𝑎 and the vertical gradient 𝑏 . Accordingly, the initial slowness model 𝑚 0 is given through the relation 
+
+𝑚 0(𝑧 ) = 1
+
+𝑎 + 𝑏𝑧 ,
+
+where 𝑧 denotes depth. 2. For any source–receiver pair, the traveltime can be computed analytically, which makes this model particularly attractive for global optimization methods to search for the parameters 𝑎 and 𝑏 in a least squares sense. The underlying principle is that, in a depth-stratified medium where velocity depends only on depth, seismic rays follow circular trajectories in the vertical plane of propagation. For a source located at (𝑥 𝑠 , 𝑧 𝑠 ) and a receiver at 
+
+(𝑥 𝑟 , 𝑧 𝑟 ) in a 2D problem, the analytic traveltime 𝜏 is given by [13, 46] 
+
+𝜏 = 1
+
+𝑏 ln 
+
+( (𝑧 𝑠 − 𝑧 𝑐 ) [𝜚 + ( 𝑥 ′ 
+
+> 𝑟
+
+− 𝑥 𝑐 )]
+
+(𝑧 𝑟 − 𝑧 𝑐 ) [𝜚 + ( 𝑥 ′ 
+
+> 𝑠
+
+− 𝑥 𝑐 )])
+
+,
+
+where 
+
+𝜚 =
+
+√
+
+(𝑥 ′ 
+
+> 𝑠
+
+− 𝑥 𝑐 )2 + ( 𝑧 𝑠 − 𝑧 𝑐 )2,
+
+and the circle center is defined by 
+
+𝑥 𝑐 = (𝑥 ′
+
+> 𝑟
+
+)2 − ( 𝑥 ′
+
+> 𝑠
+
+)2 + ( 𝑧 𝑟 − 𝑧 𝑐 )2 − ( 𝑧 𝑠 − 𝑧 𝑐 )2
+
+2( 𝑥 ′ 
+
+> 𝑟
+
+− 𝑥 ′
+
+> 𝑠
+
+) , 𝑧 𝑐 = − 𝑎 𝑏 .
+
+In this formulation, 𝑥 ′ 
+
+> 𝑠
+
+and 𝑥 ′ 
+
+> 𝑟
+
+denote the projected horizontal coordinates of the source and receiver onto the vertical plane containing both points. 
+
+## 4. Bayesian Inversion Methodology 
+
+While the deterministic consensus framework established in the previous section provides a computationally efficient path for reconstructing subsurface velocity fields under non-smooth priors, a single point estimate remains fundamentally limited in its ability to characterize the inherent ill-posedness of the tomographic inverse problem. Relying solely on the maximum a posteriori (MAP) or best-fit model ignores the non-uniqueness of the solution and can lead to overconfident interpretations, particularly in regions of the model space with poor illumination or sparse ray coverage. To overcome these limitations, this section extends our distributed architecture into a fully Bayesian framework. By integrating SVGD with the dual-space ADMM mechanism, we move from a point-estimation approach to a particle-based sampling scheme. This hybrid formulation allows leveraging the numerical stability of the AL for uncertainty quantification in high-dimensional model spaces.  
+
+> A PREPRINT Page 9 of 27
+
+Distributed proximal SVGD for Bayesian traveltime tomography 
+
+Algorithm 1 Distributed Multi-source Traveltime Tomography via Consensus ADMM (Deterministic)  
+
+> 1:
+
+Input: Observed traveltimes {𝜏 obs  
+
+> 𝑖
+
+}𝑁 𝑠 
+
+> 𝑖 =1
+
+, source locations {𝐱 𝑖 𝑠 }𝑁 𝑠 
+
+> 𝑖 =1
+
+, regularization (𝑚 ), weights 𝛼, 𝛽  
+
+> 2:
+
+Initialize:  
+
+> 3:
+
+Global model 𝑚 0 
+
+> 4:
+
+Local variables 𝑝 0 
+
+> 𝑖
+
+= 𝑚 0, global variable 𝑢 0 = 0 , dual variables 𝑣 0 = 0 , 𝜆 0 
+
+> 𝑖
+
+= 0 , 𝑞 0 
+
+> 𝑖
+
+= 0 for 𝑖 = 1 , … , 𝑁 𝑠 , 𝑘 = 0  
+
+> 5:
+
+while not converged do  
+
+> 6:
+
+Worker step (parallel over sources 𝑖 = 1 , … , 𝑁 𝑠 ):  
+
+> 7:
+
+Solve the eikonal equation using FMM to obtain traveltime field 𝑇 𝑘 𝑖 in 𝑚 𝑘  
+
+> 8:
+
+Compute the traveltimes 𝐺 𝑖 (𝑚 𝑘 ) and the Jacobian 𝐽 𝑘 𝑖  
+
+> 9:
+
+Compute the penalty parameter 𝛾 𝑘 𝑖  
+
+> 10:
+
+Compute the gradient:  
+
+> 11:
+
+𝑔 𝑘 𝑖 = ( 𝐽 𝑘 𝑖 )⊤(𝐺 𝑖 (𝑚 𝑘 ) − 𝜏 obs  
+
+> 𝑖
+
++ 𝜆 𝑘 𝑖 ) + 𝛾 𝑘 𝑖 𝑞 𝑘 𝑖  
+
+> 12:
+
+Local model update (data-space Gauss-Newton):  
+
+> 13:
+
+Δ𝑝 𝑘 𝑖 = − 1
+
+> 𝛾 𝑘 𝑖
+
+𝑔 𝑘 𝑖 + 1
+
+> 𝛾 𝑘 𝑖
+
+(𝐽 𝑘 𝑖 )⊤(𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + 𝛾 𝑘 𝑖 𝐼 𝑁 𝑖 𝑟 )−1 𝐽 𝑘 𝑖 𝑔 𝑘 𝑖  
+
+> 14:
+
+𝑝 𝑘 +1  
+
+> 𝑖
+
+= 𝑚 𝑘 + Δ 𝑝 𝑘 𝑖  
+
+> 15:
+
+Master step:  
+
+> 16:
+
+Global consensus update:  
+
+> 17:
+
+𝑚 𝑘 +1 = (𝛼𝑁 𝑠 𝐼 𝑁 + 𝛽𝐿 ⊤𝐿 )−1 (∑𝑁 𝑠  
+
+> 𝑖 =1
+
+𝛼 (𝑝 𝑘 +1  
+
+> 𝑖
+
++ 𝑞 𝑘 𝑖 ) + 𝛽𝐿 ⊤(𝑢 𝑘 + 𝑣 𝑘 )
+
+) 
+
+> 18:
+
+𝑢 𝑘 +1 = prox 
+
+> 𝛽
+
+(𝐿𝑚 𝑘 +1 − 𝑣 𝑘 ) 
+
+> 19:
+
+Dual update (parallel):  
+
+> 20:
+
+𝑞 𝑘 +1  
+
+> 𝑖
+
+= 𝑞 𝑘 𝑖 + 𝑝 𝑘 +1  
+
+> 𝑖
+
+− 𝑚 𝑘 +1  
+
+> 21:
+
+𝑣 𝑘 +1 = 𝑣 𝑘 + 𝑢 𝑘 +1 − 𝐿𝑚 𝑘 +1  
+
+> 22:
+
+𝜆 𝑘 +1  
+
+> 𝑖
+
+= 𝜆 𝑘 𝑖 + 𝐺 𝑖 (𝑚 𝑘 +1 ) − 𝜏 obs  
+
+> 𝑖
+> 23:
+
+end while  
+
+> 24:
+
+Output: Final model 𝑚 
+
+4.1. Bayesian Objective Function 
+
+4.1.1. Likelihood 
+
+Casting the inverse problem in a Bayesian framework requires specifying the likelihood—i.e., the probability of observing the data given a candidate model. Assuming independent Gaussian measurement noise with known variance 
+
+𝜎 2, the likelihood for source 𝑖 can be written as 
+
+𝜋 (𝜏 obs  
+
+> 𝑖
+
+∣ 𝑚 ) ∝ exp 
+
+(
+
+− 12𝜎 2 ‖𝐺 𝑖 (𝑚 ) − 𝜏 obs  
+
+> 𝑖
+
+‖22
+
+)
+
+. (19) 
+
+4.1.2. Prior 
+
+The prior distribution 𝜋 prior (𝑚 ) encodes geological expectations about the slowness field. We define the regularization functional such that 𝜋 prior (𝑚 ) ∝ exp ( − (𝐿𝑚 )), equivalently − log 𝜋 prior (𝑚 ) = (𝐿𝑚 ) + const. For smooth priors—e.g., Gaussian random fields with Matérn covariance—the gradient ∇ exists and can be included directly in the log-posterior gradient of each particle. However, many practically relevant priors (e.g., 𝓁 1 sparsity or TV) are non-smooth and do not admit Lipschitz-continuous gradients. While this poses challenges for standard gradient-based Bayesian inference methods, the proposed ADMM-based framework circumvents this difficulty by introducing auxiliary variables and proximal mappings. This effectively separates the non-smooth prior from the data misfit term and replaces the original non-smooth objective with a sequence of easier subproblems (see Eq. (13)), enabling efficient inference even with non-differentiable regularization. 
+
+4.1.3. Posterior 
+
+By Bayes’ rule, the negative log-posterior takes the form 
+
+A PREPRINT Page 10 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+− log 𝜋 (𝑚 |𝜏 obs ) = 
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+12𝜎 2 ‖𝐺 𝑖 (𝑚 ) − 𝜏 obs  
+
+> 𝑖
+
+‖22 + (𝐿𝑚 ) + const . (20) In the above expression, the first term plays the role of the negative log-likelihood, and the second corresponds to the negative log-prior. Sampling from this posterior is the central computational challenge, particularly when  is non-smooth. 
+
+4.2. Stein Variational Gradient Descent 
+
+Equation (13) defines an evolving unnormalized density over 𝑚 [45]: 
+
+𝜋 𝑘 (𝑚 |𝜏 obs ) ∝ exp 
+
+(
+
+−
+
+> 𝑁 𝑠
+
+∑
+
+> 𝑖 =1
+
+𝛼 
+
+2 ‖𝑝 𝑘 +1  
+
+> 𝑖
+
+− 𝑚 + 𝑞 𝑘 𝑖 ‖2Σ−1 − 𝛽 
+
+2 ‖𝑢 𝑘 − 𝐿𝑚 + 𝑣 𝑘 ‖2Σ−1 
+
+)
+
+, (21) with a proper covariance matrix Σ.This distribution is entirely smooth in 𝑚 , and its gradient can be computed. Since both terms are smooth and differentiable, SVGD can target 𝜋 𝑘 directly using the above gradient. Computing this gradient for each particle reuses the consensus worker step of the deterministic formulation: the local update 𝑝 (𝑗 ) 
+
+> 𝑖
+
+solves a data-space Gauss–Newton system in which the penalty ratio 𝛼 ∕𝜇 is replaced by its Bayesian-calibrated counterpart 𝛾 (𝑗 ) 
+
+> 𝑖
+
+∶= 𝛼𝜎 2∕𝜇 , with the adaptive per-source choice also available. The resulting scheme is summarized in Algorithm 2. Unlike the sampling-based methods like MCMC, the SVGD evolves an ensemble of 𝑁 𝑝 particles {𝑚 (𝑗 )}𝑁 𝑝  
+
+> 𝑗 =1
+
+to approximate the target posterior distribution. The particles are updated iteratively according to: 
+
+𝑚 (𝑗 ) ← 𝑚 (𝑗 ) + 𝜂𝜙 (𝑚 (𝑗 )), (22) where 𝜂 is the step size, and the optimal perturbation direction is: 
+
+𝜙 (𝑚 (𝑗 )) = 1
+
+𝑁 𝑝 𝑁 𝑝 
+
+∑
+
+> 𝑙 =1
+
+[
+
+𝐾 (𝑚 (𝑙 ), 𝑚 (𝑗 ))∇ 𝑚 (𝑙 ) log 𝜋 𝑘 (𝑚 (𝑙 )∣𝜏 obs ) + ∇ 𝑚 (𝑙 ) 𝐾 (𝑚 (𝑙 ), 𝑚 (𝑗 ))
+
+]
+
+, (23) with 
+
+𝐾 (𝑚, 𝑚 ′) = exp 
+
+(
+
+− ‖𝑚 − 𝑚 ′‖22
+
+2ℎ2
+
+)
+
+⇒ ∇𝑚 𝐾 = − 1
+
+ℎ2 (𝑚 − 𝑚 ′)𝐾 (𝑚, 𝑚 ′).
+
+The bandwidth is set at every iteration by the median heuristic of [25], ℎ2 = med 2∕ log 𝑁 𝑝 , where med is the median pairwise distance in the current ensemble. 
+
+4.3. Algorithm 
+
+Each particle 𝑗 maintains: model 𝑚 (𝑗 ), auxiliary variable 𝑢 (𝑗 ), regularization dual 𝑣 (𝑗 ), consensus duals 𝑞 (𝑗 ) 
+
+> 𝑖
+
+, data multipliers 𝜆 (𝑗 ) 
+
+> 𝑖
+
+, and local copies 𝑝 (𝑗 ) 
+
+> 𝑖
+
+. The complete algorithm is summarized in Algorithm 2. 
+
+A PREPRINT Page 11 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+Algorithm 2 ADMM-SVGD for Bayesian traveltime tomography 
+
+1: Input: Data {𝜏 obs  
+
+> 𝑖
+
+}𝑁 𝑠 
+
+> 𝑖 =1
+
+, noise variance 𝜎 2, prior , weights 𝛼, 𝛽 , particles 𝑁 𝑝 , step size 𝜂 
+
+2: Init: 𝑚 (𝑗 ) ∼ 𝜋 0, 𝑢 (𝑗 ) = 0 , 𝑣 (𝑗 ) = 0 , 𝜆 (𝑗 ) 
+
+> 𝑖
+
+= 0 , 𝑞 (𝑗 ) 
+
+> 𝑖
+
+= 0 for all 𝑗, 𝑖 
+
+3: while not converged do 
+
+4: for 𝑗 = 1 , … , 𝑁 𝑝 ; 𝑖 = 1 , … , 𝑁 𝑠 do ⊳ Worker step — parallel over particles × sources 
+
+5: Solve eikonal (FMM) in 𝑚 (𝑗 ) → traveltimes 𝐺 𝑖 (𝑚 (𝑗 )) and Jacobian 𝐽 (𝑗 )
+
+> 𝑖
+
+6: Compute the penalty parameter 𝛾 (𝑗 )
+
+> 𝑖
+
+7: 𝑔 (𝑗 ) 
+
+> 𝑖
+
+← (𝐽 (𝑗 ) 
+
+> 𝑖
+
+)⊤(𝐺 𝑖 (𝑚 (𝑗 )) − 𝜏 obs  
+
+> 𝑖
+
++ 𝜆 (𝑗 )
+
+> 𝑖
+
+) + 𝛾 (𝑗 ) 
+
+> 𝑖
+
+𝑞 (𝑗 )
+
+> 𝑖
+
+8: Δ𝑝 (𝑗 ) 
+
+> 𝑖
+
+← − 1
+
+> 𝛾 (𝑗 )
+> 𝑖
+
+𝑔 (𝑗 ) 
+
+> 𝑖
+
++ 1
+
+> 𝛾 (𝑗 )
+> 𝑖
+
+(𝐽 (𝑗 ) 
+
+> 𝑖
+
+)⊤(𝐽 (𝑗 ) 
+
+> 𝑖
+
+(𝐽 (𝑗 ) 
+
+> 𝑖
+
+)⊤ + 𝛾 (𝑗 ) 
+
+> 𝑖
+
+𝐼 𝑁 𝑖 𝑟 
+
+)−1 𝐽 (𝑗 ) 
+
+> 𝑖
+
+𝑔 (𝑗 )
+
+> 𝑖
+
+9: 𝑝 (𝑗 ) 
+
+> 𝑖
+
+← 𝑚 (𝑗 ) + Δ 𝑝 (𝑗 )
+
+> 𝑖
+
+10: end for 
+
+11: for 𝑗 = 1 , … , 𝑁 𝑝 do ⊳ Gradient assembly (gradient of Eq. (21) ), using updated 𝑢 
+
+12: 𝑧 (𝑗 ) ← 1
+
+> 𝑁 𝑠
+
+∑𝑖 𝑝 (𝑗 ) 
+
+> 𝑖
+
++ 1
+
+> 𝑁 𝑠
+
+∑𝑖 𝑞 (𝑗 )
+
+> 𝑖
+
+13: 𝑔 (𝑗 ) 
+
+> 𝑚
+
+← (𝛼𝐼 𝑁 + 𝛽𝐿 ⊤𝐿 )−1 (𝛼𝑁 𝑠 (𝑧 (𝑗 ) − 𝑚 (𝑗 )) + 𝛽 𝐿 ⊤(𝑢 (𝑗 ) − 𝐿𝑚 (𝑗 ) + 𝑣 (𝑗 )))
+
+14: end for 
+
+15: Compute RBF kernel bandwidth ℎ via median heuristic over {𝑚 (𝑗 )}
+
+16: for 𝑗 = 1 , … , 𝑁 𝑝 do ⊳ SVGD perturbation — computed over current particles 
+
+17: 𝜙 (𝑗 ) ← 1
+
+> 𝑁 𝑝
+
+∑𝑙 
+
+[𝐾 (𝑚 (𝑙 ), 𝑚 (𝑗 ))𝑔 (𝑙 ) 
+
+> 𝑚
+
++ ∇ 𝑚 (𝑙 ) 𝐾 (𝑚 (𝑙 ), 𝑚 (𝑗 ))]
+
+18: end for 
+
+19: for 𝑗 = 1 , … , 𝑁 𝑝 do ⊳ Particle update 
+
+20: 𝑚 (𝑗 ) ← 𝑚 (𝑗 ) + 𝜂 𝜙 (𝑗 ) ⊳ 𝑢 -update—proximal, given current 𝑚 
+
+21: 𝑢 (𝑗 ) ← prox ∕𝛽 
+
+(𝐿𝑚 (𝑗 ) − 𝑣 (𝑗 ))
+
+22: end for 
+
+23: for 𝑗 = 1 , … , 𝑁 𝑝 ; 𝑖 = 1 , … , 𝑁 𝑠 do ⊳ Dual updates 
+
+24: 𝑣 (𝑗 ) ← 𝑣 (𝑗 ) + 𝑢 (𝑗 ) − 𝐿𝑚 (𝑗 )
+
+25: 𝑞 (𝑗 ) 
+
+> 𝑖
+
+← 𝑝 (𝑗 ) 
+
+> 𝑖
+
+− 𝑚 (𝑗 ) + 𝑞 (𝑗 )
+
+> 𝑖
+
+26: 𝜆 (𝑗 ) 
+
+> 𝑖
+
+← 𝐺 𝑖 (𝑚 (𝑗 )) − 𝜏 obs  
+
+> 𝑖
+
++ 𝜆 (𝑗 )
+
+> 𝑖
+
+27: end for 
+
+28: end while 
+
+29: Output: Posterior samples {𝑚 (𝑗 )}𝑁 𝑝  
+
+> 𝑗 =1
+
+approximating 𝜋 (𝑚 |𝜏 obs )
+
+Every step in Algorithm 2 follows directly from the consensus AL of Section 3. The ordering is prescribed by ADMM [7]: primal blocks are updated sequentially, each using the most recent values of all other variables. 1. The 𝑚 -update minimizes  over 𝑚 for fixed ( 𝑢 𝑘 , 𝑣 𝑘 , 𝜆 𝑘 ): the consensus workers compute the data gradient via the SMW matrix identity in the 𝑁 𝑖 𝑟 × 𝑁 𝑖 𝑟 data space (lines 4–10). 2. The full gradient of log 𝜋 𝑘 from Eq. (21) is assembled using the updated 𝑢 𝑘 +1 (lines 11–14). 3. SVGD replaces the deterministic minimization with a particle transport step that targets the smooth distribution 
+
+𝜋 𝑘 (lines 15–22). 4. The 𝑢 -update (line 21) minimizes  over 𝑢 for fixed (𝑚 𝑘 , 𝑣 𝑘 ) via the proximal operator. 5. The dual updates then perform the standard dual ascent (lines 23–27). The computational cost per iteration is 𝑂 (𝑁 𝑝 𝑁 𝑠 ) parallel eikonal solves. 
+
+Inner and outer loops. In practice, Algorithm 2 is structured as a two-level iteration. The outer loop updates the Lagrange multipliers 𝜆 𝑖 and 𝑣 , which define the evolving target distribution 𝜋 𝑘 in Eq. (21). The inner loop 
+
+performs multiple SVGD steps (together with 𝑢 -updates) for a fixed set of multipliers, approximately transporting the particles toward 𝜋 𝑘 before the target changes. Heuristically, running more inner SVGD steps allows the particle ensemble to better approximate the current evolving posterior before the multiplier updates shift the target to 𝜋 𝑘 +1 .This is consistent with the inexact ADMM framework [7], which permits approximate primal solves provided the approximation improves over iterations—a condition naturally satisfied by SVGD through warm-starting, since the particles from the previous outer iteration already provide a good initialization for the updated target. 
+
+A PREPRINT Page 12 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+## 5. Numerical examples 
+
+We assess the proposed framework on three test problems of increasing dimension, summarized in Table 1. (I) The one-dimensional (1D) vertical seismic profile (VSP) (Section 5.2), small enough that a converged MCMC posterior remains affordable and can serve as the reference against which the ADMM-SVGD ensemble is calibrated. (II) The two-dimensional (2D) 2004 BP salt benchmark (Section 5.3) is run noise-free against the deterministic consensus ADMM of Algorithm 1, and then under three noise levels, to assess accuracy and noise robustness. (III) The three-dimensional (3D) SEG/EAGE salt model (Section 5.4), an order of magnitude larger. The settings shared by all examples are collected in Section 5.1; only the model-specific settings are given in the individual sections. 
+
+5.1. Common settings 
+
+In every experiment the eikonal equation (1) is solved with the same second-order FMM of Section 2.1.1, on a uniform grid shared by the forward solver and the inversion. The Jacobian 𝐽 𝑘 𝑖 is assembled by backtracking the geodesic rays from each receiver along −∇ 𝑇 . Observed traveltimes are generated with the same solver in the true model, 𝜏 obs = [𝐺 1(𝑚 true ) 𝐺 2(𝑚 true ) ⋯ 𝐺 𝑁 𝑠 (𝑚 true )], and, where indicated, contaminated with additive Gaussian noise 
+
+𝜏 obs = 𝜏 clean + 𝜀, 𝜀 ∼  (0, 𝜎 2
+
+> noise
+
+) , 𝜎 noise = 𝜈̄𝜏 clean , (24) where ̄𝜏 𝑐𝑙𝑒𝑎𝑛 is the mean clean traveltime over all source-receiver pairs and 𝜈 is the noise fraction. Solver, grid, and data are identical for the deterministic and Bayesian runs. Therefore, any difference between them is attributable to the inversion scheme alone. We invert for slowness 𝑚 = 1∕ 𝑣 , with 𝑣 in km/s, and convert back to velocity before display. TV regularization is used in all experiments. 
+
+SVGD step size. The Stein direction 𝜙 (𝑗 ) of (23) is applied with a step normalized to the length of the ADMM likelihood gradient 𝑔 (𝑗 )
+
+> like
+
+,
+
+𝑚 (𝑗 ) ← 𝑚 (𝑗 ) + 𝜂 (𝑗 ) 𝜙 (𝑗 ), 𝜂 (𝑗 ) = 𝜉 ‖𝑔 (𝑗 )
+
+> like
+
+‖2
+
+‖𝜙 (𝑗 )‖2
+
+, 𝜉 ≤ 1, (25) so that the method retains the scaling of the ADMM update, which is set by 𝜇 through (11), while replacing its direction by the SVGD one. The value of 𝜉 is given for each experiment in the corresponding section. 
+
+Initialization. The deterministic runs start from the fitted 1D gradient model 𝑣 0 = 𝑎 + 𝑏𝑧 of Section 3.3.2 and the particle ensembles are drawn around 𝑣 0, from a fixed seed using a Gaussian random field. All experiments were carried out on a dual Intel Xeon Platinum 8176 system, 56 cores at 2.10 GHz. The 𝑁 𝑝 × 𝑁 𝑠 local subproblems of each outer iteration are distributed across 30 workers using a parallel processing pool. 
+
+Quality measures. The following diagnostics are monitored throughout. The data fit of particle 𝑗 at iteration 𝑘 and the accuracy of the posterior mean are measured by the relative data residual and the relative model error (RME) 
+
+(𝑗 ) 
+
+> 𝑑
+
+(𝑘 ) = ‖𝜏 obs − 𝐺 (𝑚 (𝑗 ), 𝑘 )‖𝐹 
+
+‖𝜏 obs ‖𝐹 
+
+, RME (𝑘 ) = 100 × ‖𝑣 true −̄𝑣 𝑘 ‖2
+
+‖𝑣 true ‖2
+
+[%] , (26) where 𝐺 (⋅) = [𝐺 1(⋅) 𝐺 2(⋅) ⋯ 𝐺 𝑁 𝑠 (⋅)] ∈ ℝ𝑁 𝑟 ×𝑁 𝑠 collects the traveltimes for all of the 𝑁 𝑠 sources, with ‖ ⋅ ‖𝐹 
+
+denoting the Frobenius norm, and ̄𝑣 𝑘 = 1
+
+> 𝑁 𝑝
+
+∑𝑗 𝑣 (𝑗 ), 𝑘 is the ensemble mean, which reduces to the single deterministic model for 𝑁 𝑝 = 1 ; both are evaluated in the velocity domain. Progress of the AL loop towards feasibility is tracked through ‖𝜆 (𝑗 ), 𝑘 ‖𝐹 , which plateaus once the traveltime residuals that increment it become negligible. Uncertainty is reported as the pointwise ensemble standard deviation together with the 95% credible interval of the final ensemble at selected profiles. In the noise study of Section 5.3.3 we additionally report the inter-realization standard deviation of the posterior mean, i.e., the pixelwise spread of the posterior means obtained from independent noise draws. In all experiments below the iteration budget is fixed at 𝐾 outer iterations rather than set by a convergence test, and the reported ensemble should be understood as the state at the budget rather than the converged one.  
+
+> A PREPRINT Page 13 of 27
+
+Distributed proximal SVGD for Bayesian traveltime tomography 
+
+Table 1 
+
+Overview of the three numerical experiments. 𝑁 is the number of inverted model parameters, 𝑁 𝑠 and 𝑁 𝑟 the number of sources and receivers, and 𝑁 𝑝 the number of particles ( 𝑁 𝑝 = 1 denotes the deterministic baseline of Algorithm 1). Section Model 𝑁 𝑁 𝑠 𝑁 𝑟 𝑁 𝑝 Purpose 5.2 1D VSP 41 1 20 1000 Calibration against MCMC 5.3 2D BP 2004 salt 36 000 67 225 100 Accuracy, noise robustness 5.4 3D SEG/EAGE salt 434 146 100 154 100 Scalability, 3D feasibility 0 5 10 15 
+
+o,set (m) 
+
+> 0510 15 20 25 30 35 40
+> depth (m)
+> 600 800 1000 1200 1400 1600 1800 velocity (m/s)
+
+Figure 2: 1D VSP test: acquisition and ground truth, with the source (star) and the receiver well (triangles). 10 2 10 3 10 4 10 5 10 6
+
+> iteration
+> -800 -600 -400 -200
+> log posterior
+> burn-in ends
+
+Figure 3: Convergence of MCMC reference chains. Log-posterior against iteration through burn-in, each chain in its own color, with the end of burn-in marked by a dashed line. Every chain reaches the typical set within the first few thousand iterations, and the retained draws give a rank-normalized split-̂𝑅 of 1.0002 across all coordinates. 
+
+5.2. 1D vertical seismic profile (VSP) problem 
+
+First, we consider a small nonlinear 1D example as an affordable calibration test of the paper, in which we assess the consensus ADMM-SVGD against a reference MCMC that can be trusted. 
+
+5.2.1. Experimental design 
+
+The true model is a 1D profile, in which the velocity rises linearly from 500 to 2000 m/s over 40 m, with 
+
+700 m/s low-velocity layer between 14 and 24 m depth (Fig. 2). A single source sits near the surface at ( 18 , 1) m and 𝑁 𝑟 = 20 receivers are distributed down a well at 𝑥 = 0 m. The unknown profile 𝑚 ∈ ℝ41 is replicated laterally 
+
+A PREPRINT Page 14 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 500 1000 1500 2000              
+
+> velocity (m/s)
+> 0510 15 20 25 30 35 40
+> depth (m)
+> (a) MCMC reference
+> 95% credible median truth
+> 500 1000 1500 2000
+> velocity (m/s)
+> 0510 15 20 25 30 35 40
+> depth (m)
+> (b) ADMM-SVGD
+> 95% credible median truth 0.00 0.05 0.10 0.15
+> MCMC ¾[μjd]
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14
+> ADMM-SVGD  ¾[μ j d]
+> (c) pointwise sd, per depth
+> 0510 15 20 25 30 35 40
+> depth (m)
+
+Figure 4: 1D VSP test: ADMM-SVGD against the MCMC reference. (a) Reference posterior: median velocity inside its 95% credible band, against ground truth, with the low-velocity layer shaded. (b) The ADMM-SVGD ensemble, on the same axes. (c) Pointwise posterior standard deviation of the ensemble against that of the reference, one point per depth. 
+
+across the 41 × 20 grid on which the traveltime field is computed. The ensemble uses 𝑁 𝑝 = 1000 particles, and inverts for the unknown on a grid four times coarser than the one on which the data are generated. Two properties make the example informative despite its size. The Jacobian has rank at most 20 against 41 
+
+parameters, so roughly half of the model space is prior-determined, and a sampler miscalibrated in the null space cannot hide behind a good data fit. Illumination also decays monotonically with depth, since a single near-surface source illuminates receivers below it, so we expect the posterior to be widened toward the base of the well. 
+
+5.2.2. Results 
+
+We sample (20) with preconditioned adaptive Metropolis [19], in which the proposal shape is the Gauss-Newton form, and adaptation is confined to burn-in, so that the retained draws are time-homogeneous. Eight chains start over-dispersed on the posterior scale, five standard deviations from the deterministic solution, and as the Fig. 3 shows, every chain reduces the typical set well within the burn-in. The retained draws clear the modern rank-normalized split-̂𝑅 and effective sample size thresholds on every coordinate with room to spare [51]. Therefore, the comparison below is a statement about the sampler rather than about the baseline. Figure 4 places the two posteriors side by side. The median profiles (panels a and b) are difficult to distinguish, and both place the ground truth inside their credible band over essentially the whole section. The agreement extends to the second moment: the pointwise standard deviations agree in level and, more tellingly, in depth structure, widening toward the base of the well as illumination falls (panel c). Recovering this structure, rather than a uniform width, is the substantive observation. That the spread is not an artifact of the initialization was checked by repeating the run from an under-dispersed ensemble and from one at the prior scale (not shown here); both converge to a common level. 
+
+5.3. 2D problem: BP 2004 model 
+
+We now turn to a 2D benchmark, the 2004 BP salt velocity model [5] introduced in Fig. 1, whose combination of smoothly varying sediments with strong, high-contrast salt bodies stresses both the nonlinearity of the forward map and the ability of the prior to preserve sharp interfaces. The free parameters in model subproblem (13) are fixed at 
+
+𝛼 = 1 and 𝛽 = 5 . Furthermore, in the SVGD step (25) we use 𝜉 = 0 .2 for the first ten iterations and 𝜉 = 0 .05 thereafter. Two experiments are reported: a noise-free run (Section 5.3.2) that compares ADMM-SVGD (Algorithm 2) against the deterministic consensus ADMM (Algorithm 1), and a repetition of the inversion at three noise levels with ten realizations each (Section 5.3.3). Both share the setup described next. 
+
+5.3.1. Experimental design 
+
+Discretization and acquisition. The inversion and the forward solves share a single uniform grid of 𝑁 𝑧 × 𝑁 𝑥 =80 × 450 nodes with Δ𝑥 = Δ 𝑧 = 150 m over the 12 × 67 .5 km domain. The acquisition is an ultra-long-offset, 
+
+A PREPRINT Page 15 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 2 3 4 5 6 7          
+
+> Velocity (km/s)
+> 246810 12
+> Depth (km) X = 13 km
+> 234567
+> Velocity (km/s) X = 30 km
+> 234567
+> Velocity (km/s) X = 50 km
+> Truth Det. initial model SVGD initial particles (Np=100)
+
+Figure 5: BP 2004 model: the initial particle ensemble. Vertical velocity profiles at 𝑋 = 13 , 30 , 50 km showing the true model, the deterministic initial model, and the 100 SVGD initial particles. Iter 1                     
+
+> 10 20 30 40 50 60
+> Distance (km)
+> 246810 12
+> Depth (km)  Iter 1
+> 10 20 30 40 50 60
+> Distance (km)
+> Iter 10 246810 12
+> Depth (km)  Iter 10
+> Iter 20 246810 12
+> Depth (km)  Iter 20
+> Iter 50 246810 12
+> Depth (km)  Iter 50
+> Iter 80 246810 12
+> Depth (km)
+> 1.5 22.5 33.5 44.5 Velocity (km/s)
+> Iter 80
+> 00.1 0.2 0.3 0.4 Std Dev (km/s)
+> (b) (a)
+
+Figure 6: BP 2004 model (noise-free). ADMM-SVGD: Evolution of the posterior estimates of the velocity model with iteration number. (a) Posterior mean velocity models. (b) Corresponding posterior standard deviation models. 
+
+fixed-spread OBS geometry: 𝑁 𝑠 = 67 sources along the sea surface between 𝑥 = 0 .15 km and 𝑥 = 67 .2 km, and a fixed spread of 𝑁 𝑟 = 225 seafloor receivers at 0.3 km interval spanning 𝑥 = 0 .1 − 67 .35 km. Every receiver records every source, so the full data set consists of 𝑁 𝑟 × 𝑁 𝑠 first arrival traveltimes and each source contributes a data space Gauss-Newton system of size only 225 × 225 , to be compared with the 𝑁 × 𝑁 (with 𝑁 = 𝑁 𝑧 × 𝑁 𝑥 ) model-space Hessian that the SMW identity (11) allows us to avoid. The geometry is deliberately one-sided: sources and receivers are confined to the top of the model, so deeper parts of the model, edges, and large portions of the sub-salt region are weakly sampled or unsampled, as quantified by the illumination map of Fig. 1 (bottom). For the SVGD runs, an ensemble of 𝑁 𝑝 = 100 particles {𝑚 (𝑗 )}𝑁 𝑝  
+
+> 𝑗 =1
+
+is drawn. Figure 5 shows vertical profiles of the resulting ensemble against the true model and the deterministic initial model. 
+
+5.3.2. Noise-free data: ADMM-SVGD versus deterministic ADMM 
+
+We first compare the two algorithms on the data generated in the true model, without added noise. Figure 6 follows the ensemble mean and the pointwise standard deviation through the iterations. At the first iteration, the mean 
+
+A PREPRINT Page 16 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 10 20 30 40 50 60      
+
+> Distance (km)
+> 246810 12
+> Depth (km)  10 20 30 40 50 60
+> Distance (km)
+> 234Velocity (km/s)
+> 246810 12
+> Depth (km)
+> 234Velocity (km/s)
+> 246810 12
+> Depth (km)
+> 00.2 0.4 Std Dev (km/s)
+> (a): Deterministic (b): SVGD (mean) (c): SVGD (Std Dev)
+
+Figure 7: BP 2004 model (noise-free, final iteration). Comparison of the deterministic ADMM and ADMM-SVGD results, shown without (left column) and with (right column) the true model contours overlaid. (a) Deterministic ADMM velocity model. (b-c) ADMM-SVGD with (b) posterior mean velocity model and (c) posterior standard deviation model. X = 13 km                
+
+> 234567
+> Velocity (km/s)
+> 246810 12
+> Depth (km) X = 30 km
+> 234567
+> Velocity (km/s) X = 50 km
+> 234567
+> Velocity (km/s)
+> 95% credible Mean (SVGD) Deterministic Truth
+
+Figure 8: BP 2004 model (noise-free). Vertical velocity profiles at 𝑋 = 13 , 30 , 50 km comparing the true model, deterministic result, and SVGD posterior mean with its 95% credible interval, corresponding to the results shown in Fig. 7. Within the band, the shading encodes the density of the particle ensemble at each depth: darker shading marks the regions of high posterior density, and shading fades toward the edges of the 95% interval. 
+
+is still essentially the 1D starting trend beginning to shape the salt bodies, and the standard deviation shows little imprint of the salt: it is a smooth bowl, lowest in the shallow center, and rising towards the lateral edges and the base. By iteration #10, the two salt bodies have emerged, with their top interface close to its final position. The standard deviation changes character at the same time. The smooth bowl breaks up into ridges along the top-of-salt reflectors and the salt flanks, crossed by fine ray-path smearing (most likely the footprint of the source-wise decoupling of the {𝑝 𝑖 }-update). The ridges mark where the particles disagree about the velocity contrast at the interface. After a sufficient multiplier update in later iterations, the ray footprints fade as 𝜆 (𝑗 ) 
+
+> 𝑖
+
+enforces consistency across sources. The wedges at both lateral edges behave differently. Since no ray samples these cells, the likelihood gradient vanishes and nothing balances the repulsion in (23) except the prior score: the ensemble slowly diffuses outward. The comparison of the deterministic reconstruction with the posterior mean and standard deviation (with and without the true model overlaid) is shown in Fig. 7. Both estimates place the two shallow salt bodies at the correct depth and lateral extent. Two differences stand out. First, the deterministic model still carries ray-path footprints, whereas the posterior mean is largely free of them. Second, the deterministic salt is slightly blockier at the top and slightly more diffuse at the flanks. 
+
+A PREPRINT Page 17 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 0 20 40 60 80 100           
+
+> Iteration
+> 10 0
+> 10 2
+> Dual norm (per particle)  Particle (SVGD) Mean (SVGD) Deterministic
+> 020 40 60 80 100
+> Iteration
+> 10 !2
+> 10 0
+> Relative data residual (per particle)  Particle (SVGD) Mean (SVGD) Deterministic
+> 020 40 60 80 100
+> Iteration
+> 10 12 14 16
+> RME (%)  Mean (SVGD) Deterministic
+
+(a) (b) (c) 
+
+Figure 9: BP 2004 model (noise-free). Convergence diagnostics for ADMM-SVGD compared to the deterministic (single-model) baseline. Thin light-blue lines: individual particles; solid blue: SVGD ensemble mean; dotted red: deterministic. (a) Dual variable norm per particle. (b) Relative data residual per particle. (c) RME of the posterior mean velocity vs. iteration. = obs , <noise = 0 :25 (s)   
+
+> 20 40 60
+
+Source index 
+
+> 50 100 150 200
+> Receiver index
+> 0510 15
+> Traveltime (s)
+
+= obs , <noise = 0 :41 (s)   
+
+> 20 40 60
+
+Source index 
+
+> 50 100 150 200
+> Receiver index
+> 0510 15
+> Traveltime (s)
+
+= obs , <noise = 0 :57 (s)   
+
+> 20 40 60
+
+Source index 
+
+> 50 100 150 200
+> Receiver index
+> 0510 15
+> Traveltime (s)
+
+<noise = 0 :25 (s)   
+
+> 0100 200
+
+Receiver index   
+
+> 0510
+> Traveltime (s)
+> min{max (10 realizations) =clean
+
+<noise = 0 :41 (s)   
+
+> 0100 200
+
+Receiver index 
+
+> 0510
+> Traveltime (s)
+
+<noise = 0 :57 (s)   
+
+> 0100 200
+
+Receiver index 
+
+> 0510
+> Traveltime (s)
+
+(a) (b) 
+
+Figure 10: BP 2004 model (noise test). (a) Full noisy traveltime map 𝜏 obs (source-receiver coordinates) for each noise level labeled with 𝜎 noise ; the dashed line marks source #32, detailed in the row below. (b) Traveltime vs. receiver index for source #32, showing the pointwise minimum-maximum envelope of 𝜏 obs over the 10 independent noise realizations (shaded band), with the clean curve 𝜏 clean overlaid. 
+
+Figure 8 shows the same result as a function of depth at the profiles shown in Fig. 5. The posterior mean and the deterministic profile show good recovery of the true model down to about 6 km depth. The 95% credible band tracks the illumination: it is tight in the shallow sediment, widens across the top of salt, and reaches over a kilometer per second in the deep section. Across the model, the band contains the true velocity, but the coverage is not uniform. Figure 9 shows the three monitored quantities and makes the difference between the two schemes quantitative. The dual norm (panel a) starts an order of magnitude higher for the ensemble, whose particles begin far from feasibility, but both settle on the same plateau, which suggests a comparable level of constraint satisfaction. The data residual (panel b) is lower for the deterministic run over the first sixty iterations; the ensemble mean then overtakes it; and the spread between the worst- and the best-fitting particles contracts fourfold, so the ensemble converges as a whole rather than being carried by a few members. The model error (panel c) separates them: the deterministic curve stalls after about twenty iterations, whereas the ensemble is still improving at the iteration budget. 
+
+A PREPRINT Page 18 of 27 Distributed proximal SVGD for Bayesian traveltime tomography ?rwp (.)               
+
+> 10 !2
+> 10 !1
+> source #10 source #20 source #30 source #40
+> particles optimal .
+> ?rwp (.)
+> 10 !2
+> 10 !1particles optimal .
+> .
+> ?rwp (.)
+> 10 0
+> 10 !2
+> 10 !1
+> 10 010 010 0
+> particles optimal .
+> (a) <noise = 0 :25 (s) (b) <noise = 0 :41 (s) (c) <noise = 0 :57 (s)
+
+Figure 11: BP 2004 model: data-driven selection of the penalty parameter under noise at the first iteration. Residual-whiteness score 𝜙 rwp (𝛾 ) against the penalty parameter 𝛾 for four representative sources (columns; #10, #20, #30, #40) across three noise levels (rows; 𝜎 noise = 0 .25 , 0.41 , 0.57 s). Light-blue curves are per-particle whiteness scores; black dots mark the RWP-selected optimum 𝛾 . The functional 𝜙 rwp is defined in Appendix B. (a)                   
+
+> 0.25 0.41 0.57
+> <noise (sec)
+> 10 10.2 10.4 10.6 10.8 11 11.2
+> RME (%)
+> '1 std (10 realization) Mean
+> (b)
+> 0.25 0.41 0.57
+> <noise (sec)
+> 00.05 0.1 0.15 0.2
+> Inter-realization std (km/s)  '1 std (10 realization) Mean
+> 0.2 0.4 0.6 0.8
+> Normalized data residual  1
+> (c) Iteration
+> 50 0.57
+> <noise (sec)
+> 0.41 100 0.25
+> <noise = 0 :25 (sec)
+> <noise = 0 :41 (sec)
+> <noise = 0 :57 (sec)
+> 60 80 100
+> Iteration
+> 0.305 0.31 60 80 100
+> Iteration
+> 0.445 0.45 60 80 100
+> Iteration
+> 0.565 0.57
+
+Figure 12: BP 2004 model (noise test). (a) Final RME (%) vs. 𝜎 noise (mean ±1 std, 10 realizations). (b) Inter-realization standard deviation of the posterior mean velocity (km/s) vs. 𝜎 noise (mean ±1 std). (c) Normalized data residual vs. iteration and 𝜎 noise . The dashed lines indicate the noise level. 
+
+5.3.3. ADMM-SVGD: analysis of additive random noise 
+
+We now examine how the sampler responds to the noise in the data. The inversion is repeated for three noise levels, 𝜎 noise ∈ {0 .25 , 0.41 , 0.57 } s, corresponding to 3% , 5% and 7% of the mean clean traveltime. For each level, 10 independent realizations of the noise are generated. Only the ADMM-SVGD algorithm is run here; the settings are those of Section 5.3.1 and are held fixed across all runs. In addition, the same stored initial particles are reused throughout, so the differences between runs can be attributed to the noise realization alone. Figure 10 shows the effect of the noise on the observations. Panel (a) displays the full 𝑁 𝑟 × 𝑁 𝑠 traveltime map at each level. Panel (b) shows a comparison for source #32, where the shaded band is the pointwise minimum-maximum envelope of 10 realizations around the clean curve. Figure 11 examines whether the data-driven selection of 𝛾 (𝑗 )
+
+𝑖 
+
+remains well-posed as the noise grows. Each panel shows the residual whiteness score 𝜙 rwp (𝛾 ) of Appendix B as a function of 𝛾 for one source, with one light-blue curve per particle, and marks the selected optimum. Two observations follow. First, at every noise level and for each of the four representative sources, the whiteness score has a distinct minimum. Second, the selected 𝛾 moves systematically to larger values as 𝜎 noise increases, which is the expected and desirable behavior: noisier data are fitted less aggressively, and the Gauss-Newton system is damped more strongly, without any global schedule or manual retuning. Figure 12 (a) reports the final model error of the posterior mean as 
+
+A PREPRINT Page 19 of 27 Distributed proximal SVGD for Bayesian traveltime tomography (a) <noise = 0 :25 (s)           
+
+> 010 20 30 40 50 60
+> Distance (km)
+> 0510
+> Depth (km) (b) <noise = 0 :41 (s)
+> 0510
+> Depth (km) (c) <noise = 0 :57 (s)
+> 0510
+> Depth (km)  00.1 0.2 0.3 0.4 0.5 0.6 Inter-realization Std Dev (km/s)
+
+Figure 13: BP 2004 model (noise test). Inter-realization standard deviation of the posterior mean velocity map (km/s), computed pixel-wise across the 10 independent noise realizations at each noise level. This quantifies the inter-realization repeatability of the ADMM-SVGD mean estimate under different noise draws, distinct from the within-run SVGD posterior uncertainty shown in Fig. 7. The scalar, spatially-averaged version of this metric is shown in Fig. 12 (b). 
+
+a function of 𝜎 noise , averaged over 10 realizations with a ±1 standard deviation band. The degradation is gradual and approximately linear over the three levels tested: raising the noise from 3% to 7% of the mean clean traveltime costs less than one percentage point of the relative model error, and the whole sweep stays within about 1.5 points of the noise-free results of Section 5.3.2. Panel (b) asks the complementary question: not how far the estimate is from the truth, but how reproducible it is when only the noise draw changes. It plots the inter-realization standard deviation of the posterior mean, that is the pixelwise spread of the 10 recovered mean models, spatially averaged. This quantity is distinct from the within-run posterior standard deviation of Fig. 7 (c). The former measures the sensitivity of the estimator to the data; the latter, the width of the posterior recovered by a single run. The inter-realization spread also grows roughly in proportion to 𝜎 noise , but its relative increase is much larger than that of the error in panel (a). The normalized data residual against iteration is shown in panel (c). At every level tested, it drops sharply over the first ten iterations, reaches a plateau close to the dashed noise line at about iteration 20, and stays there. The algorithm therefore fits the data down to the noise floor: the multipliers enforce the traveltime constraints to the accuracy the data support, and the estimated 𝛾 (𝑗 ) 
+
+> 𝑖
+
+appears to prevent the Gauss-Newton step from fitting beyond it. This behavior is consistent with the mild degradation of accuracy in panel (a) and with the analysis given in [1]. Figure 13 shows where in the model that inter-realization spread lives. The pattern is the same at all three noise levels, only rescaled. It is concentrated in the upper 5 km, along the top and flanks of the salt and is very low in the deeper part. The noise perturbs the position of the interfaces that the data actually resolve, and leaves the deep, prior-dominated part of the model largely unaffected. 
+
+5.4. 3D problem: the SEG/EAGE 3D salt model 
+
+We finally apply both algorithms to a 3D problem, the SEG/EAGE salt model [3]. This example tests whether the data-space worker step (11) and the consensus update remain tractable when the model dimension grows by an order of magnitude relative to the 2D BP example and whether the ensemble still delivers interpretable posterior statistics at a scale where methods such as MCMC are not affordable. 
+
+5.4.1. Experimental design 
+
+The true model is a median-filtered version of the SEG/EAGE salt model, covering 13 .5 × 13 .5 × 4 km, resampled onto a uniform grid of 𝑁 𝑧 × 𝑁 𝑥 × 𝑁 𝑦 = 34 × 113 × 113 nodes with 120 m spacing, roughly 12 times the size of the BP problem. Velocities range from 1500 m/s in the water to 4482 m/s in the salt body, whose irregular crest lies at about 
+
+A PREPRINT Page 20 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+Figure 14: SEG/EAGE 3D salt model: true model and the two reconstructions. Each row shows orthogonal slices through the volume (left) and the 𝑋 − 𝑍 section at 𝑌 = 6 .78 km (right). (a) True model, with locations of wells A-C and the surface acquisition geometry overlaid (red stars: sources; blue circles: receivers). (b) Deterministic consensus ADMM reconstruction. (c) ADMM-SVGD posterior mean. 
+
+Figure 15: SEG/EAGE 3D salt model: posterior uncertainty. ADMM-SVGD pointwise posterior standard deviation, and its 𝑋 − 𝑍 profile. 
+
+1.0 km depth (Fig. 14a). The acquisition consists of a 10×10 grid of 𝑁 𝑠 = 100 sources ( 1.44 km spacing, 𝑧 𝑠 = 120 m) and a fixed 14×11 grid of 𝑁 𝑟 = 154 water-bottom receivers. The location of the sources and receivers is also shown in Fig. 14a. The free parameters in the model subproblem (13) are fixed at 𝛼 = 1 and 𝛽 = 7 . Additionally, in the SVGD step (25) we use 𝜉 = 0 .2 for the first thirty iterations and 𝜉 = 0 .05 thereafter. The data volume is thus comparable to that of the 2D example but for 12 times the unknowns, which makes this example the more underdetermined of the two by construction. 
+
+A PREPRINT Page 21 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 01234      
+
+> Depth (km) Well A
+> 246
+> Velocity (km/s)
+> 01234
+> Depth (km) Well B
+> 246
+> Velocity (km/s) Well C
+> Prior particles Prior mean Det. initial Truth
+> 246
+> Velocity (km/s)
+> 95% credible Mean (SVGD) Deterministic Truth
+
+Figure 16: SEG/EAGE 3D salt model: well profiles and credible intervals. Vertical velocity profiles at the three well locations (wells A-C) marked in Fig. 14 (a). Top row: prior particles (thin light-blue curves), their mean (solid blue), the initial model of the deterministic inversion (dotted red), and the true model (dashed black). Bottom row: 95% credible interval from the final ensemble, posterior mean, and deterministic reconstruction, against the true model (dashed black). 0 20 40 60 80 100           
+
+> Iteration
+> 20 40 60 80 100 120
+> Dual norm (per particle) (a)
+> Particle (SVGD) Mean (SVGD) Deterministic
+> 020 40 60 80 100
+> Iteration
+> 10 !1
+> Relative data residual (per particle) (b)
+> Particle (SVGD) Mean (SVGD) Deterministic
+> 020 40 60 80 100
+> Iteration
+> 20 25 30 35
+> RME (%) (c)
+> SVGD Deterministic
+
+Figure 17: SEG/EAGE 3D salt model: convergence diagnostics. (a-b) Norm of the data multipliers and relative data residual per particle versus iteration: individual SVGD particles (light blue), ensemble mean (solid blue), and deterministic baseline (dotted red). (c) RME (in percent) of the ensemble mean and of the deterministic reconstruction. 
+
+The observed data are contaminated with a small amount of Gaussian noise of standard deviation 𝜎 noise ≈ 0 .04 s. The starting model for the deterministic case is the fitted 1D gradient model of Section 3.3.2, 𝑣 0(𝑧 ) = 1700+0 .6𝑧 (m/s, 
+
+𝑧 in m), and the 𝑁 𝑝 = 100 initial particles are drawn centered on 𝑣 0. Both algorithms were executed with 100 iterations. For the ADMM-SVGD case, the 𝑁 𝑝 𝑁 𝑠 = 10 4 local subproblems per iteration were distributed over the 30 workers, whereas for the deterministic case there are 𝑁 𝑠 = 100 local subproblems. 
+
+5.4.2. Results 
+
+Figure 14 compares the true model, the deterministic reconstruction, and the SVGD posterior mean, each with an 
+
+𝑋 -𝑍 section at 𝑌 = 6 .78 km. Both estimates place the salt body at the correct depth and lateral position and recover the background comparably; the posterior mean is more compact and higher in amplitude at the salt, and beneath it both reconstructions revert to the smooth background trend. Algorithmically, the two runs share the same setup; the main difference is that the SVGD particles are additionally coupled through the RBF kernel in the transport step (23), whereas the deterministic model follows its own gradient alone. The sharper salt body in the posterior mean may reflect an ensemble-averaging effect: 100 regularized particles, started from different draws of the same initial distribution and kept apart by the kernel’s repulsive term while being pulled toward the data by its attractive term, are 
+
+A PREPRINT Page 22 of 27 Distributed proximal SVGD for Bayesian traveltime tomography                     
+
+> Table 2
+> Cost of the deterministic and ensemble algorithms for 2D and 3D experiments. Average per-iteration wall-clock time (mean ±one standard deviation over the 100 outer iterations), total runtime, and peak memory. Deterministic ADMM (single model) ADMM-SVGD (100 particles) Iter. time (s) Total (s) Peak mem. (GB) Iter. time (s) Total (s) Peak mem. (GB) Benchmark model 2D BP (2004) 0.78 ± 0 .06 79 30 .750 .55 ± 0 .50 5 056 40 .3
+> 3D SEG/EAGE 6.58 ± 0 .50 660 41 .3449 .21 ± 18 .19 44 922 59 .2
+
+averaged at the end of the run, which tends to cancel particle-specific fluctuations that a single deterministic trajectory has no mechanism to cancel. The pointwise posterior spread (Fig. 15) is concentrated along the salt boundary, which is the deepest interface the acquisition resolves. Figure 16 shows the same statistics as a function of depth at the three well locations of Fig. 14a. Down to the top of the salt, the posterior mean tracks the true logs closely, and the 95% band covers the truth. Beneath the salt, the true velocity drops into a low-velocity zone that neither reconstruction resolves accurately. The relative data residual and the dual-variable norm (Fig. 17a–b) both drop quickly over the first ∼ 20 iterations and then flatten into a plateau for the rest of the run, for all 100 particles and for the deterministic run alike. The RME curve (panel c) is a more informative diagnostic. Both methods reduce it from ∼ 40% to mid-teens over 100 iterations, with the SVGD posterior mean ending below the deterministic estimate. 
+
+5.5. Computational cost and memory 
+
+The measured cost of both algorithms on the 2D and 3D benchmarks is summarized in Table 2. Two design choices govern the cost of the algorithms. First, the consensus splitting makes the 𝑁 𝑝 𝑁 𝑠 local subproblems of an outer iteration, together with their eikonal solves, mutually independent. Therefore, the ensemble solves a hundred times as many of them as the deterministic implementation: 6700 against 67 in 2D and 10 4 against 100 in 3D. With both runs distributed over the same pools of 30 workers, the per-iteration wall-clock time grows by a factor of 65 in 2D and 68 in 3D (Table 2), i.e., by less than the hundredfold increase in the number of subproblems. Second, the SMW identity (11) confines every local solve to a data space of size 𝑁 𝑖 𝑟 × 𝑁 𝑖 𝑟 (225 × 225 in 2D and 
+
+154 × 154 in 3D), so the source-wise 𝑁 × 𝑁 model-space Hessian is never formed. Only the Jacobians and the small data-space matrices are stored. For 100 particles, the peak memory grows by about 31% in 2D (from 30.7 to 40.3 GB) and 43% in 3D (from 41.3 to 59.2 GB). 
+
+## 6. Conclusions 
+
+We have presented a distributed proximal SVGD algorithm that makes particle-based Bayesian inference tractable for eikonal-constrained traveltime tomography at the exploration scale. Three ingredients carry the method, and each addresses one of the obstacles identified at the outset. A consensus splitting decomposes the multi-source objective into independent source subproblems and a single regularized master update, in which the non-smooth prior enters through its proximal operator. The Sherman–Morrison–Woodbury identity moves each local Gauss-Newton solve into the data space, replacing the model-space Hessian by a data-space system, whose size is set by the number of receivers. Finally, the particle transport step replaces the deterministic consensus update. Since the local subproblems of different particles are also mutually independent, the particle index becomes a second, embarrassingly parallel dimension rather than a serial multiplier on cost. The three benchmarks probe complementary aspects. On the 1D VSP problem, the ensemble reproduces the depth structure of the pointwise standard deviation of the converged MCMC reference. On the 2D BP 2004 salt model, the posterior mean is largely free of the acquisition footprint left in the deterministic reconstruction and reaches a lower model error. The residual whiteness selection of the penalty parameter brings the data residual to the noise floor without fitting beyond it, and the relative model error of the posterior mean grows by less than one percentage point within the noise levels tested. On the 3D SEG/EAGE salt model, the same behavior persists at twelve times the model dimension.  
+
+> A PREPRINT Page 23 of 27
+
+Distributed proximal SVGD for Bayesian traveltime tomography 
+
+## Acknowledgements 
+
+This research was financially supported by the SONATA BIS grant (No. 2022/46/E/ST10/00266) of the National Science Center in Poland. 
+
+## Declaration of competing interest 
+
+The authors declare that they have no competing financial interests that could have influenced the work presented in this work. 
+
+## Declaration of generative AI use 
+
+The authors declare that no generative AI tools were used in the preparation of this work. 
+
+## 7. Data availability 
+
+The data that support this study are available from the corresponding author on reasonable request. 
+
+## A. Proof of the SMW Matrix Identity 
+
+Let 𝐽 ∈ ℝ𝑁 𝑟 ×𝑁 with 𝑁 𝑟 ≪ 𝑁 and 𝛾 > 0, we first prove the following identity [18]: 
+
+(𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 𝐽 ⊤ = 𝐽 ⊤(𝐽 𝐽 ⊤ + 𝛾𝐼 𝑁 𝑟 )−1 (27) Let us start with a trivial identity 𝐽 ⊤𝐽 𝐽 ⊤ = 𝐽 ⊤𝐽 𝐽 ⊤, then we add 𝛾𝐽 ⊤ to both side to get 
+
+𝐽 ⊤𝐽 𝐽 ⊤ + 𝛾𝐽 ⊤ = 𝐽 ⊤𝐽 𝐽 ⊤ + 𝛾𝐽 ⊤. (28) Factor 𝐽 ⊤ from the left on the left-hand side and 𝐽 ⊤ from the right on the right-hand side to obtain 
+
+𝐽 ⊤ (
+
+𝐽 𝐽 ⊤ + 𝛾𝐼 𝑁 𝑟 
+
+)
+
+= (𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 
+
+) 𝐽 ⊤. (29) Left-multiplying both sides by (𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 
+
+)−1 and right-multiplying both sides by 
+
+(
+
+𝐽 𝐽 ⊤ + 𝛾𝐼 𝑁 𝑟 
+
+)−1 
+
+yields the identity (27). Now we use the identity (27) to prove the identity used in (11): 
+
+(𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 = 1
+
+𝛾 𝐼 𝑁 − 1
+
+𝛾 𝐽 ⊤(𝐽 𝐽 ⊤ + 𝛾𝐼 𝑁 𝑟 )−1 𝐽 . (30) Starting from the definition of the identity matrix: 
+
+𝐼 𝑁 = ( 𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 (𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )= ( 𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 𝐽 ⊤𝐽 + 𝛾 (𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 ,
+
+(31) (32) gives 
+
+𝛾 (𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 = 𝐼 𝑁 − ( 𝐽 ⊤𝐽 + 𝛾𝐼 𝑁 )−1 𝐽 ⊤𝐽 
+
+= 𝐼 𝑁 − 𝐽 ⊤(𝐽 𝐽 ⊤ + 𝛾𝐼 𝑁 𝑟 )−1 𝐽 , 
+
+(33) (34) where the second equality follows from (29). Dividing by 𝛾 gives (30). 
+
+A PREPRINT Page 24 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+## B. Selection of the penalty parameter by the residual whiteness principle 
+
+By dividing the objective function in (35) by 𝜇 > 0 and defining 𝛾 = 𝛼 ∕𝜇 > 0, we get 
+
+12 ‖ 𝐽 𝑘 𝑖 𝑝 𝑖 − 𝜏 obs 
+
+𝑖 + 𝑑 𝑘 𝑖 
+
+⏟⏞⏞⏞⏞⏞⏞⏞⏞⏟⏞⏞⏞⏞⏞⏞⏞⏞⏟ 
+
+=∶ 𝑟 𝑖 (𝛾 )
+
+‖22 + 𝛾 
+
+2 ‖𝑝 𝑖 − 𝑚 𝑘 + 𝑞 𝑘 𝑖 ‖22. (35) The traveltime residual 𝑟 𝑖 (𝛾 ) predicted by the minimizer in 𝑝 𝑘 +1 
+
+𝑖 (𝛾 ) in (10) as a function of 𝛾 is 
+
+𝑟 𝑖 (𝛾 ) = 𝐽 𝑘 𝑖 𝑝 𝑘 +1 
+
+𝑖 (𝛾 ) − 𝜏 obs 
+
+𝑖 + 𝑑 𝑘 𝑖 
+
+= 𝐽 𝑘 𝑖 𝑚 𝑘 + 𝐽 𝑘 𝑖 
+
+((𝐽 𝑘 𝑖 )⊤𝐽 𝑘 𝑖 + 𝛾𝐼 𝑁 
+
+)−1 [(𝐽 𝑘 𝑖 )⊤(𝜏 obs 
+
+𝑖 − 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 ) − 𝛾𝑞 𝑘 𝑖 
+
+] − 𝜏 obs 
+
+𝑖 + 𝑑 𝑘 𝑖 
+
+= 𝐽 𝑘 𝑖 𝑚 𝑘 +
+
+(
+
+𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + 𝛾𝐼 𝑁 𝑟 
+
+)−1 
+
+𝐽 𝑘 𝑖 
+
+[(𝐽 𝑘 𝑖 )⊤(𝜏 obs 
+
+𝑖 − 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 ) − 𝛾𝑞 𝑘 𝑖 
+
+] − 𝜏 obs 
+
+𝑖 + 𝑑 𝑘 𝑖 
+
+= 𝐽 𝑘 𝑖 𝑚 𝑘 +
+
+(
+
+𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + 𝛾𝐼 𝑁 𝑟 
+
+)−1 [𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤(𝜏 obs 
+
+𝑖 − 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 ) − 𝛾𝐽 𝑘 𝑖 𝑞 𝑘 𝑖 
+
+] − 𝜏 obs 
+
+𝑖 + 𝑑 𝑘 𝑖 . (36) where the last equation is obtained using the matrix identity in (29). Adding and subtracting 𝛾 (𝜏 obs 
+
+𝑖 − 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 ) to the term in the braked and using 𝑑 𝑘 𝑖 = 𝐺 𝑖 (𝑚 𝑘 ) − 𝐽 𝑘 𝑖 𝑚 𝑘 + 𝜆 𝑘 𝑖 from (6) gives 
+
+𝑟 𝑖 (𝛾 ) = − 
+
+( 1
+
+𝛾 𝐽 𝑘 𝑖 (𝐽 𝑘 𝑖 )⊤ + 𝐼 𝑁 𝑟 
+
+)−1 [𝜏 obs 
+
+𝑖 − 𝐺 𝑖 (𝑚 𝑘 ) − 𝜆 𝑘 𝑖 + 𝐽 𝑘 𝑖 𝑞 𝑘 𝑖 
+
+]
+
+Following the residual whiteness principle (RWP) [23, 36, 1], the penalty parameter is chosen by minimizing the kurtosis of the Fourier transformed residual: 
+
+𝛾 𝑘 𝑖 = arg min 
+
+𝛾 
+
+‖FFT [𝑟 𝑖 (𝛾 )] ‖44
+
+‖FFT [𝑟 𝑖 (𝛾 )] ‖42
+
+. (37) 
+
+## References 
+
+[1] Aghazade, K., Zand, T., Gholami, A., 2025. Automatic penalty parameter selection by residual whiteness principle (RWP) and GCV for full waveform inversion. arXiv preprint arXiv:2512.16757 . [2] Almeida, M.S., Figueiredo, M.A., 2013. Parameter estimation for blind and non-blind deblurring using residual whiteness measures. IEEE Transactions on Image Processing 22, 2751–2763. [3] Aminzadeh, F., Brac, J., Kunz, T., 1997. 3-D Salt and Overthrust models. SEG/EAGE 3-D Modeling Series No.1. [4] Aster, R.C., Borchers, B., Thurber, C.H., 2018. Parameter estimation and inverse problems. Elsevier. [5] Billette, F., Brandsberg-Dahl, S., 2005. The 2004 BP velocity benchmark, in: 67th EAGE Conference & Exhibition, European Association of Geoscientists & Engineers. pp. cp–1. [6] Bishop, T.N., Bube, K., Cutler, R.T., Langan, R., Love, P.L., Resnick, J.R., Shuey, R., Spindler, D.A., Wyld, H., 1985. Tomographic determination of velocity and depth in laterally varying media. Geophysics 50, 903–923. [7] Boyd, S., Parikh, N., Chu, E., Peleato, B., Eckstein, J., 2010. Distributed optimization and statistical learning via the alternating direction method of multipliers. Foundations and trends in machine learning 3, 1–122. [8] Bürgel, F., Kazimierski, K.S., Lechleiter, A., 2017. A sparsity regularization and total variation based computational framework for the inverse medium problem in scattering. Journal of Computational Physics 339, 1–30. [9] Combettes, P.L., Pesquet, J.C., 2011. Proximal splitting methods in signal processing, in: Bauschke, H.H., Burachik, R.S., Combettes, P.L., Elser, V., Luke, D.R., Wolkowicz, H. (Eds.), Fixed-Point Algorithms for Inverse Problems in Science and Engineering. Springer New York. volume 49 of Springer Optimization and Its Applications , pp. 185–212. [10] Corrales, M., Berti, S., Denel, B., Williamson, P., Aleardi, M., Ravasi, M., 2025. Annealed Stein variational gradient descent for improved uncertainty estimation in full-waveform inversion. Geophysical Journal International 241, 1088–1113. [11] Curtis, A., Lomax, A., 2001. Prior information, sampling distributions, and the curse of dimensionality. Geophysics 66, 372–378. [12] Fichtner, A., Kennett, B.L.N., Tsai, V.C., Thurber, C., Rodgers, A.J., Tape, C., Rawlinson, N., Borcherdt, R.D., Lebedev, S., Priestley, K., Morency, C., Bozdaug, E., Tromp, J., Ritsema, J., Romanowicz, B., Liu, Q., Golos, E., Lin, F., 2024. Seismic tomography 2024. Bulletin of the Seismological Society of America . [13] Fomel, S., Luo, S., Zhao, H., 2009. Fast sweeping method for the factored eikonal equation. Journal of Computational Physics 228, 6440–6455. 
+
+A PREPRINT Page 25 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+[14] Gao, K., Chen, T., 2025. Latte: Open-source, high-performance traveltime computation, tomography, and source location in acoustic and elastic media. Geophysical Journal International . [15] Gholami, A., Aghazade, K., 2024. Full waveform inversion and lagrange multipliers. Geophysical Journal International 238, 109–131. [16] Gholami, A., Siahkoohi, H., 2010. Regularization of linear and non-linear geophysical ill-posed problems with joint sparsity constraints. Geophysical Journal International 180, 871–882. [17] Goldstein, T., Osher, S., 2009. The split Bregman method for L1-regularized problems. SIAM Journal on Imaging Sciences 2, 323–343. [18] Guttman, L., 1946. Enlargement methods for computing the inverse matrix. The Annals of Mathematical Statistics , 336–343. [19] Haario, H., Saksman, E., Tamminen, J., 2001. An adaptive Metropolis algorithm . [20] Jin, B., Zou, J., 2010. Hierarchical Bayesian inference for ill-posed problems via variational method. Journal of Computational Physics 229, 7317–7343. [21] Kira, L., Noir, J., 2025. Full-waveform acoustic tomography for fluid temperature and flow. Experiments in Fluids 66, 145. [22] Klibanov, M.V., Li, J., Zhang, W., 2023. Numerical solution of the 3-D travel time tomography problem. Journal of Computational Physics 476, 111910. [23] Lanza, A., Pragliola, M., Sgallari, F., et al., 2020. Residual whiteness principle for parameter-free image restoration. Electronic Transactions on Numerical Analysis 53, 329–351. [24] Li, Y., Zhang, Y., Zhu, X., Gao, J., 2025. Seismic traveltime tomography based on ensemble Kalman inversion. Geophysical Journal International 240, 290–302. [25] Liu, Q., Wang, D., 2016. Stein variational gradient descent: A general purpose Bayesian inference algorithm, in: Advances in Neural Information Processing Systems. [26] Loris, I., Douma, H., Nolet, G., Daubechies, I., Regone, C., 2010. Nonlinear regularization techniques for seismic tomography. Journal of Computational Physics 229, 890–905. [27] Loris, I., Nolet, G., Daubechies, I., Dahlen, F.A., 2007. Tomographic inversion using 𝓁 1-norm regularization of wavelet coefficients. Geophysical Journal International 170, 359–370. [28] Martin, J., Wilcox, L., Burstedde, C., Ghattas, O., 2012. A stochastic Newton MCMC method for large-scale statistical inverse problems with application to seismic inversion. SIAM Journal of Scientific Computing 34(3), A1460–A1487. [29] Miele, A., Moseley, P., Levy, A., Coggins, G., 1972. On the method of multipliers for mathematical programming problems. Journal of optimization Theory and Applications 10, 1–33. [30] Mosegaard, K., Tarantola, A., 1995. Monte Carlo sampling of solutions to inverse problems. Journal of Geophysical Research 100 B7, 12431–12447. [31] Nocedal, J., Wright, S.J., 2006. Numerical Optimization. 2 nd ed., Springer. [32] Nolet, G., 2008. A Breviary of Seismic Tomography. Cambridge University Press, Cambridge, UK. [33] Operto, S., Gholami, A., Aghamiry, H.S., Guo, G., Beller, S., Aghazade, K., Mamfoumbi, F., Combe, L., Ribodetti, A., 2023. Extending the search space of full-waveform inversion beyond the single-scattering Born approximation: A tutorial review. Geophysics 88, 1–32. [34] Othmani, C., Dokhanchi, N.S., Merchel, S., Vogel, A., Altinsoy, M.E., Voelker, C., Takali, F., 2023. Acoustic tomographic reconstruction of temperature and flow fields with focus on atmosphere and enclosed spaces: A review. Applied Thermal Engineering 223, 119953. [35] Powell, M.J., 1969. A method for nonlinear constraints in minimization problems. Optimization , 283–298. [36] Pragliola, M., Calatroni, L., Lanza, A., Sgallari, F., 2023. ADMM-based residual whiteness principle for automatic parameter selection in single image super-resolution problems. Journal of Mathematical Imaging and Vision 65, 99–123. [37] Raanes, P.N., 2011. patricknraanes/fm: Version 1.0. URL: https://doi.org/10.5281/zenodo.2025811 , doi: 10.5281/zenodo. 2025811 .[38] Rawlinson, N., Spakman, W., 2016. On the use of sensitivity tests in seismic tomography. Geophysical Journal International 205, 1221–1243. [39] Rizzuti, G., Siahkoohi, A., Witte, P.A., Herrmann, F.J., 2020. Parameterizing uncertainty by deep invertible networks, an application to reservoir characterization, in: Society of Exploration Geophysicists Technical Program Expanded Abstracts, pp. 1541–1545. [40] Rudin, L., Osher, S., Fatemi, E., 1992. Nonlinear total variation based noise removal algorithms. Physica D 60, 259–268. [41] Ryberg, T., Haberland, C., 2018. Bayesian inversion of refraction seismic traveltime data. Geophysical Journal International 214, 1626–1642. [42] Sethian, J.A., 1999. Fast marching methods. SIAM review 41, 199–235. [43] Shin, B.S., Shutin, D., 2022. Distributed traveltime tomography using kernel-based regression in seismic networks. IEEE Geoscience and Remote Sensing Letters 19, 1–5. [44] Si, B., Philip, A., Wei, Y., Qian, J., 2025. High-order accurate adjoint-state methods for three-dimensional high-resolution first-arrival traveltime tomography. Journal of Computational Physics 524, 113715. [45] Siahkoohi, A., Aghazade, K., Gholami, A., 2026. Dual-space posterior sampling for bayesian inference in constrained inverse problems. arXiv preprint arXiv:2603.00393 . [46] Slotnick, M.M., Geyer, R.A., 1959. Lessons in Seismic Computing. Society of Exploration Geophysicists. [47] Tarantola, A., 2005. Inverse Problem Theory and Methods for Model Parameter Estimation. Society for Industrial and Applied Mathematics, Philadelphia. [48] Tikhonov, A., Arsenin, V., 1977. Solution of ill-posed problems. Winston, Washington, DC. [49] Treister, E., Haber, E., 2016. A fast marching algorithm for the factored eikonal equation. Journal of Computational physics 324, 210–225. [50] Tsianos, K.I., Lawlor, S., Rabbat, M.G., 2012. Consensus-based distributed optimization: Practical issues and applications in large-scale machine learning, IEEE. pp. 1543–1550. [51] Vehtari, A., Gelman, A., Simpson, D., Carpenter, B., Bürkner, P.C., 2021. Rank-normalization, folding, and localization: An improved ̂ 𝑅 for assessing convergence of MCMC (with discussion). Bayesian analysis 16, 667–718. [52] Virieux, J., Operto, S., 2009. An overview of full waveform inversion in exploration geophysics. Geophysics 74, WCC1–WCC26. [53] Wahba, G., 1990. Spline models for observational data. SIAM. 
+
+A PREPRINT Page 26 of 27 Distributed proximal SVGD for Bayesian traveltime tomography 
+
+[54] Yin, Z., Orozco, R., Louboutin, M., Herrmann, F.J., 2025. WISER: Multimodal variational inference for full-waveform inversion without dimensionality reduction. Geophysics 90, A1–A7. [55] Zand, T., Siahkoohi, H.R., Malcolm, A., Gholami, A., Richardson, A., 2020. Consensus optimization of total variation–based reverse time migration. Computational Geosciences 24, 1393–1407. [56] Zhang, J., ten Brink, U.S., Toksöz, M.N., 1998. Nonlinear refraction and reflection travel time tomography. Journal of Geophysical Research 103, 29,743–29,757. [57] Zhang, J., Toksöz, M.N., 1998. Nonlinear refraction traveltime tomography. Geophysics 63, 1726–1737. [58] Zhang, X., Curtis, A., 2020. Variational full-waveform inversion. Geophysical Journal International 222, 406–411. [59] Zhang, X., Lomas, A., Zhou, M., Zheng, Y., Curtis, A., 2023. 3-D Bayesian variational full waveform inversion. Geophysical Journal International 234, 546–561. [60] Zhao, H., 2005. A fast sweeping method for eikonal equations. Mathematics of computation 74, 603–627. [61] Zhao, X., Curtis, A., 2024. Physically structured variational inference for Bayesian full waveform inversion. Journal of Geophysical Research: Solid Earth 129. [62] Zhao, X., Curtis, A., 2025. Efficient Bayesian full-waveform inversion and analysis of prior hypotheses in three dimensions. Geophysics 90, R373–R388. [63] Zhao, X., Curtis, A., Zhang, X., 2022. Bayesian seismic tomography using normalizing flows. Geophysical Journal International 228, 213–239. 
+
+A PREPRINT Page 27 of 27

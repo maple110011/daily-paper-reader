@@ -1,0 +1,705 @@
+Title: Predictive Uncertainty for Neural CAE Surrogates
+
+URL Source: https://arxiv.org/pdf/2609.25430v1
+
+Published Time: Wed, 23 Sep 2026 00:32:12 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+# Predictive Uncertainty for Neural CAE Surrogates 
+
+## Kaustubh Tangsali, Mohammad Amin Nabian, Kelvin Lee, Carmelo Gonzales, and Sanjay Choudhry NVIDIA August 2026 
+
+Abstract 
+
+Neural surrogates can substantially accelerate computer-aided engineering (CAE) workflows, but their use in design requires uncertainty estimates that remain meaningful across varying geometries, spatial prediction fields, and engineering quantities of interest. We investigate how established uncertainty quantification (UQ) approaches behave when adapted to geometry-conditioned neural surrogates. We compare one closed-form and two sampling-based approaches—a Gaussian process (GP)-based method, concrete Monte Carlo (MC) dropout, and deep ensembles—and evaluate them on three large, industry-relevant CAE datasets for external aerodynamics and crash dynamics. We examine whether predicted uncertainties have credible magnitudes, identify locations with larger prediction errors, respond to unfamiliar inputs, and remain informative for derived engineering quantities. On the DrivAerStar dataset, where all three methods are compared, each generally assigns higher uncertainty to locations with larger prediction errors, and validation-based rescaling brings interval coverage close to nominal on a disjoint in-distribution test set. Results on AirFRANS and automotive crash also show useful error ranking and interval estimates, but the relative performance of the methods changes with the dataset and evaluation criterion. UQ methods and evaluation metrics should therefore be selected based on the intended downstream CAE decision. 
+
+# 1 Introduction 
+
+Neural surrogates reduce the need for repeated high-fidelity simulations in design studies, optimization loops, and interactive engineering analysis. When exhaustive solver verification is impractical, engineers must still decide whether a new geometry warrants a solver run, where its predicted field may be unreliable, and how much confidence to place in drag, intrusion, or another derived quantity. These needs define the three evaluation scopes used here: case level, local-field level, and engineering-quantity level. Figure 1 illustrates the first of these questions for DrivAerStar [1], showing the GP uncertainty field when a surrogate trained on Fastbacks is applied to new body styles. Fastback Notchback Estateback     
+
+> Fastback Notchback Estateback
+> 075 150 Pressure standard deviation [Pa]
+
+Figure 1: Geometry-conditioned uncertainty across DrivAerStar [1] body styles. The GP-based surrogate is trained on Fastback geometries and evaluated on held-out Notchback and Estateback classes. Total predictive uncertainty becomes increasingly concentrated around the changing rear-body geometry, with the strongest response on Estateback. 
+
+1arXiv:2609.25430v1 [cs.LG] 21 Sep 2026 The studies considered here span automotive aerodynamics, high-fidelity airfoil-flow simulation, and transient crash dynamics: large-scale industry-relevant problems involving unstructured meshes, coupled output fields, and variation in geometry, boundary conditions, or structural parameters. This scale and physical diversity make the comparison a test of UQ in representative CAE workloads rather than on a small synthetic regression problem. Although all three evaluation scopes concern uncertainty, their requirements differ: an estimate may be well calibrated yet rank case errors poorly or track local errors without responding to an out-of-distribution (OOD) geometry, while pointwise marginal variances may miss dependencies needed for an integrated quantity. A single calibration score therefore cannot assess all three scopes. We examine the UQ metrics in a controlled comparison of one closed-form and two sampling-based approaches. The GP-based configuration returns posterior epistemic variance together with a learned residual variance. Concrete MC dropout and the deep ensemble return field samples whose disagreement estimates epistemic variation in the evaluated implementations. For epistemic tasks, GP posterior variance and sampling disagreement are directly comparable estimates of model uncertainty; for predictive intervals, GP total variance includes an additional residual component. In this study, the DrivAerStar [1] dataset supplies the complete three-method comparison, the AirFRANS [2] dataset changes the shift from vehicle body style to angle-of-attack extrapolation, and the automotive crash dataset [3] changes both the physics and the relevant engineering output. We characterize what each evaluated UQ method supports, identify what drives its observed strengths, and test whether the resulting conclusions persist across datasets and evaluation scopes. 
+
+Contributions 
+
+1. a CAE-oriented evaluation protocol spanning case, local-field, and engineering-quantity scopes; 2. empirical evidence that calibration, error discrimination, response to distribution shift, and usefulness for engineering quantities are distinct UQ properties that can produce different method rankings. 3. a controlled empirical comparison across three industrial CAE datasets spanning automotive aerody-namics, airfoil-flow extrapolation, and transient crash dynamics; 4. PhysicsNeMo implementations of GP-based, concrete MC dropout, and ensemble uncertainty behind a common prediction interface. 
+
+# 2 Related Work 
+
+Deep ensembles and MC dropout are widely used sampling-based approximations to predictive uncertainty in neural networks [4, 5]. Concrete dropout extends MC dropout by approximating its binary dropout masks with a differentiable continuous distribution, allowing the dropout probabilities to be learned jointly with the model parameters [6]. Gaussian processes take a different route: a kernel and posterior distribution define predictive variance directly [7], while inducing-point approximations and deep kernel learning make this practical on neural/learned representations [8–10]. Distance-aware alternatives such as spectral-normalized neural Gaussian processes pursue a similar goal, but depend on preserving useful distances in the learned feature space [11, 12]. These methods are usually studied separately, leaving engineers without a controlled comparison of what their uncertainty estimates mean on the same large simulation problems. Predictive uncertainty can be evaluated in several complementary ways. Calibration methods rescale predicted distributions using held-out data [13, 14] so that predicted uncertainty agrees more closely with observed errors or empirical coverage. Proper scoring rules such as negative log predictive density (NLPD) assess the predictive distribution as a whole [15]. Selective prediction evaluates whether withholding low-confidence predictions reduces error [16], while sparsification evaluates whether high uncertainty coincides with large prediction errors [17]. Evaluating uncertainty becomes more difficult under distribution shift because calibration fitted to in-distribution data may not transfer [18]. Conformal prediction constructs intervals that attain a chosen coverage rate across new examples without assuming a particular error distribution, provided the calibration and test examples can be treated as draws from the same distribution [19]. Physics-informed variants use residuals of the governing equations as calibration scores for neural PDE surrogates [20]. Coverage 2alone, however, does not show whether uncertainty locates field errors, detects unfamiliar cases, or supports engineering decisions; this is why our evaluation treats those properties separately. Predictive UQ has been studied in several scientific-computing and CFD settings. Bayesian convolutional encoder–decoder surrogates have been used to predict pressure and velocity fields in porous-media flow [21], and uncertainty-aware convolutional surrogates have been applied to PDE solutions on varying domains [22]. Bayesian neural networks have also been used within Reynolds-Averaged Navier-Stokes (RANS) workflows to quantify turbulence-model uncertainty and propagate it to flow quantities under changes in geometry and Reynolds number [23]. Psaros et al. [24] provide a broader review and comparison of UQ methods for PINNs, neural operators, and stochastic PDE problems. More recent CAE surrogates use neural operators and transformer-based architectures to predict fields on complex geometries [25–30]. In particular, DoMINO and GeoTransolver address the irregular geometries and large meshes encountered in industrial simulation. Recent work has also developed UQ methods specifically for neural operators. For example, Magnani et al. [31] propagate a linearized weight-space approximation through a trained neural operator to obtain function-valued Gaussian predictions that retain dependencies across output locations. Retaining these dependencies is important when field uncertainty must be propagated through integrals or other operations used to compute engineering quantities [32]. Our focus is complementary: we compare GP-based, concrete MC dropout, and ensemble uncertainty on large, irregular-mesh CAE problems and evaluate their estimates at the local-field, case, and engineering-quantity scopes. 
+
+# 3 Predictive Uncertainty in CAE Workflows 
+
+## 3.1 Uncertainty scopes 
+
+We organize the evaluation around three scopes: the case, the local field, and the derived engineering quantity. These scopes describe where uncertainty is used in the engineering workflow, rather than what causes the uncertainty or how it is estimated. Figure 2 summarizes how uncertainty is used at each scope. Surrogate input       
+
+> Geometry, boundary conditions, parameters
+> UQ-enabled CAE surrogate Predicted field
+> Predictive mean 𝜇(𝑥) + Standard deviation 𝜎(𝑥)
+> Aggregate over the field Retain spatial structure Propagate through 𝑸(⋅)
+> Case scope
+> Should this case be recomputed with the high-fidelity solver?
+> Local-field scope
+> Where is the prediction likely to be inaccurate?
+> Engineering-quantity scope
+> How uncertain is the resulting engineering quantity? Examples: drag, lift, or intrusion
+
+Figure 2: Three ways uncertainty is used in the evaluated CAE workflow. Uncertainty in the predicted field can be aggregated to screen a complete input case, retained spatially to identify unreliable regions, or propagated through the calculation of an engineering quantity. These are parallel evaluation scopes rather than a hierarchy. 
+
+At the case scope , the question is whether a particular input should be accepted or sent for review with the high-fidelity solver. For a geometry-conditioned surrogate, a case may be difficult because its geometry, boundary conditions, or material configuration differ from those represented in the training data. A case-level 3score can be formed by aggregating uncertainty over the predicted field and used to prioritize inputs for review or recomputation [16]. An unfamiliar input does not necessarily produce high predicted uncertainty, and a familiar input may still produce a large prediction error. Case-level scores should therefore be tested on both in-distribution and deliberately shifted cases before being used as guardrails [18]. At the local-field scope , uncertainty is associated with particular spatial locations, time steps, and physical channels. CAE surrogates commonly predict fields such as pressure, velocity, displacement, and stress, so it is useful to know not only whether a complete case is difficult but also where its prediction may be inaccurate. An association between local uncertainty and local prediction error can support error-based triage and help identify regions where additional training data may be valuable [17]. This association is not guaranteed and must be evaluated rather than assumed. For active learning, the epistemic component is generally the relevant quantity because it represents uncertainty that additional training data may reduce [33]. At the engineering-quantity scope , uncertainty is attached to the quantity on which an engineering decision is ultimately based. Examples include drag and lift coefficients, peak stress, integrated force, and intrusion at a specified location. These quantities are functions of one or more predicted fields, and their uncertainty cannot generally be obtained by independently combining pointwise standard deviations. Spatial correlations and dependencies between physical channels affect how field uncertainty propagates through an integral, extremum, or other engineering calculation [32]. Credible uncertainty at the field level therefore does not automatically imply credible uncertainty in the final engineering quantity. Each scope requires different evaluation criteria. Predictive intervals require credible uncertainty magni-tudes, error triage depends on error ranking, guardrails require a reliable response to relevant shifts, and engineering decisions require uncertainty in the final quantity. Section 5.2 defines the corresponding metrics. 
+
+## 3.2 Variance Decomposition 
+
+Predictive uncertainty is commonly described in terms of aleatoric and epistemic components [34]. For the GP configuration evaluated here, applying the law of total variance [35] gives 
+
+σ2pred (x) = σ2epi (x) + σ2res (x), (1) where σ2epi (x) is the posterior variance of the latent predictive function and σ2res (x) is the likelihood variance conditional on that function [7]. Epistemic uncertainty reflects limited knowledge of the predictive function and may decrease when relevant training data are added. In particular, limited training coverage can leave the predictive response weakly constrained in parts of the input space. When repeated observations at fixed inputs exhibit genuine variability, σ2res (x) may have an aleatoric interpretation. The datasets considered here instead contain deterministic simulations, for which a fixed input and solver configuration produce the same target. The predictive mean can nevertheless leave residual errors because the surrogate does not reproduce every feature of the simulated field. The likelihood-fitted residual variance represents the scale of these remaining errors rather than physical randomness, so we interpret it as learned model-discrepancy variance [36]. For the GP-based method, we report this term separately from epistemic variance and include it in the total predictive variance. 
+
+# 4 Uncertainty Quantification Methods 
+
+We consider one closed-form and two sampling-based approaches. At a high level, the closed-form, GP-based method returns a predictive distribution in one forward pass while sampling methods–concrete MC dropout and deep ensembles–construct empirical distributions from stochastic passes or independently trained models. 
+
+## 4.1 Gaussian Process-Based Method 
+
+The Gaussian process-based method replaces the deterministic output projection of a neural surrogate with independent per-output variational GPs [8, 9]. The backbone first maps each input point to a learned feature vector, and a deep-kernel-learning network then transforms these features into the representation used by the 4Surrogate input   
+
+> Geometry, BCs, parameters
+> Feature extractor
+> Geometric preprocessing
+> GeoTransolver backbone Per-point features
+> 𝐡 𝑥
+> Deep-kernel transform
+> Pointwise MLP
+> Per-channel sparse variational GP
+> Matérn-5/2 ARD kernel + Inducing points
+> Predictive Mean GP epistemic variance Residual-variance network
+> Input-dependent variance per channel
+> Learned residual variance Total predictive variance
+> 𝜎 !"#$ %(𝑥)
+> Mean predicted field
+> 𝜇(𝑥)
+> Standard GeoTransolver GP Head
+
+Figure 3: Data flow of the evaluated GP-based surrogate. Per-point backbone features are transformed before entering independent inducing-point variational GPs and the residual-variance network. The GP epistemic and residual variances are summed to obtain total predictive variance. 
+
+GP kernel [10]. Each output channel has its own variational GP, with inducing points used to approximate the posterior. The GP posterior provides a predictive mean and an epistemic variance. The kernel compares each transformed feature against learned inducing locations, giving the epistemic term an explicit, smooth dependence on distance in the learned feature space. This does not guarantee that epistemic uncertainty will increase under every form of distribution shift. If the backbone or deep-kernel transformation maps unfamiliar inputs into regions already occupied by training features, the GP receives no distance signal from which to increase its posterior variance. Inducing-point coverage, feature normalization, kernel length scales, and preservation of informative feature distances are therefore important parts of the method. We use a Matérn-5/2 kernel with automatic relevance determination (ARD). This kernel provides a finite-smoothness prior and is less restrictive than the infinitely differentiable squared-exponential kernel [7]. For transformed features h and h′,
+
+k(h, h′) = σ2
+
+> f
+
+
+
+1 + √5r + 53 r2
+
+
+
+exp( −√5r), r2 =
+
+> D
+
+X
+
+> d=1
+
+(hd − h′
+
+> d
+
+)2
+
+ℓ2
+
+> d
+
+. (2) Here, h, h′ ∈ RD are transformed feature vectors, d = 1 , . . . , D indexes their dimensions, ℓd is the corresponding ARD length scale, and σ2 
+
+> f
+
+is the kernel signal variance. The learned length scales ℓd allow different sensitivity along each feature dimension. Each physical output channel has an independent kernel, so the GP does not directly model covariance between channels. For channel c, inducing variables uc = fc(Zc) have variational posterior q(uc) = N (mc, Sc). The sparse predictive distribution follows from integrating p(fc | uc) against q(uc). Training minimizes the negative evidence lower bound, 
+
+LGP = −
+
+> N
+
+X
+
+> i=1
+
+Eq(fi) log p(yi | fi, σ 2res ,i ) + β KL[ q(u) ∥ p(u)] , (3) alongside a mean-squared-error anchor used during optimization. The deep-kernel transform is learned jointly with the backbone and GP parameters. In addition to the posterior epistemic variance, the head contains a learned residual variance. With a homoscedastic likelihood, one residual scale is learned for each output channel. With the heteroscedastic configuration used in this study, a small neural network predicts an input-dependent modulation of that scale from the same transformed features received by the GP kernel. On deterministic simulation data, this term is interpreted as model-discrepancy variance rather than physical observation noise; on data with genuine conditional variability, it can retain its conventional aleatoric interpretation. The total predictive variance is the sum of the epistemic and residual components. Figure 3 summarizes the evaluated GP-based implementation. A single inference pass returns the predicted field, total variance, epistemic variance, and corresponding Gaussian prediction intervals. The total variance is used when evaluating interval coverage and calibration, 5while the epistemic component is the relevant quantity for model diagnostics and active-learning acquisition. Case-level OOD results report GP total and epistemic standard deviations separately: total variance describes the complete predictive estimate, while GP epistemic variance is used when comparing the GP with the epistemic disagreement estimated by the sampling methods. 
+
+## 4.2 Concrete MC dropout 
+
+Concrete MC dropout estimates model uncertainty by evaluating the same trained network multiple times with stochastic dropout retained during inference [5]. Each pass produces a different field prediction, and the mean and variance across these predictions form an empirical predictive distribution. Different layers of a geometry-conditioned surrogate process distinct representations and can contribute differently to predictive uncertainty. This motivates adapting the strength of stochastic masking across the network. A single shared dropout probability restricts this flexibility. Conventional MC dropout can use separate layerwise rates, but selecting them through ablation requires a high-dimensional hyperparameter search whose cost grows with the number of dropout sites. Concrete dropout instead uses a continuous relaxation of the Bernoulli mask, allowing each probability pl to be learned jointly with the model parameters [6]. The resulting probabilities provide adaptive, layer-specific stochastic masking; they do not directly measure the predictive uncertainty attributable to each layer. The spread across stochastic passes estimates predictive disagreement induced by stochastic masking. It does not explicitly measure distance from the training data and is therefore not guaranteed to increase for unfamiliar inputs. In the implementations evaluated here, the entropy-regularized regression objective has the form 
+
+LCD = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+∥yi − fW,˜z(xi)∥22 + λreg 
+
+X
+
+> l
+
+[pl log pl + (1 − pl) log(1 − pl)] , (4) where ˜z denotes a reparameterized concrete mask. The placement of concrete dropout layers varies with the backbone architecture. Across the evaluated configurations, we apply them at available sites within geometry/context projection and transformer processing, including context-projector outputs, attention-output projections, and post-attention or post-feed-forward residual updates. Input-feature construction and preprocessing, as well as the final projection to physical output variables, remain deterministic. For layer l, the implemented mask draws u ∼ U (0 , 1) and computes 
+
+dl = sigmoid 
+
+ logit( u) + logit( pl)
+
+τ
+
+
+
+, ˜zl = 1 − dl
+
+1 − pl + ϵ , (5) where dl is the relaxed drop indicator and τ = 0 .1. All evaluated models initialize pl = 0 .05 . Initialization is clipped to [0 .01 , 0.99] for numerical safety, and the learned logit is constrained to [−10 , 10] during stochastic evaluation, corresponding approximately to pl ∈ [4 .5 × 10 −5, 0.99995] . The reported entropy coefficient is 
+
+λreg = 10 −4 in Equation 4; because the bracketed term is negative Bernoulli entropy, minimizing the objective discourages probabilities from collapsing to zero or one. Concrete MC dropout requires one training run and stores one checkpoint. At inference, the concrete dropout layers remain stochastic while the rest of the model is in evaluation mode. For S passes, the reported moments are 
+
+¯y = 1
+
+S
+
+> S
+
+X
+
+> s=1
+
+y(s), dVar( y) = 1
+
+S − 1
+
+> S
+
+X
+
+> s=1
+
+
+
+y(s) − ¯y
+
+2
+
+. (6) Each pass also produces a complete field that can be propagated sample-wise to a derived quantity. The implementation evaluated in this work reports only the spread across stochastic passes and therefore estimates epistemic disagreement rather than total predictive variance. Its scale is not fitted directly against observed residuals, and it may require calibration on held-out data before being interpreted as a predictive interval. A separate variance output could be added to model aleatoric variability or model discrepancy, but such an output is not used here. 64.3 Deep Ensembles 
+
+A deep ensemble constructs a predictive distribution from independently trained instances of the same model architecture [4]. The members differ through their random initialization and stochastic data ordering and may converge to different solutions of the training objective. At inference, each member predicts a complete field. The ensemble mean is used as the final prediction, while the spread across members estimates uncertainty arising from disagreement between the learned models. Like MC dropout, ensemble disagreement contains no explicit comparison with the training inputs. Its usefulness for detecting unfamiliar inputs depends on whether the members respond differently in those regions, which must be verified empirically. Diversity is therefore central to the method: members that converge to highly correlated solutions produce narrow uncertainty estimates even if their shared prediction is inaccurate. The number of members also affects the stability of the estimated variance, particularly for the relatively small ensembles that are practical for large CAE surrogates. The ensemble evaluated here contains K independently initialized and trained models, stores K checkpoints, and evaluates every member once per case. The members can be trained and evaluated concurrently, reducing wall-clock time but not total computation or storage. The ensemble implementation evaluated here estimates epistemic disagreement only. It does not include an additional output for aleatoric or residual variance, although probabilistic ensemble members could be trained to provide one. Its spread should therefore not be interpreted automatically as total predictive uncertainty or a calibrated error interval. 
+
+# 5 Experimental Design 
+
+We evaluate the UQ methods on three datasets spanning external aerodynamics and transient structural dynamics. DrivAerStar provides the complete comparison among the GP-based method, concrete MC dropout, and a deep ensemble. AirFRANS and the automotive crash study evaluate the GP-based and concrete MC dropout methods under a different distribution-shift axis and a different physical problem, respectively. 
+
+## 5.1 Datasets and Distribution Shift Definitions 
+
+DrivAerStar [1] is a three-dimensional external-aerodynamics dataset containing vehicle geometries from three rear-end body-style classes. To enable testing across different body-styles (geometry distributions), all models are trained only on the Fastback class and evaluated on others. Fastback evaluation cases are therefore treated as in distribution, while Notchback and Estateback are held-out body-style classes. These classes provide a categorical geometry shift rather than a calibrated continuous distance from the training distribution. We evaluate 100 geometries from each class, for a total of 300 scored cases. The predicted fields are surface pressure and the three components of wall shear stress. Derived aerodynamic quantities, including drag and lift, are computed from these fields. AirFRANS [2] contains two-dimensional Reynolds-averaged Navier-Stokes simulations over airfoil geome-tries. The prediction targets are the two velocity components, pressure, and turbulent viscosity. The fitting split contains 645 cases with angles of attack between −2.48 ◦ and 12 .45 ◦, and 159 additional cases from the same range are used for in-distribution validation. The out-of-distribution split contains 196 cases whose angles of attack extend outside the fitting range at both ends, i.e. from −4.94 ◦ to −2.48 ◦ and 12 .45 ◦ to 
+
+14 .93 ◦. Unlike DrivAerStar, the unfamiliarity axis is a boundary condition rather than a held-out geometry class. This gives a continuous extrapolation test under such distribution shift. A log(1 + x) transformation is applied to turbulent viscosity for all reported methods, and normalization statistics are computed from the fitting split only. The automotive crash dataset is based on the body-in-white finite-element study introduced by Nabian et al. [3]. It contains 150 transient structural simulations on a common mesh with 384,862 nodes. The design variables are the thicknesses of 33 front-end structural components, varied within ±20% of their nominal values. In the curated dataset, component thickness is represented as a static per-node input on the common mesh. The targets are three-dimensional nodal displacements over 26 time steps spanning 0–125 ms. We use 135 runs for training and 15 for evaluation, with 8 runs monitored as validation during training and 7 retained as genuinely held-out cases. However, the crash experiments are not explicit out-of-distribution 7Dataset Prediction task Training and validation Evaluation setting                                         
+
+> DrivAerStar Surface pressure and three wall-shear-stress components 3,252 Fastback training ge-ometries and 813 Fastback validation geometries, with 100 validation geometries re-served for calibration Disjoint test sets containing 100 Fastback, 100 Notchback, and 100 Estateback geometries AirFRANS Ux,Uy,pressure, and turbulent viscosity 645 fitting cases with α∈
+> [−2.48 ◦,12 .45 ◦]and 159 in-distribution validation cases 196 extrapolation cases with
+> α∈[−4.94 ◦,−2.48 ◦)∪
+> (12 .45 ◦,14 .93 ◦]
+> Automotive crash Three-dimensional nodal displacement over time 135 training runs from a 150-run design study 8 monitored validation runs and 7 held-out runs over 26 time steps from 0 to 125 ms
+> Table 1: Datasets and evaluation settings. Each dataset examines a different source of difficulty: categorical geometry shift, continuous boundary condition extrapolation, or transient response variability.
+> Dataset Deterministic GP-based Concrete MC dropout Ensemble
+> DrivAerStar ✓✓✓✓
+> AirFRANS ✓✓✓✗
+> Automotive crash ✓✓✓✗
+> Table 2: Methods evaluated on each dataset. A check mark denotes an included method; a cross denotes a method that was not evaluated.
+
+tests. The held-out designs lie within the sampled design space, and the most difficult responses are not necessarily unusual according to input-space distance. Instead, this dataset examines whether uncertainty remains informative across designs, spatial locations, and time in a strongly nonlinear transient problem. Table 1 summarizes the three datasets, prediction tasks, and evaluation splits. Table 2 identifies the methods evaluated on each dataset. For DrivAerStar, all uncertainty methods use the same GeoTransolver backbone. The model receives the vehicle surface mesh and its geometric features, including point coordinates and surface normals, together with the freestream velocity and air density. Because the boundary conditions are fixed across all cases in this study, geometry is the only varying conditioning input. The model predicts surface pressure and the three wall-shear-stress components at each mesh point. The deep ensemble contains five independently trained members, and its first member also serves as the deterministic reference. AirFRANS uses the same GeoTransolver architecture across its deterministic, GP-based, and concrete MC dropout configurations. The model receives the airfoil geometry, the surrounding volume-mesh coordinates, the angle of attack α, and the freestream-velocity magnitude U∞. It predicts the two in-plane velocity components, pressure, and turbulent viscosity throughout the flow domain. In contrast to DrivAerStar, both geometry and boundary conditions vary between cases, and the out-of-distribution split is defined by angles of attack outside the range used for training. The automotive crash study instead uses the time-conditional GeoTransolver with FLARE attention configuration, which is held fixed across the methods evaluated on that dataset. This backbone was selected based on prior results on the same full-vehicle crash benchmark, where the FLARE-based modification to GeoTransolver achieved lower relative L2 error and approximately halved peak attention-block memory [37]. The model receives the undeformed reference geometry, component thicknesses, and normalized query time and predicts the nodal displacement at that time. During training, one target time step is sampled per example; during inference, the model is evaluated at each of the 25 non-initial time steps to construct the complete trajectory. 
+
+## 5.2 Metrics 
+
+We use complementary metrics to evaluate predictive accuracy, interval magnitude, error discrimination, response to distribution shift, and uncertainty in derived engineering quantities. These metrics answer 8different questions and should not be interpreted as interchangeable measures of overall UQ quality. Let yi denote a target value, μi the predictive mean, σi the predicted standard deviation, and ei = yi − μi
+
+the prediction error at a point, time, and output channel. When a method provides both total and epistemic variance, the metrics are computed for each component where relevant. Table 3 maps the reported metrics to the uncertainty property they evaluate. 
+
+Evaluation question Metrics What they measure 
+
+Is the predictive mean accu-rate? Relative L2 error and RMSE Error in the mean prediction, independent of uncertainty quality Are interval magnitudes credible? 
+
+z-RMS, coverage, NLPD, and sharpness Agreement between predicted interval width and observed residuals Does uncertainty identify high error? Spearman rank correlation and AUSE Agreement between uncertainty ordering and error ordering Does uncertainty respond to unfamiliar inputs? OOD AUROC and growth ratio Case-level separation and whether uncer-tainty increases with error under shift Is uncertainty informative for an engineering quantity? Calibration and error– uncertainty correlation for the derived quantity Whether field uncertainty remains useful after propagation to the reported decision variable 
+
+Table 3: Evaluation questions and their corresponding metrics. No single metric evaluates all downstream uses of uncertainty. 
+
+Predictive accuracy is measured using relative L2 error, 
+
+ϵL2 = ∥μ − y∥2
+
+∥y∥2
+
+, (7) together with root-mean-square error where an absolute error in physical units is required. Magnitude credibility is evaluated using the standardized residual zi = ei/σ i. We report 
+
+z-RMS =
+
+vuut 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+z2 
+
+> i
+
+. (8) A value of one means that the standardized residuals have unit RMS across the evaluated observations. Values greater than one indicate that errors are larger than predicted, while values below one indicate intervals that are broader than required. This does not require |ei| = σi at every observation; individual standardized residuals can vary. The 95% pointwise coverage is 
+
+Coverage 95 = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+I (|ei| ≤ 1.96 σi) . (9) Its nominal target is 0.95 for a calibrated Gaussian predictive distribution. This is pointwise coverage and should not be interpreted as simultaneous coverage of an entire field. Negative log predictive density evaluates the predictive mean and variance jointly: 
+
+NLPD = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ 12 log  2πσ 2
+
+> i
+
+ + e2
+
+> i
+
+2σ2
+
+> i
+
+
+
+. (10) Lower values indicate a better predictive distribution. Unlike coverage, NLPD penalizes both intervals that are too narrow and intervals that are unnecessarily broad. Sharpness is the mean predicted standard deviation, 
+
+Sharpness = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+σi. (11) 9Sharpness is reported in the physical units of the target and indicates whether an interval is narrow enough to be operationally useful. It is not a measure of quality by itself: smaller uncertainty is desirable only when calibration and predictive accuracy remain comparable. Error discrimination is evaluated using Spearman rank correlation between |ei| and σi. A high positive value indicates that locations or cases assigned greater uncertainty also tend to have larger errors. Rank correlation is invariant to a positive global rescaling of uncertainty and therefore evaluates a different property from calibration. We also report the area under the sparsification error curve (AUSE) [17]. In the DrivAerStar implemen-tation, each case contributes one RMS error and one mean standard deviation per output channel. Cases are removed in decreasing order of uncertainty, and the remaining RMSE is compared with an oracle that removes the largest realized errors first. Each curve is normalized by its initial RMSE. AUSE is the area between the two curves, averaged over channels; zero represents perfect case ordering. OOD detection is evaluated at the case level using the area under the receiver operating characteristic curve (AUROC). Each case is assigned a scalar score equal to its pointwise mean predicted standard deviation over the evaluated field. GP total and GP epistemic scores are reported separately. The score is used to distinguish an out-of-distribution split from the corresponding in-distribution split. An AUROC of 0.5
+
+indicates chance-level separation, while a value of one indicates perfect separation. OOD AUROC measures case separation but not whether uncertainty changes in proportion to the accompanying change in error. To examine this second property, we define the following growth ratio for this study: 
+
+GR = σood /σ id 
+
+RMSE ood /RMSE id 
+
+. (12) A value of one indicates matched relative changes in uncertainty and RMSE. A value below one means that the uncertainty ratio is smaller than the error ratio; when error increases under shift, uncertainty does not increase by a matching proportion. This diagnostic is invariant to a fixed positive rescaling applied to both splits and is not itself a calibration guarantee. We estimate drag uncertainty in two ways. First, for all three methods, we propagate the pointwise marginal variances of pressure and wall shear stress through the drag integral, assuming independence across surface points and output channels. This provides a common basis for comparison, but neglects spatial and cross-channel covariance. Second, for concrete MC dropout and the ensemble, we compute drag directly from each sampled field and use the resulting variation to estimate its uncertainty. Because each field is propagated as a whole, this calculation preserves the dependencies represented in the sampled predictions. Equation 15 defines the marginal approximation. 
+
+Metric aggregation policy Unless stated otherwise in a table, pointwise metrics are first reduced over the valid mesh points within each case and output channel. They are then averaged over channels and cases, with each case receiving equal weight. Relative L2 error is computed separately for each case and channel before averaging. Spearman correlation is computed between pointwise absolute error and predicted standard deviation within each case and channel, and the resulting correlations are then averaged. Crash mesh metrics pool the three displacement channels over the evaluated nodes and 25 non-initial time steps. Probe metrics pool the specified probe nodes and held-out runs at each time step before aggregation over time. AUSE follows the case-level construction defined above. DrivAerStar growth ratios compare pressure RMSE with pressure standard deviation within each body style. For AirFRANS, the growth ratio is computed separately for each of the four output channels and then averaged across channels. Reported intervals quantify sensitivity to the finite test set using case-level bootstrap resampling. For each bootstrap replicate, we sample cases with replacement while preserving the original test-set size and recompute the metric. The central 95% of the resulting values defines the reported interval. When comparing methods, the same resampled cases are used for every method. 
+
+## 5.3 Post-Hoc Calibration Protocol 
+
+We report raw and post-hoc calibrated uncertainty separately. Calibration rescales the predicted standard deviation without changing the predictive mean. For calibration group g, let Ig denote the set of observations assigned to that group and let ng = |I g |. The scale factor is 10 sg =
+
+vuut 1
+
+ng
+
+X
+
+> i∈I g
+
+e2
+
+> i
+
+σ2
+
+> i
+
+, (13) and the calibrated standard deviation is σ′ 
+
+> i
+
+= sg(i)σi, where g(i) denotes the calibration group associated with observation i. The groups correspond to output channels for DrivAerStar and AirFRANS and to time steps for crash. By construction, the fitted scale gives z-RMS equal to one within each calibration group on the calibration data. The values reported on disjoint evaluation cases therefore measure how well that fitted scale transfers. The calibration and evaluation splits are summarized in Table 1. For DrivAerStar, the scale factors are fitted on a reserved subset of 100 Fastback validation geometries that is disjoint from all reported test cases. The factors are then applied unchanged to the Fastback, Notchback, and Estateback test sets, allowing us to distinguish a correctable in-distribution scale mismatch from a failure of calibration to transfer under geometry shift. For AirFRANS, the scale factors are fitted on 159 in-distribution validation cases whose angles of attack lie within the fitting range. These cases are disjoint from both the 645 model-fitting cases and the 196 extrapolation cases. The fitted factors are applied unchanged to the extrapolation cases, testing whether an in-distribution calibration transfers beyond the angle-of-attack range used for fitting. For crash, the time-dependent factors are fitted on the eight monitored validation runs and applied unchanged to the seven held-out runs. 
+
+## 5.4 Implementation and Reproducibility 
+
+All three UQ approaches are implemented within the PhysicsNeMo framework [38]. The DrivAerStar evaluation is implemented through the method-agnostic UQ benchmarking framework in PhysicsNeMo-CFD [39]. The UQ benchmarking capability extends the deterministic benchmarking framework introduced by Tangsali et al. [40], which standardized the evaluation of predictive accuracy, computational performance, scalability, and generalization for automotive-aerodynamics surrogates. The extension represents each prediction through a common distribution interface containing its mean, total uncertainty, epistemic uncertainty, and samples when available, allowing the same cases, deterministic accuracy metrics, and UQ metrics to be applied consistently to closed-form and sampling-based predictions. Within each dataset, the available methods use the same training data, normalization, and evaluation cases. The crash configurations share this backbone but use method-specific point-sampling budgets during training. All reported training runs use eight GPUs. DrivAerStar and AirFRANS use the final checkpoint at epoch 100. In crash, we train both methods till 200 epochs and then select the best checkpoint based on validation accuracy. Concrete MC dropout uses epoch 30 and the GP uses epoch 160, selected by the lowest aggregate validation displacement relative L2 error; the deterministic reference uses its final retained checkpoint at epoch 200. Appendix A records the sampling sizes, model size, and other details. For DrivAerStar, we also trained the GP-based and concrete MC dropout configurations using three random seeds per method to assess sensitivity to training initialization. Run-to-run variability was small and did not alter the principal method comparisons, so the detailed results report one training run for each method. Appendix B provides the complete sensitivity analysis. 
+
+# 6 Controlled Comparison on DrivAerStar 
+
+DrivAerStar provides the complete controlled comparison among the GP-based method, concrete MC dropout, and the five-member deep ensemble. We organize the results according to the downstream question being asked of the uncertainty: predictive accuracy, interval magnitude, error discrimination, response to geometric shift, and informativeness for an engineering quantity. Figure 4 provides an overview, and computational requirements are considered separately at the end of the section. The detailed tables and figures report one trained GP-based model, one trained concrete MC dropout model, and the five-member deep ensemble. 11 Fast. Notch. Estate. 1235      
+
+> raw z-RMS (  toward 1)
+> ideal
+> (a) Magnitude credibility
+> Fast. Notch. Estate. 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80
+> field rank corr. (  )
+> (b) Field error discrimination
+> Fast. Notch. Estate. 0.4 0.5 0.6 0.7 0.8 0.9
+> case OOD AUROC (  )
+> chance
+> (c) Unfamiliarity detection
+> GP total Concrete MC Dropout Deep ensemble
+
+Figure 4: The DrivAerStar comparison viewed through three uncertainty properties. Panel (a) reports raw z-RMS, for which values closer to one (dotted line) indicate a more credible aggregate uncertainty scale; values above one indicate intervals that are too narrow, whereas values below one indicate intervals that are broader than required. Panel (b) reports local field-error discrimination using Spearman correlation, for which higher values indicate stronger correspondence between predicted uncertainty and absolute error. Panel (c) reports case-level OOD detection using AUROC, for which higher values indicate better separation from Fastback and an AUROC of 0.5 indicates no better separation than random ordering. The GP curve uses total predictive standard deviation, while the sampling curves use concrete MC dropout or ensemble disagreement. 
+
+## 6.1 Predictive Accuracy 
+
+We first examine mean-prediction errors to determine whether adding a UQ mechanism materially changes the underlying surrogate. Table 4 reports relative L2 errors for the predicted fields and relative drag-coefficient error. The deterministic reference is the first member of the deep ensemble, so its comparison with the ensemble isolates the effect of averaging the five member predictions. 
+
+Method Class Pressure WSS-x WSS-y WSS-z Drag 
+
+Deterministic F 0.231 0.235 0.380 0.220 0.044 N 0.235 0.240 0.394 0.224 0.040 E 0.304 0.264 0.400 0.231 0.097 GP-based F 0.225 0.228 0.379 0.217 0.056 N 0.232 0.238 0.395 0.237 0.046 E 0.278 0.248 0.404 0.254 0.071 Concrete MC dropout F 0.205 0.216 0.354 0.207 0.060 N 0.212 0.225 0.373 0.221 0.053 E 0.244 0.231 0.376 0.217 0.063 Deep ensemble F 0.208 0.218 0.353 0.203 0.057 N 0.213 0.223 0.367 0.210 0.043 E 0.280 0.247 0.372 0.214 0.099 
+
+Table 4: Mean-prediction errors on Fastback (F), Notchback (N), and Estateback (E). Field entries are relative 
+
+L2 errors and drag is relative coefficient error. Lift is omitted because its reference value approaches zero for some Estateback cases, making relative error unstable. 
+
+Across the 36 matched field-and-class comparisons, the absolute difference in relative L2 error, normalized by the corresponding deterministic value, averages 6.4%. The evaluated UQ models therefore show no systematic degradation in mean-prediction accuracy relative to the deterministic reference. Because the deterministic, GP-based, and concrete MC dropout models were trained separately, and the sampling-based 12 methods average stochastic predictions or ensemble members, individual differences cannot be attributed solely to the UQ mechanism. No method is consistently the most accurate across both fields and derived quantities. The accuracy results serve as a control: the subsequent UQ comparisons are not dominated by a severely degraded predictive mean. They also show why UQ metrics must be interpreted alongside accuracy. Broad intervals around an inaccurate mean, or apparently stable uncertainty when the mean already underfits, should not be interpreted as favorable UQ behavior. Figure 5 provides a representative spatial view of the mean-prediction errors summarized in Table 4.  
+
+> Figure 5: Ground-truth surface pressure and absolute pressure error for the ensemble, concrete MC dropout, and GP-based predictive means on one representative Fastback case. All error panels use the same color scale.
+
+## 6.2 Magnitude Credibility 
+
+We next ask whether the numerical magnitude of the predicted uncertainty is consistent with the observed residuals. Table 5 reports raw results before any post-hoc recalibration.                                                           
+
+> Method Class z-RMS 95% cov. NLPD Total σEpistemic σ
+> GP total F1.252 0.900 0.972 9.350 0.894 N1.515 0.875 1.357 9.351 0.872 E1.687 0.855 1.675 9.709 0.928 Concrete MC dropout F4.274 0.511 8.539 3.088 3.088 N4.732 0.488 10.631 3.049 3.049 E4.847 0.482 11.256 3.177 3.177 Deep ensemble F3.053 0.681 4.409 5.226 5.226 N3.218 0.662 4.944 5.262 5.262 E3.235 0.666 5.084 5.787 5.787
+> Table 5: Raw interval-magnitude metrics. The target values are one for z-RMS and 0.95 for pointwise coverage. Sharpness is the mean predicted standard deviation in the physical units of the pressure and wall-shear-stress targets. For the sampling methods, total and epistemic uncertainty coincide because no separate residual-variance output is used.
+
+Without post-hoc calibration, the evaluated GP total variance is closest to the nominal predictive interval scale. Its Fastback z-RMS is 1.252 with 90.0% coverage, compared with z-RMS values of 4.274 and 3.053 for concrete MC dropout and the ensemble. The intervals remain narrower than required for nominal coverage. The GP epistemic standard deviation is approximately 9.6% of its total standard deviation. The raw interval result is therefore primarily associated with the learned residual-variance model, not the distance-aware posterior variance; see Section 3.2. Table 6 reports results after applying the per-channel scales fitted on the independent Fastback calibration subset. The fitted standard-deviation multipliers range from 1.19 to 1.40 for the GP-based method, 3.62 to 5.01 for concrete MC dropout, and 2.61 to 3.44 for the ensemble. 13 Method Class Calibrated z-RMS Calibrated 95% cov. Calibrated NLPD                                
+
+> GP total F1.003 0.949 0.907 N1.209 0.927 1.144 E1.342 0.911 1.337 Concrete MC dropout F0.999 0.948 1.242 N1.106 0.933 1.346 E1.134 0.929 1.416 Deep ensemble F0.994 0.954 1.321 N1.047 0.947 1.383 E1.055 0.947 1.473
+> Table 6: Interval-magnitude metrics after fitting one standard-deviation scale per output channel on 100 independent Fastback calibration geometries. The factors are applied unchanged to the disjoint Fastback, Notchback, and Estateback test cases.
+
+All three methods reach approximately nominal magnitude and coverage on the disjoint Fastback test set. The large raw z-RMS values of the sampling methods therefore arise primarily from a correctable in-distribution scale mismatch rather than an absence of useful variation in their uncertainty fields. Nevertheless, the amount of correction required remains operationally relevant: without calibration data, the raw sampling spreads would produce intervals that are substantially too narrow. Calibration transfer under geometry shift produces a different ordering. The ensemble remains close to nominal on both Notchback and Estateback, while concrete MC dropout becomes moderately overconfident and the GP-based method degrades most. At the same time, the GP retains the lowest NLPD on every class. NLPD evaluates mean accuracy and sharpness in addition to standardized residual scale, whereas z-RMS and coverage focus more directly on interval magnitude. Thus, even within the broad category of calibration metrics, the relative performance depends on the criterion being used. 
+
+## 6.3 Error Discrimination 
+
+Magnitude credibility does not establish whether uncertainty identifies inaccurate predictions. This distinction is operationally relevant as a reliable error ordering can help prioritize locations or cases for review and solver verification and, when based on epistemic uncertainty, inform the acquisition of additional training data. We evaluate local ordering with within-case pointwise Spearman correlation and case ordering with AUSE. Both depend on uncertainty ranking rather than absolute scale, so per-channel post-hoc rescaling does not alter the corresponding within-channel rankings. Table 7 reports the local and case-level error-discrimination metrics for each uncertainty estimate. All three methods contain meaningful local error information. Their rank correlations range from approximately 0.55 to 0.73. The GP total uncertainty has the highest correlation on each body style, while its epistemic component remains positively associated with error but is less discriminative than the total variance. The sampling methods also rank errors usefully despite their poor raw interval magnitude. Dropout, for example, has a Fastback z-RMS of 4.274 but a rank correlation of 0.561. Its raw uncertainty scale is unsuitable as a predictive interval without recalibration, yet its ordering can still support tasks such as identifying high-error regions or prioritizing locations for review. Figure 6 should be read columnwise: useful local uncertainty should be larger in regions with larger absolute pressure error. Across all three methods, elevated uncertainty aligns with the dominant error region around the roof trailing edge and adjacent rear pillar. The methods differ in the secondary regions emphasized around the wheels and body side. This recurring spatial correspondence between high-error and high-uncertainty regions provides a spatial interpretation of the positive Spearman correlations reported in Table 7. Because the error and uncertainty rows use different numerical ranges, the figure illustrates spatial error ordering rather than calibration of uncertainty magnitude. 14 Method Class Spearman ρ AUSE 
+
+GP total F 0.726 0.0218 N 0.708 0.0234 E 0.706 0.0332 GP epistemic F 0.612 0.0295 N 0.607 0.0235 E 0.614 0.0323 Concrete MC dropout F 0.561 0.0413 N 0.558 0.0364 E 0.565 0.0302 Deep ensemble F 0.549 0.0501 N 0.551 0.0336 E 0.564 0.0331 
+
+Table 7: Error discrimination. Spearman measures pointwise ordering within cases; AUSE sparsifies complete cases using channel RMS error and mean standard deviation. Higher Spearman and lower AUSE are better. 
+
+Figure 6: Absolute pressure error (top) and raw predicted pressure standard deviation (bottom) on one Estateback geometry. Columns show GP total, concrete MC dropout disagreement, and deep-ensemble disagreement. 
+
+15 6.4 Response to Geometric Shift 
+
+We next evaluate whether uncertainty responds when the body style changes from the Fastback class used for training to the held-out Notchback and Estateback classes. Two aspects are considered. The growth ratio compares the relative change in uncertainty with the relative change in error, while case-level AUROC measures whether aggregate uncertainty can distinguish unfamiliar geometries from Fastbacks. Table 8 reports pressure-channel growth, using pressure standard deviation and pressure RMSE in the same physical units. Values are normalized by the corresponding Fastback quantities. The AUROC score uses each case’s mean field uncertainty.                                            
+
+> Method Class Pressure σgrowth Pressure RMSE growth Growth ratio AUROC [95% CI]
+> GP total N1.001 1.045 0.957 0.514 [0.432, 0.595] E1.039 1.235 0.841 0.719 [0.646, 0.788] GP epistemic N0.977 1.045 0.934 0.452 [0.372, 0.533] E1.038 1.235 0.840 0.684 [0.605, 0.759] Concrete MC dropout N0.988 1.049 0.941 0.451 [0.370, 0.531] E1.029 1.183 0.869 0.650 [0.571, 0.725] Deep ensemble N1.007 1.037 0.971 0.562 [0.480, 0.641] E1.108 1.346 0.823 0.883 [0.832, 0.928]
+
+Table 8: Response to Notchback (N) and Estateback (E) relative to Fastback. Pressure σ and RMSE growth are measured relative to Fastback; a growth ratio of one indicates matched growth. AUROC uses the all-channel case score (higher is better; 0.5 is chance). Brackets show 95% bootstrap confidence intervals (CIs). 
+
+For all three methods, the relative change in predicted uncertainty is smaller than the relative change in prediction error. Relative to Fastback, the GP pressure RMSE increases by a factor of 1.235 on Estateback, while its predicted standard deviation increases by 1.039, giving a growth ratio of 0.841. For concrete MC dropout, the corresponding factors are 1.183 and 1.029, giving 0.869. For the ensemble, they are 1.346 and 1.108, giving 0.823. A global calibration factor multiplies in-distribution and out-of-distribution uncertainty equally and therefore cannot change the ratios. The methods also differ in their ability to identify unfamiliar geometries. In our evaluation, Notchback is treated as the smaller geometry shift because its overall rear-body morphology is closer to Fastback, whereas Estateback has a more distinct, bluff rear geometry. This ordering motivated training on Fastbacks and evaluating separately on Notchbacks and Estatebacks. For Notchback, all AUROC values lie between 0.451 and 0.562, close to the chance value of 0.5. The mean predicted uncertainty therefore cannot reliably distinguish Notchbacks from the Fastbacks used for training. Estateback produces a clearer unfamiliarity signal: AUROC increases to 0.719 for GP total, 0.650 for concrete MC dropout, and 0.883 for the ensemble. The results are consistent with the intended ordering of the shifts: the smaller Notchback shift is difficult for every method to detect, while the larger Estateback shift is more readily identified. Concrete MC dropout and ensemble disagreement estimate epistemic variation, so the GP epistemic component provides the more direct comparison. Its AUROC is 0.452 on Notchback and 0.684 on Estateback, compared with 0.514 and 0.719 when GP total uncertainty is used. This difference indicates that the learned residual term contributes to OOD separation as well as to interval magnitude. After recalibration, the ensemble has the most stable interval magnitude under the body-style shifts and the strongest Estateback detection. 
+
+## 6.5 Engineering Quantities of Interest 
+
+The surface pressure and wall-shear-stress fields are intermediate predictions; the engineering quantity considered here is the drag coefficient. We therefore examine how uncertainty in these fields propagates to uncertainty in drag. For a surface discretized into cells i, the drag coefficient is computed as 
+
+CD = κ X
+
+> i
+
+Ai [( ni · d)pi − τ i · d] , (14) 16 where Ai and ni are the area and normal of cell i, d is the drag direction, pi is pressure, τ i is wall shear stress, and κ = 2 /(Aref ρU 2
+
+> ∞
+
+) is the force-coefficient prefactor. Assuming independence across cells and physical channels, the corresponding variance is propagated as 
+
+σ2 
+
+> CD
+
+= κ2 X
+
+> i
+
+A2
+
+> i
+
+(ni · d)2σ2 
+
+> p,i
+
++
+
+> 3
+
+X
+
+> j=1
+
+d2 
+
+> j
+
+σ2
+
+> τij
+
+ . (15) For the marginal calculation, the same propagation rule is applied to every method. For the GP-based method, σp,i and στij are the predicted pointwise marginal standard deviations. For concrete MC dropout and the ensemble, they are estimated across stochastic passes or ensemble members. The marginal rule omits spatial covariance, covariance between pressure and wall shear stress, and covariance between wall-shear-stress components. Across the 300 cases, sample-wise propagation changes the mean drag standard deviation by factors of approximately 1.1 for concrete MC dropout and 15–22 for the ensemble, depending on body style. These large scale changes do not by themselves establish improved identification of high-drag-error cases. The sample-wise propagation retains the spatial and cross-channel dependencies represented by the sampled fields. An analogous sample-wise propagation for the GP-based method would require samples from its joint field posterior or an explicit covariance model, neither of which is exposed by the current pointwise-marginal interface. The relationship between predicted drag uncertainty and absolute drag error is not consistent enough to rank the methods. Small changes in the integrated pressure and wall-shear-stress errors can reorder cases, while a shared bias in predicted drag creates an error component that no case-dependent uncertainty score can rank. 
+
+## 6.6 Uncertainty-Guided Solver Review 
+
+Surrogate models can produce inaccurate predictions for some inputs. When only a subset of cases can be checked with the high-fidelity solver, a case-level uncertainty score can help prioritize which cases to review. Figure 7 ranks each body style by total GP standard deviation, concrete MC dropout disagreement, or ensemble disagreement. The score is the mean pressure standard deviation per case. At each review fraction, risk is the pressure RMSE over cases not sent back to the solver, normalized by the RMSE at zero review. For readability, the plot stops at a review fraction of 0.8, leaving at least 20 cases in each panel. The reported AUSE values are computed from the complete sparsification curves. 0.0 0.2 0.4 0.6 0.8         
+
+> Fraction sent for solver review
+> 0.88 0.90 0.92 0.94 0.96 0.98 1.00
+> Normalized retained pressure risk
+> Fastback
+> GP total Concrete MC Dropout Deep ensemble Method-specific oracle
+> 0.0 0.2 0.4 0.6 0.8
+> Fraction sent for solver review
+> Notchback
+> 0.0 0.2 0.4 0.6 0.8
+> Fraction sent for solver review
+> Estateback Pressure uncertainty-guided solver review
+
+Figure 7: Normalized retained pressure risk under uncertainty-guided solver review. Solid curves select cases using predicted uncertainty; dashed curves use the true case errors and show the oracle ordering. 
+
+We summarize each ranking using pressure AUSE, the normalized area between the uncertainty-ranked and oracle risk curves over the complete review range. AUSE uses the full curves rather than their separation at any single review fraction; zero indicates oracle ordering. For GP total, concrete MC dropout, and the 17 ensemble, respectively, pressure AUSE is 0.013, 0.026, and 0.030 on Fastback; 0.017, 0.021, and 0.022 on Notchback; and 0.037, 0.025, and 0.023 on Estateback. The 95% intervals overlap in several comparisons, so the small differences are not decisive. Uncertainty provides some value for prioritizing cases with large pressure errors, but the improvement is modest. 
+
+## 6.7 Computational Trade-Offs 
+
+The methods differ in where they incur their computational cost. Table 9 summarizes the dominant requirements of the evaluated methods.              
+
+> Method Independently trained models Stored checkpoints Model evaluations per case
+> GP-based 111Concrete MC dropout 1120 Deep ensemble 555
+> Table 9: Evaluation counts for the DrivAerStar configurations.
+
+The GP-based method requires one training run and one end-to-end model evaluation at inference. Its mean, epistemic variance, residual variance, and total predictive variance are produced in the same evaluation. The GP head evaluates inducing-point covariances in addition to the backbone. Training is more complex than deterministic regression because the backbone, variational distribution, inducing locations, kernel parameters, and residual-variance model are optimized jointly. Concrete MC dropout also requires only one training run and stores one checkpoint. Its additional cost occurs primarily during inference, where S stochastic passes are used for every case. The number of passes can be changed after training, allowing a trade-off between inference cost and the stability of the estimated sample variance. The deep ensemble evaluated here contains K independently initialized and trained members, stores K
+
+checkpoints, and requires K backbone evaluations per case. Both training and inference can be parallelized when sufficient hardware is available, reducing wall-clock latency but not total computation or storage. The complete field prediction from each member can be used for sample-wise propagation to nonlinear or spatially integrated engineering quantities. The DrivAerStar evaluation reports both sample-wise propagation and the common marginal-variance rule described in Section 6.5. In the evaluated configurations, the GP shifts complexity to training, concrete MC dropout shifts additional cost to inference, and the ensemble multiplies training, storage, and inference work. A further distinction concerns the numerical stability of the predicted uncertainty field. For a fixed input and trained model, the GP-based method evaluates its marginal variance deterministically, without Monte Carlo estimation noise. Its regularity is governed by the learned feature map, GP kernel, and residual-variance model. Concrete MC dropout and ensemble standard deviations are instead empirical estimates from a finite number of field samples. Their estimates become more stable with additional stochastic evaluations or ensemble members. Under idealized independent Gaussian sampling, the relative standard error of an estimated standard deviation is approximately 1/p2( S − 1) for S samples. This gives approximately 16% for the 20 concrete MC dropout passes and 35% for the five ensemble members used here. These are theoretical pointwise sampling estimates rather than measurements of spatial roughness, and independently trained ensemble members need not behave as ideal Gaussian samples. Figure 9 provides a direct finite-sample illustration on AirFRANS. 
+
+# 7 Additional CAE Case Studies 
+
+We use AirFRANS and automotive crash as supporting case studies that change the shift axis, physical system, and engineering use of uncertainty. We only include GP-based method and concrete MC dropout in the subsequent studies. Their numerical values are therefore compared only within each dataset, and the cross-case analysis focuses on qualitative findings supported by compatible measurements. 18 7.1 AirFRANS 
+
+AirFRANS supplies the continuous angle-of-attack extrapolation study defined in Section 5. 
+
+Predictive accuracy Table 10 reports mean relative L2 error across the four predicted channels together with pressure error, which is particularly relevant for aerodynamic quantities.                    
+
+> Method Mean ID Mean OOD Pressure ID Pressure OOD
+> Deterministic 0.082 0.098 0.126 0.150 GP-based 0.085 0.150 0.074 0.144 Concrete MC dropout 0.181 0.191 0.173 0.205
+> Table 10: AirFRANS relative L2error in distribution (ID) and under angle-of-attack extrapolation (OOD). Mean error averages the two velocity components, pressure, and transformed turbulent viscosity.
+
+In distribution, the GP-based model has nearly the same mean error as the deterministic reference. Its pressure advantage narrows under extrapolation, from an error difference of 0.052 in distribution to 0.006 outside the fitting range. Meanwhile, its mean error increases from 0.085 to 0.150, whereas the deterministic model increases from 0.082 to 0.098. The accuracy behavior of this evaluated GP configuration therefore differs from its behavior on DrivAerStar. Concrete MC dropout has higher error both in and outside the fitting range. Its OOD-to-ID error ratio is consequently close to one partly because its in-distribution error is already high. This is important when interpreting its uncertainty calibration: an interval can appear to transfer more successfully when the underlying prediction error changes little because the model underfits both splits. 
+
+Uncertainty under angle-of-attack extrapolation Table 11 summarizes interval magnitude, error discrimination, and response to shift for the GP-based and concrete MC dropout models.                       
+
+> Metric GP total GP epistemic Concrete MC dropout
+> Raw ID z-RMS 1.090 –1.183 Calibrated OOD z-RMS 4.657 –2.046 OOD error–uncertainty Spearman ρ0.682 0.638 0.625 OOD AUROC 0.849 0.914 0.773 Growth ratio 0.701 0.707 0.768
+> Table 11: AirFRANS uncertainty metrics averaged over the four output channels. Calibration factors are fitted on the in-distribution validation split and applied unchanged to the angle-of-attack extrapolation cases.
+
+Figure 8 compares the GP uncertainty and absolute-error fields for a representative extrapolation case. Both raw uncertainty estimates are near nominal in distribution: the GP-based method has a z-RMS of 1.090 and concrete MC dropout 1.183. On DrivAerStar, by contrast, the uncalibrated sampling spread requires a substantially larger correction. The raw calibration gap is therefore dataset dependent. After fitting scale factors in distribution, both methods become overconfident under extrapolation. The OOD z-RMS rises to 4.657 for the GP-based method and 2.046 for concrete MC dropout. Concrete MC dropout’s smaller calibration degradation occurs while its mean prediction remains substantially less accurate. For every method, predicted uncertainty increases by a smaller proportion than prediction error. The growth ratios are 0.701 for GP total, 0.707 for GP epistemic, and 0.768 for concrete MC dropout. This reproduces the DrivAerStar observation under a different and continuous shift axis: a scale fitted in distribution cannot correct an uncertainty estimate that responds too weakly as error increases outside the fitting range. When the GP learned residual variance is excluded, GP epistemic uncertainty and concrete MC dropout disagreement have similar OOD error–uncertainty correlations, 0.638 and 0.625. GP epistemic uncertainty has higher OOD AUROC in every channel, averaging 0.914 compared with 0.773 for concrete MC dropout. GP total uncertainty has the highest field-error correlation, 0.682, but its OOD AUROC is lower at 0.849. 19 Figure 8: GP total predictive standard deviation (top) and absolute prediction error (bottom) for Ux, Uy , and pressure on one representative AirFRANS extrapolation case at α = 14 .926 ◦. The example visualizes spatial correspondence in a single flow field. 
+
+Figure 9: Finite-sample behavior of concrete MC dropout on the same AirFRANS extrapolation case. The first four panels estimate the Ux standard deviation from 5, 10, 20, and 40 stochastic passes; the final panel shows absolute error for the 40-sample predictive mean. Against this fixed error field, pointwise Spearman correlation increases from 0.570 to 0.623, 0.645, and 0.658. Rank agreement with the 40-sample standard-deviation field is 0.860, 0.942, 0.981, and 1.000, respectively. 
+
+20 7.2 Automotive Crash 
+
+The automotive crash study changes both the physics and the scope at which uncertainty is used. It uses the transient structural task and seven held-out runs defined in Section 5. 
+
+Mesh-level uncertainty We evaluate uncertainty across the complete displacement field. This field-level analysis asks whether the predicted uncertainty has a credible magnitude, both before and after calibration, and whether larger nodal errors receive higher uncertainty. The uncertainty metrics pool the three displacement components over the evaluated mesh nodes and 25 non-initial time steps for the seven held-out designs. Table 12 summarizes the results on the seven held-out designs. For each uncertainty definition, we fit one scaling factor per time step using the eight validation runs and a fixed 20,000-node mesh subsample. These scaling factors are applied unchanged to the seven held-out designs at both the mesh and probe levels. At each time step, the procedure adjusts uncertainty magnitude but does not change the ranking of runs or spatial locations. 
+
+Method Rel. L2 Raw z-RMS 95% cov. Spearman ρ Calibrated z-RMS 
+
+Deterministic 0.195 – – – –Concrete MC dropout 0.223 3.919 0.487 0.347 1.216 GP total 0.371 1.564 0.783 0.207 1.229 GP epistemic 0.371 4.695 0.546 −0.103 1.244 
+
+Table 12: Mesh-level crash results on seven held-out designs. Spearman correlation is computed between nodal displacement error and predicted standard deviation. 
+
+GP total has the more credible raw interval magnitude, while concrete MC dropout has the more accurate mean and stronger spatial error ranking. GP epistemic uncertainty is too narrow before scaling and has a negative error–uncertainty correlation. After validation-based scaling, all three z-RMS values are similar. The comparison therefore changes with the intended use: raw interval scale favors GP total, whereas local error discrimination favors concrete MC dropout. Figure 10 visualizes the final state of a representative held-out crash simulation. Concrete MC dropout reproduces the overall deformation, while both the displacement error and calibrated uncertainty vary spatially and become most pronounced around the frontal impact structure. (a) Reference deformation         
+
+> 0195 390
+> Displacement magnitude [mm]
+> (b) Predictive mean
+> 0195 390
+> Displacement magnitude [mm]
+> (c) Absolute displacement error
+> 0100 200
+> Error magnitude [mm]
+> (d) Calibrated uncertainty
+> 065 130
+> Calibrated standard deviation [mm]
+
+Figure 10: Representative concrete MC dropout result for a held-out sample at 125 ms. From left to right: reference deformation, predictive mean, absolute displacement error, and calibrated standard deviation. 
+
+Probe-level uncertainty The engineering deliverable in the crash study is uncertainty at selected intrusion probes. We evaluate 185 probe nodes across the driver and passenger regions. For each method, we report both the uncertainty produced directly by the model and the uncertainty after post-hoc scaling. 21 Concrete MC dropout has approximately the same predictive accuracy as the deterministic reference, with RMSE values of 30.5 and 31.6 mm, respectively. The GP-based method has a larger RMSE of 59.5 mm, so interval metrics must be considered alongside this difference in mean accuracy. The probe analysis uses the same validation-fitted, time-dependent scales described above. The probe nodes are not used during calibration. Table 13 compares raw and calibrated probe uncertainty, pooled over the seven held-out runs and all 185 driver- and passenger-side probe nodes.                                    
+
+> Metric Deterministic Concrete MC dropout GP total
+> RMSE (mm) 31.6 30.5 59.5 Raw sharpness (mm) –10.1 44.7 Raw z-RMS –3.38 1.36 Raw 95% coverage –0.464 0.831 Raw NLPD –8.89 5.52 Calibrated sharpness (mm) –31.9 49.5 Calibrated z-RMS –0.91 0.99 Calibrated 95% coverage –0.981 0.933 Calibrated NLPD –4.70 5.13
+> Table 13: Probe-level displacement uncertainty on seven held-out crash designs. Sharpness is the mean predicted standard deviation over the 185 probe nodes and 25 non-initial time steps. Coverage uses ±1.96 σintervals, with time-dependent scales fitted on the eight development runs.
+
+Before post-hoc scaling, GP total variance is closer to nominal: its raw z-RMS is 1.36 with 83.1% coverage, compared with 3.38 and 46.4% for concrete MC dropout. These values compare GP total uncertainty, which includes the learned residual variance, with concrete MC dropout disagreement, which represents epistemic uncertainty in this implementation. They therefore do not compare the two methods’ epistemic uncertainties alone. When calibration data are available, both methods approach the nominal interval magnitude. The GP-based method reaches a z-RMS of 0.99 with 93.3% coverage, while concrete MC dropout reaches 0.91 with 98.1% coverage. Concrete MC dropout retains the more accurate predictive mean and, after scaling, the lower NLPD: 4.70 compared with 5.13 for the calibrated GP. Before scaling, the ordering reverses, with NLPD values of 5.52 for the GP and 8.89 for concrete MC dropout. Within these seven held-out runs, aggregate calibration does not ensure that uncertainty responds to the most difficult designs. Two rebound-dominated runs have 3.54 times the GP prediction error of the other five runs, but their raw and calibrated uncertainty ratios are 0.99 and 1.00, respectively. For concrete MC dropout, the error ratio is 1.77, while its raw and calibrated uncertainty ratios are 0.89 and 0.83. In both methods, the predicted uncertainty remains approximately constant or decreases on the runs with larger errors. Figure 11 shows this behavior across all seven held-out designs. 
+
+Learned dropout probabilities Figure 12 tracks the 18 learned dropout probabilities in the crash model. The geometry-encoder rates approach 0.5 early, whereas the transformer-block rates evolve at different speeds; the final block’s post-MLP residual rate remains small. The rates continue to change beyond the validation-selected checkpoint at epoch 30. Thus, checkpoint selection by predictive accuracy does not imply convergence of the dropout rates. These probabilities parameterize stochastic masks and do not measure layerwise predictive variance. 22 0200 400 600 Driver toe pan Displacement X (mm) 
+
+> Run 54 (rebound) RMSE: DET 52 | CD 45 | GP 88 mm 95% cov.: CD 88% | GP 100% Run 55 RMSE: DET 14 | CD 29 | GP 17 mm 95% cov.: CD 100% | GP 100% Run 101 RMSE: DET 40 | CD 19 | GP 42 mm 95% cov.: CD 100% | GP 100% Run 102 (rebound) RMSE: DET 47 | CD 38 | GP 109 mm 95% cov.: CD 99% | GP 47%
+
+0.000 0.025 0.050 0.075 0.100 0.125 
+
+Time (s) 
+
+0200 400 600 Driver toe pan Displacement X (mm) 
+
+> Run 103 RMSE: DET 16 | CD 20 | GP 26 mm 95% cov.: CD 100% | GP 100%
+
+0.000 0.025 0.050 0.075 0.100 0.125 
+
+Time (s) 
+
+> Run 104 RMSE: DET 5 | CD 15 | GP 26 mm 95% cov.: CD 100% | GP 100%
+
+0.000 0.025 0.050 0.075 0.100 0.125 
+
+Time (s) 
+
+> Run 105 RMSE: DET 4 | CD 33 | GP 42 mm 95% cov.: CD 91% | GP 100%
+
+Ground truth Deterministic Concrete MC Dropout Concrete MC Dropout 95% band (calibrated) GP total GP total 95% band (calibrated) Figure 11: Driver-side toe-pan displacement for the seven held-out crash designs, averaged over 104 probe nodes. Curves show ground truth and predictive means; shaded regions are calibrated 95% Gaussian bands for both UQ configurations. Runs 54 and 102 have substantially larger GP errors without correspondingly wider intervals. x y
+
+LayerNorm Attention Linear projection LayerNorm MLP 
+
+D1 D2 D3 + +
+
+Skip connection Skip connection 
+
+00.25 0.50 
+
+(b) Geometry encoders 
+
+Local 1 Local 2 Global 
+
+(c) Block 1 (d) Block 2 
+
+0 100 200 00.25 0.50 
+
+(e) Block 3 
+
+0 100 200 
+
+(f) Block 4 
+
+0 100 200 
+
+(g) Block 5 
+
+(a) Dropout locations within one transformer block 
+
+> Learned dropout probability,  p
+
+Training epoch 
+
+D1: attention output D2: attention + skip D3: MLP + skip 
+
+Figure 12: Learned concrete dropout probabilities in the crash surrogate. (a) Dropout locations in one transformer block: D1 follows the attention-output linear projection, D2 follows the attention skip addition, and D3 follows the MLP skip addition. (b) Geometry encoders. (c–g) Transformer blocks, with matching colors and line styles for D1–D3. All rates were initialized to p = 0 .05 .
+
+23 8 Cross-Case Synthesis and Practical Guidance 
+
+Table 14 summarizes the main findings across the three datasets.                                
+
+> Property DrivAerStar AirFRANS Crash
+> Raw interval magnitude GP total variance clos-est to nominal; sam-pling disagreement too narrow Both methods near nominal GP total variance clos-est to nominal; Con-crete MC dropout dis-agreement too narrow After ID scaling All nominal on unseen Fastbacks; transfer dif-fers under shift Both overconfident un-der extrapolation Interval magnitudes closer to nominal on held-out runs Uncertainty growth under ex-plicit shift All growth ratios below one All reported growth ra-tios below one –Pointwise error discrimination All informative; GP to-tal has highest Spear-man correlation Both informative; GP has higher Spearman correlation Concrete MC dropout strongest; GP total positive; GP epistemic negative Case-level OOD detection Notchback near chance for all; Estateback en-semble strongest GP epistemic strongest; both GP scores exceed concrete MC dropout –Engineering-quantity behavior Sample-wise propaga-tion changes the esti-mated drag-uncertainty scale –Probe uncertainty does not increase on the highest-error runs
+> Table 14: Cross-case summary. Comparisons are qualitative because the datasets use different targets, splits, aggregation rules, and available method sets.
+
+The cross-case comparison suggests four practical lessons for evaluating UQ on other surrogate problems. First, the intended decision should determine the uncertainty quantity and evaluation metric. Figure 4 shows that method performance changes across interval magnitude, local error discrimination, and OOD detection. The crash results provide another example: GP total variance has the more credible raw interval magnitude, whereas concrete MC dropout provides stronger mesh-level error discrimination (Table 12). Predictive intervals therefore require credible total uncertainty, error triage requires reliable ranking, and engineering quantities require uncertainty propagated through the quantity itself. Epistemic uncertainty is generally the relevant component for active learning. Success under one criterion should not be used as evidence for another. Second, calibration corrects scale only under the conditions represented by the calibration data. On DrivAerStar, scale factors fitted on Fastbacks produce approximately nominal results on disjoint Fastback cases but transfer differently to Notchback and Estateback (Table 6). On AirFRANS, scale factors fitted in distribution leave both methods overconfident under angle-of-attack extrapolation, and all reported growth ratios remain below one (Table 11). Because a positive scale factor cannot change uncertainty rankings or the relative growth of uncertainty between splits, a new application should reserve separate data for model selection, calibration, in-distribution testing, and testing under the shifts expected in deployment. Third, field-level validation is not sufficient when the final decision uses an integrated force, extremum, probe response, or other derived quantity. In the DrivAerStar study, sample-wise propagation changes the mean drag standard deviation by a factor of approximately 1.1 for concrete MC dropout and by factors of 15–22 for the ensemble relative to marginal propagation (Section 6.5). This result shows that the treatment of spatial and cross-channel dependencies can materially affect the reported uncertainty scale. When a derived quantity matters, field samples or an explicitly joint predictive distribution should therefore be propagated through the same calculation used by the engineering workflow. Finally, uncertainty should be evaluated alongside predictive accuracy and computational requirements. 24 The crash probe results illustrate the first point: GP total variance has the more credible raw interval magnitude, but its RMSE is 59.5 mm compared with 30.5 mm for concrete MC dropout (Table 13). The evaluated methods also require different numbers of trained models, stored checkpoints, and model evaluations per case (Table 9). An uncertainty estimate cannot compensate for an inaccurate predictive mean, and its training, storage, and inference requirements must be considered when selecting a method for deployment. Table 15 translates these findings into method-selection guidance.                     
+
+> Method Prediction interface Well suited to Checks required for a new prob-lem
+> GP-based Posterior epistemic marginal variance and total marginal variance including learned model-discrepancy variance Single-pass local uncertainty, predic-tive intervals, and case-level scores; epistemic variance can support data acquisition Mean accuracy, interval calibration, response to relevant shifts, sensitiv-ity to the learned features and GP configuration, and whether a joint distribution is needed for derived quantities Concrete MC dropout Coherent stochastic field sam-ples; sample disagreement es-timates epistemic uncertainty Spatially coherent uncertainty sce-narios and propagation to derived quantities using one trained model Convergence with the number of stochastic passes, learned dropout probabilities, interval calibration, predictive accuracy, and response to relevant shifts Deep ensemble Field samples from indepen-dently trained models; mem-ber disagreement estimates epistemic uncertainty A strong sampling-based reference and deployment settings where mul-tiple independently trained mem-bers and stored checkpoints are ac-ceptable Member diversity, sensitivity to training initialization, convergence with ensemble size, interval calibra-tion, predictive accuracy, and re-sponse to relevant shifts
+
+Table 15: Method-selection guidance for extending the evaluated UQ approaches to a new surrogate problem. The appropriate choice depends on the downstream decision, required prediction interface, and available training and inference budget. 
+
+No method is a default choice across these uses. For interval reporting, a new study should evaluate coverage, sharpness, and predictive accuracy on an independent test set after fixing any calibration procedure. For review prioritization or solver triage, it should evaluate error ranking and risk reduction directly; positive rescaling cannot improve these rankings. For OOD guardrails, it should test both detection and whether uncertainty grows at least as quickly as error across application-relevant shifts. For active learning, the epistemic component should be used and the acquisition strategy should ultimately be judged by the reduction in prediction error after new simulations are added. Implementation choices should be validated as part of this process. Sampling-based estimates require a convergence study over the number of stochastic passes or ensemble members. GP-based estimates require sensitivity checks for the learned representation, inducing-point coverage, kernel constraints, and variance parameterization. UQ metrics should be tracked during training because their best checkpoints need not coincide with those selected for mean accuracy. 
+
+# 9 Limitations 
+
+The complete method matrix is available only on DrivAerStar; AirFRANS and crash compare the GP-based and concrete MC dropout configurations without a deep ensemble. The reported bootstrap intervals quantify sensitivity to the finite DrivAerStar test sets rather than to model training. Training-run sensitivity is evaluated separately for the GP-based and concrete MC dropout configurations on DrivAerStar, but not for the complete method matrix or the other datasets. The GP-based method reports learned residual variance in addition to posterior epistemic variance, while the sampling configurations report epistemic disagreement only. We therefore use total variance for predictive-interval evaluation and compare GP posterior variance with sampling disagreement for epistemic tasks. The GP drag calculation uses pointwise marginals under an independence approximation because the current interface does not expose joint field samples. Concrete MC dropout and the ensemble are also evaluated with sample-wise propagation across all 300 cases. Post-hoc calibration is limited to positive scaling; conditional and conformal approaches are not evaluated. 25 Concrete MC dropout uses 20 stochastic passes on DrivAerStar and AirFRANS and 32 on crash; the DrivAerStar ensemble has five members. Their standard deviations contain finite-sample variation, illustrated in Figure 9. The GP-based configuration avoids inference-time sampling noise but is sensitive to its feature representation, inducing-point coverage, kernel constraints, residual-variance bounds, and objective schedule. 
+
+# 10 Conclusion 
+
+We evaluated predictive uncertainty for neural CAE surrogates on three large, physically distinct problems: vehicle aerodynamics across body styles, airfoil-flow prediction under angle-of-attack extrapolation, and transient automotive crash dynamics. The datasets contain complex geometries, large irregular meshes, multiple spatial output channels, and engineering quantities of direct practical interest. This setting allowed us to examine UQ not only as a statistical output but as information that must survive the scale, geometry variation, and aggregation found in CAE workflows. The experiments show that calibration, error discrimination, response to distribution shift, and engineering-quantity level usefulness are separate properties. A method that performs well on one need not perform well on another. In-distribution scaling corrects aggregate interval magnitude, but it cannot make uncertainty increase at the same rate as prediction error under distribution shift. Likewise, local correspondence between error and uncertainty does not guarantee useful case-level guardrails or reliable propagation to quantities of interest. Both GP-based and sampling-based uncertainty remain useful within this picture. GP total variance provides a strong raw interval scale in the DrivAerStar and crash configurations. GP epistemic variance retains meaningful field-error discrimination and gives stronger epistemic OOD detection than concrete MC dropout on AirFRANS, while concrete MC dropout gives stronger mesh-level error ranking on crash. On DrivAerStar, sample-wise propagation of fields materially changes the estimated drag-uncertainty magnitude relative to marginal propagation. The methods’ relative ordering therefore changes with the dataset and the engineering question, which is the central empirical result of this study. The next step is to extend the framework with conformal prediction so that finite-sample coverage guarantees under exchangeability can be studied alongside the probabilistic metrics used here, including an evaluation of coverage under structured distribution shifts. We also plan to evaluate these methods on larger and more diverse industrial datasets and to move beyond passive uncertainty reporting. Important downstream directions include uncertainty-guided geometry modification, acquisition of new simulations through active learning, and design-space exploration in which uncertainty influences where and how a surrogate is queried. These workflows will test whether uncertainty can improve an engineering process, rather than only whether it scores well after prediction. 
+
+# Acknowledgments 
+
+We thank Sudeep Chavare for sharing the automotive crash dataset used in this study. 
+
+# References 
+
+[1] Jiyan Qiu, Lyulin Kuang, Guan Wang, Yichen Xu, Leiyao Cui, Shaotong Fu, Yixin Zhu, and Ruihua Zhang. DrivAerStar: An industrial-grade CFD dataset for vehicle aerodynamic optimization. In Advances in Neural Information Processing Systems 38, Datasets and Benchmarks Track , volume 38, 2025. [2] Florent Bonnet, Jocelyn Ahmed Mazari, Paola Cinnella, and Patrick Gallinari. AirFRANS: High fidelity computational fluid dynamics dataset for approximating reynolds-averaged Navier–Stokes solutions. In 
+
+Advances in Neural Information Processing Systems 35 (NeurIPS 2022), Datasets and Benchmarks Track , volume 35, pages 23463–23478, 2022. [3] Mohammad Amin Nabian, Sudeep Chavare, Deepak Akhare, Rishikesh Ranade, Ram Cherukuri, and Srinivas Tadepalli. Automotive crash dynamics modeling accelerated with machine learning. Technical 26 Report 2026-01-0568, SAE International, 2026. URL https://doi.org/10.4271/2026-01-0568 . Also available as arXiv:2510.15201. [4] Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncertainty estimation using deep ensembles. In Advances in Neural Information Processing Systems 30 ,2017. [5] Yarin Gal and Zoubin Ghahramani. Dropout as a Bayesian approximation: Representing model uncertainty in deep learning. In Proceedings of the 33rd International Conference on Machine Learning ,2016. [6] Yarin Gal, Jiri Hron, and Alex Kendall. Concrete dropout. In Advances in Neural Information Processing Systems 30 , 2017. [7] Carl Edward Rasmussen and Christopher K. I. Williams. Gaussian Processes for Machine Learning .MIT Press, 2006. [8] Michalis Titsias. Variational learning of inducing variables in sparse Gaussian processes. In Proceedings of the 12th International Conference on Artificial Intelligence and Statistics , 2009. [9] James Hensman, Alexander G. de G. Matthews, and Zoubin Ghahramani. Scalable variational Gaussian process classification. In Proceedings of the 18th International Conference on Artificial Intelligence and Statistics , 2015. [10] Andrew Gordon Wilson, Zhiting Hu, Ruslan Salakhutdinov, and Eric P. Xing. Deep kernel learning. In 
+
+Proceedings of the 19th International Conference on Artificial Intelligence and Statistics , 2016. [11] Jeremiah Zhe Liu, Zi Lin, Shreyas Padhy, Dustin Tran, Tania Bedrax-Weiss, and Balaji Lakshminarayanan. Simple and principled uncertainty estimation with deterministic deep learning via distance awareness. In Advances in Neural Information Processing Systems 33 , pages 7498–7512, 2020. [12] Joost van Amersfoort, Lewis Smith, Andrew Jesson, Oscar Key, and Yarin Gal. On feature collapse and deep kernel learning for single forward pass uncertainty. arXiv preprint arXiv:2102.11409 , 2021. [13] Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern neural networks. In Proceedings of the 34th International Conference on Machine Learning , 2017. [14] Volodymyr Kuleshov, Nathan Fenner, and Stefano Ermon. Accurate uncertainties for deep learning using calibrated regression. In Proceedings of the 35th International Conference on Machine Learning , 2018. [15] Tilmann Gneiting and Adrian E. Raftery. Strictly proper scoring rules, prediction, and estimation. 
+
+Journal of the American Statistical Association , 102(477):359–378, 2007. [16] Yonatan Geifman and Ran El-Yaniv. Selective classification for deep neural networks. In Advances in Neural Information Processing Systems 30 , pages 4878–4887, 2017. [17] Eddy Ilg, Özgün Çiçek, Silvio Galesso, Aaron Klein, Osama Makansi, Frank Hutter, and Thomas Brox. Uncertainty estimates and multi-hypotheses networks for optical flow. In European Conference on Computer Vision , 2018. [18] Yaniv Ovadia, Emily Fertig, Jie Ren, Zachary Nado, D. Sculley, Sebastian Nowozin, Joshua V. Dillon, Balaji Lakshminarayanan, and Jasper Snoek. Can you trust your model’s uncertainty? evaluating predictive uncertainty under dataset shift. In Advances in Neural Information Processing Systems 32 ,2019. [19] Anastasios N. Angelopoulos and Stephen Bates. Conformal prediction: A gentle introduction. Foundations and Trends in Machine Learning , 16(4):494–591, 2023. 27 [20] Vignesh Gopakumar, Ander Gray, Lorenzo Zanisi, Timothy Nunn, Daniel Giles, Matt Kusner, Stanislas Pamela, and Marc Peter Deisenroth. Calibrated physics-informed uncertainty quantification. In 
+
+Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 20103–20141. PMLR, 2025. URL https://proceedings.mlr.press/ v267/gopakumar25a.html .[21] Yinhao Zhu and Nicholas Zabaras. Bayesian deep convolutional encoder–decoder networks for surrogate modeling and uncertainty quantification. Journal of Computational Physics , 366:415–447, 2018. doi: 10.1016/j.jcp.2018.04.018. URL https://doi.org/10.1016/j.jcp.2018.04.018 .[22] Nick Winovich, Karthik Ramani, and Guang Lin. ConvPDE-UQ: Convolutional neural networks with quantified uncertainty for heterogeneous elliptic partial differential equations on varied domains. 
+
+Journal of Computational Physics , 394:263–279, 2019. doi: 10.1016/j.jcp.2019.05.026. URL https: //doi.org/10.1016/j.jcp.2019.05.026 .[23] Nicholas Geneva and Nicholas Zabaras. Quantifying model form uncertainty in reynolds-averaged turbulence models with bayesian deep neural networks. Journal of Computational Physics , 383:125–147, 2019. doi: 10.1016/j.jcp.2019.01.021. URL https://doi.org/10.1016/j.jcp.2019.01.021 .[24] Apostolos F. Psaros, Xuhui Meng, Zongren Zou, Ling Guo, and George Em Karniadakis. Un-certainty quantification in scientific machine learning: Methods, metrics, and comparisons. Jour-nal of Computational Physics , 477:111902, 2023. doi: 10.1016/j.jcp.2022.111902. URL https: //doi.org/10.1016/j.jcp.2022.111902 .[25] Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial differential equations. In International Conference on Learning Representations , 2021. [26] Lu Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George Em Karniadakis. Learning nonlinear operators via DeepONet based on the universal approximation theorem of operators. Nature Machine Intelligence , 3(3):218–229, 2021. [27] Haixu Wu, Huakun Luo, Haowen Wang, Jianmin Wang, and Mingsheng Long. Transolver: A fast transformer solver for PDEs on general geometries. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of PMLR , pages 53681–53705, 2024. [28] Huakun Luo, Haixu Wu, Hang Zhou, Lanxiang Xing, Yichen Di, Jianmin Wang, and Mingsheng Long. Transolver++: An accurate neural solver for PDEs on million-scale geometries. In Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research ,pages 41432–41449. PMLR, 2025. URL https://proceedings.mlr.press/v267/luo25o.html .[29] Rishikesh Ranade, Mohammad Amin Nabian, Kaustubh Tangsali, Alexey Kamenev, Oliver Hennigh, Ram Cherukuri, and Sanjay Choudhry. DoMINO: A decomposable multi-scale iterative neural operator for modeling large scale engineering simulations. arXiv preprint arXiv:2501.13350 , 2025. doi: 10.48550/ arXiv.2501.13350. URL https://arxiv.org/abs/2501.13350 .[30] Corey Adams, Rishikesh Ranade, Ram Cherukuri, and Sanjay Choudhry. GeoTransolver: Learning physics on irregular domains using multi-scale geometry aware physics attention transformer. arXiv preprint arXiv:2512.20399 , 2025. doi: 10.48550/arXiv.2512.20399. URL https://arxiv.org/abs/2512.20399 .[31] Emilia Magnani, Marvin Pförtner, Tobias Weber, and Philipp Hennig. Linearization turns neural operators into function-valued Gaussian processes. In Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 42421–42452. PMLR, 2025. URL https://proceedings.mlr.press/v267/magnani25a.html .[32] Ralph C. Smith. Uncertainty Quantification: Theory, Implementation, and Applications . Society for Industrial and Applied Mathematics, 2013. doi: 10.1137/1.9781611973228. 28 [33] Yarin Gal, Riashat Islam, and Zoubin Ghahramani. Deep Bayesian active learning with image data. In Proceedings of the 34th International Conference on Machine Learning , volume 70 of Proceedings of Machine Learning Research , pages 1183–1192, 2017. URL https://proceedings.mlr.press/v70/ gal17a.html .[34] Alex Kendall and Yarin Gal. What uncertainties do we need in Bayesian deep learning for computer vision? In Advances in Neural Information Processing Systems 30 , 2017. [35] George Casella and Roger L. Berger. Statistical Inference . Duxbury, Pacific Grove, CA, 2nd edition, 2002. [36] Marc C. Kennedy and Anthony O’Hagan. Bayesian calibration of computer models. Journal of the Royal Statistical Society: Series B , 63(3):425–464, 2001. doi: 10.1111/1467-9868.00294. [37] Deepak Akhare, Mohammad Amin Nabian, Corey Adams, Sudeep Chavare, and Sanjay Choudhry. High-fidelity industrial crash dynamics prediction via geometry-aware operator learning with memory-efficient low-rank attention. arXiv preprint arXiv:2605.27758 , 2026. doi: 10.48550/arXiv.2605.27758. URL 
+
+https://arxiv.org/abs/2605.27758 .[38] NVIDIA Corporation. NVIDIA PhysicsNeMo: A framework for physics-ML model development, 2025. Software, https://github.com/NVIDIA/physicsnemo .[39] NVIDIA Corporation. NVIDIA PhysicsNeMo-CFD: Computational fluid dynamics workflows, 2026. Software, https://github.com/NVIDIA/physicsnemo-cfd .[40] Kaustubh Tangsali, Rishikesh Ranade, Mohammad Amin Nabian, Alexey Kamenev, Peter Sharpe, Neil Ashton, Ram Cherukuri, and Sanjay Choudhry. A benchmarking framework for AI models in automotive aerodynamics. arXiv preprint arXiv:2507.10747 , 2025. doi: 10.48550/arXiv.2507.10747. URL https://arxiv.org/abs/2507.10747 .
+
+# Appendix A Evaluated Configuration Details 
+
+Table 16 records settings that materially affect the interpretation or reproduction of the UQ results. The implementation source and experiment configuration remain the authoritative specification for layer-by-layer architecture and optimizer defaults.                       
+
+> Dataset Method UQ-specific settings
+> DrivAerStar GP 1,024 inducing points per output; DKL widths 128/16; Matérn-5/2ARD; ra-dial L2feature normalization; residual head 64/64; residual-standard-deviation bounds 0.01–10; 200,000 geometry samples; 51,200-point GP inference chunks. DrivAerStar Concrete MC dropout Learned concrete probabilities in the backbone; entropy coefficient 10 −4; 20 stochastic passes; 200,000 geometry samples. DrivAerStar Ensemble Five independent members with training seeds 1000–1004; member 0 is the deterministic reference; five member predictions at inference. AirFRANS GP 1,024 inducing points per output; DKL widths 128/16; residual head 64/64; 12,288 points per GP update; KL and GP-loss warmup through epoch 30. AirFRANS Concrete MC dropout Entropy coefficient 10 −4; matched GeoTransolver backbone and data resolution; 20 passes for manuscript evaluation. Crash GP One checkpoint for mesh and probe evaluation; 32,768 GP-objective nodes per time step; 512 inducing points; 128/16 DKL transform; 64/64 residual head. Crash Concrete MC dropout Entropy coefficient 10 −4; 32 inference passes; time-conditional GeoTransolver backbone with FLARE attention.
+
+Table 16: UQ-specific settings of the evaluated configurations. 
+
+DrivAerStar and AirFRANS use AdamW with learning rate 10 −3, weight decay 10 −4, (β1, β 2) = (0 .9, 0.999) ,and a StepLR schedule with factor 0.5 every 100 epochs. Their GP configurations ramp both the KL coefficient and overall negative-ELBO weight over epochs 0–30, use a final KL multiplier of 0.5, a unit-weight mean-MSE anchor, and a 0.5-weight latent-distance penalty over 4,096 pairs. Crash uses Adam with learning rate decayed 29 from 3 × 10 −4 to 10 −6 and weight decay 10 −4. Its GP schedules ramp the KL term over epochs 10–60 and negative-ELBO weight over epochs 5–40; the final KL and mean-MSE weights are one, and the latent-distance penalty has weight 0.1 over 4,096 pairs. All GP heads use gradient-norm clipping at 10. 
+
+Backbone configurations. The DrivAerStar and AirFRANS experiments use GeoTransolver backbones with 20 transformer blocks, hidden width 256, eight attention heads, and 128 physical-state slices. DrivAerStar uses six 32-dimensional local-geometry scales, producing a 448-dimensional per-point representation, whereas AirFRANS uses four scales and a 384-dimensional representation. DrivAerStar receives centered surface coordinates and normals together with air density and freestream velocity, and predicts pressure and three wall-shear-stress components. AirFRANS receives centered volume coordinates, a direction relative to the airfoil centroid, freestream velocity, and angle of attack, and predicts two velocity components, pressure, and turbulent viscosity. Both configurations sample 51,200 field points during training; their geometry branches use 200,000 DrivAerStar surface points and 768 AirFRANS airfoil points, respectively. The corresponding GeoTransolver backbones contain approximately 29.49 million and 21.66 million parameters. The crash experiments use a time-conditional GeoTransolver with FLARE attention. This configuration has five transformer blocks, hidden width 256, eight heads, 128 global queries, and a 320-dimensional per-node representation. Its inputs are the undeformed coordinates, component thickness, and normalized query time, and its outputs are the three displacement components. The backbone operates on the full 384,862-node mesh. The selected GP configuration evaluates its variational objective on 32,768 sampled nodes per training step. The deterministic and concrete MC dropout configurations contain approximately 5.60 million parameters, while the complete GP-based configuration contains approximately 6.46 million. The backbone hyperparameters are shared across methods. 
+
+GP implementation. For each dataset, the backbone first produces a learned representation at every predicted field location. The evaluated GP configurations then apply a pointwise deep-kernel network with widths 128 and 16, followed by normalization that retains both feature direction and magnitude. This produces a 17-dimensional kernel input. Each physical output channel is modeled by an independent sparse variational GP with a Matérn-5/2 ARD kernel and its own variational parameters and inducing locations. DrivAerStar and AirFRANS use 1,024 inducing points per output channel, while crash uses 512. The latent GP posterior supplies the predictive mean and epistemic variance. A separate two-layer, 64-unit network maps the same kernel features to an input-dependent residual-variance term, and total predictive variance is formed by adding this term to the GP epistemic variance. For crash, normalized time is included in the backbone input and is also appended to the backbone representation before the deep-kernel transformation. 
+
+# Appendix B DrivAerStar Reproducibility Across Training Runs 
+
+To evaluate sensitivity to model training, we trained and evaluated the GP-based and concrete MC dropout configurations three times using independent random seeds. Each training run was calibrated separately on the same disjoint 100-case Fastback calibration set and then evaluated on the three 100-case test sets. Table 17 summarizes the variation in field-level accuracy and UQ metrics across these training runs.                                               
+
+> Method Pressure L2z-RMS F z-RMS N/E Epistemic ρTotal AUSE
+> GP-based 0.252 ±0.009 1.005 ±0.005 1.274 ±0.024 0.620 ±0.008 0.027 ±0.002
+> Concrete MC dropout 0.221 ±0.002 1.001 ±0.002 1.121 ±0.003 0.567 ±0.005 0.038 ±0.002
+> Table 17: DrivAerStar sensitivity to model training. Values are mean ±sample standard deviation over three independent training runs. Pressure relative L2error, epistemic error–uncertainty Spearman correlation ρ, and total AUSE are first averaged over Fastback, Notchback, and Estateback. Calibrated z-RMS is shown separately for Fastback (F) and the average of the held-out Notchback and Estateback classes (N/E).
+
+The field-level conclusions are consistent across the three training runs. Concrete MC dropout retains lower pressure error, while the GP-based method retains stronger field-error discrimination and lower total AUSE. Separate calibration brings both methods close to unit z-RMS on Fastback, but interval scale still degrades on the held-out body styles, more strongly for the GP configuration. 30 Table 18 evaluates whether drag and marginal drag-uncertainty rankings are similarly stable across training runs.                          
+
+> Comparison Method Fastback Notchback Estateback
+> Predicted vs. true drag GP-based 0.946–0.967 0.932–0.946 0.861–0.881 Concrete MC dropout 0.955–0.961 0.921–0.935 0.888–0.917 Predicted drag across training runs GP-based 0.976–0.986 0.972–0.981 0.974–0.981 Concrete MC dropout 0.988–0.991 0.976–0.982 0.977–0.983 Marginal drag UQ across training runs GP-based 0.958–0.973 0.949–0.976 0.940–0.964 Concrete MC dropout 0.975–0.985 0.984–0.989 0.891–0.903
+
+Table 18: Stability of DrivAerStar drag and marginal drag-uncertainty rankings. Entries are ranges of Spearman correlation over three independent training runs for predicted-versus-true drag and over the three pairs of runs for between-run agreement. 
+
+For both the GP-based and concrete MC dropout methods, the Spearman correlation between predicted and true drag exceeds 0.86 for every body style and training run. Predicted-drag rankings are also consistent between runs, with correlations above 0.97, and marginal drag-uncertainty rankings have correlations above 0.89. The association between drag uncertainty and absolute drag error is less consistent because small changes in integrated field residuals can reorder absolute drag errors. 31
