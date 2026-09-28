@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-27 22:37:32 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-28 23:45:24 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天以速读为主、精读为0，速读清单聚焦贝叶斯推断、在线预测与不确定性量化。</p>
-<p>最值得看的是7.0分的《Bayesian inference, on-line forecasting and model choice for large VAR models with Cholesky stochastic volatility》，其次是6.0分的《Predictive Uncertainty for Neural CAE Surrogates》，分别对应大规模VAR在线预测/模型选择与神经CAE代理的预测不确定性。</p>
-<p>普通读者可先读7.0分那篇的摘要与结论，再按兴趣延伸到神经代理不确定性或分布式贝叶斯旅行时层析推断。</p>
+<p>今日日报筛出6篇，精读2篇、速读4篇，主线集中在贝叶斯不确定性量化与扩散/采样推断。</p>
+<p>最值得看的是两篇9分精读：用模拟推断为fMRI功能连接做贝叶斯不确定性量化，以及用深度展开在Split-Gibbs扩散后验采样中替代MCMC。</p>
+<p>普通读者可先读这两篇精读，再按需扫速读里的在线学习、粒子滤波与预测重采样校准方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Uncertainty Quantification for fMRI Functional Connectivity via Simulation-Based Inference">Bayesian Uncertainty Quantification for fMRI Functional Connectivity via Simulation-Based Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning to Replace MCMC in Split-Gibbs Diffusion Posterior Sampling via Deep Unfolding">Learning to Replace MCMC in Split-Gibbs Diffusion Posterior Sampling via Deep Unfolding</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -96,9 +96,9 @@
     <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian inference, on-line forecasting and model choice for large VAR models with Cholesky stochastic volatility">Bayesian inference, on-line forecasting and model choice for large VAR models with Cholesky stochastic volatility</span></li><li><span class="dpr-home-dashboard-paper-title" title="Predictive Uncertainty for Neural CAE Surrogates">Predictive Uncertainty for Neural CAE Surrogates</span></li><li><span class="dpr-home-dashboard-paper-title" title="Distributed Proximal Stein Variational Gradient Descent Algorithm for Large-scale Bayesian Inference in Traveltime Tomography">Distributed Proximal Stein Variational Gradient Descent Algorithm for Large-scale Bayesian Inference in Traveltime Tomography</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Online Learning via Learned Latent Bayesian Tracking">Online Learning via Learned Latent Bayesian Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning to Bias: Machine Learning-Enhanced Particle Filters">Learning to Bias: Machine Learning-Enhanced Particle Filters</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bagged Martingale Posteriors: Calibrated Uncertainty Quantification for Predictive Resampling">Bagged Martingale Posteriors: Calibrated Uncertainty Quantification for Predictive Resampling</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
 </section>
 </div>
 
