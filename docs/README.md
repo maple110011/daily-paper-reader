@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-28 23:45:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 22:54:14 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日日报筛出6篇，精读2篇、速读4篇，主线集中在贝叶斯不确定性量化与扩散/采样推断。</p>
-<p>最值得看的是两篇9分精读：用模拟推断为fMRI功能连接做贝叶斯不确定性量化，以及用深度展开在Split-Gibbs扩散后验采样中替代MCMC。</p>
-<p>普通读者可先读这两篇精读，再按需扫速读里的在线学习、粒子滤波与预测重采样校准方向。</p>
+<p>今天精读2/10篇，神经后验估计成绝对主角，量子系统推断与反事实预测双双上榜。</p>
+<p>最值得看的是9.0分的量子系统仿真推断和8.0分的CAFE快速后验反事实预测，核心方向是“仿真/快速后验估计”驱动的推断与预测。</p>
+<p>普通读者建议先读这两篇精读，再按兴趣速览GP-SDE不规则观测学习和最优传输Dropout等不确定性方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,7 +83,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Uncertainty Quantification for fMRI Functional Connectivity via Simulation-Based Inference">Bayesian Uncertainty Quantification for fMRI Functional Connectivity via Simulation-Based Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning to Replace MCMC in Split-Gibbs Diffusion Posterior Sampling via Deep Unfolding">Learning to Replace MCMC in Split-Gibbs Diffusion Posterior Sampling via Deep Unfolding</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Simulation-Based Quantum System Inference with Neural Posterior Estimation">Simulation-Based Quantum System Inference with Neural Posterior Estimation</span></li><li><span class="dpr-home-dashboard-paper-title" title="CAFE: Counterfactual Prediction via Fast Posterior Estimation">CAFE: Counterfactual Prediction via Fast Posterior Estimation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Online Learning via Learned Latent Bayesian Tracking">Online Learning via Learned Latent Bayesian Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning to Bias: Machine Learning-Enhanced Particle Filters">Learning to Bias: Machine Learning-Enhanced Particle Filters</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bagged Martingale Posteriors: Calibrated Uncertainty Quantification for Predictive Resampling">Bagged Martingale Posteriors: Calibrated Uncertainty Quantification for Predictive Resampling</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Recovery-Directed Symbolic Distillation of Neural Likelihoods">Recovery-Directed Symbolic Distillation of Neural Likelihoods</span></li><li><span class="dpr-home-dashboard-paper-title" title="Simulation-Free Learning of GP-SDEs from Irregular Observations">Simulation-Free Learning of GP-SDEs from Irregular Observations</span></li><li><span class="dpr-home-dashboard-paper-title" title="Optimal Transport Dropout for Structured Predictive Uncertainty">Optimal Transport Dropout for Structured Predictive Uncertainty</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>5</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>3</strong></span></div>
 </section>
 </div>
 
