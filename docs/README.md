@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 22:54:14 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:03:17 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读2/10篇，神经后验估计成绝对主角，量子系统推断与反事实预测双双上榜。</p>
-<p>最值得看的是9.0分的量子系统仿真推断和8.0分的CAFE快速后验反事实预测，核心方向是“仿真/快速后验估计”驱动的推断与预测。</p>
-<p>普通读者建议先读这两篇精读，再按兴趣速览GP-SDE不规则观测学习和最优传输Dropout等不确定性方法。</p>
+<p>今天只速读了1篇、精读为零，唯一入选的是评分6.0的贝叶斯非参数因子分析论文。</p>
+<p>这篇值得看的方向是它把边缘化Dirichlet过程列聚类与spike-and-slab稀疏先验结合，用非参数方式自动处理因子载荷的列分组与稀疏性，适合关注高维降维、因子个数不确定场景的读者。</p>
+<p>普通读者可先把它当作方法参考而非结论依据，若你手头有高维数据分群或降维需求，可再找该方向更高分或精读过的论文对照验证。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Simulation-Based Quantum System Inference with Neural Posterior Estimation">Simulation-Based Quantum System Inference with Neural Posterior Estimation</span></li><li><span class="dpr-home-dashboard-paper-title" title="CAFE: Counterfactual Prediction via Fast Posterior Estimation">CAFE: Counterfactual Prediction via Fast Posterior Estimation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Recovery-Directed Symbolic Distillation of Neural Likelihoods">Recovery-Directed Symbolic Distillation of Neural Likelihoods</span></li><li><span class="dpr-home-dashboard-paper-title" title="Simulation-Free Learning of GP-SDEs from Irregular Observations">Simulation-Free Learning of GP-SDEs from Irregular Observations</span></li><li><span class="dpr-home-dashboard-paper-title" title="Optimal Transport Dropout for Structured Predictive Uncertainty">Optimal Transport Dropout for Structured Predictive Uncertainty</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Nonparametric Factor Analysis via Marginalized Dirichlet Process Column Clustering with Spike-and-Slab Sparsity">Bayesian Nonparametric Factor Analysis via Marginalized Dirichlet Process Column Clustering with Spike-and-Slab Sparsity</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>5</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 
