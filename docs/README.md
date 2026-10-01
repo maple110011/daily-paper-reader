@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:03:17 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-01 23:11:06 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天只速读了1篇、精读为零，唯一入选的是评分6.0的贝叶斯非参数因子分析论文。</p>
-<p>这篇值得看的方向是它把边缘化Dirichlet过程列聚类与spike-and-slab稀疏先验结合，用非参数方式自动处理因子载荷的列分组与稀疏性，适合关注高维降维、因子个数不确定场景的读者。</p>
-<p>普通读者可先把它当作方法参考而非结论依据，若你手头有高维数据分群或降维需求，可再找该方向更高分或精读过的论文对照验证。</p>
+<p>今日共生成 5 篇推荐（精读 0 篇，速读 5 篇）</p>
+<p>速读：《FPCA-Enhanced Simulation-Based Inference for Robust Type Ia Supernova Cosmology》（7.0/10）, 《Amortized Bayesian Disease Mapping and Boundary Detection on Heterogeneous Spatial Graphs》（7.0/10）, 《Bayesian calibration of adaptive-behavior SIR models for multi-wave COVID-19 incidence in New York City》（6.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Nonparametric Factor Analysis via Marginalized Dirichlet Process Column Clustering with Spike-and-Slab Sparsity">Bayesian Nonparametric Factor Analysis via Marginalized Dirichlet Process Column Clustering with Spike-and-Slab Sparsity</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FPCA-Enhanced Simulation-Based Inference for Robust Type Ia Supernova Cosmology">FPCA-Enhanced Simulation-Based Inference for Robust Type Ia Supernova Cosmology</span></li><li><span class="dpr-home-dashboard-paper-title" title="Amortized Bayesian Disease Mapping and Boundary Detection on Heterogeneous Spatial Graphs">Amortized Bayesian Disease Mapping and Boundary Detection on Heterogeneous Spatial Graphs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian calibration of adaptive-behavior SIR models for multi-wave COVID-19 incidence in New York City">Bayesian calibration of adaptive-behavior SIR models for multi-wave COVID-19 incidence in New York City</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 </div>
 
