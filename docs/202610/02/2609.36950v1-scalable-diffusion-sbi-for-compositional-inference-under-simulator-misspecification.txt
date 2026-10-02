@@ -1,0 +1,2462 @@
+Title: Scalable Diffusion SBI for Compositional Inference under Simulator Misspecification
+
+URL Source: https://arxiv.org/pdf/2609.36950v1
+
+Published Time: Wed, 30 Sep 2026 01:33:10 GMT
+
+Number of Pages: 51
+
+Markdown Content:
+Preprint 
+
+# SCALABLE DIFFUSION SBI FOR COMPOSITIONAL 
+
+# INFERENCE UNDER SIMULATOR MISSPECIFICATION 
+
+Vincent D. Zaballa & Elliot E. Hui 
+
+University of California, Irvine 
+
+vzaballa@uci.edu 
+
+## ABSTRACT 
+
+Simulation-based inference is challenging when many heterogeneous observa-tions must be composed, hierarchical latent structure must be preserved, and the simulator is misspecified relative to observed data. We develop sampling and fine-tuning methods for diffusion-based inference in design-conditional settings, where the same simulator is queried across different experimental conditions ξ.We extend compositional score-based inference with a continuous-time diffusion coefficient that accounts for the number of observations, avoiding Jacobian and auxiliary-covariance corrections. We introduce Hierarchical Blockwise Diffusion Sampling (HBDS), which infers shared parameters and group-specific latent states using a single pretrained model, with the hierarchy specified only at sampling time. Together, these methods support variable observation sets and groupings without retraining. To address misspecification, we introduce path-regularized fine-tuning that adapts the learned likelihood to observations and transfers corrections to posterior inference. Using Girsanov’s theorem, we quantify path divergence between pretrained and fine-tuned models across experimental designs and interpret it alongside predictive errors to distinguish candidate misspecification correction from unnecessary adaptation. We evaluate compositional sampling on exact-score Gaussian and Simple Likelihood, Complex Posterior benchmarks, HBDS with analytic and learned scores on a controlled hierarchical model, and fine-tuning and localization on a separate analytic model with known design-dependent discrep-ancy. Finally, we apply the framework to 940 measurements across four cell lines in a mechanistic Bone Morphogenetic Protein signaling model, where fine-tuning improves posterior-predictive accuracy relative to the pretrained model and shifts posterior marginals toward the least-squares reference while retaining spread. 
+
+## 1 INTRODUCTION 
+
+Mechanistic simulators compress scientific knowledge into predictive models whose latent parameters carry physical or biological meaning. Simulation-based inference (SBI) (Cranmer et al., 2020) can amortize Bayesian inference in these models even when their likelihoods cannot be evaluated. In reality, however, inference rarely consists of conditioning on a single observation from a perfectly specified simulator. Data may contain many heterogeneous observations, shared and group-specific latent variables, and systematic discrepancies between the simulator and the observed system. These challenges have motivated several complementary directions in SBI. Compositional methods aggregate multiple observations in a score-based model without retraining a posterior estimator, beginning with Factorized Neural Posterior Score Estimation (F-NPSE) (Geffner et al., 2023) and followed by covariance-aware diffusion samplers for tall-data SBI (Linhart et al., 2026). Meanwhile, recent hierarchical approaches explicitly model shared and local latent structure through hierarchical estimators or training constructions (Arruda et al., 2026; Charles et al., 2026; Heinrich et al., 2024). Separately, simulator misspecification has motivated a growing literature on detection and mitigation (Boelts, 2026; Cannon et al., 2022), including explicit discrepancy models (Ward et al., 2022), misspecification-aware representations and summary statistics (Huang et al., 2023b; Schmitt et al., 2024), and distributional alignment or calibration methods (Wehenkel et al., 2025). These lines of work address composition, hierarchy, and misspecification, but typically as distinct problems. 1arXiv:2609.36950v1 [cs.LG] 29 Sep 2026 Preprint (ξ1, y 1) (ξ2, y 2) · · · (ξn, y n)       
+
+> Composition-aware SDE + ULA
+> New diffusion coefficient gn(t)
+> Posterior samples schematic
+> θ2
+> θ1
+> Target VP noise gn(t)
+> Shared parameters
+> θR1
+> D1
+> Group 1
+> R2
+> D2
+> Group 2
+> RK
+> DK
+> Group K
+
+· · ·  
+
+> + observed designs
+> A(θref  , ξ )
+> high low
+> design  ξ2
+> design ξ1
+> simulator–data mismatch
+
+Figure 1: Schematic overview of the framework. (Left ) Compositional sampling combines ob-servations using the derived diffusion coefficient gn(t) and optional Langevin correctors, without retraining. (Middle ) HBDS alternates updates of shared parameters θ and group-specific latent states Rk conditioned on each group’s data Dk. ( Right ) Path divergence A(θref , ξ ) measures the magnitude of likelihood adaptation across experimental designs. Comparing this field with predictive improvement helps distinguish candidate misspecification correction from over-adaptation. We study how these requirements can be combined within a single diffusion-based SBI framework (Sharrock et al., 2024). Our central idea is to treat a pretrained amortized conditional model as a reusable inference engine: observation sets can be composed, hierarchical structure introduced at sampling time, and the simulator-trained surrogate adapted to observed data while retaining posterior inference in the original mechanistic parameterization. Achieving the last of these requires likelihood and posterior score representations to remain coupled as the simulator-trained surrogate is adapted to observed data. We use the Simformer of Gloeckler et al. (2024) as the diffusion backbone and introduce a new mechanism for transfer learning (Pan & Yang, 2010) through shared embeddings, allowing likelihood fine-tuning to update representations used for posterior inference (§ G.7). The framework is summarized in Figure 1. Building on this coupled surrogate, our contributions are: • Composition-aware diffusion sampling. We derive an n-dependent continuous-time diffusion coefficient for compositional SBI, extending F-NPSE to efficient SDE sampling while avoiding the Jacobian and auxiliary-covariance costs of JAC and GAUSS. • Hierarchical inference at sampling time. We introduce Hierarchical Blockwise Diffusion Sampling (HBDS), reusing a single joint diffusion model to infer shared and group-specific latents with hierarchy introduced only at sampling time. • Path-space adaptation and localization. We fine-tune the surrogate likelihood to observations while transferring the correction to posterior inference, and use Girsanov’s theorem to isolate 
+
+where model misspecification may occur. • Large-scale systems biology inference. We apply the full framework to a Bone Morphogenetic Protein (BMP) signaling simulator with 60 shared parameters, five receptor quantities per cell line, and 940 observations, showing how composition, hierarchy, and misspecification-aware adaptation jointly make SBI practical on a nontrivial scientific model. 
+
+## 2 BACKGROUND 
+
+2.1 DESIGN -DEPENDENT SIMULATION -BASED INFERENCE 
+
+SBI considers a simulator from which observations can be sampled conditional on latent parameters and, when relevant, experimental conditions. In that setting we write y ∼ peval (y | θ), where 
+
+peval (y, θ ) = peval (y | θ) p(θ) is an expert simulator , distinct from the unknown true data-generating process p∗(y, θ ). We adopt the peval (y | θ) notation of Smith et al. (2025) and use the design-dependent setting where an experimental design ξ alters the joint model and resulting posterior, yielding peval (y, θ | ξ) and related p∗(y, θ | ξ). We represent a simulator as a function 
+
+f : Ξ × Θ −→ Y , Ξ ⊂ RD , Θ ⊂ RM , Y ⊂ RB ,
+
+2Preprint where Ξ, Θ, and Y denote the spaces of experimental designs, latent model parameters, and observa-tions, respectively. The simulator generates samples from the prior predictive distribution, θ ∼ p(θ)
+
+and y ∼ peval (y | θ, ξ ), which provide training data for amortized density, ratio, or score estimators targeting quantities such as the posterior p(θ | y, ξ ) or surrogate likelihood p(y | θ, ξ ).2.2 MASK -CONDITIONED JOINT DIFFUSION MODELS 
+
+Diffusion-based SBI often trains an estimator for a particular inference task, such as posterior or likelihood estimation (Sharrock et al., 2024). Mask-conditioned joint diffusion models instead support different conditioning patterns within a single network (Gloeckler et al., 2024). Variables such as 
+
+y, ξ, and θ are represented by tokens encoding their identity, value, and whether they are latent or conditioned. For d modeled variables, a condition mask MC ∈ { 0, 1}d identifies those held fixed, with MC = (0 , . . . , 0) giving an unconditional model. An attention mask ME incorporates the expert model’s graphical structure into the transformer (Weilbach et al., 2023). Writing the tokenized variables collectively as y0, a prescribed forward perturbation kernel pt(yt | y0)
+
+provides noisy versions yt. The masked input yMC 
+
+> t
+
+retains clean values for conditioned variables and noisy values for latent variables. The network learns the conditional score, the gradient of the log density with respect to latent variables, through masked denoising score matching (Hyvärinen, 2005; Vincent, 2011). We define 
+
+ℓ(ϕ, M C , t, y 0, y t) = ζ(t)(1 − MC )
+
+
+
+sME
+
+> ϕ
+
+ yMC 
+
+> t
+
+, t  − ∇ yt log pt
+
+ yt|y0
+
+
+
+,
+
+where ζ(t) weights the noise levels and (1 − MC ) selects latent coordinates. We minimize the expected squared residual, 
+
+L(ϕ) = EMC ,t,y 0,y t
+
+h
+
+ℓ ϕ, M C , t, y 0, y t
+
+ 22
+
+i
+
+,
+
+yielding the pretrained (PT) model pϕ0 (y, θ | ξ), where ϕ0 denotes the PT network parameters. The choice of condition masks and their frequency during training influences conditional sampling performance (§ F). 2.3 SCORE -BASED DIFFUSION SAMPLING 
+
+The learned conditional score defines a sampler that reverses the noising used during pretraining. We use a variance-preserving SDE (VP-SDE), the continuous-time limit of the forward Gaussian noising chain in denoising diffusion probabilistic models (DDPMs) (Ho et al., 2020; Song et al., 2021). At fixed conditioning, let yt denote the variables being generated and suppress the conditioning arguments. The forward process transforms p0(y0) toward a tractable Gaussian pT (yT ), and the learned score sϕ(yt, t ) ≈ ∇ yt log pt(yt) gives the reverse dynamics, 
+
+dy t =
+
+f (yt, t )dt + g(t)dw, (forward) 
+
+[f (yt, t ) − g(t)2sϕ(yt, t )] dt + g(t)d←
+
+w, (reverse) ,
+
+where w and ←
+
+w are forward- and reverse-time Wiener processes, and f and g are the drift and diffusion coefficients (Anderson, 1982; Song et al., 2021). For the VP-SDE, f (y, t ) = − 12 β(t)y and 
+
+g(t) = pβ(t) for a nonnegative noise rate β(t). Sampling integrates the reverse SDE from yT ∼ pT
+
+at t = T to t = 0 , holding conditioned variables fixed. 
+
+## 3 METHODS 
+
+3.1 FINE -TUNING TO ADDRESS MODEL MISSPECIFICATION 
+
+The PT joint surrogate provides a conditional likelihood pϕ0 (y | θ, ξ ) ≈ peval (y | θ, ξ ), which inherits simulator misspecification relative to p∗(y | θ, ξ ). Following Cannon et al. (2022), we conceptualize misspecification via an unknown transformation that maps simulator outputs to observations. In our setting this is naturally a map between different sample spaces, since simulator outputs must be post-processed (e.g. normalized) to match the observation representation: 
+
+y ∼ peval (· | θ, ξ ), yo = T (y), T : Ysim → Y obs .
+
+3Preprint Token embeddings                   
+
+> bi= [ eid
+> i, e val
+> i]
+> econd
+> i
+> Condition-aware FiLM
+> (γi, β i) = hϕ(eid
+> i, e cond
+> i)
+> zi= [ γi⊙bi+βi, e cond
+> i]
+> Joint score model
+> Simformer backbone
+> syϕ(yt, t ;θ, ξ )
+> Likelihood rollout
+> Reverse SDE
+> yT⇝y
+> Observed response
+> yo
+> Path-regularized fine-tuning
+> LFT (ϕ) = −E[R(y, y o)] + λKL
+
+(︁ Pθ,ξ ϕ ∥ Pθ,ξ ϕ0)︁            
+
+> Observation agreement +pretrained path reference
+> samples
+> Gradient update: ϕ←ϕ−η∇ϕLFT
+> forward sampling parameter update ϕ: embeddings, FiLM, backbone ϕ0: frozen reference
+
+Figure 2: Likelihood fine-tuning of the joint diffusion surrogate. At fixed reference parameters and design, generated responses are evaluated against observations with a path-space KL penalty relative to the PT model. Gradients through sampling update the token embeddings, FiLM layers, and score network, which also support posterior queries. Under this representation, p∗(· | θ, ξ ) is the pushforward p∗(· | θ, ξ ) = T#peval (· | θ, ξ ). Rather than specifying T explicitly, we seek to learn an implicit misspecification correction that absorbs this transformation into the joint model’s parameters. We draw on diffusion fine-tuning to address simulator misspecification, adapting the surrogate likelihood to observed data. Specifically, we use the implicit diffusion method of Marion et al. (2025), which allows us to optimize agreement with observations by differentiating through likelihood sampling. We discuss alternative diffusion fine-tuning approaches and their suitability for SBI in § G.6. In SBI, observations yo, or design–observation pairs (yo, ξ ), provide a target for fine-tuning the surrogate likelihood. The learned correction must also inform the posterior over θ conditioned on those observations. We enable this transfer through token-aware Feature-wise Linear Modulation (FiLM) (Perez et al., 2018), which modulates token embeddings according to their identity and whether they are latent or conditioned. These embeddings are shared across likelihood and posterior queries in the masked transformer, allowing likelihood fine-tuning to update representations used for posterior inference; Figure 2 illustrates this mechanism, with embedding details in § G.7. 
+
+How can we fine-tune the likelihood pϕ(y | θ, ξ ) to observed data when the corresponding mechanistic parameters θ are unknown? For observed design–response pairs (yoi , ξ i), we condi-tion the surrogate likelihood on a fixed, simulator-aligned reference parameter θref . In supervised settings, θref may be provided by a labeled real-world dataset Dcal = {(θi, y io)}Ncal  
+
+> i=1
+
+, where each observation yio is paired with its ground-truth parameter θi, as in Wehenkel et al. (2025). When it is unknown, it may instead be an externally obtained best-fit estimate. In the BMP application, we use the domain-standard least-squares estimate θLSR ∈ arg min θ
+
+P 
+
+> i
+
+ℓ(f (θ, ξ i), y oi ) , which provides a parameter configuration explicitly grounded in the expert simulator. We do not interpret θLSR as a true parameter vector; it serves only as a fixed reference for adapting the likelihood to observed data. For fixed (θref , ξ ), we draw samples y ∼ pϕ(y | θref , ξ ) and evaluate their agreement with observa-tions through a reward R(y; yo). The diffusion sampler induces an output distribution π⋆(ϕ; θref , ξ )
+
+defined implicitly by the network parameters ϕ. We formulate fine-tuning as optimization of a functional F of this sampled distribution, differentiating through the sampler with the adjoint method of Implicit Diffusion (Marion et al., 2025). Suppressing the fixed conditioning arguments, the endpoint-regularized problem is min ϕ F(π⋆(ϕ)) , with 
+
+F(pϕ) := −Ey∼pϕ [R(y; yo)] + λ KL( pϕ ∥ π⋆(ϕ0)) , (1) where λ ≥ 0 penalizes departure from the PT output law. In our experiments, R is the negative mean squared error (MSE) between generated and observed responses. In implementation, we replace the endpoint KL by a path-space KL penalty, giving the stronger regularization described in §§ 3.2 and G.3. Alternative fine-tuning frameworks are discussed in § G.6. Surprisingly, anchoring likelihood fine-tuning at a fixed θref does not reduce posterior inference to a point estimate — in the BMP example, the fine-tuned (FT) posterior marginals generally shift toward the reference relative to pretraining while retaining substantial spread (Figure 15). 4Preprint 3.2 LOCALIZING SIMULATOR MISSPECIFICATION WITH PATH -SPACE DIVERGENCE 
+
+For fixed (θ, ξ ), the reverse-SDE sampler underlying π⋆(ϕ; θ, ξ ) induces a path measure Pθ,ξ ϕ over trajectories Y = ( Yt)t∈[0 ,T ], whose generated endpoint distribution is π⋆(ϕ; θ, ξ ). Fine-tuning from 
+
+ϕ0 to ϕ therefore changes not only the endpoint distribution of generated responses but the probability law of the complete sampling trajectory, giving PT and FT path measures Pθ,ξ ϕ0 and Pθ,ξ ϕ . We quantify this change using path-space KL, which we use in place of the endpoint penalty in Eq. (1). Since the generated response is a projection of the complete diffusion trajectory, the data-processing inequality implies that path-space KL upper-bounds the corresponding endpoint divergence and can therefore capture adaptation not visible from the final samples alone. Under the regularity and integrability conditions stated in § G.2, Girsanov’s theorem gives 
+
+KL 
+
+
+
+Pθ,ξ ϕ Pθ,ξ ϕ0
+
+
+
+= 12 EPθ,ξ ϕ
+
+"Z T
+
+> 0
+
+g(t)2 syϕ(Yt, t ; θ, ξ ) − syϕ0 (Yt, t ; θ, ξ ) 22
+
+dt 
+
+#
+
+. (2) We denote this discrepancy by A(θ, ξ ). Evaluating A at the same fixed reference parameter θref 
+
+used during fine-tuning yields a non-negative scalar field over design space, assigning each design a measure of the trajectory-level displacement between the PT and FT reverse-SDEs. 
+
+Stochastic optimal control (SOC) interpretation. Equation (2) admits a SOC interpretation. In our reverse-time convention, a control field u(x, t ) perturbs a reference drift through dX ut = [ b0(Xut , t ) + 
+
+σ(t)u(Xut , t )] dt + σ(t)d←
+
+wt, integrated from t = T to t = 0 , inducing a controlled path measure Pu.Taking the PT reverse-SDE as the reference and σ(t) = g(t)I gives uϕ = −g(t)( syϕ − syϕ0 ). Hence, 
+
+A(θ, ξ ) is the quadratic control energy associated with transporting the PT path law to the FT one, connecting likelihood adaptation to SOC and KL-constrained path-space transport (Blessing et al., 2025). 
+
+Fisher geometry over conditioning variables. Beyond comparing PT and FT path laws at fixed 
+
+(θ, ξ ), the same path-space formulation induces a local geometry over the conditioning variables themselves. Let z = ( θ, ξ ) denote the continuous mechanistic and design coordinates, and fix the learned model ϕ. Assuming the induced path laws vary smoothly with z, nearby path measures satisfy the absolute-continuity conditions required by Girsanov’s theorem, and distinct nearby conditioning values induce distinct path laws, the family 
+
+Mϕ = Pzϕ : z ∈ Θ × Ξ ⊂ P  C([0 , T ]; Rdy )
+
+can be treated locally as a statistical manifold (Figure 3). Here, C([0 , T ]; Rdy ) is the space of continuous trajectories Y : [0 , T ] → Rdy , and P(·) denotes probability measures on that space. With a shared diffusion schedule and terminal law, the same Girsanov argument gives 
+
+Ipath  
+
+> ϕ
+
+(z) := EY ∼Pzϕ
+
+"Z T
+
+> 0
+
+g(t)2Jz syϕ(Yt, t ; z)⊤Jz syϕ(Yt, t ; z) dt 
+
+#
+
+, (3) Parameters  θ    
+
+> Conditions ξ
+> ξaξb
+> Data-adapted
+> Mϕ∗
+> Simulator-trained
+> Mϕ0
+> Tangent space
+> TPθ,ξ bϕ∗
+> Mϕ∗
+> No adaptation
+> A= 0 Model adaptation
+> A(θ, ξ )
+
+Figure 3: Conditional path-law geometry un-der fine-tuning. 
+
+where Jz syϕ = ∂s yϕ/∂z . Thus, Ipath  
+
+> ϕ
+
+(z) is the local Fisher–Rao metric induced by KL divergence on the con-ditional reverse-SDE path laws (Amari & Nagaoka, 2000). When the conditioning parameterization is locally non-identifiable, Ipath  
+
+> ϕ
+
+(z) may be singular, consistent with the classical connection between local identifiability and non-singularity of the Fisher information matrix (Rothenberg, 1971). This includes the familiar case of mechanistic pa-rameter non-identifiability, where distinct parameter com-binations θ induce indistinguishable responses (Raue et al., 2009; Villaverde, 2019). The tangent space TPzϕ Mϕ cap-tures first-order perturbations of the conditional path law around Pzϕ, with Ipath  
+
+> ϕ
+
+(z) defining the local metric on this space. We further discuss the parameter- and design-space structure of this geometry in § G.4. 5Preprint 3.3 COMPOSITIONAL SAMPLING 
+
+A simformer can represent arbitrary conditionals of a fixed joint distribution, but explicitly repre-senting each design–observation pair in the joint makes the modeled state grow with the number of experiments and ties inference to a fixed number of observation tokens. Instead, for each observation 
+
+(yj , ξ j ) we use the posterior score sϕ(θt, t ; yj , ξ j ) ≈ ∇ θt log pt(θt | yj , ξ j ), and combine these per-observation scores at inference to approximate the posterior conditioned on Dn = {(yj , ξ j )}nj=1 .Since the same score model is reused for every (yj , ξ j ), the number and subset of observations can vary without changing or retraining the learned joint model. To achieve this, we first review the discrete F-NPSE construction of Geffner et al. (2023), then introduce a continuous-time extension. 
+
+Discrete compositional sampling. Under conditional independence given θ, the target posterior factorizes as p(θ | D n) ∝ p(θ)1−n Qnj=1 p(θ | yj , ξ j ). F-NPSE exploits this factorization by defining intermediate distributions whose scores combine the per-observation posterior scores above with the corresponding prior-score correction. In the DDPM setting (Ho et al., 2020), k indexes diffusion steps and αk denotes one-step signal retention, with signal scaling √αk and added noise variance 
+
+1 − αk per coordinate. The resulting normalized reverse transition can be written as 
+
+epk(θk−1 | θk, Dn) = N θk−1; μG 
+
+> k
+
+, 1 − αk
+
+κ(n)
+
+> k
+
+I
+
+!
+
+, κ(n) 
+
+> k
+
+= 1 + ( n − 1)(1 − αk), (4) where μG 
+
+> k
+
+combines the learned reverse scores for each (yj , ξ j ) with the prior-score correction implied by the posterior factorization above; its full form and assumptions are given in § A.2. The transition variance in Equation (4) decreases with the number of observations n and approaches 1/n 
+
+as αk → 0. This transition-level contraction motivates a narrower cumulative noising path than the single-observation VP process, echoing the n−1 covariance contraction of Bernstein–von Mises theory (van der Vaart, 1998, Ch. 10). 
+
+From discrete to continuous dynamics. To construct a continuous-time noising process, consider a hypothetical draw θ0 from the desired posterior. Ordinary VP noising attenuates this draw by pα(t)
+
+and adds Gaussian noise with variance 1 − α(t) per coordinate, where α(t) denotes cumulative squared signal retention. Motivated by the discrete contraction in Eq. (4), we retain this mean attenuation but prescribe a smaller accumulated noise variance Vn(t) = (1 − α(t)) /κ (n)(t), where 
+
+κ(n)(t) = 1 + ( n − 1)(1 − α(t)) . This introduces observation-count dependence without estimating the posterior covariance. Keeping the ordinary VP-SDE drift f (t) = ˙α(t)/(2 α(t)) (Song et al., 2021), the variance evolution ˙Vn(t) = 2 f (t)Vn(t) + gn(t)2 then determines the diffusion coefficient for this noising process 
+
+gn(t)2 = β(t) 1 + ( n − 1) (1 − α(t)) 2
+
+[κ(n)(t)] 2 , β(t) = − ˙α(t)
+
+α(t) . (5) The coefficient satisfies gn(t)2 ≤ β(t), with g1(t)2 = β(t) and gn(t)2/β (t) → 1/n as α(t) → 0.We call the resulting sampler F-NPSE-SDE. It uses gn(t) in the reverse-SDE predictor, which advances between noise levels, and in L optional unadjusted Langevin corrections, which explore the current compositional marginal at fixed diffusion time. For a concentrated marginal, the score can change rapidly over short distances, so a correction step may overshoot even when its direction points toward higher density. The smaller coefficient moderates score-driven drift and noise, reducing the risk of overshoot in stiff dynamics. Our controlled exact-score Gaussian example shows that these numerical issues arise even in a simple model and that the schedule reduces both step-size sensitivity and sampling error (§ A.5). This yields an inexpensive schedule depending only on diffusion time and observation count, with its derivation in § A.3. 
+
+Practical scaling. F-NPSE-SDE requires only score evaluations, avoiding the score Jacobians of JAC and auxiliary covariance estimation of GAUSS (Linhart et al., 2026). These costs become especially important in HBDS (§ 3.4), where compositional sampling is repeated within each block update. Computational complexity and observed runtime and memory limitations on the BMP model are discussed in § A.8. 6Preprint 3.4 HIERARCHICAL BLOCKWISE DIFFUSION SAMPLING 
+
+Naïve compositional sampling, which we refer to as pooled compositional sampling , treats all experimental observations as if they share a single posterior distribution. This ignores the fact that different groups of experiments may induce distinct posteriors, leading to suboptimal inference. For example, the BMP dataset comprises K = 4 cell lines consisting of a parent and three receptor-knockdown lines. Each line has its own receptor state Rk, shared across its ligand-dose experiments, while the biophysical parameters θ are shared across all four lines (Appendix C). We use a hierarchical Bayesian formulation (Gelman et al., 1995) with shared parameters θ and group-specific latent states 
+
+R1: K . Given designs ξ1: K and observations y1: K across K groups, we target the joint posterior 
+
+p(θ, R 1: K | y1: K , ξ 1: K ). To approximately sample this posterior, HBDS initializes a shared parameter state and separate receptor states. At every reverse-diffusion time, each Rk is updated with its own 
+
+(yk, ξ k) and current global θ, then θ is updated using all receptor blocks. Repeating yields samples with one globally consistent parameter vector and K distinct local latent states without training a separate hierarchical estimator or tokenizing the complete dataset. The HBDS algorithm and analytic example are in §§ B and B.1. 
+
+## 4 EXPERIMENTS 
+
+We evaluate gn(t) on an exact toy Gaussian model and the Simple Likelihood, Complex Posterior (SLCP) Papamakarios et al. (2019) benchmarks (§ 4.1), hierarchical inference on a controlled toy (§ 4.2), and misspecification-aware fine-tuning (§ 4.3). The BMP application (§ 4.4) combines fine-tuning with HBDS across 940 observations, assessing predictive improvement and its relationship to design-localized path divergence. 4.1 EVALUATING F-NPSE-SDE 
+
+Exact-score Gaussian benchmark. We compare F-NPSE-SDE with GAUSS, JAC, and Langevin (Linhart et al., 2026), and the original F-NPSE (Geffner et al., 2023). The 10-dimensional Gaussian model (§ A.5) has correlation ρ = 0 .8 and exact compositional scores and posteriors. Here, n
+
+counts observations, T predictor steps, and L Langevin corrections per predictor. At n = 100 and 
+
+T = 400 , Table 1 shows that F-NPSE-SDE is competitive with GAUSS and JAC in maximum sliced Wasserstein distance, matches F-NPSE, and improves over Langevin. Full sweep settings and results appear in § A.6. 
+
+SLCP benchmark. We next evaluate compositional sampling on SLCP, where the scores must be learned and the posterior is multimodal. Following the protocol of Linhart et al. (2026), we evaluate three independently trained single-observation score networks at n ∈ { 1, 14 , 30 }, with all samplers sharing the same frozen network within each comparison. At n = 30 , GAUSS and JAC remain the most accurate, while F-NPSE-SDE improves over Langevin and F-NPSE in sliced Wasserstein distance and MMD (Table 1), without JAC’s score Jacobians or GAUSS’s auxiliary DDIM rollouts. Training, stabilization, and results across observation counts and network seeds are detailed in § A.7. Table 1: Comparison of compositional samplers on the Gaussian benchmark ( n = 100 , T = 400 )and SLCP ( n = 30 ). Entries are mean ± standard deviation over five seeds for Gaussian and 25 test instances using one network seed for SLCP.                                                                                         
+
+> Gaussian ( T= 400 ,n= 100 )SLCP ( n= 30 )Method max-sW ↓sW ↓MMD ↓C2ST →0.5
+> GAUSS 0.24 ±0.23 0.45 ±0.18 0.05 ±0.16 0.97 ±0.04
+> JAC 0.26 ±0.22 0.53 ±0.19 0.05 ±0.14 0.95 ±0.05
+> Langevin 0.52 ±0.50 0.81 ±0.28 0.13 ±0.22 0.97 ±0.03
+> F-NPSE 0.29 ±0.24 0.83 ±0.29 0.11 ±0.13 0.98 ±0.03
+> F-NPSE-SDE ( L= 1 )0.29 ±0.25 0.74 ±0.31 0.10 ±0.15 0.98 ±0.03
+> F-NPSE-SDE ( L= 5 )0.31 ±0.27 0.73 ±0.28 0.10 ±0.15 0.98 ±0.03
+
+7Preprint 4.2 EVALUATING POOLED COMPOSITIONAL SAMPLING AND HBDS 
+
+Hierarchical toy model. We first isolate the effect of hierarchical structure in a controlled model with a shared continuous parameter θ ∈ R and group-specific latent states zg ∈ {− 1, +1 },
+
+zg ∼ Rad   12
+
+ , θ ∼ N (0 , 1) , xgi | θ, z g ∼ N (5 zg + θ, 1) .0.5 1.0 1.5 Shared parameter θ           
+
+> −1 01Latent state  z
+> Pooled True θ= 1
+> 0.5 1.0 1.5 Shared parameter θ
+> HBDS z= +1 HBDS z= −1 True θ= 1
+
+Figure 4: ( Left ) Pooled sampling uses one shared la-tent. ( Right ) HBDS retains separate group latents with a shared θ. Colors identify the generating groups; plot-ted latent states are continuous sampler outputs. Dotted lines mark the generating θ = 1 .
+
+Here Rad( 12 ) assigns equal probability to the two signs. We compare learned-score sam-plers using n = 20 observations generated with 
+
+θ = 1 , and ten samples from z = +1 and 
+
+z = −1. HBDS permits each group to select its own latent mode, whereas pooled composi-tional sampling ties all groups to a single la-tent state. Figure 4 shows pooled sampling can-not represent groups requiring different latent modes, while HBDS maintains separate group-specific states together with a shared θ. The analytic posterior structure and additional score-based diagnostics are given in § B.1. We further evaluate HBDS on the BMP model in § 4.4. 4.3 FINE -TUNING UNDER SIMULATOR MISSPECIFICATION 
+
+Fine-tuning and path-divergence localization. To study how fine-tuning responds to model misspecification and whether path divergence localizes the resulting adaptation, we use a toy linear-Gaussian simulator y | θ, ξ ∼ N (ξ⊤θ, σ 2) with θ ∼ N (0 , I 2), designs ξ ∈ [−2, 2] 2, and σ = 0 .2.At a fixed generating parameter θ⋆, the noise-free observation response is yo(ξ) = ξ⊤θ⋆ + h(ξ),where h is a localized Gaussian bump omitted from the simulator. We fine-tune on ten observations with Gaussian noise of variance σ2, then assess where the correction helps or hurts across design space. We then estimate the PT and FT likelihood means from 16 samples per design and measure their absolute errors against yo(ξ), giving the pointwise error maps ePT (ξ) and eFT (ξ) in Figure 5. We measure mean absolute error (MAE) averages over 1,681 grid points. Fine-tuning reduces error near the bump but adds errors elsewhere; however, employing autoguidance (Karras et al., 2024) to blend the PT & FT models lowers MAE to 0.12 (Figure 12). Without autoguidance, mean A(θLSR , ξ )
+
+inside the misspecified region ( h ≥ 0.1) is 4.73 times that outside and correlates with h (Pearson 
+
+r = 0 .75 ). Path divergence and error maps show where fine-tuning helps or over-adapts, a trade-off we explore through regularization and autoguidance sweeps in § G.9. 
+
+SBI misspecification comparison. On BMP (§ 4.4), we compare with Flow Matching Corrected Posterior Estimation (FMCPE), which corrects an NPE using calibration pairs (Ruhlmann et al., 2026), here constructed from LSR fits. FMCPE uses subset-specific posterior models, whereas FT also adapts the likelihood and supports flexible conditioning, composition, and HBDS. Across the FMCPE observation- and LSR-budget sweep, FT achieves the lowest mean median predictive distance, while FMCPE-LSR has lower best-draw RMSE (Eqs. (64) and (65) and Table 7). Because both metrics evaluate predictions through the original simulator, the comparison remains subject to its misspecification. We provide the full evaluation protocol alongside PT comparisons and calibration diagnostics in § G.8. 2.0 1.5 1.0 0.5 0.0 0.5 1.0 1.5 2.0                               
+
+> 1
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> Known discrepancy h( )
+> 2.0 1.5 1.0 0.5 0.0 0.5 1.0 1.5 2.0
+> 1
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> PT absolute error
+> observed design MAE = 0.1407
+> 2.0 1.5 1.0 0.5 0.0 0.5 1.0 1.5 2.0
+> 1
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> FT absolute error
+> observed design MAE = 0.1545
+> 2.0 1.5 1.0 0.5 0.0 0.5 1.0 1.5 2.0
+> 1
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> Path divergence (ref ,)
+> observed design
+> 0.0 0.2 0.4 0.6 0.8 1.0 true additive discrepancy
+> 0.0 0.2 0.4 0.6 0.8 |yPT ( )  ytrue ( )|
+> 0.0 0.2 0.4 0.6 0.8 |yFT ( )  ytrue ( )|
+> 2468path divergence
+
+Figure 5: Likelihood adaptation and prediction error in the analytic toy at a fixed LSR reference. (Left to right ) Known discrepancy h(ξ), PT absolute error ePT (ξ), FT absolute error eFT (ξ), and path divergence A(θref , ξ ).8Preprint 0.00 0.25 0.50 0.75 1.00 1.25 Normalized response  NMuMG BMP4/BMP10 Rim BMPR2 KD BMP4 / BMP10 Rim                                      
+
+> LSR BMP simformer BMP simformer interval Observed
+> NMuMG BMP4 Gradient
+> LMLLSR cost group
+> Low Middle High
+> LMHML
+> 0.6 0.8 1.0 1.2 1.4 ( , )
+> (experiment-normalized)
+> 123456789BMP4 BMP10
+> 10 1
+> 10 2
+> 010 2
+> 10 1
+> eLSR ( )
+> LSR error  FT error
+> 123456789BMP4 BMP10
+> 0.00033 0.0082 0.2 5.1 1.3e+02 3.2e+03 BMP4 concentration (ng/mL)
+> -3.7 03.7 symmetric log scale
+> Worse distance Closer
+
+Figure 6: BMP predictions and design-localized adaptation. ( Left ) BMP4/BMP10 competition in NMuMG. ( Middle ) The same competition in BMPR2 KD. ( Right ) BMP4 titration in NMuMG. From top to bottom: LSR and FT predictions against observations; low (L), middle (M), and high (H) LSR cost groups; experiment-normalized path divergence A(θ, ξ ); and reduction in absolute prediction error from LSR to the FT bootstrap median. 4.4 BMP APPLICATION 
+
+We combine fine-tuning with HBDS to infer shared biophysical parameters and cell-line-specific receptor states from 940 observations across four cell lines, using the model, priors, and training procedures described in §§ C, D, F and G. We first hold parameters at the LSR reference to isolate how fine-tuning changes predictions. The bottom row of Figure 6 reports ∆eLSR (ξ), the LSR simulator’s absolute error against yo(ξ) minus that of the FT bootstrap median, on a symmetric-logarithmic axis that is linear near zero. Positive values favor FT, with improvements throughout the BMPR2-knockdown competition series and at lower BMP4 doses. In the BMP4 titration, these gains generally coincide with larger path divergence, but adaptation in the NMuMG competition series often increases error, showing why the magnitude of adaptation must be interpreted alongside its predictive benefit. The LSR cost-group analysis adds context to these local differences, showing that globally higher-cost fits can perform better at individual designs (§ G.10). When we use the FT model with λ = 5 × 10 −4 for posterior inference, HBDS yields RMSE 0.34 and median distance 
+
+14 .94 , compared with 0.36 and 66 .77 under pooled sampling. We examine the contributions of the sampler, FiLM, and regularization, together with the aggregate LSR comparison, in Tables 3 to 5. 
+
+## 5 DISCUSSION 
+
+Together, these methods enable flexible diffusion SBI across changing observation sets, hierarchical latent structure, and simulator misspecification, with the BMP model providing a large-scale scientific stress test. Rather than requiring a PT SBI model to anticipate this downstream structure, our methods adapt it to the problem at hand. 
+
+Limitations and future work. Compositional sampling and HBDS both rely on approximations to intermediate-time posteriors. More accurate intermediate targets and faster sampling with learned flow maps (Boffi et al., 2025; Song et al., 2023) could improve compositional inference and HBDS block updates. Fine-tuning at a fixed reference parameter θref can improve misspecified regions while degrading regions that were already well modeled. These results suggest tuning adaptation across experimental designs rather than imposing one global regularization strength, with predictive error and path divergence guiding where to focus updates and where to preserve the PT model. Path-space Fisher geometry over (θ, ξ ) (§ G.4) further suggests design-dependent adaptation, particle-or geometry-based refinement of θref , and diffusion-based Bayesian experimental design over ξ (Iollo et al., 2025). 9Preprint 
+
+## ACKNOWLEDGEMENTS 
+
+We thank the Elowitz Lab for helpful feedback. We also thank UCI’s Research Cyberinfrastructure Center (RCIC) for providing and supporting the HPC3 computing resources used in this work (Research Cyberinfrastructure Center, 2026). This research was partially funded by the National Institute of General Medical Sciences (NIGMS) of the National Institutes of Health (NIH) under award number 1F31GM145188-01. 
+
+## REFERENCES 
+
+Shun-ichi Amari and Hiroshi Nagaoka. Methods of information geometry , volume 191. American Mathematical Soc., 2000. Brian D.O. Anderson. Reverse-time diffusion equation models. Stochastic Processes and their Applications , 12(3):313–326, 1982. ISSN 0304-4149. doi: 10.1016/0304-4149(82)90051-5. Yaron E Antebi, James M Linton, Heidi Klumpe, Bogdan Bintu, Mengsha Gong, Christina Su, Reed McCardell, and Michael B Elowitz. Combinatorial signal perception in the bmp pathway. Cell ,170(6):1184–1196, 2017. Jonas Arruda, Niels Bracher, Ullrich Köthe, Jan Hasenauer, and Stefan T. Radev. Diffusion models in simulation-based inference: A tutorial review. arXiv preprint arXiv:2512.20685, 2025. Jonas Arruda, Vikas Pandey, Catherine Sherry, Margarida Barroso, Xavier Intes, Jan Hasenauer, and Stefan T. Radev. Compositional amortized inference for large-scale hierarchical bayesian models. In International Conference on Learning Representations , 2026. Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. Curriculum learning. In Proceedings of the 26th Annual International Conference on Machine Learning , pp. 41–48. Association for Computing Machinery, 2009. doi: 10.1145/1553374.1553380. Christopher M. Bishop. Mixture density networks. Technical Report NCRG/94/004, Neural Comput-ing Research Group, Aston University, Birmingham, UK, 1994. Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine. Training diffusion models with reinforcement learning. In International Conference on Learning Representations , pp. 4965–4987, 2024. Denis Blessing, Julius Berner, Lorenz Richter, Carles Domingo-Enrich, Yuanqi Du, Arash Vahdat, and Gerhard Neumann. Trust region constrained measure transport in path space for stochastic optimal control and inference. In Advances in Neural Information Processing Systems , volume 38, 2025. Jan Boelts. Model misspecification in simulation-based inference: Recent advances and open challenges. ICLR Blogposts 2026, April 2026. Published April 27, 2026. Nicholas M. Boffi, Michael S. Albergo, and Eric Vanden-Eijnden. Flow map matching with stochastic interpolants: A mathematical framework for consistency models. Transactions on Machine Learning Research , 2025. Patrick Cannon, Daniel Ward, and Sebastian M. Schmon. Investigating the impact of model mis-specification in neural simulation-based inference. arXiv preprint arXiv:2209.01845 , 2022. doi: 10.48550/arxiv.2209.01845. Pierre Cesar, Sofya Dymchenko, Abhishek Purandare, and Bruno Raffin. Learning where to simulate: Generative active sampling for online PDE surrogate training. arXiv preprint arXiv:2606.09949, 2026. Giovanni Charles, Cosmo Santoni, Seth Flaxman, and Elizaveta Semenova. Tokenised flow matching for hierarchical simulation based inference. arXiv preprint arXiv:2604.20723, 2026. 10 Preprint Kevin Clark, Paul Vicol, Kevin Swersky, and David Fleet. Directly fine-tuning diffusion models on differentiable rewards. In International Conference on Learning Representations , pp. 4793–4822, 2024. Kyle Cranmer, Johann Brehmer, and Gilles Louppe. The frontier of simulation-based inference. 
+
+Proceedings of the National Academy of Sciences , 117(48):30055–30062, November 2020. ISSN 0027-8424. doi: 10.1073/pnas.1912789117. arXiv: 1911.01429 Publisher: Proceedings of the National Academy of Sciences. Riccardo De Santi, Marin Vlastelica, Ya-Ping Hsieh, Zebang Shen, Niao He, and Andreas Krause. Flow density control: Generative optimization beyond entropy-regularized fine-tuning. In Advances in Neural Information Processing Systems , volume 38, pp. 11056–11088, 2025. Daniel Dimitrov, Stefan Schrod, Martin Rohbeck, and Oliver Stegle. Interpretation, extrapolation and perturbation of single cells. Nature Reviews Genetics , pp. 1–22, 2026. Robert M. Dirks, Justin S. Bois, Joseph M. Schaeffer, Erik Winfree, and Niles A. Pierce. Ther-modynamic analysis of interacting nucleic acid strands. SIAM Review , 49(1):64–88, 2007. doi: 10.1137/060651100. Carles Domingo i Enrich, Michal Drozdzal, Brian Karrer, and Ricky T. Q. Chen. Adjoint matching: Fine-tuning flow and diffusion generative models with memoryless stochastic optimal control. In 
+
+International Conference on Learning Representations , pp. 53791–53846, 2025. Conor Durkan, Iain Murray, and George Papamakarios. On contrastive learning for likelihood-free inference. In Proceedings of the 37th International Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research , pp. 2771–2781. PMLR, 2020. Alain Durmus and Éric Moulines. Nonasymptotic convergence analysis for the unadjusted Langevin algorithm. The Annals of Applied Probability , 27(3):1551–1587, 2017. doi: 10.1214/16-AAP1238. Ying Fan, Olivia Watkins, Yuqing Du, Hao Liu, Moonkyung Ryu, Craig Boutilier, Pieter Abbeel, Mohammad Ghavamzadeh, Kangwook Lee, and Kimin Lee. DPOK: Reinforcement learning for fine-tuning text-to-image diffusion models. In Advances in Neural Information Processing Systems ,volume 36, pp. 79858–79885, 2023. Richard Gao, Michael Deistler, and Jakob H Macke. Generalized bayesian inference for scientific simulators via amortized cost estimation. In Advances in Neural Information Processing Systems ,volume 36, pp. 80191–80219, 2023. Tomas Geffner, George Papamakarios, and Andriy Mnih. Compositional score modeling for simulation-based inference. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett (eds.), Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pp. 11098–11116. PMLR, 23–29 Jul 2023. Andrew Gelman, John B Carlin, Hal S Stern, and Donald B Rubin. Bayesian data analysis . Chapman and Hall/CRC, 1995. I. V. Girsanov. On transforming a certain class of stochastic processes by absolutely continuous substitution of measures. Theory of Probability & Its Applications , 5(3):285–301, 1960. doi: 10.1137/1105027. Manuel Gloeckler, Michael Deistler, Christian Dietrich Weilbach, Frank Wood, and Jakob H. Macke. All-in-one simulation-based inference. In Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (eds.), Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pp. 15735–15766. PMLR, 21–27 Jul 2024. David Greenberg, Marcel Nonnenmacher, and Jakob Macke. Automatic posterior transformation for likelihood-free inference. In International Conference on Machine Learning , pp. 2404–2414. PMLR, 2019. 11 Preprint Daniel Habermann, Marvin Schmitt, Lars Kühmichel, Andreas Bulling, Stefan T. Radev, and Paul-Christian Bürkner. Amortized bayesian multilevel models. Bayesian Analysis , pp. 1–30, 2025. doi: 10.1214/25-BA1570. Aaron J. Havens, Benjamin Kurt Miller, Bing Yan, Carles Domingo-Enrich, Anuroop Sriram, Daniel S. Levine, Brandon M. Wood, Bin Hu, Brandon Amos, Brian Karrer, Xiang Fu, Guan-Horng Liu, and Ricky T. Q. Chen. Adjoint sampling: Highly scalable diffusion samplers via adjoint matching. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research , pp. 22204–22237. PMLR, 2025. Lukas Heinrich, Siddharth Mishra-Sharma, Chris Pollard, and Philipp Windischhofer. Hierarchical neural simulation-based inference over event ensembles. Transactions on Machine Learning Research , 2024, 2024. ISSN 2835-8856. Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In Advances in Neural Information Processing Systems , volume 33, 2020. Daolang Huang, Ayush Bharti, Amauri Souza, Luigi Acerbi, and Samuel Kaski. Learning robust statistics for simulation-based inference under model misspecification. In Advances in Neural Information Processing Systems , volume 36, pp. 7289–7310, 2023a. Peide Huang, Xilun Zhang, Ziang Cao, Shiqi Liu, Mengdi Xu, Wenhao Ding, Jonathan Francis, Bingqing Chen, and Ding Zhao. What went wrong? closing the sim-to-real gap via differentiable causal discovery. In Proceedings of The 7th Conference on Robot Learning , volume 229 of 
+
+Proceedings of Machine Learning Research , pp. 734–760. PMLR, 2023b. Aapo Hyvärinen. Estimation of non-normalized statistical models by score matching. Journal of Machine Learning Research , 6(24):695–709, 2005. Jacopo Iollo, Christophe Heinkelé, Pierre Alliez, and Florence Forbes. Bayesian experimental design via contrastive diffusions. In Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (eds.), International Conference on Learning Representations , volume 2025, pp. 73125–73151, 2025. Cristian Perez Jensen, Luca Schaufelberger, Riccardo De Santi, Kjell Jorner, and Andreas Krause. Value matching: Scalable and gradient-free reward-guided flow adaptation. In International Conference on Learning Representations , 2026. Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine. Guiding a diffusion model with a bad version of itself. In Proceedings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. Heidi E Klumpe, Matthew A Langley, James M Linton, Christina J Su, Yaron E Antebi, and Michael B Elowitz. The context-dependent, combinatorial logic of bmp signaling. Cell systems ,13(5):388–407, 2022. Julia Linhart, Alexandre Gramfort, and Pedro Rodrigues. ℓ-C2ST: Local diagnostics for posterior approximations in simulation-based inference. In Advances in Neural Information Processing Systems , volume 36, pp. 56384–56410, 2023. Julia Linhart, Gabriel Victorino Cardoso, Alexandre Gramfort, Sylvain Le Corff, and Pedro L. C. Rodrigues. Diffusion posterior sampling for simulation-based inference in tall data settings. 
+
+Transactions on Machine Learning Research , 2026. Jan-Matthis Lueckmann, Pedro J Goncalves, Giacomo Bassetto, Kaan Öcal, Marcel Nonnenmacher, and Jakob H Macke. Flexible statistical inference for mechanistic models of neural dynamics. In 
+
+Advances in Neural Information Processing Systems , volume 30, 2017. Jan-Matthis Lueckmann, Giacomo Bassetto, Theofanis Karaletsos, and Jakob H. Macke. Likelihood-free inference with emulator networks. In Proceedings of The 1st Symposium on Advances in Approximate Bayesian Inference , volume 96 of Proceedings of Machine Learning Research , pp. 32–53. PMLR, 2019. 12 Preprint Abbas Mammadov, Jerry Y. Huang, Justin Lin, Partha Kaushik, Sheel Shah, Kartik Nair, Yee Whye Teh, and Nicholas M. Boffi. Wtf?! simulation-free reinforcement learning with wasserstein-tilted flow maps, 2026. Pierre Marion, Anna Korba, Peter Bartlett, Mathieu Blondel, Valentin De Bortoli, Arnaud Doucet, Felipe Llinares-López, Courtney Paquette, and Quentin Berthet. Implicit diffusion: Efficient optimization through stochastic sampling. In Proceedings of the 28th International Conference on Artificial Intelligence and Statistics , volume 258 of Proceedings of Machine Learning Research ,pp. 1999–2007. PMLR, 2025. Benjamin Kurt Miller, Christoph Weniger, and Patrick Forré. Contrastive Neural Ratio Estimation. In Advances in Neural Information Processing Systems , volume 35, 2022. Aayush Mishra, Daniel Habermann, Marvin Schmitt, Stefan T Radev, and Paul-Christian Bürkner. Ro-bust amortized bayesian inference with self-consistency losses on unlabeled data. In International Conference on Learning Representations , 2026. Sinno Jialin Pan and Qiang Yang. A survey on transfer learning. IEEE Transactions on Knowledge and Data Engineering , 22:1345–1359, 2010. George Papamakarios and Iain Murray. Fast ϵ-free inference of simulation models with Bayesian conditional density estimation. In Advances in Neural Information Processing Systems , pp. 1036– 1044, 2016. George Papamakarios, David C. Sterratt, and Iain Murray. Sequential neural likelihood: Fast likelihood-free inference with autoregressive flows. In Proceedings of the Twenty-Second Interna-tional Conference on Artificial Intelligence and Statistics , volume 89 of Proceedings of Machine Learning Research , pp. 837–848. PMLR, 2019. Ethan Perez, Florian Strub, Harm de Vries, Vincent Dumoulin, and Aaron Courville. FiLM: Visual reasoning with a general conditioning layer. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 32, 2018. doi: 10.1609/aaai.v32i1.11671. Mihir Prabhudesai, Anirudh Goyal, Deepak Pathak, and Katerina Fragkiadaki. Aligning text-to-image diffusion models with reward backpropagation. arXiv preprint arXiv:2310.03739v2, 2023. Version 2. Subsequently withdrawn and subsumed by arXiv:2407.08737. Andreas Raue, Clemens Kreutz, Thomas Maiwald, Julie Bachmann, Marcel Schilling, Ursula Klingmüller, and Jens Timmer. Structural and practical identifiability analysis of partially observed dynamical models by exploiting the profile likelihood. Bioinformatics , 25(15):1923–1929, 2009. Research Cyberinfrastructure Center. Facilities managed by Research Cyberinfrastructure Center (RCIC) at UC Irvine. University of California, Irvine, April 2026. Gareth O. Roberts and Richard L. Tweedie. Exponential convergence of Langevin distributions and their discrete approximations. Bernoulli , 2(4):341–363, 1996. doi: 10.2307/3318418. Thomas J Rothenberg. Identification in parametric models. Econometrica: Journal of the Econometric Society , pp. 577–591, 1971. Pierre-Louis Ruhlmann, Michael Arbel, Florence Forbes, and Pedro L. C. Rodrigues. Flow match-ing calibration for simulation-based inference under model misspecification. In International Conference on Machine Learning , 2026. Marvin Schmitt, Paul-Christian Bürkner, Ullrich Köthe, and Stefan T. Radev. Detecting model misspecification in amortized bayesian inference with neural networks. In Pattern Recognition. DAGM GCPR 2023 , volume 14264 of Lecture Notes in Computer Science , pp. 541–557. Springer, 2024. doi: 10.1007/978-3-031-54605-1_35. Louis Sharrock, Jack Simons, Song Liu, and Mark Beaumont. Sequential neural score estimation: Likelihood-free inference with conditional score based diffusion models. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pp. 44565–44602. PMLR, 2024. 13 Preprint Freddie Bickford Smith, Jannik Kossen, Eleanor Trollope, Mark van der Wilk, Adam Foster, and Tom Rainforth. Rethinking aleatoric and epistemic uncertainty. In Proceedings of the 42nd International Conference on Machine Learning , 2025. Henry D. Smith, Nathaniel L. Diamant, and Brian L. Trippe. Calibrating generative models to distributional constraints. In International Conference on Machine Learning , 2026. Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In International Conference on Learning Representations , 2021. Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pp. 32211–32252. PMLR, 2023. Christina J Su, Arvind Murugan, James M Linton, Akshay Yeluri, Justin Bois, Heidi Klumpe, Matthew A Langley, Yaron E Antebi, and Michael B Elowitz. Ligand-receptor promiscuity enables cellular addressing. Cell systems , 13(5):408–425, 2022. Camille Touron, Gabriel V. Cardoso, Julyan Arbel, and Pedro L. C. Rodrigues. Theoretical guidelines for annealed Langevin dynamics in compositional simulation-based inference. arXiv preprint arXiv:2605.21253, 2026. Masatoshi Uehara, Yulai Zhao, Tommaso Biancalani, and Sergey Levine. Understanding rein-forcement learning-based fine-tuning of diffusion models: A tutorial and review. arXiv preprint arXiv:2407.13734, 2024a. Masatoshi Uehara, Yulai Zhao, Kevin Black, Ehsan Hajiramezanali, Gabriele Scalia, Nathaniel Lee Diamant, Alex M. Tseng, Tommaso Biancalani, and Sergey Levine. Fine-tuning of continuous-time diffusion models as entropy-regularized control. arXiv preprint arXiv:2402.15194, 2024b. Masatoshi Uehara, Yulai Zhao, Kevin Black, Ehsan Hajiramezanali, Gabriele Scalia, Nathaniel Lee Diamant, Alex M. Tseng, Sergey Levine, and Tommaso Biancalani. Feedback efficient online fine-tuning of diffusion models. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pp. 48892–48918. PMLR, 2024c. Masatoshi Uehara, Yulai Zhao, Ehsan Hajiramezanali, Gabriele Scalia, Gokcen Eraslan, Avantika Lal, Sergey Levine, and Tommaso Biancalani. Bridging model-based optimization and generative modeling via conservative fine-tuning of diffusion models. In Advances in Neural Information Processing Systems , volume 37, pp. 127511–127535, 2024d. A. W. van der Vaart. Asymptotic Statistics . Cambridge University Press, 1998. doi: 10.1017/CBO9 780511802256. Alejandro F. Villaverde. Observability and structural identifiability of nonlinear biological systems. 
+
+Complexity , 2019(1):8497093, 2019. doi: https://doi.org/10.1155/2019/8497093. Pascal Vincent. A connection between score matching and denoising autoencoders. Neural Comput. ,23(7):1661–1674, July 2011. ISSN 0899-7667. doi: 10.1162/NECO_a_00142. Bram Wallace, Meihua Dang, Rafael Rafailov, Linqi Zhou, Aaron Lou, Senthil Purushwalkam, Stefano Ermon, Caiming Xiong, Shafiq Joty, and Nikhil Naik. Diffusion model alignment using direct preference optimization. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pp. 8228–8238, 2024. Daniel Ward, Patrick Cannon, Mark Beaumont, Matteo Fasiolo, and Sebastian Schmon. Robust neural posterior estimation and statistical model criticism. In Advances in Neural Information Processing Systems , volume 35, pp. 33845–33859, 2022. Antoine Wehenkel, Juan L. Gamella, Ozan Sener, Jens Behrmann, Guillermo Sapiro, Joern-Henrik Jacobsen, and Marco Cuturi. Addressing misspecification in simulation-based inference through data-driven calibration. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research , pp. 65949–65980. PMLR, 2025. 14 Preprint Christian Weilbach, William Harvey, and Frank Wood. Graphically structured diffusion models. In 
+
+Proceedings of the 40th International Conference on Machine Learning , ICML’23. JMLR.org, 2023. Christopher Williams, Andrew Campbell, Arnaud Doucet, and Saifuddin Syed. Score-optimal diffusion schedules. In Advances in Neural Information Processing Systems , volume 37, pp. 107960–107983, 2024. Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong. ImageReward: Learning and evaluating human preferences for text-to-image generation. In 
+
+Advances in Neural Information Processing Systems , volume 36, pp. 15903–15935, 2023. 15 Preprint 
+
+## APPENDICES 
+
+## TABLE OF CONTENTS 
+
+A Compositional sampling details 17 
+
+A.1 Existence of cumulative transition score . . . . . . . . . . . . . . . . . . . . . . . 17 A.2 Derivation of the reverse transition kernel . . . . . . . . . . . . . . . . . . . . . . 17 A.3 Deriving the continuous-time diffusion coefficient . . . . . . . . . . . . . . . . . . 19 A.4 Langevin refinement and numerical accuracy . . . . . . . . . . . . . . . . . . . . 21 A.5 Experimental evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 A.6 Exact-score Gaussian benchmark . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 A.7 SLCP benchmark . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 A.8 Computational cost of compositional samplers . . . . . . . . . . . . . . . . . . . . 26 A.9 Compositional sampling related works . . . . . . . . . . . . . . . . . . . . . . . . 26 
+
+B Hierarchical blockwise diffusion sampling details 27 
+
+B.1 Toy simulator model example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28 B.2 Hierarchical SBI related works . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29 
+
+C BMP signaling pathway mathematical model 30 D Cell receptor hierarchical modeling 30 E Additional BMP experimental results 32 
+
+E.1 Calibrated receptor diffusion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 E.2 BMP posterior-sampling ablations . . . . . . . . . . . . . . . . . . . . . . . . . . 33 
+
+F Pretraining details 33 G Fine-tuning and path-space details 34 
+
+G.1 Fine-tuning objective and optimization . . . . . . . . . . . . . . . . . . . . . . . . 34 G.2 Path-space formulation and Girsanov’s theorem . . . . . . . . . . . . . . . . . . . 35 G.3 Stochastic optimal control connection . . . . . . . . . . . . . . . . . . . . . . . . 36 G.4 Fisher–Rao optimization analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . 37 G.5 Related work on simulator misspecification in SBI . . . . . . . . . . . . . . . . . 40 G.6 Related work on diffusion fine-tuning . . . . . . . . . . . . . . . . . . . . . . . . 40 G.7 Embedding-based transfer learning . . . . . . . . . . . . . . . . . . . . . . . . . . 43 G.8 FMCPE-LSR baseline . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 43 G.9 Design-dependent misspecification toy . . . . . . . . . . . . . . . . . . . . . . . . 44 G.10 BMP misspecification evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . 46 
+
+H AI use statement 51 
+
+16 Preprint 
+
+## A COMPOSITIONAL SAMPLING DETAILS 
+
+A.1 EXISTENCE OF CUMULATIVE TRANSITION SCORE 
+
+We begin with a proposition for the existence of a cumulative transition score. 
+
+Proposition A.1 (Existence of a cumulative transition score) . Under the reverse–forward consistency assumption in Eq. (6) , we construct a cumulative transition ˜pk(θk−1|θk) whose score combines the per-observation reverse scores with the common forward-kernel correction. This gives the compositional transition used below. Proof (existence of a cumulative transition kernel). Fix a discrete step k ∈ { 1, . . . , K }. For each observation yj let p jk (θk) denote the marginal at diffusion time tk and qk(θk|θk−1) the common forward kernel. Assume the (exact) reverse–forward consistency 
+
+p jk (θk) p jk (θk−1|θk) = p jk−1(θk−1) qk(θk|θk−1) for each j ∈ { 1, . . . , n }. (6) We seek a transition kernel ˜pk(θk−1|θk) that satisfies the composition condition (cf. Eq. (24) of Geffner et al. (2023)) 
+
+˜pk−1(θk−1) = 
+
+Z
+
+˜pk(θk) ˜ pk(θk−1|θk) dθ k. (7) where ˜pk(θk) = Z−1
+
+> k
+
+Qnj p jk (θk). Following Geffner et al. (2023), we rewrite Eq. (7) (cf. Eqs. (25)–(26) therein) by using Eq. (6) to express ratios of marginals and reverse kernels: 
+
+˜pk−1(θk−1) = 
+
+Z
+
+dθ k p 1 
+
+> k
+
+(θk) qk(θk|θk−1)
+
+p 2 
+
+> k
+
+(θk−1|θk) · · · qk(θk|θk−1)
+
+p nk (θk−1|θk)
+
+Zk
+
+Zk−1
+
+˜pk(θk−1|θk).
+
+One way to satisfy this equality, as noted in Geffner et al. (2023), is to set 
+
+˜pk(θk−1|θk) = p 1 
+
+> k
+
+(θk−1|θk) Zk
+
+Zk−1
+
+p 2 
+
+> k
+
+(θk−1|θk)
+
+qk(θk|θk−1) · · · p nk (θk−1|θk)
+
+qk(θk|θk−1) . (8) Hence, under exact reversibility, a cumulative transition kernel of the form exists, establishing the claim. This derivation follows the compositional construction of Geffner et al. (2023), using the per-observation reverse–forward consistency relation in Eq. (6). We spell out the intermediate algebra to clarify how the individual reverse kernels and common forward kernel enter the cumulative transition, then derive its score under a Gaussian parameterization in § A.2. Our aim is to make the cumulative transition score explicit under these assumptions, rather than to establish an exact reverse kernel for the joint posterior. A.2 DERIVATION OF THE REVERSE TRANSITION KERNEL 
+
+We next derive the analytic form of the cumulative transition score under a Gaussian diffusion parameterization. Starting from the cumulative reverse transition (cf. Eq. (8)) 
+
+˜pk(θk−1|θk) = p 1 
+
+> k
+
+(θk−1|θk) Zk
+
+Zk−1
+
+> n
+
+Y
+
+> j=2
+
+p jk (θk−1|θk)
+
+qk(θk|θk−1) ,
+
+where Zk and Zk−1 are normalization constants ensuring integration to one. We retain the DDPM notation, with k indexing discrete steps at diffusion times tk and αk denoting one-step signal retention, distinct from the continuous-time cumulative factor α(t) used in § A.3. The Gaussian kernels are parameterized as 
+
+p jk (θk−1|θk) = N  θk−1; μ jk , (1 − αk)I, (9) 
+
+qk(θk|θk−1) = N  θk; √αk θk−1, (1 − αk)I, (10) 17 Preprint and we differentiate log ˜ pk(θk−1|θk) with respect to θk−1 to get 
+
+∇θk−1 log ˜ pk(θk−1|θk) = 
+
+> n
+
+X
+
+> j=1
+
+∇θk−1 log p jk (θk−1|θk) − (n − 1) ∇θk−1 log qk(θk|θk−1), (11) where the normalization constants cancel after differentiation. For the reverse Gaussian kernels, the mean can be written in terms of the learned score function as 
+
+μ jk = 1
+
+√αk
+
+θk + 1 − αk
+
+√αk
+
+s jϕ (θk, t k), (12) where s jϕ (θk, t k) denotes the estimated score for observation yj . Before substituting the score of the 
+
+log of these kernels into Eq. (11), we recall two Gaussian score identities. For a Gaussian density 
+
+N (x; μ, Σ) , the score with respect to the argument x is 
+
+∇x log N (x; μ, Σ) = −Σ−1(x − μ),
+
+while the score with respect to the mean μ is 
+
+∇μ log N (x; μ, Σ) = Σ −1(x − μ).
+
+Applying these identities gives 
+
+∇θk−1 log p jk (θk−1|θk) = μ jk − θk−1
+
+1 − αk
+
+, (13) 
+
+∇θk−1 log qk(θk|θk−1) = 
+
+√αk
+
+1 − αk
+
+θk − αk
+
+1 − αk
+
+θk−1. (14) We then substitute these into Eq. (11) and group by θk and θk−1 terms to form the cumulative transition kernel in terms of the mean values at the transition 
+
+∇θk−1 log ˜ pk(θk−1|θk) = 
+
+> n
+
+X
+
+> j=1
+
+μ jk − θk−1
+
+1 − αk
+
+− (n − 1) 
+
+ √αk
+
+1 − αk
+
+θk − αk
+
+1 − αk
+
+θk−1
+
+
+
+=
+
+Pnj=1 μ jk − n θ k−1
+
+1 − αk
+
+− (n − 1) √αk
+
+1 − αk
+
+θk + (n − 1) αk
+
+1 − αk
+
+θk−1
+
+=
+
+Pnj=1 μ jk − (n − 1) √αk θk
+
+1 − αk
+
+− n − αk(n − 1) 1 − αk
+
+θk−1. (15) We can now identify the terms previously used by Geffner et al. (2023) for compositional sampling. Matching the grouped score to the Gaussian identity 
+
+∇θk−1 log N (θk−1; μk, σ 2
+
+> k
+
+) = σ−2 
+
+> k
+
+μk − σ−2 
+
+> k
+
+θk−1,
+
+we identify the coefficients of θk−1 and the constant term as 
+
+σ−2 
+
+> k
+
+= n − αk(n − 1) 1 − αk
+
+, σ−2 
+
+> k
+
+μk = 11 − αknX
+
+> j=1
+
+μ jk − (n − 1) √αk
+
+1 − αk
+
+θk.
+
+Therefore, 
+
+μk =
+
+Pnj=1 μ jk − (n − 1) √αk θk
+
+n − αk(n − 1) , (16) 
+
+σ2 
+
+> k
+
+= 1 − αk
+
+n − αk(n − 1) , (17) as originally used by Geffner et al. (2023). We can now substitute approximate scores for a final cumulative score expression, ∇θk−1 log ˜ pk(θk−1|θk). Using the equivalence between diffusion means and scores (12), nX
+
+> j=1
+
+μ jk = n
+
+√αk
+
+θk + 1 − αk
+
+√αknX
+
+> j=1
+
+s jϕ (θk, t k),
+
+18 Preprint Writing the right-hand side of Eq. (15) as RHS , we substitute the score parameterization to obtain RHS = 11 − αknX
+
+> j=1
+
+μ jk − (n − 1) √αk
+
+1 − αk
+
+θk + (n − 1) αk − n
+
+1 − αk
+
+θk−1
+
+= 11 − αk
+
+ n
+
+√αk
+
+θk + 1 − αk
+
+√αknX
+
+> j=1
+
+s jϕ (θk, t k)
+
+ − (n − 1) √αk
+
+1 − αk
+
+θk + (n − 1) αk − n
+
+1 − αk
+
+θk−1
+
+= 1
+
+√αknX
+
+> j=1
+
+s jϕ (θk, t k) + 
+
+ n
+
+(1 − αk)√αk
+
+− (n − 1) √αk
+
+1 − αk
+
+
+
+θk + (n − 1) αk − n
+
+1 − αk
+
+θk−1
+
+= 1
+
+√αknX
+
+> j=1
+
+s jϕ (θk, t k) + 
+
+ n − (n − 1) αk
+
+θk + √αk
+
+ (n − 1) αk − nθk−1
+
+(1 − αk)√αk
+
+. (18) Finally, we arrive at the cumulative transition score. To apply this insight in practice, we need to define the μk and σ2 
+
+> k
+
+terms that will be used in a Gaussian transition. Grouping the θk and θk−1 terms as before and simplifying we arrive at the mean transition in terms of different scores 
+
+μk = 1
+
+√αk
+
+θk + 1 − αk
+
+√αk
+
+ n − αk(n − 1) 
+
+> n
+
+X
+
+> j=1
+
+sjϕ(θk, t k), (19) 
+
+σ2 
+
+> k
+
+= 1 − αk
+
+n − αk(n − 1) . (20) Notice that both the aggregate score contribution and the transition variance contain the common factor n − αk(n − 1) , which depends jointly on the number of composed observations and the noise schedule. We denote this quantity by 
+
+κ(n) 
+
+> k
+
+:= n − αk(n − 1) ,
+
+and refer to it as the compositional precision factor for n composed observations . It controls how composition rescales the aggregate score and the variance of the normalized reverse transition. The mean and variance of this Gaussian reverse kernel define a DDPM-style predictor, 
+
+θk−1 = 1
+
+√αk
+
+θk + 1 − αk
+
+√αk κ(n)
+
+> kn
+
+X
+
+> j=1
+
+s jϕ (θk, t k) + 
+
+s 1 − αk
+
+κ(n)
+
+> k
+
+zk, z k ∼ N (0 , I ). (21) To relate these steps to a continuous VP schedule, take a forward-time grid 0 = t0 < · · · < t K = 1 
+
+and let α(t) denote cumulative squared signal retention, with α(0) = 1 . The one-step factors and their cumulative product satisfy 
+
+αk = α(tk)
+
+α(tk−1) , (22) 
+
+> k
+
+Y
+
+> j=1
+
+αj = α(tk). (23) The score network is evaluated at the corresponding continuous time tk, while αk controls only the transition between tk−1 and tk.A.3 DERIVING THE CONTINUOUS -TIME DIFFUSION COEFFICIENT 
+
+We seek a continuous-time counterpart to the discrete predictor in Eq. (21). Here t denotes continuous diffusion time, α(t) denotes cumulative squared signal retention from the clean state, and a dot denotes differentiation with respect to t. The one-step DDPM factors remain αk, with discrete steps 19 Preprint indexed by k. For a forward process with drift f (t)θ, diffusion coefficient g(t), and corresponding marginal pt, the reverse SDE admits a predictor-corrector (PC) decomposition (Song et al., 2021), 
+
+dΘ t =  f (t)θt − 12 g(t)2∇ log pt(θt) dt
+
+| {z }
+
+> Probability Flow Prediction ODE
+
++   − 12 g(t)2∇ log pt(θt) d t + g(t) d ewt
+
+| {z }
+
+> Langevin Correction SDE
+
+. (24) Sampling follows this equation toward decreasing t. The probability-flow term advances samples between noise levels, while the Langevin term provides score-driven exploration at the current level. The shared coefficient g(t) determines the strength of both the score-driven motion and the injected noise. For compositional sampling, we seek an observation-count-dependent choice g(t) = gn(t) to improve the stability and numerical accuracy of these corrections. We examine its effects and the associated exploration trade-offs in § A.4. Here we construct gn(t) by retaining the ordinary VP mean attenuation and prescribing a Gaussian noising variance that contracts with the observation count n, motivated by the discrete variance contraction in Eq. (21). Specifying this conditional kernel does not require knowing the clean posterior or assuming that it is Gaussian. With the VP drift fixed, the diffusion coefficient then follows from the chosen variance evolution. 
+
+Deriving the diffusion coefficient gn(t). Let x = x1: n collect the observed design–response pairs. Suppose we could draw θ0 ∼ p0(θ | x) from the clean posterior. Ordinary VP noising would perturb this draw according to 
+
+Θt | Θ0 = θ0 ∼ N 
+
+p α(t) θ0, [1 − α(t)] I
+
+
+
+.
+
+Here α(t) is the cumulative squared signal retention, with α(0) = 1 and ˙α(t) = −β(t)α(t) for the VP noise-rate schedule β(t) ≥ 0. This kernel has accumulated noise variance 1 − α(t) per coordinate, independent of the number of composed observations n.The discrete compositional update in Eq. (21) contracts its one-step Gaussian reverse-transition variance by κ(n) 
+
+> k
+
+= 1 + ( n − 1)(1 − αk). We use the same functional form with cumulative retention 
+
+α(t) to prescribe the conditional noising variance, defining a distinct cumulative contraction factor 
+
+κ(n)(t),
+
+Cov(Θ t | Θ0 = θ0) = Vn(t)I, (25) 
+
+Vn(t) := 1 − α(t)
+
+κ(n)(t) , (26) 
+
+κ(n)(t) := 1 + ( n − 1)(1 − α(t)) . (27) This cumulative contraction is a modeling prescription, not the infinitesimal limit of the DDPM transition. The factors κ(n) 
+
+> k
+
+and κ(n)(t) share a functional form but act on one-step and accumulated noise variances, respectively. The prescribed kernel recovers ordinary VP noising at n = 1 and reduces the noising variance for n > 1.With Vn(t) specified, the remaining task is to find the diffusion coefficient gn(t) that produces it while retaining the VP drift fn(t) = −β(t)/2. For the forward SDE dΘ t = fn(t)Θ t dt + gn(t) d wt,applying Itô’s formula to each coordinate’s squared deviation from its conditional mean and taking expectations gives the variance evolution 
+
+˙Vn(t) = 2 fn(t)Vn(t) + gn(t)2, Vn(0) = 0 . (28) The first term comes from differentiating the squared deviation under the drift. With the chosen VP drift, 2fn(t)Vn(t) = −β(t)Vn(t), so this contribution contracts the existing variance. The second term is Itô’s additional contribution from the noise increment’s variance gn(t)2 dt, which the ordinary chain rule would miss. The remaining stochastic term has zero expectation. Consequently, the required diffusion variance rate is 
+
+gn(t)2 = ˙Vn(t) − 2fn(t)Vn(t) = ˙Vn(t) + β(t)Vn(t). (29) Thus, gn(t)2 must both compensate for contraction under the drift and produce the prescribed increase in cumulative variance; it is not simply Vn(t) or ˙Vn(t).20 Preprint To evaluate this expression, we first differentiate the prescribed variance with respect to cumulative retention, then apply the chain rule to obtain its time derivative. Holding n fixed and temporarily writing α for α(t), the numerator 1 − α has derivative −1, while the denominator n − (n − 1) α has derivative −(n − 1) . The quotient rule gives 
+
+ddα
+
+ 1 − αn − (n − 1) α
+
+
+
+= (−1) n − (n − 1) α − (1 − α)−(n − 1) 
+
+[n − (n − 1) α]2
+
+= −n + ( n − 1) α + ( n − 1) − (n − 1) α
+
+[n − (n − 1) α]2
+
+= − 1[n − (n − 1) α]2 .
+
+The terms proportional to α cancel, leaving −n + ( n − 1) = −1 in the numerator. Restoring the time dependence and applying the chain rule yields 
+
+˙Vn(t) = ddα
+
+ 1 − αn − (n − 1) α
+
+
+
+> α=α(t)
+
+˙α(t)= − ˙α(t)[κ(n)(t)] 2 = β(t)α(t)[κ(n)(t)] 2 ,
+
+(30) where the final equality uses ˙α(t) = −β(t)α(t).Substituting this derivative and the prescribed variance Vn(t) = (1 − α(t)) /κ (n)(t) into Eq. (29) gives 
+
+gn(t)2 = β(t)α(t)[κ(n)(t)] 2 + β(t) 1 − α(t)
+
+κ(n)(t)= β(t) α(t) + (1 − α(t)) κ(n)(t)[κ(n)(t)] 2 .
+
+To simplify the numerator, substitute κ(n)(t) = 1 + ( n − 1)(1 − α(t)) :
+
+α(t) + (1 − α(t)) κ(n)(t) = α(t) + (1 − α(t)) 1 + ( n − 1)(1 − α(t)) 
+
+= α(t) + (1 − α(t)) + ( n − 1)(1 − α(t)) 2
+
+= 1 + ( n − 1)(1 − α(t)) 2.
+
+Consequently, the diffusion variance rate is 
+
+gn(t)2 = − ˙α(t)
+
+α(t)1 + ( n − 1)(1 − α(t)) 2
+
+[κ(n)(t)] 2 .
+
+Equivalently, in terms of the VP noise-rate schedule, 
+
+gn(t)2 = β(t) 1 + ( n − 1)(1 − α(t)) 2
+
+[1 + ( n − 1)(1 − α(t))] 2 . (31) For n = 1 , κ(1) (t) = 1 , so the prescribed cumulative variance reduces to V1(t) = 1 − α(t) and the diffusion coefficient satisfies g1(t)2 = β(t), recovering the ordinary VP-SDE. For general n, these coefficients realize the chosen linear Gaussian forward process with ordinary VP mean attenuation and reduced cumulative noising variance Vn(t).The coefficient satisfies gn(t)2 ≤ β(t) and depends only on diffusion time and observation count. It therefore provides a composition-dependent sampling scale without score Jacobians or auxiliary covariance estimates. This construction specifies a chosen forward noising process, rather than establishing an exact reverse process for the product bridge. A.4 LANGEVIN REFINEMENT AND NUMERICAL ACCURACY 
+
+Discretizing the Langevin term in Eq. (24) gives an unadjusted Langevin algorithm (ULA) correction between predictor steps. We now examine how the choice g(t) = gn(t) affects the stability and accuracy of these updates. We assess how efficiently these corrections explore the compositional marginals ept introduced in § 3.3. 21 Preprint 
+
+Mixing at fixed diffusion time. The predictor advances between noise levels, while Langevin corrections help particles explore each intermediate target before moving on. Their effectiveness depends on both the amount of exploration and the numerical accuracy of the updates. Strongly curved or anisotropic marginals can make these corrections sensitive, e.g. rapidly contracting directions may force small steps even when exploration in other directions requires much longer trajectories – a form of numerical stiffness. Starting from the predictor output θ(0)  
+
+> t
+
+and writing est = ∇θ log ept, one ULA correction is 
+
+θ(ℓ+1)  
+
+> t
+
+= θ(ℓ) 
+
+> t
+
++ ηg (t)2
+
+2 est(θ(ℓ) 
+
+> t
+
+)
+
+| {z }
+
+> drift update
+
++ √η g (t) εℓ
+
+| {z }
+
+> diffusion noise
+
+, εℓ
+
+> iid
+
+∼ N (0 , I d). (32) Here L is the number of corrections, ℓ = 0 , . . . , L −1 indexes them, and d is the parameter dimension. The Langevin correction step size η > 0 controls the size of each update while the diffusion noise level t remains unchanged. This update uses the coefficient g(t) = gn(t) from Eq. (24). Its score-driven drift 12 g(t)2est moves toward higher density, while its noise covariance ηg (t)2Id supplies exploration. The term f (t)θ belongs to the predictor and is not part of this within-level correction. “Unadjusted” means there is no Metropolis accept/reject step. Consequently, for a fixed nonzero step size, a stable ULA chain generally has an invariant distribution that differs from ept, introducing discretization bias (Durmus & Moulines, 2017; Roberts & Tweedie, 1996). 
+
+Numerical accuracy of Langevin correction. As a one-dimensional Gaussian illustration of this step-size restriction, consider the target N (m, v ) with mean m and variance v. Substituting its score 
+
+est(θ) = −(θ − m)/v into Eq. (32) gives 
+
+θ(ℓ+1)  
+
+> t
+
+− m =
+
+
+
+1 − ηg (t)2
+
+2v
+
+
+
+(θ(ℓ) 
+
+> t
+
+− m) + √η g (t) εℓ, εℓ ∼ N (0 , 1) . (33) For example, if ηg (t)2 = 6 v, the deterministic part takes a displacement δ from the mean to −2δ.It crosses the mean and ends twice as far away. More generally, two trajectories receiving identical noise have their separation multiplied by 1 − ηg (t)2/(2 v), which amplifies its magnitude when 
+
+ηg (t)2 > 4v. Here the score changes at rate −1/v with the parameter, so a narrower target produces a more rapidly varying restoring drift. Stability therefore depends on the diffusion coefficient and correction step size relative to the target variance, not on score magnitude alone. Numerical stability does not by itself imply accurate sampling. Even in the stable range 0 < ηg (t)2 <
+
+4v, this chain has stationary variance v/ [1 − ηg (t)2/(4 v)] , which exceeds the target variance v.Reducing g(t)2 or η reduces this discretization bias but also slows exploration, potentially requiring more corrections. Increasing L alone does not remove the bias. In this illustration, using gn(t)2 ≤ β(t) reduces the update scale relative to v and, within the stable range, the stationary-variance inflation at a given η. Because the schedule depends on observa-tion count rather than local curvature, the step size and correction count still need to be chosen appropriately. 
+
+Choosing correction step sizes and counts. Touron et al. (2026, §3) give rules for choosing the step size and number of Langevin steps together to meet a desired Wasserstein error tolerance in annealed Langevin sampling. Their guarantees require smooth, strongly log-concave intermediate densities and controlled score error. In their bound, more steps reduce mixing error but do not remove the residual error from the finite step size and score approximation. The required number of steps also depends on how much the target changes between noise levels, so the correction count need not be the same throughout sampling. 
+
+Choosing diffusion noise levels. Choosing the noise levels themselves is a separate optimization problem. For example, Williams et al. (2024) construct score-optimal schedules by estimating the cost of moving between successive marginals and redistributing the time points to approximately equalize that cost. This requires an additional cost-estimation and grid-adaptation procedure, distinct from choosing the number of ULA corrections. 22 Preprint A.5 EXPERIMENTAL EVALUATION 
+
+Gaussian benchmark. We used the correlated Gaussian model of Linhart et al. (2026), with parameter dimension d = 10 and observation-noise correlation ρ = 0 .8. The prior and conditionally independent observations are 
+
+θ ∼ N (0 , I d), (34) 
+
+xj | θ iid 
+
+∼ N (θ, Σ) , (35) 
+
+Σ = (1 − ρ)Id + ρ11 ⊤, (36) for j = 1 , . . . , n , where 1 ∈ Rd is the all-ones vector. The exact posterior is p(θ | x1: n) = 
+
+N (θ; m0, C 0), with mean m0 and covariance C0 before diffusion noise is added, given by 
+
+C0 = ( Id + nΣ−1)−1, m0 = C0Σ−1
+
+> n
+
+X
+
+> j=1
+
+xj .
+
+Controlled Gaussian setup. We compared the derived diffusion variance rate gn(t)2 with the ordinary VP rate gVP (t)2 = β(t) on the same prescribed Gaussian path. We examined numerical stability, covariance tracking, and posterior-sampling accuracy as n increases. Covariance tracking compares the sample covariance with its analytic target at each noise level. It checks whether the samples have the intended spread and correlations, which numerical stability alone does not guarantee. Exact scores let us isolate these effects without score-estimation error, and each paired comparison held the terminal particles, random noise draws, time grid, and correction count fixed. For Euler–Maruyama sampling, we used β(t) = 0 .05 + 19 .95 t, α(t) = exp( −0.05 t − 9.975 t2), and the forward process from Eq. (26). At diffusion time t, this gives a Gaussian marginal with mean mt,covariance Ct, and exact score sG 
+
+> t
+
+, the gradient of its log density, 
+
+mt = pα(t) m0, Ct = α(t)C0 + 1 − α(t)
+
+κ(n)(t) Id, sG 
+
+> t
+
+(θ) = −C−1 
+
+> t
+
+(θ − mt).
+
+Both coefficient choices, c(t) = g2
+
+> n
+
+(t) and c(t) = β(t), retained this score, the linear reverse drift 
+
+β(t)θ/ 2, and the terminal law N (m1, C 1). Each run used 1,000 particles and 400 equal reverse-time steps from 1 to 0, with step size h = 1 /400 and no final Tweedie correction. We replaced the diffusion coefficient in both the predictor and ULA correctors while keeping the score and initialization unchanged. This isolates the effect of using gn(t)2 rather than β(t) for the prescribed compositional noise path. 
+
+Stiffness and step-size sensitivity. Here the predictor advances between noise levels using an Euler–Maruyama step of the full reverse SDE in Eq. (24), before any additional ULA corrections. To assess stability, imagine two nearby particles receiving the same Gaussian noise. Their noise increments cancel in the difference, isolating how the drift changes their separation. This depends on the spatial derivative of the drift, its Jacobian, rather than on the drift’s magnitude alone. Let h > 0
+
+denote the sampling step size, so each predictor advances from diffusion time t to t − h. Combining the two score terms in Eq. (24) gives the sampling drift bt and its Jacobian in this reverse-time direction, 
+
+bt(θ) = β(t)2 θ + c(t)sG 
+
+> t
+
+(θ) = β(t)2 θ − c(t)C−1 
+
+> t
+
+(θ − mt), (37) 
+
+Jt := ∂b t
+
+∂θ = β(t)2 Id − c(t)C−1 
+
+> t
+
+. (38) At a given noise level, mt and Ct are fixed with respect to θ, so differentiating the Gaussian score contributes −C−1 
+
+> t
+
+. Writing δ for the separation between the two particles, one predictor step gives 
+
+δnext = ( Id + hJ t)δ. To check whether discretization turns contraction into expansion, we examine this update one eigendirection at a time. Here Jt is symmetric, so its eigenvectors form an orthogonal basis and any separation can be decomposed into components along these directions. Along each eigenvector, applying the Jacobian is exactly multiplication by its eigenvalue. This reduces the matrix update to a scalar calculation for each component, without changing the dynamics. For a negative eigenvalue −r, its magnitude r > 0 is the local contraction rate, so the continuous drift brings nearby 23 Preprint 0.0 0.2 0.4 0.6 0.8 1.0 Reverse progress (noise → posterior) 10 −1                                                              
+
+> 10 0
+> 10 1
+> Diffusion variance rate
+> (a) Diffusion schedules
+> β(t), both ng232 (t)
+> g2100 (t)
+> 0.0 0.5 1.0
+> n= 32
+> (b) Time-marginal covariance error
+> 0.0 0.5 1.0 0.00 0.05 0.10
+> n= 100: derived
+> 0.0 0.5 1.0 10 −2
+> 10 80
+> 10 160
+> n= 100: β(t) (log)
+> 0.0 0.2 0.4 0.6 0.8 1.0 Reverse progress (noise → posterior) −1.5 −1.0 −0.5 0.0 0.5 Leading posterior-PC coordinate  (c) Particle paths: n= 32
+> Exact 90% band Exact mean
+> 0.0 0.2 0.4 0.6 0.8 1.0 Reverse progress (noise → posterior) −1.5 −1.0 −0.5 0.0 0.5 Leading posterior-PC coordinate  (d) Particle paths: n= 100
+> Exact 90% band Exact mean
+> β(t), L= 0: paths off scale
+> β(t), L= 1: paths off scale
+> 124816 32 64 100 Number of observations, n
+> 0.000 0.005 0.010 0.015 0.020 sW β − sW gn
+> (e) Matched-cost benefit across observations
+> Paired mean and 95% CI
+> 124816 32 64 100 Number of observations, n
+> 0.0 0.5 1.0 1.5 2.0 2.5 Step size / local stability limit
+> Above 1: numerical amplification
+> (f) Stiffness across observations
+> Ordinary β(t)Derived g2
+> n(t)
+> Relative Frobenius error
+> Reverse progress (noise → posterior)
+> g2
+> n(t), L= 0 g2
+> n(t), L= 1 β(t), L= 0 β(t), L= 1
+
+Figure 7: Compositional diffusion improves finite-budget Gaussian sampling. (a–d ) Diffusion schedules, covariance tracking, and matched particle paths. At n = 100 , ordinary-VP covariance errors require a logarithmic scale; path gaps and braces mark off-scale excursions. ( e) Endpoint sW reduction at matched cost, with positive values favoring g2
+
+n(t); bars are pointwise 95% intervals over five paired seeds. ( f ) Step size relative to the local contraction limit. Ordinary VP crosses 1,indicating numerical amplification, while the derived coefficient stays below it. Accuracy improves even below this threshold. particles closer along that direction. Taking δ along this eigenvector gives Jtδ = −rδ . Euler adds h
+
+times this rate of change to the current separation, giving 
+
+δnext = δ + hJ tδ = δ − hrδ = (1 − hr )δ. 
+
+When hr > 2, the multiplier 1 − hr is less than −1. Its negative sign means that the particles exchange their ordering along this direction, while its absolute value exceeding one means that their distance increases. For example, hr = 3 gives δnext = −2δ, so the particles overshoot each other and end twice as far apart. This is numerical amplification in a direction where the continuous drift contracts. Checking all negative eigenvalues identifies the directions most sensitive to this overshoot. We can summarize this sensitivity by asking how close each update comes to its local contraction limit. Along a predictor direction with contraction rate r, this limit is 2/r , so the ratio h/ (2 /r ) = hr/ 2
+
+reaches one at the boundary between contraction and amplification. The same reasoning extends to a ULA corrector of duration h, whose contraction limit along a direction with variance v is 4v/c (t), as in Eq. (33). The corresponding ratio hc (t)/(4 v) is largest in the narrowest direction of the Gaussian, where the covariance eigenvalue is smallest. To capture the most restrictive update encountered during sampling, we define R(n) as the largest of these ratios across both update types, their contracting directions, and all sampling steps for n observations. With one correction per predictor step ( L = 1 )24 Preprint on the grid tk = kh , the predictor uses time tk and the subsequent corrector uses tk−1, giving 
+
+R(n) = max 
+
+> 1≤k≤400
+
+
+
+h
+
+2 max  
+
+> i
+
+[−λi(Jtk )] +
+
+| {z }
+
+> predictor
+
+, h c (tk−1)4λmin (Ctk−1 )
+
+| {z }
+
+> corrector
+
+
+
+, (39) where [a]+ = max( a, 0) and λi denotes an eigenvalue. We exclude positive predictor eigenvalues because they describe expansion already present in the continuous drift, rather than amplification introduced by discretization. Panel (f) of Figure 7 reports R(n) for each coefficient choice, showing how the same sampling step size fares as more observations are composed. Values below one mean that every tested contracting direction remains within its local step-size limit, whereas values above one identify at least one update that amplifies separation where the continuous drift would contract. A smaller R(n) therefore leaves more room below these limits, although it does not by itself imply faster mixing or better posterior accuracy. It remains a local diagnostic rather than a guarantee of global stability or a measure of accumulated sampling error. 
+
+Assessing sampling accuracy. Avoiding numerical amplification does not ensure that the particles accurately represent the target distribution. For a Gaussian target, the mean and covariance together determine the distribution, so samples can be centered correctly yet misrepresent uncertainty by being too concentrated, too dispersed, or incorrectly correlated. We therefore tracked whether the particles reproduce the intended spread and correlations throughout sampling by comparing their empirical covariance with the analytic target Ct, using the relative covariance error ∥ dCov( θt) − Ct∥F /∥Ct∥F ,where ∥ · ∥ F is the Frobenius norm. The plotted paths show eight matched particles projected onto the leading posterior principal component, against the exact mean and pointwise 90% band. For panels (e,f), we fixed L = 1 and swept n ∈ { 1, 2, 4, 8, 16 , 32 , 40 , 48 , 64 , 100 }. Each method used 800 full compositional-score calls per run, each processing all particles. We measured empirical sliced 2-Wasserstein distance (sW) against 1,000 exact-posterior draws using 512 random unit directions, taking the square root of the mean squared difference between sorted projections. At each n, five paired seeds shared observations, terminal particles, predictor/corrector noise, reference draws, and projection directions across methods. Panel (e) reports the mean paired difference sW β − sW gn ,with pointwise 95% Student-t intervals using four degrees of freedom. 
+
+Effect of the diffusion coefficient. The two coefficients give identical samples at n = 1 , while the derived coefficient lowers sW in all 45 paired comparisons with n > 1. At n = 100 , mean sW falls from 0.0153 to 0.0074 , a reduction of approximately 52%. The absolute improvement peaks near 
+
+n = 8 , rather than increasing monotonically. Ordinary VP crosses R = 1 between the tested values 
+
+n = 40 and n = 48 ; at n = 100 , R is 2.49 for ordinary VP versus 0.07 for the derived coefficient. Finite ordinary-VP endpoints with L = 1 can conceal transient relative covariance errors of order 
+
+10 142 ; these runs remain in the accuracy comparison. The coefficient therefore improves finite-budget accuracy and reduces step-size sensitivity, but the accuracy gains already appear below the local instability threshold. Changing the coefficient while retaining the score and linear drift also changes compatibility with the prescribed continuous-time marginals, so numerical stiffness alone does not explain the difference. These controlled Gaussian results do not establish the same behavior for learned-score SLCP or BMP sampling. A.6 EXACT -SCORE GAUSSIAN BENCHMARK 
+
+We evaluated the complete observation-count sweep n ∈ { 1, 2, 4, 8, 16 , 32 , 64 , 100 } using the exact compositional score and posterior of the 10-dimensional correlated Gaussian model defined in § A.5. For every n, each method used five common data seeds, 1,000 posterior particles, and T = 400 reverse steps. The F-NPSE-SDE comparisons used L ∈ { 1, 5} Langevin corrections per predictor. This paired design separates changes caused by the compositional sampler from variation in observations or reference samples. A.7 SLCP BENCHMARK 
+
+We evaluated n ∈ { 1, 14 , 30 } across three independently trained single-observation score networks and 25 common SLCP test instances per network seed. Each network was trained on simulator-25 Preprint generated SLCP pairs. Within each seed and test instance, all compositional samplers used the same frozen score network and reference posterior, so the comparison isolates the sampling method. Following Linhart et al. (2026), JAC and Langevin bounded standardized iterates coordinatewise to 
+
+[−3, 3] for numerical stability. We report sliced Wasserstein distance, MMD, and C2ST using the same definitions as in Table 1. A.8 COMPUTATIONAL COST OF COMPOSITIONAL SAMPLERS 
+
+Consider sampling P posterior particles, or P simultaneous reverse-diffusion chains, over d unknown parameters conditioned on n observations using T reverse steps. Let Cs denote the architecture-dependent cost of one unbatched score-network evaluation for one particle-observation pair at one diffusion time. F-NPSE-SDE evaluates n scores for every particle in each predictor and repeats these evaluations in each of L ULA corrector steps. Its compute cost is therefore O(T (L + 1) P nC s).Because scores can be accumulated over observations and ULA steps run sequentially, its working state requires O(P d ) memory beyond the score network’s minibatch activations. Thus, increasing L
+
+increases runtime but not the asymptotic peak state memory. JAC forms a full d × d score Jacobian for every particle-observation pair at every reverse step. Computing these Jacobians requires roughly O(T P ndC s) work, corresponding to approximately 
+
+d reverse-mode passes per score, in addition to dense covariance inversions and solves. A fully vectorized implementation stores O(P nd 2) Jacobian values, an nd -fold increase over the O(P d )
+
+particle state of F-NPSE-SDE. For pooled BMP inference, n = 940 and d = 65 , so this auxiliary state is approximately 6.1 × 10 4 times larger. Streaming over observations can instead reduce peak Jacobian storage to O(P d 2), but serializes the same computation and retains the additional autodifferentiation and dense linear-algebra costs. GAUSS avoids online Jacobians but estimates a covariance for each observation from M auxiliary samples generated by S-step DDIM rollouts. For fixed conditioning, its preprocessing cost is 
+
+O(nM SC s). A straightforward batched implementation uses O(nM d + nd 2) storage for auxiliary samples and per-observation covariances. Online covariance accumulation can remove the nM d term, and processing contexts sequentially can further reduce peak storage, but each context still requires the rollout computation and estimation of a d × d covariance. Sampling then requires O(T P nC s)
+
+score evaluations and dense precision operations. These costs are amplified by the conditional block updates in HBDS. Each reverse-time level updates four five-dimensional receptor blocks conditional on the current 60-dimensional global state, then updates the global state conditional on the refined receptors. JAC consequently requires four sets of local Jacobians and a global 60 × 60 Jacobian family. If fully vectorized, the global family alone is approximately n(60) 2/(60+4 ×5) ≈ 4.2×10 4 times larger than the complete F-NPSE-SDE HBDS particle state. Streaming reduces peak memory but repeats this Jacobian computation serially within every block update. For GAUSS, the relevant conditional covariances change with the current global and receptor states, so its DDIM rollouts become nested inside the block refinements rather than being amortized once. By contrast, F-NPSE-SDE stores only the HBDS particle state, O(P (60 + 4 × 5)) ,beyond common score-network activations. HBDS therefore adds sequential score evaluations for F-NPSE-SDE without requiring these Jacobian or covariance calculations. 
+
+BMP runtime and memory. In our BMP experiments, JAC increased HBDS sampling from approximately one hour to more than ten hours, while GAUSS exhausted GPU memory during context-specific covariance estimation across 940 designs. We therefore omit both from the subsequent BMP evaluation. A.9 COMPOSITIONAL SAMPLING RELATED WORKS 
+
+Factorized posterior sampling. Our construction builds on F-NPSE (Geffner et al., 2023), which combines single-observation posterior scores with a prior correction for inference from multiple observations. We retain this factorization and use its discrete transition to motivate a continuous-time Gaussian surrogate. The contribution is the resulting variance prescription and compatible diffusion coefficient, rather than score composition itself; Arruda et al. (2025) review this broader family of SBI methods. 26 Preprint 
+
+Inference-time schedule adjustments. Our scalar approximation is closely related to the sampling-time modifications of Arruda et al. (2026), who stabilize composition through score damping and an adjustable constant shift of the log signal-to-noise ratio (SNR), alongside minibatch score estimation to reduce memory requirements. For our Gaussian surrogate, define SNR n(t) = α(t)/V n(t) and 
+
+SNR VP (t) = α(t)/(1 − α(t)) at times with 0 < α (t) < 1. The prescribed variance in Eq. (26) gives 
+
+log SNR n(t) = log SNR VP (t) + log κ(n)(t).
+
+Thus, κ(n)(t) induces a time- and observation-count-dependent log-SNR shift. We obtain this adjustment by prescribing a composition-dependent cumulative variance and deriving its compatible diffusion coefficient while retaining the ordinary VP mean attenuation. Since the mean attenuation is unchanged while the variance is reduced, this is not simply a reparameterization of the ordinary VP schedule, nor is it equivalent to multiplying the composed score by a damping factor. The derivation realizes the chosen Gaussian surrogate but does not establish an exact reverse process for the full compositional posterior. 
+
+Covariance-aware sampling. The samplers of Linhart et al. (2026) address errors in composing diffusion-time scores through score Jacobians (JAC) or auxiliary posterior covariance estimates (GAUSS). We compare these methods directly on Gaussian and SLCP benchmarks in § 4.1; their additional computations become more expensive when repeated inside HBDS block updates. In our BMP implementation, JAC increased HBDS sampling from approximately one hour to more than ten hours, while GAUSS exhausted GPU memory during covariance estimation across 940 designs (§ A.8). These observations concern the tested implementation, not an impossibility of adapting either method. Our score-only compositional sampler makes the repeated block updates practical in this setting. The hierarchical inference construction is discussed separately in § B.2. 
+
+## B HIERARCHICAL BLOCKWISE DIFFUSION SAMPLING DETAILS 
+
+Grouped posterior target. Suppose there are K experimental groups, each with design ξk, obser-vation yk, and local latent state Rk, together with global parameters θ. Assuming condition-specific independent receptor priors, as in our BMP model, the grouped posterior factorizes as 
+
+p(θ, R 1: K | y1: K , ξ 1: K ) ∝ p(θ)
+
+> K
+
+Y
+
+> k=1
+
+p(Rk | ξk) p(yk | Rk, θ, ξ k). (40) A pooled model restricts this family by tying R1 = · · · = RK . If two groups require different local states on a set with positive posterior mass, that restriction cannot represent the grouped posterior; § B.1 gives an analytic example. 
+
+Blockwise intermediate target. HBDS uses conditional scores to approximate the unavailable noised joint posterior pt(θ, R 1: K | y1: K , ξ 1: K ). Over each diffusion interval, it advances and refines the local receptor blocks before updating the shared parameters using all groups. Additional block rounds repeat this interval after re-noising the updated states, rather than adding another reverse transition after the predictor–corrector updates. Algorithm 1 uses PC Bt→s to denote a predictor–corrector update that advances block B from t to s
+
+and applies L Langevin corrections at s. In the continuous implementation, the predictor uses the probability-flow part of Eq. (24) and is deterministic. Each correction follows Eq. (32) with noise covariance ηg nB (s)2I, where η = ( t − s)/L for L > 0. Here nB is the observation count for that block, namely the size of group k for Rk and the total count for θ. Setting L = 0 skips corrections, which are also omitted on the final diffusion interval. Thus, no additional Gaussian reverse step is needed after these updates. The initialization laws qinit use Gaussian noise for θ and, in the BMP experiments, the receptor prior in § D. 27 Preprint 
+
+Algorithm 1: Hierarchical Blockwise Diffusion Sampling (HBDS) 
+
+Input: Groups {(ξk, y k)}Kk=1 ; score model sϕ; sampling schedule (f, g n); time grid 
+
+tT > · · · > t 0 = 0 ; block rounds M ≥ 1; corrector steps L ≥ 0.
+
+PC t→s combines one predictor step t → s with L Langevin corrections at s.
+
+Init: θtT ∼ qθ
+
+> init
+
+; RktT ∼ qRk 
+
+> init
+
+for k = 1 , . . . , K .
+
+for i = T, T − 1, . . . , 1 do 
+
+(t, s ) ← (ti, t i−1)
+
+for m = 1 , . . . , M do for k = 1 to K do 
+
+Rks ← PC Rt→s
+
+ Rkt | θt, ξ k, y k
+
+Gs ← { (Rks , ξ k, y k)}Kk=1 
+
+θs ← PC θt→s(θt | G s)
+
+if m < M then 
+
+Re-noise (θs, R 1: Ks ) to obtain (θt, R 1: Kt ) at noise level t
+
+Output: (θ0, {Rk 
+
+> 0
+
+}Kk=1 ) conditioned on {(ξk, y k)}Kk=1 .B.1 TOY SIMULATOR MODEL EXAMPLE 
+
+We consider a hierarchical model with a discrete latent k ∈ {− 1, +1 }, a continuous latent θ ∈ R,and an observation x ∈ R. The generative process is 
+
+k ∼ Rad   12
+
+ , (Rademacher: P[k = +1] = P[k = −1] = 12 ),θ ∼ N (0 , 1) ,x|θ, k ∼ N  5k + θ, 1, i.e., x = 5 k + θ + ε, ε ∼ N (0 , 1) indep. The joint density factorizes as 
+
+p(θ, k, x ) = p(k)p(θ)p(x|θ, k ) = 12 N (θ; 0 , 1) N x; 5 k + θ, 1.
+
+Thus, the likelihood is p(x|θ, k ) = N (x; 5 k + θ, 1) , with prior p(θ) = N (0 , 1) and p(k) = 12 . The corresponding posterior distributions are analytically tractable. The discrete latent variable has 
+
+p(k = +1 |x) = N (x; 5 , 2) 
+
+N (x; 5 , 2) + N (x; −5, 2) , (41) 
+
+p(k = −1|x) = 1 − p(k = +1 |x), (42) while the continuous latent variable conditioned on x and k follows 
+
+p(θ|x, k ) = N θ; 12 (x − 5k), 12
+
+. (43) Together these define the exact posterior for a single observation, 
+
+p(θ, k |x) = p(θ|x, k ) p(k|x),
+
+which serves as the analytic ground truth for single-sample posterior evaluation. 
+
+Pooled versus grouped posterior structure. For K experimental groups, we introduce one group-specific discrete latent zg ∈ {− 1, +1 } per group while sharing the continuous parameter θ:
+
+zg ∼ Rad   12
+
+ , θ ∼ N (0 , 1) , xg | θ, z g ∼ N (5 zg + θ, 1) .
+
+The hierarchical posterior is 
+
+p(θ, z 1: K | x1: K ) ∝ p(θ)
+
+> K
+
+Y
+
+> g=1
+
+p(zg )p(xg | θ, z g ), (44) 28 Preprint 
+
+Figure 8: Joint-state diagnostic for the hierarchical toy with 20 observations across two groups and no ULA correctors. ( Left ) Pooled sampling with one shared latent. ( Right ) HBDS with separate group latents. Rows use analytic (top) and learned (bottom) scores; dotted lines mark the generating θ = 1 .This oracle diagnostic conditions HBDS latent updates on the true θ and parameter updates on the true group signs; pooled sampling receives no such information. which allows each group to select its own latent mode. A pooled model instead ties all groups to a single latent z,
+
+ppool (θ, z | x1: K ) ∝ p(θ)p(z)
+
+> K
+
+Y
+
+> g=1
+
+p(xg | θ, z ). (45) Thus, whenever different groups are better explained by different latent modes, the hierarchical poste-rior can represent the oracle structure while the pooled posterior cannot. For example, observations near +5 and −5 are naturally explained by different group-specific latents with θ ≈ 0, whereas the pooled model must force both groups to share the same latent explanation. 
+
+Learned-score illustration. The main-text comparison in Figure 4 used 20 observations, ten per group, generated with θ = 1 , signs z1 = −1 and z2 = +1 , and unit observation-noise standard deviation. Both samplers reused a frozen single-observation score network, with 1,000 particles per sampling seed across seeds 0, 1, and 2, 200 predictor intervals, and no ULA correctors. HBDS conditioned its block updates on cumulative-VP Tweedie estimates, without access to the generating parameters or signs. The plot shows all saved paired particles without jitter or latent rounding; continuous latent states are sampler approximations to the discrete target. B.2 HIERARCHICAL SBI RELATED WORKS 
+
+Hierarchical posterior estimators. Hierarchical SBI explicitly distinguishes shared parameters from local latent variables. Heinrich et al. (2024) learn dataset-wide representations of event en-sembles and separate global and local posterior estimators, supporting varying ensemble sizes. Habermann et al. (2025) introduce multilevel neural posterior estimation (ML-NPE), pairing hier-archical summary networks with global and local posterior estimators. Their framework supports covariates, shared parameters, and varying numbers of groups and observations per group within the training range, with validation through simulation-based calibration and comparisons to Stan. Charles et al. (2026) combine group-aware tokenization with flow matching, using a per-site likeli-hood surrogate to generate synthetic multi-site datasets for training a separate hierarchical posterior estimator. These approaches build the hierarchy into the learned inference model. 
+
+Hierarchical score models. Arruda et al. (2026) train global and local score estimators on individual groups, compose the global scores across groups, and then sample local parameters conditional on the sampled globals. This supports hierarchical inference without simulating the full hierarchy for each training example. HBDS instead reuses the conditional queries of one joint score model and alternates local and global updates within the reverse-diffusion process, rather than training separate 29 Preprint estimators for the hierarchical posterior factorization. The distinction is conditional-model reuse and blockwise sampling, not hierarchical composition itself. Their compositional sampling modifications are discussed in § A.9. 
+
+Nested, design-dependent observations. In BMP, each of four cell lines has one receptor vector shared across 235 distinct ligand-dose observations, while biophysical parameters are shared across all cell lines (§ C). Assigning an independent local latent to every scalar observation would discard this within-cell-line sharing. Conversely, treating a cell line as one group requires representing its panel of design–response pairs within the group-level inference model. ML-NPE already accommodates nested observations and changing dataset sizes (Habermann et al., 2025); HBDS instead performs the aggregation through score composition at sampling time. It retains the single-observation repre-sentation and composes scores within receptor blocks and across groups for the shared parameters. Observation subsets can therefore change without training another hierarchical estimator, provided the underlying model has learned the required conditionals. The same sampler can also reuse the joint model adapted through likelihood fine-tuning (§ 3.1). 
+
+## C BMP SIGNALING PATHWAY MATHEMATICAL MODEL 
+
+The BMP dataset contains n = 940 steady-state cell response measurements from C = 4 cell lines, each profiled under 235 distinct ligand-dose conditions. We write y = ( y1, . . . , y n) for these observations. The parent and three receptor-knockdown lines form four groups, each with a distinct receptor state Rk ∈ R5 shared across its ligand-dose experiments. These groups share the simulator’s biochemical affinities and catalytic efficiencies, collected in θ ∈ R60 , giving the hierarchical structure used by HBDS in § 3.4. Each single-observation latent state (θ, R k) therefore contains 65 quantities. BMPs are homodimeric and heterodimeric ligands that transmit information by assembling signaling complexes with two classes of serine/threonine-kinase receptors: type I ( Ai) and type II ( Bk). In a parsimonious “one-step” mass–action kinetics model (Su et al., 2022), each ligand Lj binds one receptor of each class in a single equilibrium step 
+
+Ai + Bk + LjKijk 
+
+−−−⇀↽−−− Tijk , εijk Tijk −→ S, 
+
+where Kijk is an effective affinity for forming the active trimer Tijk and εijk is its catalytic efficiency in phosphorylating SMAD1/5/8, producing a transcriptional signal S. Interestingly, despite treating the 10 known ligands and 4 × 3 = 12 canonical receptors as effectively promiscuous, the model recovers dose–response data and explains how receptor context rewires downstream transcriptional programs during development or oncogenesis (Antebi et al., 2017; Su et al., 2022). Here, we model a subset of the known ligands and canonical receptors where I = 3 , J = 5 , and K = 2 denote the numbers of type-I receptors, ligands, and type-II receptors, respectively, so that i = 1 , . . . , I ,
+
+j = 1 , . . . , J , and k = 1 , . . . , K . Table 2 summarizes how the SBI variables map onto this BMP model. The receptor concentrations A and B can also be treated as fixed design variables, as in perturbation-modeling settings where biological covariates are specified interventions (Dimitrov et al., 2026), giving (Lj , A i, B k) ∈ ΞJ+I+K and (εijk , K ijk ) ∈ Θ2IJK >0 , but since receptor measurements are noisy, we treat them as latent variables throughout the experiments. Table 2: BMP-to-SBI mapping and dimensions.                       
+
+> SBI symbol BMP meaning Dimension
+> ξExperimental design: ligand doses L1: JJ= 5
+> θShared affinities Kijk and efficiencies εijk 2IJK = 60
+> RkCell-line receptor state A1: I, B 1: KI+K= 5
+> yObservation: steady-state SMAD response S1
+
+## D CELL RECEPTOR HIERARCHICAL MODELING 
+
+We implement diffusion guidance by constructing a probabilistic prior over receptor expression informed by quantitative polymerase chain reaction (qPCR) measurements and then using the 30 Preprint resulting (marginal) log-density as an energy function for guidance during sampling. The goal is to bias samples toward receptor configurations consistent with known KD conditions while explicitly accounting for the substantial uncertainty inherent to qPCR. 
+
+Indices and observations. Let s ∈ { 0, 1, 2, 3} index the four experimental cell-line conditions (one wild-type and three KD conditions). Let j ∈ { 0, 1, 2, 3, 4} index the five BMP-pathway receptors considered in this work (ACVR1, BMPR1A, ACVR2A, ACVR2B, BMPR2). For each condition s
+
+and receptor j we observe a positive relative qPCR readout xs,j > 0, interpreted as a noisy proxy for receptor abundance (relative mRNA expression). Because qPCR variability is multiplicative, we model observations in log space, ys,j ≜ log xs,j .
+
+Knockdown targets. For each condition s, the KD target index is ks ∈ {− 1, 0, 1, 2, 3, 4}, where 
+
+ks = −1 denotes no knockdown (wild-type) and ks = j denotes that receptor j is knocked down in condition s. We define an indicator 
+
+Is,j ≜ I[ ks = j ],
+
+which is 1 iff receptor j is the KD target in condition s and 0 otherwise. 
+
+Hierarchical model (baseline receptor distribution). We posit receptor-specific baseline log-means and log-standard-deviations that are partially pooled across receptors via global hyperpa-rameters. Let μj denote the baseline log-mean for receptor j, and let σj denote the baseline log-standard-deviation for receptor j. We introduce global hyperparameters (μ0, κ ) controlling the population distribution of receptor means, and (ℓ0, η ) controlling the population distribution of receptor log-variances. In standard hierarchical form, 
+
+μ0 ∼ N (m0, v 0),κ ∼ HalfNormal( λκ),μj | μ0, κ ∼ N (μ0, κ 2), j = 0 , . . . , 4,ℓ0 ∼ N (mℓ, v ℓ),η ∼ HalfNormal( λη ),
+
+log σj | ℓ0, η ∼ N (ℓ0, η 2), j = 0 , . . . , 4.
+
+This hierarchy induces partial pooling: when data are weak or noisy, {μj , σ j } are shrunk toward the global centers (μ0, ℓ 0), while still allowing receptor-specific deviations. 
+
+Condition-level variability. To account for inter-condition variability (e.g., biological differences between cell lines and experimental perturbations not explained by the KD), we add a condition-specific random effect δs,j for each receptor: 
+
+τ ∼ HalfNormal( λτ ),δs,j | τ ∼ N (0 , τ 2), s = 0 , . . . , 3, j = 0 , . . . , 4.
+
+This term captures the fact that receptor expression can vary appreciably across conditions even in the absence of knockdown. 
+
+Knockdown effect model (multiplicative fold-change). Knockdown acts multiplicatively in the original receptor domain, which corresponds to an additive shift in log space. We therefore model a KD fold-change via a log-shift νj ≤ 0 and additional KD uncertainty ωj ≥ 0:
+
+νj ∼ N (mν,j , v ν,j ) with support on (−∞ , 0] ,ωj ∼ HalfNormal( λω,j ),
+
+and incorporate KD by modifying the conditional distribution of ys,j . Specifically, the KD target receptor ( Is,j = 1 ) receives a negative mean shift and an additional variance term: 
+
+ys,j | μj , σ j , δ s,j , ν j , ω j ∼ N 
+
+
+
+μj + δs,j + Is,j νj , σ2 
+
+> j
+
++ Is,j ω2
+
+> j
+
+
+
+.
+
+Non-target receptors ( Is,j = 0 ) follow the baseline distribution. 31 Preprint 
+
+Figure 9: Comparison between BMP receptor posterior samples (columns) across LSR best-fit θLSR 
+
+(top ), applying a truncated lognormal prior to the BMP receptors’ distributions ( middle ), and applying the marginal hierarchical receptor priors § D ( bottom ). Model identifiability in the θLSR parameter set can be seen in the multi-modal distributions of the θLSR fits as well as the case of BMPR2, where 
+
+θLSR only works if the ACVR1 KD and BMPR1A KD conditions are 1.5 × the amount of the parent 
+
+cell line. Imposing a diffusion prior on the receptors in the BMP simformer avoids this clash of parameters. 
+
+Observation model in the original receptor domain. Let rs,j ≜ exp( ys,j ) denote the receptor expression in the original (positive) domain. In our implementation we further impose a physically plausible upper bound h > 0 and use a truncated LogNormal likelihood with support rs,j ∈ (0 , h ):
+
+rs,j | μj , σ j , δ s,j , ν j , ω j ∼ TruncLogNormal 
+
+
+
+μj + δs,j + Is,j νj ,
+
+q
+
+σ2 
+
+> j
+
++ Is,j ω2 
+
+> j
+
+; h
+
+
+
+.
+
+Equivalently, this is a LogNormal distribution in rs,j with truncation at h, which provides numerical stability and reflects the bounded receptor regime used in simulation. 
+
+Using the model for guidance. The hierarchical model defines a receptor prior density p(r | s) for each condition s. During diffusion sampling, we compute a denoised receptor estimate and apply guidance by adding the gradient of the (marginal) log-prior, 
+
+g(r, s ) ≜ ∇r log p(r | s),
+
+scaled by a time-dependent factor (analogous to classifier-free guidance when used as a prior). In practice, marginalization over latent variables (e.g., μ0, κ, ℓ 0, η, τ ) can be performed either by a tractable approximation (e.g., moment-matching) or by mixture density networks (Bishop, 1994); both yield a differentiable log-density suitable for guidance. 
+
+## E ADDITIONAL BMP EXPERIMENTAL RESULTS 
+
+E.1 CALIBRATED RECEPTOR DIFFUSION 
+
+The LSR receptor estimates in Figure 9 illustrate potential identifiability issues. Some knockdown (KD) conditions have higher fitted basal receptor levels than the parent cell line, contrary to the intended knockdown. Low predictive error alone therefore does not establish physical plausibility. The receptor priors in § D allow posterior sampling to incorporate these biological constraints. 
+
+LSR fit and receptor sensitivity. We compared FT posterior-predictive fit with the historical least-squares regression estimate θLSR and a sensitivity analysis in which its ACVR1 estimate was reduced by 10% (Table 3). The FT model in this comparison has three transformer layers and a feed-forward widening factor of two, with λ = 5 × 10 −4. Its all-data row used HBDS on 940 observations, whereas each cell-line row used an independent pooled posterior conditioned on that cell’s 235 observations. These rows are not subsets of a single all-data posterior. Each run used 250 draws, 100 diffusion steps, five Langevin corrections per step, and sampling seed 42. The all-data FT RMSE is 0.26 . The historical LSR errors were retained without recomputation, and their all-data 32 Preprint                                                   
+
+> Table 3: RMSE comparison of historical LSR, ACVR1 −10% LSR ( θLSR †), and FT predic-tions. FT uses HBDS for all data and indepen-dent pooled inference for each cell line. Lower values are better.
+> Condition θLSR θLSR †FT
+> All data 0.08 1.02 0.26 NMuMG 0.08 0.08 0.48 BMPR1A KD 0.07 0.06 0.31 BMPR2 KD 0.09 0.06 0.13 ACVR1 KD 0.06 2.04 0.22 Table 4: Pooled/HBDS comparison for PT, FT, and separately trained FT without FiLM ( ¬FiLM), using 250 draws and one sampling seed.
+> ℓ-C2ST Method RMSE ↓Median ↓θR
+> PT Pooled 0.58 1,594.55 0.22 0.06 FT Pooled 0.36 66.77 0.18 0.02
+> ¬FiLM Pooled 12.30 4,538.82 0.13 0.03 PT HBDS 0.78 194.01 0.05 0.04 FT HBDS 0.34 14.94 0.02 0.07
+> ¬FiLM HBDS 0.91 274.61 0.09 0.01
+
+value is not the root-mean-square of the four cell-wise values, so they should not be treated as a consistently aggregated baseline until the original evaluation protocol is reconciled. The receptor perturbation illustrates local fit sensitivity. E.2 BMP POSTERIOR -SAMPLING ABLATIONS 
+
+We compared pooled sampling and HBDS on 940 BMP observations, with 235 observations from each of four cell lines. Pooled sampling infers the 60 shared biophysical parameters and one shared five-dimensional receptor vector, whereas HBDS maintains a separate receptor state for each cell line. Both samplers used the derived diffusion coefficient, 100 diffusion steps, five Langevin corrections per step, 250 posterior draws, and sampling seed 42. HBDS used three block-refinement rounds with Tweedie conditioning for both blocks. Pooled sampling used three resampling passes in one sequential round, which are not hierarchical block updates. These are single-seed results, with no between-seed uncertainty estimates. 
+
+Models and predictive metrics. The PT and FT models in Tables 4 and 5 have four transformer layers and a feed-forward widening factor of four. FT started from the matched PT model and used 
+
+λ = 5 × 10 −4 for the sampler comparison. The no-FiLM model is a separately pretrained and fine-tuned architectural ablation that retains mask-state embeddings, not the same model with FiLM switched off at sampling time. It uses the same depth and width as the FiLM model. For posterior draw k, let dk = ∥yk − yo∥2, where yk is evaluated through the original mechanistic simulator over 
+
+N observations. We report RMSE = min k dk/√N and median distance median k dk. Thus, RMSE measures the best predictive draw rather than the posterior mean, while median distance summarizes response-space error across draws. 
+
+Calibration. We report the logged local classifier two-sample test ( ℓ-C2ST) (Linhart et al., 2023) statistics separately for parameters and receptors. The tests used an MLP with three folds and two ensemble members, classifier seed zero, and 100 permutation-based null trials. These are single-run statistics, not averages across independent sampling seeds. Fine-tuning improves both predictive-fit metrics over its matched PT model under pooled sampling and HBDS (Table 4). For each FT architecture, HBDS gives lower errors than pooled sampling, and FT with FiLM has the lowest reported values among the completed comparisons. The three-layer results in Table 3 use a different model family and are not a controlled comparison of network size. 
+
+## F PRETRAINING DETAILS 
+
+Transformer architecture. The simformer uses value, ID, condition, and attention dimensions of 32, with three attention heads of size 32. The model used for the cell-line and LSR comparison in Table 3 has three layers and a feed-forward widening factor of two. The model/sampler and regularization ablations in Tables 4 and 5 instead used four layers and a widening factor of four. Rather than summing token embeddings (ID, condition, and value), we concatenate them prior to projection, which empirically produced more stable training and better downstream posterior quality. 33 Preprint We trained the simformer using 1,000 prior parameter draws evaluated across 940 experimental designs. For each draw θ ∼ p(θ) and design ξ, we generated expert-model outputs y ∼ peval (y | θ, ξ )
+
+to form training examples (θ, ξ, y ). While preliminary results suggest that increasing the number of prior parameter draws improves downstream posterior quality, we restricted this study to 1,000 draws for computational simplicity. During training we employed two forms of masking. For edge masking , we applied masks corre-sponding to marginals, the full joint, and the expert model graph, each with equal probability ( 13 of the time). For condition masking , we used four different masks: (i) joint masking (noise all variables), (ii) posterior conditioning, (iii) likelihood conditioning, and (iv) random conditioning on 30% of tokens in arbitrary groupings. These were applied with probabilities of 20% for the joint, posterior, and likelihood masks, and 40% for the random conditioning. We found that heavier use of posterior and likelihood masks tended to produce overconfident models, whereas increasing the joint masking improved generalization. 
+
+Pretraining pipeline. We trained for 100 epochs with a batch size of 2,048 . Evaluating these parameter draws across all 940 designs produced approximately 1,000 × 940 = 940 ,000 simulator outputs. While this represents a large training set, the dimensionality of the parameter space ( θ ∈ R60 )implies a trade-off between the number of prior parameter draws available and the coverage of experimental conditions. In practice, this dataset size was sufficient for demonstrating the model’s capabilities within available compute, but there is room for future work studying scaling laws of the number of prior parameter draws and the number of parameters of the architecture. 
+
+Compute resources. All models were trained on NVIDIA A100 GPUs. Sampling and smaller ablation runs were also performed on NVIDIA A30 GPUs when memory constraints allowed. 
+
+## G FINE -TUNING AND PATH -SPACE DETAILS 
+
+G.1 FINE -TUNING OBJECTIVE AND OPTIMIZATION 
+
+MSE reward. We use the negative-MSE reward R(y; yo) = −∥ y − yo∥22 from § 3.1 to measure agreement between conditional likelihood samples and observed responses. The fixed conditioning reference θref combines the biophysical parameters θ and receptor states R in the BMP model. For an observation yo under design ξ and n Monte Carlo response samples {yj }nj=1 drawn from the diffusion sampler at this fixed condition, 
+
+{yj }nj=1 ∼ π⋆(ϕ; θref , ξ ),
+
+we estimate the expected reward by 
+
+Ey∼pϕ(·| θref ,ξ )[R(y; yo)] ≈ − 1
+
+n
+
+> n
+
+X
+
+> j=1
+
+yj − yo 22.
+
+We aggregate these per-condition rewards across a minibatch during fine-tuning. At fixed conditioning, 
+
+E∥Y − yo∥22 = ∥EY − yo∥22 + tr Cov( Y ), so the corresponding sample-level loss penalizes both mean prediction error and predictive variance. 
+
+Adjoint gradients. The diffusion sampler induces the mapping π⋆(ϕ; θref , ξ ) implicitly through the reverse-time SDE. At fixed (θref , ξ ), the likelihood score defines the sampling drift μyϕ, with dynamics integrated from t = T to t = 0 ,
+
+μyϕ(y, t ) := f (y, t ) − g(t)2syϕ(y, t ; θref , ξ ), (46) 
+
+dY t = μyϕ(Yt, t ) dt + g(t) d←
+
+wt. (47) Here f and g are the forward-SDE coefficients from § 2.3. The superscript y distinguishes this likelihood drift from the compositional transition mean μG 
+
+> k
+
+in Eq. (4). The diffusion coefficient and starting noise law are independent of ϕ. We assume the drift is differentiable in y and ϕ, with integrable sensitivities permitting differentiation under the expectation. Holding the sampled noise realization fixed, the adjoint starts from the reward gradient at Y0 and follows the same trajectory 34 Preprint Table 5: BMP regularization and Langevin-correction sweep. Each setting used 250 HBDS draws and one sampling seed. L is the number of corrector steps per diffusion step.                                                                                  
+
+> L= 0 L= 1 L= 3 L= 5
+> λRMSE ↓Median ↓RMSE ↓Median ↓RMSE ↓Median ↓RMSE ↓Median ↓
+> 00.29 12.16 0.36 12.96 0.36 12.97 0.36 12.97
+> 10 −40.30 28.15 0.32 89.55 0.32 90.63 0.32 90.87
+> 5×10 −40.28 14.30 0.34 14.89 0.33 14.62 0.34 14.94
+> 10 −30.34 29.97 0.36 41.20 0.36 41.36 0.36 41.86
+> 10 −20.33 45.26 0.40 93.51 0.42 94.78 0.41 99.30
+> 10 −10.30 52.17 0.52 157.55 0.53 153.48 0.48 159.86
+> 10.30 47.00 0.40 130.73 0.41 134.90 0.41 139.27
+
+from t = 0 to t = T . The system of Marion et al. (2025, Appendix A.3, Eq. 14), expressed in this clock with column-vector gradients, becomes 
+
+A0 = ∇y R(Y0; yo), dA t
+
+dt = −∂y μyϕ(Yt, t )⊤At,Gϕ 
+
+> 0
+
+= 0 , dG ϕt
+
+dt = −∂ϕμyϕ(Yt, t )⊤At.
+
+Here At propagates the endpoint reward sensitivity along the sampled path, while Gϕt accumulates the parameter gradient. The minus signs account for expressing the adjoint in the original diffusion clock. Taking the expectation of GϕT over paths yields the endpoint reward gradient with respect to ϕ,which enters the minimized objective with a minus sign. To include the path penalty, we differentiate the full sampled trajectory cost, 
+
+−R(Y0; yo) + λ
+
+2
+
+Z T
+
+> 0
+
+g(t)2 syϕ(Yt, t ) − syϕ0 (Yt, t ) 22 dt. 
+
+Averaging this cost over FT paths gives the SOC objective in Eq. (52), with the integrated penalty contributing λA(θref , ξ ) from Eq. (2). Beyond the reward-only adjoint above, differentiation includes the integral’s dependence on both the sampled states Yt and the parameters ϕ. Our implementation uses checkpointed backpropagation through the discretized rollout to compute discrete-adjoint gradients of both the endpoint reward and the integrated penalty (§ G.6). For BMP, we fixed θref = ( θLSR , R LSR ) at a best-fit least-squares regression (LSR) solution. We note that the choice of reference is an important hyperparameter during fine-tuning, similar to the choice of a known pair in Wehenkel et al. (2025). In § G.4, we propose alternating Fisher–Rao-guided updates of posterior proposal particles with likelihood fine-tuning, allowing the mechanistic reference to evolve alongside the model. 
+
+Regularization and corrector sweeps. We compared seven regularization strengths and L ∈{0, 1, 3, 5} Langevin corrections per diffusion step using the four-layer FiLM model (Table 5). Each setting used HBDS with 100 diffusion steps, three block-refinement rounds, Tweedie conditioning for both blocks, 250 posterior draws, and sampling seed 42. All settings retained the derived diffusion coefficient, including the predictor-only L = 0 case. At L = 5 , λ = 10 −4 gives the lowest RMSE among positive penalties, while λ = 5 × 10 −4 gives the lowest median distance. The unregularized model has the lowest median distance overall. In this single-seed sweep, omitting corrections yields lower errors than adding them for every λ, showing that more corrector steps need not improve predictive fit at a fixed discretization. This is a correction-count ablation, not a comparison with the ordinary VP coefficient. G.2 PATH -SPACE FORMULATION AND GIRSANOV ’S THEOREM 
+
+We briefly state the change-of-measure result used in §§ 3.1 and 3.2. Let Ω = C([0 , T ]; Rd) denote the space of continuous trajectories. Consider two SDEs evolving from t = 0 to t = T with the same 35 Preprint initial law and scalar diffusion coefficient, 
+
+dX t = b0(Xt, t ) dt + g(t) dw t, X0 ∼ p0,dX t = b1(Xt, t ) dt + g(t) d ewt, X0 ∼ p0,
+
+and let P0 and P1 denote their induced probability measures on Ω. We assume g(t) > 0 and that solutions exist, remain finite on [0 , T ], and have uniquely determined path laws. Here w and ew are Wiener processes under P0 and P1, respectively. It is convenient to express the drift perturbation in diffusion-normalized coordinates, 
+
+ut(x) := b1(x, t ) − b0(x, t )
+
+g(t) .
+
+In stochastic optimal control (SOC) this normalized drift perturbation is conventionally interpreted as the control; we return to this connection in § G.3. We further assume that ut is sufficiently integrable for the associated stochastic exponential to be a true martingale under P0 (Novikov’s condition is a standard sufficient condition). This ensures that the trajectory weights have expectation one under the reference law and define a normalized probability measure. Under these assumptions, Girsanov’s theorem (Girsanov, 1960) expresses the change from drift b0 to b1 through the following Radon–Nikodym derivative, which reweights reference trajectories to obtain the modified path law, 
+
+dP1
+
+dP0
+
+(X) = exp 
+
+Z T
+
+> 0
+
+ut(Xt)⊤dw t − 12
+
+Z T
+
+> 0
+
+∥ut(Xt)∥22 dt 
+
+!
+
+. (48) Here the stochastic integral is taken under the reference law P0, induced by drift b0. The Radon– Nikodym derivative reweights these trajectories to recover expectations under P1, the law induced by the changed drift b1 = b0 + gu with the same diffusion coefficient and initial distribution. Consequently, provided the control energy is integrable under P1,
+
+KL( P1 ∥ P0) = 12 EP1
+
+"Z T
+
+> 0
+
+∥ut(Xt)∥22 dt 
+
+#
+
+. (49) For the PT and FT reverse SDEs in our setting, the shared starting law is the noise distribution at 
+
+t = T and the drift difference is μyϕ − μyϕ0 = −g(t)2(syϕ − syϕ0 ). The normalized reverse-drift change is therefore ut = −g(t)( syϕ − syϕ0 ). Rewriting the processes in increasing sampling time reverses this sign but leaves the squared control energy unchanged, yielding Eq. (2). G.3 STOCHASTIC OPTIMAL CONTROL CONNECTION 
+
+Likelihood fine-tuning as drift control. We fix (θref , ξ ) and suppress these conditioning arguments. To connect the Implicit Diffusion notation in § G.1 to the SOC notation, we write the same drifts as 
+
+bϕ = μyϕ and b0 = bϕ0 = μyϕ0 , where the subscript 0 denotes the PT reference, not a time. We retain the reverse-SDE convention in which diffusion time t decreases from T to 0, so sampling ends at 
+
+t = 0 . Let Y ϕ0 
+
+> t
+
+and Y ϕt denote the PT and FT reverse-SDE trajectories, with path laws Pϕ0 and Pϕ,respectively, and dynamics 
+
+dY ϕ0 
+
+> t
+
+= b0(Y ϕ0 
+
+> t
+
+, t ) dt + g(t) d←
+
+wt,dY ϕt = b0(Y ϕt , t ) + g(t)uϕ(Y ϕt , t ) dt + g(t) d←
+
+ewt,
+
+where 
+
+uϕ(y, t ) := g(t)−1bϕ(y, t ) − b0(y, t ) = −g(t)syϕ(y, t ) − syϕ0 (y, t ). (50) Thus, fine-tuning changes the reverse drift from b0 to bϕ = b0 + gu ϕ, while preserving the diffusion coefficient g(t) and the common starting noise law at t = T . Let πϕ = π⋆(ϕ; θref , ξ ) denote the corresponding endpoint distribution. Extracting the generated response Y0 is a measurable projection of the full trajectory, so the data-processing inequality and the control-energy identity in Eq. (2) give 
+
+KL( πϕ∥πϕ0 ) ≤ KL( Pϕ∥Pϕ0 ) = 12 EPϕ
+
+Z T
+
+> 0
+
+∥uϕ(Yt, t )∥22 dt, (51) 36 Preprint under the assumptions in § G.2. Replacing the endpoint penalty in Eq. (1) by this path penalty gives the parameterized SOC cost 
+
+Jλ(ϕ) := −Ey∼πϕ [R(y; yo)] + λ KL( Pϕ∥Pϕ0 )= EPϕ
+
+"
+
+−R(Y0; yo) + λ
+
+2
+
+Z T
+
+> 0
+
+∥uϕ(Yt, t )∥22 dt 
+
+#
+
+, (52) This is KL-regularized SOC within the score-network parameterization, with observation loss −R as the sampling-endpoint cost and λ pricing control effort (Uehara et al., 2024b). Since the expected reward is unchanged and λ ≥ 0, data processing gives F(π⋆(ϕ)) ≤ J λ(ϕ). The SOC cost is therefore a path-regularized upper bound on the endpoint objective, not an identical rewrite of it. We optimize this cost through the score-network parameters using the checkpointed rollout differentiation described in § G.1, without learning a separate control network or value function. Rewriting the sampler in increasing sampling time reverses the drift and control signs but leaves the quadratic cost unchanged. 
+
+Path-space trust regions. The same penalty admits a constrained interpretation, 
+
+min  
+
+> ϕ
+
+−EPϕ [R(Y0; yo)] subject to KL( Pϕ∥Pϕ0 ) ≤ ρ, (53) where ρ ≥ 0 is a divergence budget. Its Lagrangian is Jλ(ϕ) − λρ with multiplier λ ≥ 0, so fixing λ
+
+recovers the penalized optimization over ϕ. This motivates choosing the penalty through a divergence budget rather than treating it only as a tuning constant, in the spirit of path-space trust-region methods (Blessing et al., 2025). For multiple observed designs, constraints KL( Pθref ,ξ ϕ ∥Pθref ,ξ ϕ0 ) ≤ ρ(ξ) would introduce design-specific multipliers λξ . Adjusting these against their budgets could regulate how strongly each condition is adapted, alongside a curriculum that selects which designs to revisit. This is a prospective extension, not an implemented adaptive optimizer or a claim of strong duality for the neural parameterization. G.4 FISHER –R AO OPTIMIZATION ANALYSIS 
+
+Let z = ( θ, ξ ) collect the mechanistic parameters and experimental design. Under the regularity assumptions in § 3.2, the conditional reverse-SDE path laws {Pzϕ : z ∈
+
+Θ×Ξ} can be viewed locally as a statistical manifold. Its Fisher–Rao geometry is Riemannian on neighborhoods where the Fisher metric is nonsingular, and degenerate where it is singular. The path-space Fisher metric in Eq. (3) can be partitioned according to the two types of conditioning variables (Figure 10), 
+
+Ipath  
+
+> ϕ
+
+(z) = 
+
+Iθθ (z) Iθξ (z)
+
+Iξθ (z) Iξξ (z)
+
+
+
+, (54) θξ         
+
+> Mϕ
+> za= ( θ, ξ a)
+> zb= ( θ, ξ b)
+> TPza ϕMϕTPzbϕ
+> Mϕ
+> vaθ
+> vaξ
+> vbθ
+> vbξ
+> 〈vθ, v ξ
+> 〉
+> F=δθ ⊤Iθξ (z)δξ
+
+Figure 10: Joint parameter Fisher geometry. 
+
+For example, the parameter block of Eq. (3) is 
+
+Iθθ (z) = EY ∼Pzϕ
+
+"Z T
+
+> 0
+
+g(t)2Jθ syϕ(Yt, t ; z)⊤Jθ syϕ(Yt, t ; z) dt 
+
+#
+
+.
+
+We first consider how this geometry could refine a population of mechanistic reference parameters during fine-tuning. We then examine design sensitivity and parameter–design coupling, before propagating reference uncertainty into path-divergence diagnostics. 
+
+Refining the posterior proposal. The block Iθθ measures how perturbations of the mechanistic parameters change the conditional path law while holding the experimental design fixed. As a proposed extension, the fixed reference θref could be replaced by a posterior proposal distribution q(θ)
+
+that is updated during fine-tuning. Consider one observed design–response pair (ξ, y o) and m proposal 37 Preprint particles θ(i) ∼ q. For each particle, we draw n predictive response samples y(i) 
+
+> j
+
+∼ pϕ(· | θ(i), ξ ) at this same design. We use the same reward R(y; yo) as in § G.1 and write Eϕ[· | θ, ξ ] for expectation over responses from this conditional likelihood. Averaging over proposal particles and predictive responses gives 
+
+Eθ∼q Eϕ[R(y; yo) | θ, ξ ] ≈ − 1
+
+mn 
+
+> m
+
+X
+
+> i=1
+> n
+
+X
+
+> j=1
+
+∥y(i) 
+
+> j
+
+− yo∥22.
+
+At fixed ϕ, the same reward can be used to tilt the posterior proposal toward parameter values whose conditional likelihood better predicts the observation. Specifically, consider 
+
+q⋆ϕ = arg min  
+
+> q
+
+{− Eθ∼q [Eϕ[R(y; yo) | θ, ξ ]] + τ KL( q∥p)} , (55) 
+
+q⋆ϕ(θ) ∝ p(θ) exp 
+
+ Eϕ[R(y; yo) | θ, ξ ]
+
+τ
+
+
+
+, (56) where p(θ) is the prior and τ > 0 controls the strength of the reward tilt, so predictive agreement reweights the prior toward a posterior proposal concentrated on parameter values that better explain the observation. Recent concurrent work similarly contrasts KL reward tilting with transport-based adaptation, moving samples toward higher reward under a geometry induced by the pretrained generative dynamics (Mammadov et al., 2026). Motivated by a related transport view in mechanistic parameter space, we instead use the Fisher geometry of the conditional diffusion path law to move proposal particles in θ.The Fisher block Iθθ (θ, ξ ) provides a local geometry for reward-driven motion of the posterior proposal particles. At iteration k, with ϕk fixed, we propose the particle update 
+
+θ(i) 
+
+> k+1
+
+= θ(i) 
+
+> k
+
++ ∆ θ(i) 
+
+> k
+
+, (57) 
+
+∆θ(i) 
+
+> k
+
+= η I θθ (θ(i) 
+
+> k
+
+, ξ )† ∇θ Eϕk [R(y; yo) | θ, ξ ]|θ=θ(i)
+
+> k
+
++ ητ ∇θ log p(θ(i) 
+
+> k
+
+) + p2ητ ε (i) 
+
+> k
+
+, ε(i) 
+
+> k
+
+∼ N (0 , I ). (58) Here η > 0 is the particle-update step size, and † denotes the Moore–Penrose pseudoinverse. For a positive-semidefinite Fisher matrix, it inverts positive eigenvalues while leaving zero eigenvalues at zero, reducing to the ordinary inverse when the matrix is nonsingular. The first term moves each proposal particle toward improved predictive agreement using the learned path geometry. In Fisher-null directions this term vanishes, while the prior drift and stochastic term remain active, allowing the proposal population to explore mechanistic variation that is not locally resolved by the conditional path law. The reward-tilted distribution q⋆ϕk expresses an ideal balance between predictive agreement and proximity to the prior. Motivated by this balance, the updates above use predictive sensitivities, prior drift, and stochastic exploration to refine an evolving proposal population, without assuming that its particles are distributed according to q⋆ϕk . After updating all m particles, we represent the next proposal by the empirical measure 
+
+qk+1 (θ) = 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+δθ(i)
+
+> k+1
+
+(θ).
+
+Holding these proposal particles fixed, we update the likelihood parameters by averaging the fine-tuning objective in Eq. (1) across them, using the path-space penalty A from Eq. (2) in place of the endpoint KL as in the main text, 
+
+ϕk+1 ∈ arg min 
+
+> ϕ
+
+1
+
+m
+
+> m
+
+X
+
+> i=1
+
+h
+
+−Eϕ
+
+h
+
+R(y; yo) | θ(i)
+
+> k+1
+
+, ξ 
+
+i
+
++ λ A
+
+
+
+θ(i)
+
+> k+1
+
+, ξ 
+
+i 
+
+, (59) Here A(θ, ξ ) is evaluated for the candidate model ϕ relative to the fixed PT model ϕ0, so each summand is the conditional SOC cost Jλ in Eq. (52). The procedure therefore alternates between updating the posterior proposal under the current likelihood and fine-tuning the likelihood across the resulting proposal particles. 38 Preprint 
+
+Design sensitivity and active simulation acquisition. The block Iξξ measures how strongly the conditional path law changes under local perturbations of the experimental design. For a small δξ ,
+
+KL 
+
+
+
+Pθ,ξ +δξ ϕ Pθ,ξ ϕ
+
+
+
+≈ 12 δξ ⊤Iξξ (θ, ξ )δξ. 
+
+PT model. Large Iξξ identifies regions where the learned simulator surrogate changes rapidly with design. Scalar summaries such as tr Iξξ or log det( Iξξ + ϵI ) could therefore prioritize additional simulator calls where denser coverage is most useful, rather than expanding the pretraining set uniformly. Related work uses diffusion models to acquire simulation parameters from surrogate loss or uncertainty in online PDE-surrogate training (Cesar et al., 2026), whereas our proposed signal is derived from local path-space sensitivity. 
+
+FT model. Iξξ instead measures sensitivity of the adapted likelihood across experimental conditions. Designs with large sensitivity may warrant greater weight in a fine-tuning curriculum, particularly when accompanied by high predictive error or large PT–FT path divergence. Sensitivity alone does not imply misspecification, since additional PT simulations improve fidelity to the simulator whereas 
+
+A(θ, ξ ) measures departure from the simulator toward observations. 
+
+Experimental design. The same geometry could also guide the choice of experiments for learning mechanistic parameters. At a candidate design ξ, large Iθθ (θ, ξ ) indicates strong local sensitivity of the predictive path law to θ. An objective such as 
+
+log det ( Iθθ (θ, ξ ) + ϵI )
+
+could therefore prioritize experimental conditions that are locally informative about the mechanistic parameters. 
+
+Parameter–design coupling for proposal refinement. Beyond selecting new designs, the joint geometry could help refine posterior proposals using the designs already observed. 
+
+Parameter–design overlap. The cross block Iθξ measures whether perturbations of θ and ξ induce similar first-order changes in the conditional path law. Removing their respective local scales gives the normalized coupling 
+
+C(θ, ξ ) = I†/2 
+
+> θθ
+
+Iθξ I†/2 
+
+> ξξ
+
+, (60) with I†/2 = ( I†)1/2. The singular vectors of C identify parameter and design directions with aligned effects. Larger singular values indicate parameter-induced changes that can be closely reproduced by local design perturbations, while smaller values indicate more distinct effects. 
+
+Residual parameter geometry. Removing this design-associated component from the parameter block gives the Schur complement 
+
+Ieff  
+
+> θ|ξ
+
+= Iθθ − Iθξ I† 
+
+> ξξ
+
+Iξθ . (61) Geometrically, Ieff  
+
+> θ|ξ
+
+retains the component of parameter-induced path-law variation that cannot be reproduced locally by changing the design. 
+
+Proposal refinement across observed designs. For a collection of observed designs, a non-negative weighted average of Ieff  
+
+> θ|ξ
+
+(θ, ξ ) could replace Iθθ in the proposal-particle update in Eq. (58). The resulting geometry emphasizes mechanistic directions whose effects remain distinguishable across the fine-tuning curriculum after removing locally design-mimickable variation. The same effective information could also be used prospectively to favor new designs at which weakly identified parameter directions become distinguishable from nearby design perturbations. 
+
+Uncertainty-aware path divergence. A distribution over reference parameters also yields an uncertainty-aware version of the adaptation diagnostic. In place of evaluating the path divergence 
+
+A(θ, ξ ) from Eq. (2) at one θref , define 
+
+Aq (ξ) = Eθ∼q [A(θ, ξ )] , (62) 
+
+VA,q (ξ) = Var θ∼q [A(θ, ξ )] . (63) The first quantity identifies designs at which substantial adaptation is required across plausible mechanistic parameterizations, whereas the second identifies designs whose apparent misspecification 39 Preprint depends strongly on parameter uncertainty. Here VA,q (ξ) quantifies how sensitive the inferred adaptation is to uncertainty in the mechanistic reference θ. This is distinct from Monte Carlo uncertainty arising from the finite trajectory samples used to estimate each A(θ, ξ ).
+
+Future work. Although we do not develop these extensions here, they suggest promising ways to improve both PT and FT models in future SBI applications. For example, path-space geometry could guide refinement and particle transport of posterior proposals over mechanistic parameters, while incorporating parameter uncertainty into adaptation diagnostics (Eqs. (62) and (63)). It could also inform simulation acquisition for pretraining, complementing diffusion-based active sampling (Cesar et al., 2026), while supporting design-adaptive fine-tuning curricula and local parameter–design identifiability analysis (Eqs. (60) and (61)). G.5 RELATED WORK ON SIMULATOR MISSPECIFICATION IN SBI Simulation-based inference (SBI) treats the expert model simulator as an implicit, or intractable, likelihood model from which one can sample, y ∼ p(y|θ), but whose density cannot be evaluated. Starting with samples from a prior θ ∼ p(θ), synthetic pairs (y, θ ) are generated to fit a neural density estimator for the likelihood pϕ(y|θ) (Lueckmann et al., 2019; Papamakarios et al., 2019), posterior 
+
+pϕ(θ|y) (Greenberg et al., 2019; Lueckmann et al., 2017; Papamakarios & Murray, 2016; Sharrock et al., 2024), or likelihood-to-evidence ratio (Durkan et al., 2020; Miller et al., 2022) using observed data yo, enabling parameter inference without explicit likelihoods. Thus, SBI is well-suited for biological simulators that use stochastic differential equations or simulation by convex optimization (Dirks et al., 2007; Su et al., 2022). SBI relies on a simulator that accurately reflects the true, and unknown, data-generating process of the observed data, i.e., p⋆(yo) := R p⋆(θ)p⋆(yo|θ)dθ , which is typically unavailable and can be the cause of poor performance of SBI models (Cannon et al., 2022; Schmitt et al., 2024). This has resulted in a variety of techniques to improve robustness of SBI inference to model misspecification (Gao et al., 2023; Huang et al., 2023a; Mishra et al., 2026; Ward et al., 2022; Wehenkel et al., 2025) but there is a gap in methods that transfer improvement in predictive accuracy to posterior inference. G.6 RELATED WORK ON DIFFUSION FINE -TUNING 
+
+Diffusion fine-tuning is a rapidly growing field with diverse optimization and regularization strategies. We review a selection of approaches relevant to SBI, summarized in Table 6, rather than attempting an exhaustive survey. The comparison is intended to highlight the main tradeoffs among methods, including what feedback they require, how that signal is converted into model updates, whether gradients must pass through sampling, what auxiliary quantities must be learned, and how strongly the adapted model is tied to its pretrained reference. We then motivate our use of Implicit Diffusion for the present SBI setting while highlighting alternative strategies that may be preferable under different feedback, computational, and regularization requirements. 
+
+Reward optimization and gradient estimators. Reward-based diffusion fine-tuning encompasses policy-gradient and direct-differentiation methods, with different requirements on reward access (Uehara et al., 2024a). DPOK (Fan et al., 2023) and DDPO (Black et al., 2024) treat denoising as a sequential decision process, allowing optimization without differentiating the reward. DPOK explicitly regularizes deviation from the PT model through a KL penalty and optionally learns a value baseline to reduce gradient variance. When rewards are differentiable, ReFL (Xu et al., 2023) backpropagates through a clean prediction from one selected late denoising step, holding earlier states fixed. AlignProp (Prabhudesai et al., 2023) uses randomly truncated rollout backpropagation, with low-rank adaptation and gradient checkpointing to reduce memory requirements. DRaFT-
+
+K (Clark et al., 2024) restricts backpropagation to the last K denoising steps, and DRaFT-LV reduces gradient variance for K = 1 . These approaches trade access to reward gradients and the cost of differentiating long trajectories against the sampling variance of policy-gradient estimates. Preference-based alternatives such as Diffusion-DPO optimize an ELBO-derived objective from paired comparisons rather than a supplied scalar reward (Wallace et al., 2024). We focus here on methods compatible with observation-based rewards and distributional constraints. 40 Preprint Table 6: Representative approaches to reward- and constraint-based generative-model adaptation, compared by the feedback they require, how model updates are obtained, whether gradients propagate through sample generation, any additional learned objects, and how deviation from a reference model is controlled. In the feedback column, R denotes reward values without sample derivatives, 
+
+∇y R denotes differentiable reward or loss feedback, (h, h ⋆) denotes constraint statistics and target moments, and ∇y E denotes gradients of a differentiable unnormalized target energy E(y), with 
+
+p⋆(y) ∝ exp[ −E(y)] ; when an energy is instead defined relative to a reference distribution p0,the equivalent tilted target is p⋆(y) ∝ p0(y) exp[ −E(y)] . In the sampler-gradient column, “Full” denotes differentiation through the complete sampled trajectory and explicit step labels indicate partial differentiation. In the learned-auxiliary column, “–” means that no additional function or parameter is fitted beyond the adapted generator or control and any supplied reward model; computed adjoint states, trajectory queues, and replay buffers are not counted. PT denotes a pretrained model. For Implicit Diffusion, Full ∗ denotes full finite-horizon sampler differentiation. Our implementation uses checkpointed backpropagation through a complete discretized rollout rather than the original queued joint sampling–optimization scheme, so that each gradient update corresponds to a complete rollout under a single selected design.                                              
+
+> Method Feedback Update mechanism Sampler gradients Learned auxiliaries Reference regularization
+> DPOK (Fan et al., 2023)
+> RPolicy gradient –Optional value baseline Discrete path KL DDPO (Black et al., 2024)
+> RPolicy gradient ––No explicit PT KL ReFL (Xu et al., 2023)
+> ∇yRIntermediate clean-prediction gradient 1 selected step –Pretraining denoising loss AlignProp (Prabhudesai et al., 2023)
+> ∇yRRandomly truncated rollout backpropagation Random trailing steps –No explicit PT KL DRaFT-K(Clark et al., 2024)
+> ∇yRTruncated rollout backpropagation Last K
+> steps –LoRA weight decay (implementation) ELEGANT (Uehara et al., 2024b)
+> ∇yRSOC objective via rollout gradients Full Initial-time value function and initial-law sampler Drift-control cost and initial-law KL Adjoint Matching (Domingo i Enrich et al., 2025)
+> ∇yRRegression on detached adjoint-derived control targets ––SDE path KL (SOC) TR-SOCM (Blessing et al., 2025)
+> ∇yRReweighted adjoint regression ––Inter-iterate path-KL constraint Adjoint Sampling (Havens et al., 2025)
+> ∇yEAdjoint regression with reference bridges ––Control cost, energy target Implicit Diffusion (Marion et al., 2025)
+> ∇yRJoint sampling– optimization with adjoint gradients Full ∗–Optional SDE path KL CGM-relax / CGM-reward (Smith et al., 2026)
+> (h, h ⋆)Likelihood-ratio gradients –Tilt coefficients (reward only) KL to PT (path KL for SDEs) Value Matching (Jensen et al., 2026)
+> ROnline value-function learning –Value function Control-based
+
+Stochastic optimal control. SOC treats fine-tuning as learning a change to the PT drift that improves terminal reward while penalizing the accumulated control effort. With a shared initial law and diffusion coefficient, Girsanov’s theorem expresses path-space KL as a quadratic cost of 41 Preprint this drift change (§ G.2). This gives a trajectory-level notion of staying close to the PT model, rather than a penalty on network weights. ELEGANT (Uehara et al., 2024b) uses this formulation to optimize both the denoising drift and the initial noise distribution, regularizing both changes. Its implementation estimates the value function at the initial diffusion time and learns an auxiliary process for sampling the adapted initial distribution. Adjoint Matching (Domingo i Enrich et al., 2025) takes a different route, fitting the control to targets obtained from a simplified backward adjoint equation. Trajectories and targets are held fixed during each regression update, avoiding differentiation through the controlled rollout, although reward and base-drift derivatives are still needed to construct the targets. Its reward fine-tuning formulation uses a memoryless noise schedule to recover the intended reward-tilted output distribution without separately learning the initial noise law. TR-SOCM (Blessing et al., 2025) fits controls using reweighted adjoint targets with a path-KL constraint relative to the preceding iterate. A scalar dual multiplier controls the trust region, while buffered trajectories support reuse across updates. Adjoint Sampling (Havens et al., 2025) instead applies adjoint regression to unnormalized energy targets, using reference bridges to reuse terminal samples and energy gradients across multiple parameter updates. It learns an energy-targeting sampler rather than preserving a PT data distribution. These options differ in the auxiliary quantities they learn, their sampling requirements, and their target distributions. 
+
+Implicit Diffusion and sampler gradients. Implicit Diffusion (Marion et al., 2025) separates gradient estimation through a parameterized sampler from the algorithm used to interleave sampling and optimization. Its finite-horizon adjoint formulation propagates terminal-loss sensitivity through the sampling dynamics and can incorporate a Girsanov path-KL penalty (Marion et al., 2025, Appendix A.3). Algorithm 3 additionally maintains a queue of trajectories that advance while model parameters change, coupling sampling with parameter updates. Our implementation instead completes reverse-SDE rollouts at fixed parameters and uses checkpointed backpropagation, computing discrete-adjoint gradients while trading recomputation for memory. We therefore use the finite-horizon sampler-gradient formulation, not the queued optimization algorithm. This shares the pathwise differentiation principle of DRaFT (Clark et al., 2024), whereas Adjoint Matching holds trajectories and adjoint targets fixed during control regression. Neither checkpointing nor adjoint differentiation itself specifies the regularizer. 
+
+Controlling departure from the pretrained model. Fine-tuning methods differ not only in how they obtain parameter updates, but also in how they constrain departure from the pretrained (PT) model. DRaFT uses AdamW weight decay on its LoRA factors, shrinking the learned update toward the PT parameters (Clark et al., 2024, Appendix A.1). This is parameter-space regularization rather than a KL between sampling laws; a separate ablation instead penalizes PT–FT noise-prediction differences at the final denoising step (Clark et al., 2024, Appendix B.8). DPOK directly regularizes the sampling distribution by summing transition KLs over the discrete denoising chain, yielding a path-space KL that also bounds endpoint divergence (Fan et al., 2023). ReFL instead retains a pretraining denoising loss (Xu et al., 2023). For continuous SDEs with shared diffusion and initial laws, the corresponding path KL is the integrated drift-control energy in Eq. (49); this is the regularizer we pair with Implicit Diffusion. ELEGANT additionally regularizes changes to the initial noise law. Adjoint Sampling uses a control cost to reach an energy-defined target, so its regularization serves target transport rather than preservation of a PT data distribution. 
+
+Feedback and distributional constraints. Beyond the gradient estimator, the reliability and availability of feedback determine which adaptations are useful. Uehara et al. (2024c) study online fine-tuning with limited reward queries, while BRAID (Uehara et al., 2024d) uses conservative reward estimates to limit overoptimization outside the support of offline data. Calibrating Generative Models (CGM) (Smith et al., 2026) seeks the KL-closest model satisfying moment constraints. CGM-relax penalizes constraint violations, whereas CGM-reward fits exponential-tilt coefficients that define a reward. Both differentiate density ratios with sampled outputs held fixed, avoiding derivatives of the constraint functions and backpropagation through sample generation. For continuous diffusions, these are path-measure ratios evaluated using Girsanov’s theorem, so tractable endpoint likelihoods are not required. A response-mean constraint also differs from our expected sample-wise MSE, which penalizes predictive variance as well as mean error (§ G.1). Flow Density Control (De Santi et al., 2025) extends optimization to broader utilities and divergences through mirror-flow updates, and Value Matching (Jensen et al., 2026) studies gradient-free reward-guided flow adaptation. These 42 Preprint works motivate considering both the computational cost of fine-tuning and whether its objective remains informative away from the observed data. 
+
+Why this fine-tuning formulation for SBI? The challenge in our SBI setting is to match a finite set of observed design–response pairs (ξ, y o) without access to the true data-generating process for additional samples or queries at unmeasured designs. We adapt the conditional likelihood at a simulator-aligned θref , using discrepancy from these observations as the learning signal and the PT path law as a regularizing reference. We optimize this path-regularized objective using checkpointed backpropagation through the discretized reverse-SDE sampler. This computes pathwise parameter gradients through a discrete adjoint, following the finite-horizon sampler-gradient formulation of Implicit Diffusion (Marion et al., 2025) and sharing the differentiation principle of direct reward fine-tuning (Clark et al., 2024). This lets us differentiate the observation-based loss directly without fitting a separate value function or replacing it with a control-regression objective. The SBI contribution is the adaptation at mechanistically grounded conditioning values, its transfer to posterior queries through shared FiLM-modulated embeddings (§ G.7), and the interpretation of conditional path divergence alongside predictive error, rather than a new gradient estimator. Because the required correction varies with ξ, choosing which designs to revisit, how to weight their losses, and how strongly to regularize raises a curriculum problem (Bengio et al., 2009). Our toy illustrates how updates that correct a misspecified region can degrade regions that were already accurate (§ G.9). Interpreting A(θ, ξ ) alongside predictive error reveals these heterogeneous effects and motivates adaptive curricula and design-specific trust regions, with weights λξ adjusted to control departure from the PT path law (Blessing et al., 2025). Such design-dependent penalties remain a proposed extension. Adjoint Matching, TR-SOCM, and Adjoint Sampling provide alternative optimization routes worth investigating for this conditional likelihood setting. G.7 EMBEDDING -BASED TRANSFER LEARNING 
+
+Fine-tuning a joint simformer through its likelihood requires the learned correction to transfer to posterior queries, but the original architecture of Gloeckler et al. (2024) zeros condition inputs for latent tokens and leaves this transfer largely to the transformer. We instead apply token-aware Feature-wise Linear Modulation (FiLM) (Perez et al., 2018) before the transformer. For token i,let eval  
+
+> i
+
+, eid  
+
+> i
+
+, and econd  
+
+> i
+
+denote its value, identity, and latent-or-conditioned state embeddings, and define bi = [ eval  
+
+> i
+
+, e id  
+
+> i
+
+]. A linear projection of [eid  
+
+> i
+
+, e cond  
+
+> i
+
+] produces [˜ γi, ˜βi], which we bound as γi =1 + ε tanh(˜ γi) and βi = ε tanh( ˜βi) before forming the transformer input zi = [ γi ⊙ bi + βi, e cond  
+
+> i
+
+].Thus, the condition state both enters the transformer explicitly and modulates the value–identity representation, while ε limits how far latent and conditioned embeddings can separate; likelihood fine-tuning can therefore update a representation that posterior queries reuse. G.8 FMCPE-LSR BASELINE 
+
+Protocol. FMCPE first trains a neural posterior estimator (NPE) on simulator-generated pairs and then uses flow matching to correct its predictions with a smaller calibration set (Ruhlmann et al., 2026). For BMP, we used the authors’ Lampe/Zuko NPE implementation and treated the 4,816 
+
+retained LSR fits as pseudo-calibration parameters. They are estimates from the observed BMP dataset, not ground-truth parameters from a high-fidelity data-generating process. The complete sweep contains 48 runs: four nested observation budgets ( 235 , 470 , 705 , and 940 measurements), four nested LSR budgets ( 1,204 , 2,408 , 3,612 , and 4,816 fits), and three seeds ( 33 , 43 , and 53 ). Observation subsets were balanced across cell lines. For each condition, we trained a dedicated NPE and correction flows, drew 1,024 posterior samples, and evaluated the first 250 through the original one-step BMP simulator over all 940 measurements. For the simformer comparison, we evaluated the FT model and the PT model from which it was initialized, each with sampling seeds 42 , 43 and 44 . Every run used 250 joint draws of the 60 
+
+biophysical parameters and 20 cell-line receptor concentrations, 20 predictor steps, five corrector steps, three EM steps, hierarchical receptor sampling, and Tweedie conditioning in both parameter blocks. We computed the predictive metrics using the original BMP simulator over all 940 measurements. 
+
+Shared predictive metrics. Across our BMP posterior-inference experiments, we evaluate inferred parameters by running them through the original simulator and comparing its predictions with the 43 Preprint observed responses. RMSE and median distance summarize this agreement, capturing the best fit among posterior draws and the typical fit across draws, respectively. For the full-data comparison here, let ˆy(s) be the simulator’s response vector for posterior draw s, let yo contain the 940 observed responses, and let ry = max i yoi − min i yoi . We report 
+
+RMSE min = min 
+
+> s
+
+1
+
+ry
+
+vuut 1940 
+
+> 940
+
+X
+
+> i=1
+
+
+
+ˆy(s) 
+
+> i
+
+− yoi
+
+2
+
+, (64) 
+
+dmed = median s ˆy(s) − yo
+
+> 2
+
+. (65) This same RMSE definition is used for every method, with the FMCPE entries taken from its saved 
+
+250 -draw prediction banks. Both metrics are in response space. 
+
+Results. FMCPE-LSR can achieve lower best-draw RMSE than either simformer, particularly with larger LSR budgets (Table 7). With all 940 observations and 4,816 LSR fits, its RMSE is 0.175 ,compared with 0.252 for PT and 0.245 for FT. This advantage does not extend to median distance, which is 31 .05 for full-budget FMCPE-LSR versus 11 .11 for PT and 10 .38 for FT. Neither simformer is surpassed on mean median distance by any FMCPE-LSR configuration in the sweep. For each observation subset, our FMCPE-LSR implementation required training a dedicated NPE and two correction flows, whereas the PT and FT joint models reuse their weights across subsets through masking and compositional sampling. The FMCPE networks contained 0.87 –1.28 million parameters in total, including the NPE frozen during correction, compared with approximately 0.48 million for each PT/FT simformer. Thus, the lower best-draw error came with subset-specific training and a larger combined model, without a corresponding improvement in typical predictive fit. G.9 DESIGN -DEPENDENT MISSPECIFICATION TOY 
+
+Analytic model. The simulator and observation model in § 4.3 share the prior θ ∼ N (0 , I 2) and noise standard deviation σ = 0 .2, but differ by the additive discrepancy 
+
+h(ξ) = exp 
+
+
+
+− ∥ξ − c∥22
+
+2w2
+
+
+
+, c = (1 , −0.5) ⊤, w = 0 .4, ξ ∈ [−2, 2] 2.
+
+Table 7: Predictive errors through the original BMP simulator on all 940 measurements, using 250 parameter draws per run. Values are mean ± SE over three FMCPE training seeds or three sampling seeds of each fixed PT or FT simformer. FMCPE ℓ-C2ST uses separate shared-normalization correction refits and a joint 80-dimensional parameter target. Method Observations LSR fits RMSE ↓ Median distance ↓ ℓ-C2ST ↓
+
+FMCPE-LSR 235 1,204 0.242 ± 0.004 203 .661 ± 38 .307 0.198 ± 0.023 
+
+FMCPE-LSR 235 2,408 0.231 ± 0.026 203 .451 ± 70 .019 0.150 ± 0.039 
+
+FMCPE-LSR 235 3,612 0.184 ± 0.010 77 .887 ± 19 .521 0.194 ± 0.050 
+
+FMCPE-LSR 235 4,816 0.168 ± 0.011 136 .460 ± 77 .855 0.157 ± 0.049 
+
+FMCPE-LSR 470 1,204 0.256 ± 0.008 283 .935 ± 26 .484 0.137 ± 0.020 
+
+FMCPE-LSR 470 2,408 0.202 ± 0.006 108 .803 ± 19 .193 0.081 ± 0.013 
+
+FMCPE-LSR 470 3,612 0.195 ± 0.003 154 .748 ± 46 .537 0.095 ± 0.019 
+
+FMCPE-LSR 470 4,816 0.177 ± 0.003 31 .505 ± 10 .206 0.065 ± 0.004 
+
+FMCPE-LSR 705 1,204 0.246 ± 0.003 296 .322 ± 88 .535 0.074 ± 0.027 
+
+FMCPE-LSR 705 2,408 0.197 ± 0.014 161 .322 ± 41 .237 0.099 ± 0.022 
+
+FMCPE-LSR 705 3,612 0.193 ± 0.002 98 .697 ± 18 .042 0.124 ± 0.046 
+
+FMCPE-LSR 705 4,816 0.168 ± 0.007 50 .355 ± 16 .256 0.072 ± 0.036 
+
+FMCPE-LSR 940 1,204 0.270 ± 0.012 203 .950 ± 20 .409 0.083 ± 0.017 
+
+FMCPE-LSR 940 2,408 0.210 ± 0.025 188 .117 ± 73 .589 0.117 ± 0.029 
+
+FMCPE-LSR 940 3,612 0.186 ± 0.023 62 .011 ± 26 .766 0.129 ± 0.010 
+
+FMCPE-LSR 940 4,816 0.175 ± 0.005 31 .051 ± 8.460 0.086 ± 0.017 
+
+PT BMP Simformer 940 0 0.252 ± 0.003 11 .111 ± 0.116 0.157 ± 0.010 
+
+FT BMP Simformer 940 1 0.245 ± 0.003 10 .376 ± 0.058 0.189 ± 0.019 
+
+44 Preprint Pretraining drew designs uniformly over this square. Each observation panel contains n = 10 
+
+responses generated at θ⋆ = (0 .8, −1.2) ⊤; the localization run used a separate, manually specified design panel. Fine-tuning conditioned on an LSR estimate fitted under the simulator model, not on 
+
+θ⋆. We distinguish the misspecified region h(ξ) ≥ 0.1 from its complement. The true posterior is available analytically. Let X have rows ξ⊤ 
+
+> i
+
+, and let yo and h collect the observations and discrepancies h(ξi). Then 
+
+p⋆(θ | yo, X ) = N (μ⋆, Σ) , Σ = ( I2 + σ−2X⊤X)−1, μ⋆ = σ−2ΣX⊤(yo − h).
+
+The simulator-implied posterior has the same covariance but omits h from its mean. This gives an exact reference for evaluating posterior correction. The toy exposes a trade-off hidden by posterior metrics alone: adaptation can move the posterior toward the truth while degrading a likelihood that was already accurate away from the discrepancy. More aggressive full-network fine-tuning reduces posterior W2 further to 0.03 , but raises correct-region likelihood RMSE to 0.32 .
+
+Design-localized error and adaptation. Figure 5 uses a separate full-network fine-tuning run with joint two-dimensional RBF design embeddings and λ = 0 .1. We estimated the PT and FT likelihood means using 16 draws per design at the same fixed LSR reference and evaluated their absolute errors against the known noise-free response at θ⋆. The displayed ePT and eFT maps share a color scale, and their annotations average these pointwise errors over all 1,681 design-grid points. This run is distinct from the posterior benchmark above and supplies the λ = 0 .1 setting in the regularization sweep below. MAE decreases from 0.31 to 0.20 inside the misspecified region ( h ≥ 0.1), but increases from 0.11 
+
+to 0.15 outside it. Path divergence has a Pearson correlation of 0.75 with h, and its mean inside the misspecified region is 4.73 times that outside. Thus, concentrated adaptation can coexist with both local correction and deterioration elsewhere; path divergence alone does not determine whether predictions improve. This analysis used one training seed, one dataset of 10 observations, and one generating parameter vector, so it is a controlled diagnostic rather than a multi-seed benchmark. 
+
+Regularization trade-off. Figure 11 varies λ for the joint-RBF model while holding the PT model, observation panel, LSR reference, and remaining training settings fixed. Strong regularization reduces response adjustment and path divergence, retaining more of the PT model, but also weakens correction near the omitted bump. Increasing λ from 1 to 10 reduces RMSE outside the misspecified region by about 3% , while increasing it inside from 0.25 to 0.29 . None of the tested FT models improves full-grid RMSE over PT. Here prediction error compares the FT mean at θLSR with the noiseless true response at θ⋆, so it includes reference-parameter error. This trade-off motivates a design-dependent penalty λ(ξ) that preserves well-modeled regions while permitting correction where needed; testing that extension remains future work. 
+
+Sampling-time autoguidance. Inspired by autoguidance (Karras et al., 2024), we tested score blending as a sampling-time alternative to changing the training penalty. Using the frozen PT and FT models from Figure 5, we sampled with syw = sy 
+
+> PT
+
++ w(sy 
+
+> FT
+
+− sy
+
+> PT
+
+) at the same LSR reference, where w = 0 recovers pretraining and w = 1 recovers fine-tuning. Here the endpoints differ through misspecification correction, rather than training quality alone. Figure 12 shows that intermediate Table 8: Fine-tuning on the analytic design-misspecification toy. Posterior errors are measured against the exact true posterior; likelihood RMSE is evaluated in correctly specified and misspecified regions of the design space. The improvement factor is the PT error divided by the FT error, so values above 
+
+1× favor fine-tuning and values below 1× indicate degradation.                     
+
+> Metric PT FT Improvement (PT/FT)
+> Posterior W2↓0.09 0.07 1.35 ×
+> Posterior mean error ↓0.08 0.03 2.88 ×
+> Correct-region likelihood RMSE ↓0.05 0.26 0.18 ×
+> Misspecified-region likelihood RMSE ↓0.45 0.30 1.49 ×
+
+45 Preprint weights can retain correction near the discrepancy while attenuating some errors elsewhere. With 64 response draws per design, 100 reverse steps, and matched sampling noise across weights, w = 0 .5
+
+gives full-grid MAE 0.12 , compared with 0.14 for PT and 0.15 for FT. The full sweep also tested 
+
+w ∈ { 1.25 , 1.5, 2}, which increase full-grid error beyond FT. The lower row estimates PT-relative path divergence along each weight’s own reverse trajectories, using 64 paths per design rather than rescaling the FT map; this discretized estimate excludes the final Tweedie step. The best weight was selected retrospectively in this single-seed comparison, and improvement is not uniform across designs. These results suggest a sampling-time control for over-adaptation. Table 9: Interpretation of design-localized fine-tuning. Path divergence A(θ, ξ ) measures departure from the PT model at fixed θ, while predictive error change is evaluated against observations at the same design ξ.
+
+A(θ, ξ ) Error improves Error does not improve 
+
+Small Adequate simulator or mild correction Under-correction Large Corrected misspecification Over-correction or forgetting 
+
+Table 9 relates the magnitude of adaptation to its predictive benefit at each design. Large path divergence with reduced error is consistent with misspecification correction, whereas large divergence without improvement suggests unnecessary adaptation or forgetting. Small divergence with persistent error indicates under-correction, while small divergence where predictions are already accurate suggests that little correction is needed. G.10 BMP MISSPECIFICATION EVALUATION 
+
+LSR cost groups. The LSR ensemble was generated by fitting the expert simulator to the same BMP observations across four cell lines in 6,000 bounded least-squares runs with different random initializations. Each run minimized squared prediction error and yielded a candidate parameter set, providing alternative fits to the same data. We used the 4,816 fits retained in the original filtered bank provided by Klumpe et al. (2022). Each fit contains 60 biophysical parameters and five receptor multiplicative factors, giving 65 features. We transformed these features to model-normalized coordinates, z-scored each feature across fits, and computed PCA (Figure 13). To group solutions by parameter structure and fit quality, we applied k-means with nine clusters to standardized PC1, PC2, and log 10 C, where C is the total LSR fitting cost, multiplying the standardized cost coordinate by eight. We ordered clusters by their mean log-cost and merged clusters 1–3, 4–6, and 7–9 into low (L), middle (M), and high (H) cost groups, respectively. These labels summarize global fit quality, not performance at every design. For the local group assignments in Figures 6 and 14, we 2                
+
+> 02
+> 2
+> = 10 4
+> MAE = 0.1641
+> = 10 3
+> MAE = 0.1679
+> = 10 2
+> MAE = 0.1662
+> = 10 1
+> MAE = 0.1545
+> = 10 0
+> MAE = 0.1554
+> = 10 1
+> MAE = 0.1664
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 FT absolute error
+> 202
+> 1
+> 2
+> 02
+> 2
+> 202
+> 1
+> 202
+> 1
+> 202
+> 1
+> 202
+> 1
+> 202
+> 1
+> 0246810 Path divergence
+
+Figure 11: Regularization sweep on the joint-RBF misspecification toy. Columns increase λ from 
+
+10 −4 to 10 . ( Top ) FT absolute prediction error eFT (ξ), with full-grid MAE annotated. ( Bottom ) Path divergence A(ξ). Stars mark observed designs; dashed contours enclose h(ξ) ≥ 0.1. Color scales are shared within rows. The sweep used one training seed and 16 Monte Carlo draws per design to estimate response means. 46 Preprint 2.0                          
+
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> w= 0 (PT)
+> MAE = 0.1356
+> w= 0.25 (blend)
+> MAE = 0.1196
+> w= 0.5 (blend)
+> MAE = 0.1191
+> w= 0.75 (blend)
+> MAE = 0.1320
+> w= 1 (FT)
+> MAE = 0.1539
+> 0.0 0.2 0.4 0.6 0.8 Absolute error of predictive mean
+> 21012
+> 1
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5 1.0 1.5 2.0
+> 2
+> 21012
+> 1
+> 21012
+> 1
+> 21012
+> 1
+> 21012
+> 1
+> 02468Path divergence from PT
+
+Figure 12: PT–FT score blending on the misspecification toy. Columns vary the sampling weight 
+
+w from PT ( 0) to FT ( 1), without retraining. ( Top ) Absolute error of the predictive mean against the noise-free response, with full-grid MAE annotated. ( Bottom ) Estimated path divergence from PT. Stars mark observed designs; color scales are shared within rows. Intermediate weights reduce average error while limiting departure from PT. computed MSE across member fits at each design and selected the group with the lowest value. Thus, a globally higher-cost group can still fit a particular experimental condition best, as explicitly shown in Figure 14A. 
+
+Ligand-competition and titration conditions. The three response curves in Figure 6 probe competition for receptors and dose-dependent signaling. The ligand-competition axis transitions from high BMP4 and low BMP10 to high BMP10 and low BMP4. The NMuMG response changes along this axis, whereas the BMPR2-knockdown line remains close to zero. The BMP4 titration in NMuMG provides a dose–response comparison that also includes a decrease in observed signal at the highest concentration. We held the mechanistic parameters at θLSR and sampled the FT likelihood, isolating response correction from changes in inferred parameters. The FT model improves over the simulator at this reference throughout the displayed BMPR2-knockdown series and at lower BMP4 doses, while the NMuMG competition series and higher-dose titration retain regions where LSR predicts better. These conditional-likelihood comparisons are distinct from the aggregate HBDS posterior-predictive benchmark in Table 3. 
+
+Design-level adaptation. We relate the design-conditional path divergence in Eq. (2) to the LSR cost groups defined above. Panel A of Figure 14 shows which group has the lowest MSE at each experimental condition. Although the low-cost group dominates, other groups fit better at particular ligand conditions and cell lines. These preferences describe relative fit among groups of parameter estimates, rather than establishing simulator misspecification on their own. Comparing panels A and B reveals a qualitative correspondence between some departures from the dominant LSR group and elevated path divergence A(θ, ξ ). Panels C and D then distinguish adaptation from predictive improvement by comparing FT responses with the selected LSR anchor and the PT bootstrap median, respectively. Fine-tuning improves over the PT model across many conditions, but its comparison with LSR remains mixed. Nevertheless, improvements over LSR occur both at conditions favoring alternative parameter groups and at some conditions where the dominant group remains preferred. The green-boxed examples connect these design-level diagnostics to the response curves in Figure 6. Together, these results provide a proof of concept for design-localized likelihood correction where fine-tuning can improve predictions beyond the selected mechanistic fit on particular conditions, while path divergence identifies where the likelihood changes. The remaining regions where LSR performs better also show that the current fine-tuning procedure does not fully exploit this potential, or, can be improved. This motivates the design-adaptive curricula and divergence-aware regularization discussed in §§ G.3 and G.4, targeting residual error while preserving successful corrections. Establishing 47 Preprint 8 6 4 2 0 2 4PC1 (8.9% var.) 8      
+
+> 6
+> 4
+> 2
+> 0246PC2 (5.3% var.)
+> 0.4 0.6 0.8 1.0 1.2 log 10  LSR cost 8642024PC1 (8.9% var.) 8
+> 6
+> 4
+> 2
+> 0246PC2 (5.3% var.) LSR cost regime Low Middle High
+
+Figure 13: LSR solution structure and cost groups across 4,816 retained fits. ( Left ) PCA coordinates colored by log 10 total LSR cost. ( Right ) The same projection colored by low, middle, and high cost groups, containing 1,296 , 2,245 , and 1,275 fits. PC1 and PC2 explain 8.9% and 5.3% of the standardized feature variance. Grouping also uses fitting cost, so overlap in this two-dimensional projection is expected. whether these extensions yield broader gains requires further evaluation, which we leave to future work. 
+
+Posterior transfer without collapse. Although likelihood fine-tuning is anchored at a fixed refer-ence θLSR , the resulting posterior does not collapse onto this point estimate. Figure 15 shows that FT posterior marginals generally shift toward the reference while retaining substantial spread, indicating that the likelihood-side correction transfers to posterior queries without reducing inference to the fine-tuning anchor. 48 Preprint 
+
+Figure 14: Design-localized adaptation in the BMP model across four cell lines (rows) and experi-mental conditions (columns). Thin black lines separate titration series; the thick black line separates ligand-competition (“Rim”) from gradient series (“Gradient”). Green boxes mark the conditions illustrated in Figure 6. (A) Best-fitting LSR parameter group; colors identify groups, not error magnitudes. ( B) Path divergence A(θ, ξ ), with yellow indicating greater adaptation. ( C) Fine-tuning distance improvement relative to the selected LSR anchor. ( D) Fine-tuning distance improvement relative to the PT bootstrap median. In C and D, blue indicates reduced distance to observations and red indicates increased distance relative to the comparator. 49 Preprint 10 −4 10 −2 10 0 10 2
+
+BMP4 
+
+ACVR2A 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2B 
+
+10 −4 10 −2 10 0 10 2
+
+BMPR2 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2A 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2B 
+
+10 −4 10 −2 10 0 10 2
+
+BMPR2 
+
+10 −4 10 −2 10 0 10 2
+
+BMP7 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+BMP9 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+BMP10 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+GDF5 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+BMP4 
+
+ACVR2A 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2B 
+
+10 −4 10 −2 10 0 10 2
+
+BMPR2 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2A 
+
+10 −4 10 −2 10 0 10 2
+
+ACVR2B 
+
+10 −4 10 −2 10 0 10 2
+
+BMPR2 
+
+10 −4 10 −2 10 0 10 2
+
+BMP7 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+BMP9 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+BMP10 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+10 −4 10 −2 10 0 10 2
+
+GDF5 
+
+10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2 10 −4 10 −2 10 0 10 2
+
+Binding affinity, K
+
+ACVR1 BMPR1A 
+
+Phosphorylation efficiency, ε
+
+ACVR1 BMPR1A 
+
+Original parameter value (log scale) 
+
+Pretrained Fine-tuned LSR estimate 
+
+Figure 15: BMP posterior alignment with the LSR reference. Purple and green show PT and FT marginals; red lines mark the fitted LSR reference. The upper and lower blocks show 30 binding affinities K and 30 phosphorylation efficiencies ε, with ligand rows and receptor-complex columns. Type-I receptors label the column groups above; type-II receptors label individual columns beneath them, identifying each receptor pair. FT marginals generally move closer to the reference while retaining spread rather than collapsing to it. 50 Preprint 
+
+## H AI USE STATEMENT 
+
+AI tools assisted with grammar, organization, TikZ figures, and experiment management. The authors take responsibility for the final content. 51

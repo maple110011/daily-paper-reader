@@ -1,0 +1,1364 @@
+Title: BayesNDE: Bayesian Generative Modeling for Neural Density Estimation
+
+URL Source: https://arxiv.org/pdf/2609.39843v1
+
+Published Time: Thu, 01 Oct 2026 01:53:08 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+# BayesNDE: Bayesian Generative Modeling for Neural Density Estimation 
+
+## Chenglin Li Qiao Liu ∗
+
+## Department of Biostatistics, Yale University New Haven, Connecticut, USA October 1, 2026 
+
+Abstract 
+
+Density estimation is a fundamental problem in statistics and machine learning. In this work, we introduce BayesNDE, a neural density estimator based on Bayesian generative modeling. BayesNDE learns a Bayesian generative model and evaluates its density without requiring invertible networks or Jacobian-determinant computation. For each observation, it infers a sample-specific latent posterior to construct an adaptive proposal that focuses computation on regions contributing most to its density. Bridge sampling then combines samples from this proposal with separate posterior samples to estimate the density. Experiments on nonlinear and multimodal synthetic datasets show improved estimation of density values and better recovery of the density structure compared to the state-of-the-art neural density estimators. Applications to real-world datasets further demonstrate improved anomaly detection. Together, these results highlight BayesNDE as a flexible and effective neural density estimator, demonstrating how posterior inference can turn generative models into tools for density estimation. The code and tutorials are available at https://github.com/liuq-lab/BayesNDE .
+
+# 1 Introduction 
+
+Density estimation is a fundamental problem in statistics and machine learning. Given observations {xi}Ni=1 drawn from an unknown distribution, the goal is to learn the underlying distribution p(x) and evaluate the density value at a new observation. Traditional density estimators such as kernel-based methods [Parzen, 1962] typically perform well only in low-dimensional settings. Density estimation has become increasingly challenging as modern data exhibit complex patterns, such as nonlinearity and high-dimensionality. Deep neural networks provide powerful tools for modeling complex distributions, offering new advances to density estimation. There are two major types of neural density estima-tors: autoregressive models and normalizing flows. Autoregressive models obtain tractable 
+
+> ∗
+
+Corresponding author: qiao.liu@yale.edu 
+
+1arXiv:2609.39843v1 [stat.ML] 30 Sep 2026 likelihoods through a sequential factorization of the joint density [Germain et al., 2015, Pa-pamakarios et al., 2017], while normalizing flows construct invertible transformations whose Jacobian determinants can be efficiently evaluated [Dinh et al., 2017, Chen et al., 2018, 2019]. Despite their different formulations, both autoregressive density estimators and normal-izing flows can be viewed within a general change-of-variables framework [Kingma et al., 2016]. Specifically, let z ∼ pZ (z) and x = G(z), where G : Rp → Rp is differentiable and invertible. The density of x follows, 
+
+pX (x) = pZ (z) det ∂G (z)
+
+∂z ⊤
+
+> −1
+
+. (1) Within this change-of-variables formulation, exact density evaluation requires both invert-ible transformation and tractable Jacobian computation. It requires the latent and observed spaces to have the same dimension and constrains the neural architecture, which may po-tentially limit the expressiveness of the neural architecture. Latent-variable generative models provide an alternative route to flexible distribution modeling. Given a latent variable z with prior pZ (z) and the model pθ(x | z), the marginal density is 
+
+pθ(x) = 
+
+Z
+
+pθ(x | z)pZ (z) dz. (2) The challenge is therefore shifted from Jacobian computation to integration over the latent space, which is generally intractable. Following this direction, Liu et al. [2021] proposed Roundtrip, which models observations around a learned low-dimensional manifold and eval-uates pointwise densities using importance sampling or Laplacian approximation. Although Roundtrip substantially relaxes the architectural constraints of flow-based den-sity estimators, its importance proposal is centered at the encoder output, which provides a deterministic latent representation rather than a distributional characterization of the observation-specific posterior. The resulting proposal may therefore not fully capture pos-terior uncertainty, dependence, or multimodality, potentially reducing importance-sampling efficiency when proposal-posterior mismatch is substantial. To overcome these limitations, we introduce BayesNDE, a neural density estimator based on Bayesian generative modeling. To our knowledge, BayesNDE is the first neural density-estimation framework to use sample-specific posterior-adaptive bridge sampling for pointwise density evaluation. We summarize our contributions as follows: 
+
+• We introduce a new perspective for explicit neural density evaluation by estimating the marginal or conditional density of each observation through posterior-adaptive bridge sampling. This removes the need for dimension-preserving, invertible transformations and tractable Jacobian determinants. 
+
+• BayesNDE uses observation-specific posterior samples to construct adaptive proposals and bridge sampling to estimate the resulting normalizing constants. We establish con-sistency of the estimator and characterize how posterior-proposal overlap determines its asymptotic efficiency. 2• BayesNDE achieves superior performance in a diverse of density estimation bench-marks, including nonlinear and multimodal simulation datasets, and real-world datasets. The downstream applications, such as outlier detection and Bayesian classification, fur-ther support the significance of our method. 
+
+# 2 Related Work 
+
+Neural density estimation. Modern neural density estimators are largely built around model classes that admit tractable likelihood evaluation. Autoregressive models, such as MADE [Germain et al., 2015], represent a joint density through sequential conditional factor-izations, while normalizing flows construct invertible transformations with tractable change-of-variables computation, including MAF [Papamakarios et al., 2017], Real NVP [Dinh et al., 2017], and Residual Flow (Resflow) [Chen et al., 2019]. Continuous normalizing flows extend this framework to continuous-time transformations [Chen et al., 2018], while Flow Matching provides an efficient approach for learning the associated vector fields [Lipman et al., 2023]. Relatedly, Wu et al. [2017] used annealed importance sampling to evaluate test log-likelihoods of pretrained decoder-based generative models. Their focus is quantitative evaluation of fit-ted generative models rather than the development and benchmarking of a general-purpose neural density estimator. 
+
+Normalizing-constant estimation. Estimating normalizing constants is a classical prob-lem in Bayesian computation. Importance sampling estimates an unknown normalizing constant using weighted samples from a proposal distribution, with efficiency depending critically on proposal-target overlap. Bridge sampling estimates the normalizing constant by combining samples from both a proposal distribution and the normalized target distri-bution [Meng and Wong, 1996, Gronau et al., 2020]. Related adaptive importance-sampling methods further use information from posterior regions to construct more effective proposal distributions [Hoogerheide et al., 2012]. [Jia and Seljak, 2020] adopt bridge sampling with a normalizing-flow-based proposal for normalizing-constant estimation of Bayesian evidence. These methods, however, are designed for generic normalizing-constant estimation rather than neural density estimation of the observed-data distribution. 
+
+Positioning of BayesNDE. BayesNDE bridges the gap between neural density estima-tion and Bayesian normalizing-constant estimation through observation-specific posterior inference. Its generative model is inspired by recent advances in Bayesian generative mod-eling [Liu and Wong, 2026b,a, Luo and Liu, 2026, Liu, 2026], while our focus is on explicit density estimation through posterior-adaptive bridge sampling. BayesNDE exploits this posterior to guide latent-space integration, providing a new perspective on neural density estimation. 33 Method 
+
+## 3.1 Method overview 
+
+BayesNDE proceeds in two stages (Figure 1). First, we train a Bayesian generative model to capture the underlying data distribution. Second, with the fitted model, we estimate the density of a new observation as the normalizing constant of its latent posterior. Poste-rior samples guide the construction of an observation-adaptive proposal that concentrates computation in latent regions contributing most to the marginal-density integral. Bridge sampling then combines proposal draws with held-out posterior samples to estimate this normalizing constant and obtain the pointwise density. 2. Density estimation for a new observation x
+
+(a) Posterior sampling 
+
+HMC 
+
+# x
+
+Split posterior draws 
+
+(b) Adaptive proposal fitting 
+
+Proposal distribution 
+
+Proposal samples 
+
+(c) Bridge sampling 
+
+Output: pointwise density estimate 
+
+> Bridge function
+
+1. Train the Bayesian 
+
+generative model 
+
+# X
+
+# Z
+
+pθ (X | Z)
+
+𝑝𝑝𝑍𝑍 𝑧𝑧 
+
+𝑝𝑝𝜃𝜃 𝑥𝑥 , 𝑧𝑧 = 𝑝𝑝𝜃𝜃 𝑥𝑥 |𝑧𝑧 𝑝𝑝𝑍𝑍 𝑧𝑧 
+
+𝐷𝐷fit = 𝑧𝑧𝑚𝑚 ∗ 𝑚𝑚=1 𝑀𝑀𝑓𝑓 
+
+𝐷𝐷bridge = 𝑧𝑧𝑗𝑗 ∗𝑗𝑗=1 𝑀𝑀𝑏𝑏 
+
+𝓓𝓓𝐟𝐟𝐟𝐟𝐟𝐟  𝓓𝓓𝐛𝐛𝐛𝐛 𝐟𝐟 𝐛𝐛𝐛𝐛𝐛𝐛 ̃ 𝑧𝑧𝑠𝑠 𝑠𝑠=1 𝑆𝑆 ∼
+
+𝓓𝓓𝐟𝐟𝐟𝐟𝐟𝐟  𝐷𝐷bridge = 𝑧𝑧𝑗𝑗 ∗𝑗𝑗=1 𝑀𝑀𝑏𝑏 ̃ 𝑧𝑧𝑠𝑠 𝑠𝑠=1 𝑆𝑆 ∼ � 𝑞𝑞𝑥𝑥 𝑧𝑧               
+
+> ˆ𝑍𝑍𝑥𝑥 𝑡𝑡+1 =𝑆𝑆 −1 ∑𝑠𝑠=1 𝑆𝑆 ℎ 𝑡𝑡 ˜𝑧𝑧𝑠𝑠 𝜋𝜋𝑥𝑥 ˜𝑧𝑧𝑠𝑠 𝑀𝑀 𝑏𝑏 −1 ∑𝑗𝑗=1 𝑀𝑀𝑏𝑏 ℎ 𝑡𝑡 𝑧𝑧 𝑗𝑗 ∗�𝑞𝑞𝑥𝑥 𝑧𝑧 𝑗𝑗 ∗
+> ℎ 𝑡𝑡 𝑧𝑧 ∝1
+> 𝑠𝑠𝑝𝑝 𝜋𝜋𝑥𝑥 𝑧𝑧 +𝑠𝑠𝑞𝑞 ˆ𝑍𝑍 𝑥𝑥 𝑡𝑡 �𝑞𝑞𝑥𝑥 𝑧𝑧
+
+…
+
+…
+
+𝜋𝜋𝑥𝑥 𝑧𝑧 = 𝑝𝑝 ˆ𝜃𝜃 𝑥𝑥 ∣ 𝑧𝑧 𝑝𝑝𝑍𝑍 𝑧𝑧 
+
+𝑝𝑝 ˆ𝜃𝜃 𝑧𝑧 ∣ 𝑥𝑥 = 𝜋𝜋𝑥𝑥 𝑧𝑧 𝑍𝑍𝑥𝑥 
+
+Fixed-point iteration 
+
+ˆ𝑝𝑝 ˆ𝜃𝜃 𝑥𝑥 = ˆ 𝑍𝑍𝑥𝑥   
+
+> ˆ𝑍𝑍𝑥𝑥 0ˆ𝑍𝑍𝑥𝑥 1ˆ𝑍𝑍𝑥𝑥 2
+> ˆ𝑍𝑍𝑥𝑥 tˆ𝑍𝑍𝑥𝑥 t+1 ˆ𝑍𝑍𝑥𝑥
+
+# 𝐺𝐺𝜃𝜃 
+
+𝑞𝑞𝑥𝑥 
+
+𝑞𝑞𝑥𝑥 
+
+𝑞𝑞𝑥𝑥 𝑧𝑧 = �𝑘𝑘=1 𝐾𝐾 𝜔𝜔𝑘𝑘 𝑡𝑡𝜈𝜈 𝑧𝑧 ; 𝜇𝜇𝑘𝑘 , Σ𝑘𝑘      
+
+> �𝑞𝑞𝑥𝑥 𝑧𝑧 =1− 𝜖𝜖 𝑞𝑞𝑥𝑥 𝑧𝑧 +𝜖𝜖𝑝𝑝𝑍𝑍 𝑧𝑧
+
+Figure 1: Overview of BayesNDE. Specifically, for a fitted parameter ˆθ and an observation x, define the unnormalized latent posterior as πx(z) = pˆθ(x | z)pZ (z). Its normalizing constant is exactly the desired marginal density, 
+
+Zx := 
+
+Z
+
+πx(z) dz = pˆθ(x), pˆθ(z | x) = πx(z)
+
+Zx
+
+. (3) Thus, pointwise density evaluation reduces to estimating Zx. Posterior inference requires only the unnormalized posterior πx(z), allowing posterior samples to identify the latent regions that contribute most to the marginal-density integral. BayesNDE uses these samples to construct an observation-specific proposal and estimates Zx by bridge sampling. 43.2 Bayesian Generative Model 
+
+Let x ∈ Rp denote the observed random vector and z ∈ Rd a low-dimensional latent random vector, where typically d < p . We assume a standard Gaussian prior pZ (z) = N (z; 0, Id) for the latent variable. For continuous data, the conditional distribution of x given z is modeled as 
+
+pθ(x | z) = N (x; μθ(z), Σθ(z)) , (4) where θ denotes the parameters of the generative model. Both the conditional mean μθ(z)and covariance matrix Σθ(z) are represented by a neural network with two output heads. For simplicity, we use the diagonal structure Σθ(z) = diag  σ21 (z; θ), . . . , σ 2 
+
+> p
+
+(z; θ). Importantly, the Gaussian assumption is imposed conditionally on z; a nonlinear marginal distribution of 
+
+x is induced after integrating over the latent variable. During model fitting, we first use an EGM warm start [Liu et al., 2024, Liu and Wong, 2026b] to initialize the generative parameters and sample-specific latent representations (see details in Appendix A.4). Then training proceeds by iteratively updating the sample-specific latent variables {zi}Ni=1 and the shared generative parameters θ. Given the current θ,the latent variable associated with observation xi is updated according to its log-posterior log pθ(zi | xi) = log pZ (zi) + log pθ(xi | zi) + Ci, where Ci does not depend on zi. Since the right-hand side is differentiable with respect to zi, each latent variable is updated by stochastic gradient ascent. These updates are fully decoupled across observations and can therefore be performed in parallel to improve efficiency. Conditional on the current latent variables, the generative parameters are updated using the mini-batch conditional log-likelihood lB(θ) = 1
+
+> |B|
+
+P 
+
+> i∈B
+
+log pθ(xi | zi), together with the regularization terms specified in Appendix A.4. The two updates are alternated until con-vergence. The fitted generative parameters ˆθ are then fixed for subsequent pointwise density evaluation. 
+
+## 3.3 Posterior Sampling and Proposal Construction 
+
+For a new observation x, the fitted model defines the latent posterior 
+
+pˆθ(z | x) = πx(z)
+
+Zx
+
+= pˆθ(x | z)pZ (z)
+
+pˆθ(x) . (5) Although the normalizing constant Zx is unknown, posterior sampling only requires eval-uation of πx(z). We therefore use Hamiltonian Monte Carlo (HMC) [Duane et al., 1987, Neal, 2011] to obtain posterior draws {z⋆m}Mm=1 from pˆθ(z | x). To construct a proposal, the posterior draws are randomly split into two disjoint sets, Dfit and Dbridge , following the sample-splitting principle studied for bridge sampling [Wong et al., 2020]. The former is used exclusively for proposal construction, while the latter is retained for subsequent bridge sampling. To capture the observation-specific posterior geometry, we first fit a K-component full-covariance Gaussian mixture model (GMM) to Dfit and use the fitted mixture weights, means, and regularized covariance matrices to construct a mixture-of-Student-t proposal 5qx(z) = PKk=1 ωktν (z; μk, Σk) , where ν denotes the degrees of freedom. The mixture struc-ture accommodates multimodal posterior geometry, while the heavy-tailed components im-prove coverage of the posterior tails. To improve robustness to proposal misspecification and provide additional tail coverage, we further introduce a defensive component based on the latent prior [Hesterberg, 1995, Owen and Zhou, 2000], eqx(z) = (1 − ϵ)qx(z) + ϵp Z (z), where ϵ ∈ (0 , 1) controls the defensive weight. We then draw S independent proposal samples {ezs}Ss=1 from eqx. Together with the held-out posterior draws in Dbridge , these samples are used for pointwise density estimation in the following section. 
+
+## 3.4 Bridge-Sampling Density Estimation 
+
+We estimate the normalizing constant Zx = pˆθ(x) using bridge sampling. Using the defensive proposal eqx, we first obtain an importance-sampling estimate 
+
+bZIS = 1
+
+S
+
+> S
+
+X
+
+> s=1
+
+πx(ezs)
+
+eqx(ezs) , ezs ∼ eqx. (6) This estimate is used to initialize the bridge-sampling iteration. For any positive bridge function h, the bridge identity and its Monte Carlo approximation are 
+
+Zx = Eeqx [h(z)πx(z)] 
+
+Ep ˆθ (z|x) [h(z)eqx(z)] , bZx = S−1 PSs=1 h(ezs)πx(ezs)
+
+M −1b
+
+PMb 
+
+> j=1
+
+h(z⋆j )eqx(z⋆j ). (7) BayesNDE uses the asymptotically optimal bridge function [Meng and Wong, 1996] 
+
+h(z) ∝ 1
+
+spπx(z) + sqZx eqx(z), sp = Meff 
+
+Meff + S , sq = SMeff + S , (8) where Meff denotes an effective posterior sample count computed from the held-out bridge draws, as detailed in Appendix A.4. Because h⋆(z) itself depends on the unknown normal-izing constant, Zx is obtained through the fixed-point update 
+
+bZ(t+1)  
+
+> x
+
+=1
+
+S
+
+> S
+
+X
+
+> s=1
+
+πx(ezs)
+
+spπx(ezs) + sq bZ(t) 
+
+> x
+
+eqx(ezs)1
+
+Mb
+
+> Mb
+
+X
+
+> j=1
+
+eqx(z⋆j )
+
+spπx(z⋆j ) + sq bZ(t) 
+
+> x
+
+eqx(z⋆j )
+
+. (9) The iteration is initialized at bZ(0)  
+
+> x
+
+= bZIS , and continued until convergence. The resulting log bpˆθ(x) = log bZx is reported as the estimated pointwise log-density. For conditional density estimation with an observed conditioning variable y, we extend the Bayesian generative model to a conditional generative architecture and the same pro-cedure applies after replacing pˆθ(x | z) by pˆθ(x | z, y) throughout, yielding an estimate of 
+
+pˆθ(x | y). See details in Appendix A.3. 63.5 Training Objectives and Model Architecture 
+
+We briefly summarize the training objectives and network architectures used to instantiate the Bayesian generative model. For EGM initialization, the generator G and encoder E are trained using a weighted combination of adversarial matching, bidirectional reconstruction, distribution matching through MMD [Gretton et al., 2012] and sliced-Wasserstein discrep-ancy [Kolouri et al., 2019], correlation matching, and conditional-variance regularization: 
+
+LEGM = λadv Ladv + λrec Lrec + λcorr Lcorr 
+
++ λMMD LMMD + λSW LSW + λvar Llogvar , (10) where the adversarial and reconstruction terms encourage agreement between the data and latent representations, while the remaining terms regularize distributional, dependence, and conditional-variance properties. The detailed experimental settings are reported in Ap-pendix A.4. During the subsequent stochastic iterative updating, the generative parameters are opti-mized using the conditional negative log-likelihood together with the regularization terms: 
+
+Jiter (θ) = −lB(θ) + λPP LMMD ,PP + λiter corr Lcorr + λiter var Llogvar , (11) where LMMD ,PP matches the prior-predictive distribution to the observed data. For vector-valued data, the generative model Gθ adopts five width-256 hidden layers for p ≤ 10 and five width-256 residual blocks for p > 10 with separate conditional-mean and diagonal-variance heads, with a Softplus transformation to ensure positive variances. Detailed loss definitions, architecture settings, optimization hyperparameters, and regime-specific weights are provided in Appendix A.4. 
+
+# 4 Theory 
+
+## 4.1 Consistency of Adaptive Bridge Estimation 
+
+BayesNDE constructs a bridge proposal from posterior samples, so the proposal itself is data-adaptive. We show that this adaptation does not alter the asymptotic target of the density estimator, provided that the proposal-fitting samples are separated from those used in bridge estimation. 
+
+Theorem 1 (Consistency of posterior-adaptive bridge estimation) . Fix an observation x
+
+and a fitted generative model ˆθ. Let πx(z) = pˆθ(x | z)pZ (z) and Zx = R πx(z) dz = pˆθ(x).Suppose that the adaptive proposal is constructed from a separate posterior sample, has sup-port wherever πx is positive, and that the proposal and held-out posterior samples satisfy the corresponding laws of large numbers. Then the bridge estimate bZx produced by BayesNDE satisfies bZxp
+
+−→ Zx = pˆθ(x)
+
+as the numbers of proposal and posterior samples tend to infinity. 
+
+7Theorem 1 shows that posterior adaptation affects the efficiency of bridge estimation, but not its asymptotic target. The result is conditional on the fitted generative model and therefore concerns the consistency of the Monte Carlo density evaluation step, rather than consistency with respect to the unknown data-generating density. The full assumptions and proof under the regularity conditions are given in Appendix A.1. 
+
+## 4.2 Posterior–proposal overlap and estimation efficiency 
+
+Classical bridge-sampling theory shows that the bridge function and the overlap between the two sampling distributions determine the efficiency of normalizing-constant estimation [Meng and Wong, 1996, Gronau et al., 2020]. We specialize this analysis to the latent posterior 
+
+px = πx/Z x and the defensive proposal ˜ qx, treated as fixed given Dfit . Let N = Mb + S with 
+
+Mb/N → sp ∈ (0 , 1) and sq = 1 − sp, and define, for any nonnegative function q,
+
+Ox(q) = 
+
+Z px(z) q(z)
+
+sp px(z) + sq q(z) dz. (12) 
+
+Theorem 2 (Efficiency under posterior–proposal overlap) . Suppose the Mb held-out draws are i.i.d. from px and the S proposal draws are i.i.d. from ˜qx, independently of each other. For the optimal bridge estimator of Meng and Wong [1996], 
+
+√N   bZx/Z x − 1 d
+
+−→ N 
+
+
+
+0, 1
+
+> spsq
+
+Ox(˜ qx)−1 − 1
+
+
+
+.
+
+Moreover, 0 < Ox(ϵ p Z ) ≤ O x(˜ qx) ≤ 1, where the lower bound does not depend on the fitted mixture qx and the upper bound is attained if and only if ˜qx = px almost everywhere. 
+
+No overlap or moment conditions are required, since the bridge integrands are bounded by 1 /s p and 1 /s q. Stronger overlap between ˜ qx and px yields smaller Monte Carlo variance, which motivates observation-specific proposals, while the defensive component bounds the variance however poorly qx fits the posterior. For correlated HMC draws, replacing Mb by 
+
+Meff in ( sp, s q) is a heuristic. The proof is given in Appendix A.1. 
+
+# 5 Results 
+
+## 5.1 Experimental setup 
+
+Datasets and evaluation. We evaluate BayesNDE on both synthetic benchmarks with known densities and real-world benchmarks. The synthetic experiments are designed to reflect two complementary challenges in density estimation. The independent Gaussian mixture (Independent GMM) represents a strongly multimodal distribution: each coordinate independently follows an equally weighted three-component Gaussian mixture with means 
+
+−1, 0, and 1, yielding 3 p modes in p dimensions. The involute distribution instead represents a highly nonlinear density concentrated around a curved manifold. Detailed data generative processes are provided in Appendix A.2. For each distribution, we generate 20 ,000 i.i.d. observations and use 81% /9% /10% for training, validation, and testing. 8In two dimensions, estimated densities are compared directly with the ground truth on a common grid; for the independent Gaussian mixture, we further evaluate dimensions from 2 to 25 using the Spearman rank correlation between true and estimated test densities. For real data, we use five tabular benchmarks from the UCI Machine Learning Repository [Dua and Graff, 2017]. BANK and ParkTele are used for unconditional density estimation, while Pendigits10, Vehicle, and EEGEye are used for conditional density estimation with one-hot encoded class labels. Performance is measured by average test log-likelihood. 
+
+Baseline methods. We compare BayesNDE with six leading neural density estimators spanning autoregressive models, normalizing flows, continuous flows, and generative latent-variable models: MADE [Germain et al., 2015], MAF [Papamakarios et al., 2017], Real NVP [Dinh et al., 2017], Residual Flow (Resflow) [Chen et al., 2019], Conditional Flow Matching (CFMs) [Lipman et al., 2023], and Roundtrip [Liu et al., 2021]. These baselines cover widely used approaches based on autoregressive factorization, invertible transforma-tions, continuous-time flows, and flexible deep generative mappings. Implementation details of the baselines are provided in Appendix A.5. 
+
+## 5.2 Simulation studies 
+
+We first evaluate whether the estimated densities recover the underlying structure of the two synthetic distributions. Figure 2 shows density maps of the true and estimated densities in two dimensions. BayesNDE closely recovers both the nonlinear geometry of the involute distribution and the nine separated modes of the Gaussian mixture, while competing methods exhibit varying degrees of smoothing, distortion, or spurious connections between modes. For example, on the involute benchmark, BayesNDE achieves a Spearman correlation of 0 .959, compared with 0 .898 for the strongest baseline, Roundtrip. We next examine how density estimation accuracy changes as the dimension increases. Using the Gaussian mixture benchmark, each coordinate independently follows a three-component mixture, the number of modes grows exponentially as 3 p, making the problem increasingly challenging with dimension. As shown in Figure 4a, BayesNDE achieves the highest Spearman correlation at every evaluated dimension. For example, when p = 20, BayesNDE attains a correlation of 0 .57, compared with 0 .43 for the strongest competing method. 9−4 −2 024                 
+
+> x2
+> Truth BayesNDE CFMs MADE
+> −4 −2 024
+> x2
+> MAF Real NVP Resflow Roundtrip
+> −1 01
+> x2
+> Truth BayesNDE CFMs MADE
+> −1 01
+> x1
+> −1 01
+> x2
+> MAF
+> −1 01
+> x1
+> Real NVP
+> −1 01
+> x1
+> Resflow
+> −1 01
+> x1
+> Roundtrip
+> 0.00 0.02 0.04 0.06
+> Density
+> 0.00 0.50 1.00 1.50
+> Density
+> (a) Involute (b) Independent GMM
+
+Figure 2: True and estimated densities for the two-dimensional involute distribution and independent Gaussian mixture. 
+
+## 5.3 Real datasets 
+
+Table 1 reports average test log-likelihoods on the five real-world datasets, covering both unconditional and conditional density estimation. BayesNDE achieves the highest value on every dataset. The improvements are substantial across tasks. For instance, BayesNDE obtains the highest average test log-likelihood of 41 .43 on BANK, compared with 35 .74 for the best baseline Roundtrip. On the three conditional datasets, BayesNDE improves over the strongest competing method by 3 .68-19 .01 nats. These consistent gains across datasets and task types demon-strate the effectiveness of BayesNDE for real-world density estimation. 10 5.4 Density-Based Downstream Tasks 
+
+We first evaluate the practical utility of BayesNDE for outlier detection on three ODDS benchmark datasets [Rayana, 2016]: Shuttle, Cardio, and Pendigits. All density estimators were trained only on the training split, and test observations were ranked by estimated log-density, with lower-density observations more likely to be outliers. We compared BayesNDE with five generative density estimators as well as two dedicated anomaly-detection methods, one-class SVM [OC-SVM; Sch¨ olkopf et al., 2001] and Isolation Forest [I-Forest; Liu et al., 2008], using precision@ k, which is the proportion of true anomalies among the k highest-ranked candidates. Table 1: Average test log-likelihood (nats) on real-world datasets. Uncertainties are two standard errors of the mean test log-likelihood across test points. The best result for each dataset is shown in bold.                                          
+
+> Method Unconditional Conditional BANK ParkTele Pendigits10 Vehicle EEGEye
+> MADE 14.38 ±0.27 34.34 ±0.67 -54.56 ±0.96 -51.84 ±1.41 -50.25 ±0.18 MAF -53.15 ±0.20 36.99 ±0.66 -52.29 ±0.78 -52.30 ±2.25 -49.47 ±0.21 Real NVP 27.21 ±0.38 36.45 ±0.68 -54.59 ±1.16 -63.03 ±3.61 -49.87 ±0.22 Resflow 23.68 ±0.18 36.25 ±0.63 -47.77 ±0.64 -45.97 ±1.13 -48.33 ±0.29 CFMs 10.23 ±0.07 16.32 ±0.19 -54.40 ±0.36 -49.65 ±0.87 -51.45 ±0.14 Roundtrip 35.74 ±0.13 49.64 ±0.33 -48.59 ±0.08 -40.10 ±0.70 -44.83 ±0.08 BayesNDE 41.43 ±0.17 59.54 ±0.53 -28.76 ±0.44 -33.54 ±0.88 -41.15 ±0.19
+
+Table 2: Precision@k on the ODDS anomaly-detection benchmarks, where k equals the number of outliers in the test split. Results are means over the same three random seeds for every method; OC-SVM is deterministic. Higher values are better.                         
+
+> OC-SVM I-Forest Real NVP MAF CFMs Resflow Roundtrip BayesNDE Shuttle 0.953 0.958 0.735 0.861 0.932 0.477 0.958 0.965
+> Cardio 0.533 0.556 0.178 0.200 0.511 0.244 0.311 0.556
+> Pendigits 0.154 0.128 0.000 0.000 0.000 0.000 0.000 0.180
+
+As shown in Table 2, BayesNDE achieves the highest precision@ k on all three datasets, including 0.556 on Cardio and 0.180 on the challenging Pendigits dataset. These results show that the density estimates produced by BayesNDE are informative for downstream outlier detection and remain competitive with methods designed specifically for this task. 11 True BayesNDE MAF Figure 3: Conditional image generation on MNIST. The first column shows real MNIST examples; the remaining columns show samples generated by BayesNDE and MAF. For each digit class, representative generated images are shown in decreasing order of conditional density pθ(x | y). Next, we evaluate BayesNDE on the MNIST image dataset for conditional generation and classification. As shown in Figure 3, BayesNDE generates diverse and recognizable digits, with higher-density samples exhibiting more representative class-specific structure. With the uniform class prior p(y) = 1 /10, we classify each test image using ˆ y = arg max y p(y | x) = arg max y{log bpθ(x | y) + log p(y)} = arg max y log bpθ(x | y). BayesNDE achieves 98.6% test accuracy, compared with 98.0% for Roundtrip and 92.6% for MAF. 2 5 10 15 20 25 
+
+> Dimension
+> 0.0 0.2 0.4 0.6 0.8
+> Log-density Spearman correlation
+> BayesNDE Roundtrip Resflow CFMs MADE Real NVP MAF
+
+(a) Spearman rank correlation on independent GMM. BayesNDE Roundtrip MAF 
+
+> 90 92 94 96 98 100
+> Test accuracy (%)
+> 98.6%
+> 98.0% 92.6%
+> +0.6 pp
+
+(b) Test accuracy on MNIST. 
+
+Figure 4: Empirical evaluation across benchmarks. (a) Density estimation accuracy across varying dimensions; (b) Classification performance on MNIST. 12 5.5 Ablation Analysis 
+
+We ablate the main components of BayesNDE on the synthetic mixture setting, using the same 500 held-out observations for all comparisons. Table 3 reports the density estimation accuracy. Bridge sampling attains higher ranking accuracy than importance sampling at ev-ery posterior budget, reaching the best accuracy importance sampling attains at any budget with four times fewer posterior samples (see details in Appendix A.4 S6). In the 2D ablation setting, removing the EGM warm start severely degrades density recovery. In 15 dimensions, removing correlation matching or the MMD terms also reduces density accuracy. Table 3: Ablation results on synthetic data.          
+
+> Method Spearman ↑
+> BayesNDE (2D) 0.9214
+> w.o. EGM init. 0.0129 w.o. var. reg. 0.8929 BayesNDE (15D) 0.6311
+> w.o. BS 0.5932 w.o. EGM reg. (MMD) 0.5848 w.o. EGM reg. (Corr) 0.6169
+
+# 6 Discussion 
+
+We introduced BayesNDE, which casts pointwise density evaluation as posterior normalizing-constant estimation. Observation-specific posterior proposals and bridge sampling enable density evaluation without invertible architectures or Jacobian determinants, while improv-ing density estimation and downstream performance. Its main limitation is running time: BayesNDE is slower than CFMs, MAF and Roundtrip (Appendix A.4). However, test-time posterior sampling and bridge estimation are indepen-dent across observations and can be further accelerated by parallel computing. Accuracy also depends on posterior exploration and proposal overlap in complex latent spaces. Future work will focus on faster training, posterior sampling and reusable proposals to reduce the cost of repeated density evaluation. 
+
+# Acknowledgments 
+
+Q.L. was supported in part by the National Human Genome Research Institute (NHGRI) under Award Number R00HG013661, the Operations Core of the Claude D. Pepper Older Americans Independence Center at Yale School of Medicine (P30AG021342), and the YSPH Transformation Pilot Grant. 13 References 
+
+Ricky T. Q. Chen, Yulia Rubanova, Jesse Bettencourt, and David Duvenaud. Neural ordinary differential equations. In Advances in Neural Information Processing Systems , volume 31, 2018. Ricky T. Q. Chen, Jens Behrmann, David Duvenaud, and J¨ orn-Henrik Jacobsen. Residual flows for invertible generative modeling. In Advances in Neural Information Processing Systems , volume 32, 2019. Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using Real NVP. In International Conference on Learning Representations , 2017. Dheeru Dua and Casey Graff. UCI machine learning repository. University of California, Irvine, School of Information and Computer Sciences, 2017. URL https://archive.ics. uci.edu/ml .Simon Duane, A. D. Kennedy, Brian J. Pendleton, and Duncan Roweth. Hybrid monte carlo. 
+
+Physics Letters B , 195(2):216–222, 1987. doi: 10.1016/0370-2693(87)91197-X. Mathieu Germain, Karol Gregor, Iain Murray, and Hugo Larochelle. MADE: Masked au-toencoder for distribution estimation. In Proceedings of the 32nd International Conference on Machine Learning , volume 37 of Proceedings of Machine Learning Research , pages 881– 889. PMLR, 2015. Arthur Gretton, Karsten M. Borgwardt, Malte J. Rasch, Bernhard Sch¨ olkopf, and Alexander Smola. A kernel two-sample test. Journal of Machine Learning Research , 13:723–773, 2012. Quentin F. Gronau, Henrik Singmann, and Eric-Jan Wagenmakers. bridgesampling: An R package for estimating normalizing constants. Journal of Statistical Software , 92(10):1–29, 2020. doi: 10.18637/jss.v092.i10. Tim Hesterberg. Weighted average importance sampling and defensive mixture distributions. 
+
+Technometrics , 37(2):185–194, 1995. doi: 10.1080/00401706.1995.10484303. Lennart Hoogerheide, Anne Opschoor, and Herman K. van Dijk. A class of adaptive impor-tance sampling weighted EM algorithms for efficient and robust posterior and predictive simulation. Journal of Econometrics , 171(2):101–120, 2012. doi: 10.1016/j.jeconom.2012. 06.011. He Jia and Uros Seljak. Normalizing constant estimation with gaussianized bridge sampling. In Symposium on Advances in Approximate Bayesian Inference , pages 1–14. PMLR, 2020. Diederik P. Kingma, Tim Salimans, Rafal Jozefowicz, Xi Chen, Ilya Sutskever, and Max Welling. Improved variational inference with inverse autoregressive flow. In Advances in Neural Information Processing Systems , volume 29, pages 4743–4751, 2016. Soheil Kolouri, Phillip E. Pope, Charles E. Martin, and Gustavo K. Rohde. Sliced-wasserstein auto-encoders. In International Conference on Learning Representations , 2019. 14 Ilya Korsunsky, Nghia Millard, Jean Fan, Kamil Slowikowski, Fan Zhang, Kevin Wei, Yuriy Baglaenko, Michael Brenner, Po-Ru Loh, and Soumya Raychaudhuri. Fast, sensitive and accurate integration of single-cell data with harmony. Nature Methods , 16(12):1289–1296, 2019. doi: 10.1038/s41592-019-0619-0. Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for generative modeling. In International Conference on Learning Representa-tions , 2023. Fei Tony Liu, Kai Ming Ting, and Zhi-Hua Zhou. Isolation forest. In 2008 Eighth IEEE International Conference on Data Mining , pages 413–422. IEEE, 2008. doi: 10.1109/ ICDM.2008.17. Qiao Liu. Missingness-aware data imputation via ai-powered bayesian generative modeling. 
+
+arXiv preprint arXiv:2605.01676 , 2026. Qiao Liu and Wing Hung Wong. An AI-powered bayesian generative modeling approach for causal inference in observational studies. Journal of the American Statistical Association ,121(554):976–987, 2026a. doi: 10.1080/01621459.2026.2654227. Qiao Liu and Wing Hung Wong. An AI-powered bayesian generative modeling approach for arbitrary conditional inference, 2026b. URL https://arxiv.org/abs/2601.05355 .Qiao Liu, Jiaze Xu, Rui Jiang, and Wing Hung Wong. Density estimation using deep generative neural networks. Proceedings of the National Academy of Sciences , 118(15): e2101344118, 2021. doi: 10.1073/pnas.2101344118. Qiao Liu, Zhongren Chen, and Wing Hung Wong. An encoding generative modeling approach to dimension reduction and covariate adjustment in causal inference with observational studies. Proceedings of the National Academy of Sciences , 121(23):e2322376121, 2024. Guyue Luo and Qiao Liu. Bgm-iv: an ai-powered bayesian generative modeling approach for instrumental variable analysis. arXiv preprint arXiv:2605.07029 , 2026. Xiao-Li Meng and Wing Hung Wong. Simulating ratios of normalizing constants via a simple identity: A theoretical exploration. Statistica Sinica , 6(4):831–860, 1996. Radford M. Neal. Mcmc using hamiltonian dynamics. In Handbook of Markov Chain Monte Carlo , pages 113–162. Chapman and Hall/CRC, 2011. doi: 10.1201/b10905-6. Art Owen and Yi Zhou. Safe and effective importance sampling. Journal of the American Statistical Association , 95(449):135–143, 2000. doi: 10.1080/01621459.2000.10473909. George Papamakarios, Theo Pavlakou, and Iain Murray. Masked autoregressive flow for density estimation. In Advances in Neural Information Processing Systems , volume 30, pages 2338–2347, 2017. Emanuel Parzen. On estimation of a probability density function and mode. The Annals of Mathematical Statistics , 33(3):1065–1076, 1962. doi: 10.1214/aoms/1177704472. 15 Shebuti Rayana. ODDS library. Stony Brook University, Department of Computer Science, 2016. URL https://shebuti.com/outlier-detection-datasets-odds/ .Bernhard Sch¨ olkopf, John C. Platt, John Shawe-Taylor, Alex J. Smola, and Robert C. Williamson. Estimating the support of a high-dimensional distribution. Neural Computa-tion , 13(7):1443–1471, 2001. doi: 10.1162/089976601750264965. Alexander Tong, Kilian Fatras, Nikolay Malkin, Guillaume Huguet, Yanlei Zhang, Jarrid Rector-Brooks, Guy Wolf, and Yoshua Bengio. Improving and generalizing flow-based generative models with minibatch optimal transport. Transactions on Machine Learning Research , 2024. ISSN 2835-8856. URL https://openreview.net/forum?id=CD9Snc73AW .Aki Vehtari, Andrew Gelman, Daniel Simpson, Bob Carpenter, and Paul-Christian B¨ urkner. Rank-normalization, folding, and localization: An improved bR for assessing convergence of mcmc (with discussion). Bayesian Analysis , 16(2):667–718, 2021. doi: 10.1214/ 20-BA1221. Jackie S. T. Wong, Jonathan J. Forster, and Peter W. F. Smith. Properties of the bridge sampler with a focus on splitting the mcmc sample. Statistics and Computing , 30(4): 799–816, 2020. doi: 10.1007/s11222-019-09918-5. Yuhuai Wu, Yuri Burda, Ruslan Salakhutdinov, and Roger Grosse. On the quantitative analysis of decoder-based generative models. In International Conference on Learning Representations , 2017. URL https://openreview.net/forum?id=B1M8JF9xx .
+
+# A Appendix 
+
+## A.1 Proofs of theory 
+
+Proof of Theorem 1 We provide the technical conditions and proof for Theorem 1. Throughout, the observation x and the fitted generative parameter ˆθ are fixed. Define 
+
+πx(z) = pˆθ(x | z)pZ (z), Zx =
+
+Z
+
+πx(z) dz, px(z) = πx(z)
+
+Zx
+
+.
+
+By construction, Zx = pˆθ(x). Let Dfit denote the posterior sample used to construct the observation-specific proposal. Conditional on Dfit , the fitted proposal qx and the defensive proposal 
+
+eqx(z) = (1 − ϵ)qx(z) + ϵp Z (z)are treated as fixed. For notational simplicity, write q(z) = eqx(z). Conditional on Dfit , assume: (A1) q(z) > 0 whenever πx(z) > 0. 16 (A2) The proposal draws ez1, . . . , ezS are i.i.d. from q, and the held-out posterior draws 
+
+z⋆ 
+
+> 1
+
+, . . . , z ⋆M satisfy the law of large numbers under px for every bounded measurable function appearing below. (A3) The bridge weights sp and sq = 1 − sp remain bounded away from zero: for some constant η ∈ (0 , 1/2), 
+
+η ≤ sp, s q ≤ 1 − η. 
+
+(A4) The fixed-point iteration is initialized by the importance-sampling estimator 
+
+bZIS = 1
+
+S
+
+> S
+
+X
+
+> s=1
+
+πx(ezs)
+
+q(ezs) ,
+
+and the iteration is run to a converged fixed point bZx.Condition (A2) allows the held-out posterior sample to be generated by an ergodic Markov chain; independence of the posterior draws is not required. When the proposal-fitting and bridge samples are obtained from a common Markov chain, (A2) is understood conditionally on Dfit .For c > 0, define 
+
+AS (c) = 1
+
+S
+
+> S
+
+X
+
+> s=1
+
+πx(ezs)
+
+spπx(ezs) + sqc q (ezs), B M (c) = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+q(z⋆j )
+
+spπx(z⋆j ) + sqc q (z⋆j ).
+
+The empirical bridge map is 
+
+bTM,S (c) = AS (c)
+
+BM (c).
+
+Its population counterparts are 
+
+A(c) = Eq
+
+ πx(Z)
+
+spπx(Z) + sqc q (Z)
+
+
+
+, B (c) = Epx
+
+ q(Z)
+
+spπx(Z) + sqc q (Z)
+
+
+
+.
+
+We first establish the key population identity. Since px(z) = πx(z)/Z x,
+
+B(c) = 
+
+Z q(z)
+
+spπx(z) + sqc q (z)
+
+πx(z)
+
+Zx
+
+dz 
+
+= 1
+
+Zx
+
+Z πx(z)q(z)
+
+spπx(z) + sqc q (z) dz 
+
+= A(c)
+
+Zx
+
+. (13) Consequently, 
+
+T (c) := A(c)
+
+B(c) = Zx for every c > 0. (14) Thus the population bridge map is constant: the choice of bridge iterate c and the fitted proposal affect Monte Carlo efficiency but not the population target. 17 We next show that the empirical bridge map converges uniformly to this population map on compact subsets of (0 , ∞). Let K = [ a, b ] ⊂ (0 , ∞) and define 
+
+fc(z) = πx(z)
+
+spπx(z) + sqc q (z), gc(z) = q(z)
+
+spπx(z) + sqc q (z).
+
+For all c ∈ K,0 ≤ fc(z) ≤ 1
+
+sp
+
+≤ 1
+
+η , 0 ≤ gc(z) ≤ 1
+
+sqc ≤ 1
+
+ηa .
+
+Hence both families are uniformly bounded. Moreover, they are uniformly Lipschitz in c. Indeed, 
+
+∂f c(z)
+
+∂c = sqπx(z)q(z)[spπx(z) + sqc q (z)] 2 .
+
+Using 4 uv ≤ (u + v)2 with u = spπx(z) and v = sqc q (z) gives 
+
+∂f c(z)
+
+∂c ≤ 14spa ≤ 14ηa .
+
+Similarly, 
+
+∂g c(z)
+
+∂c = sqq(z)2
+
+[spπx(z) + sqc q (z)] 2 ≤ 1
+
+sqa2 ≤ 1
+
+ηa 2 .
+
+Therefore the classes {fc : c ∈ K} and {gc : c ∈ K} are uniformly bounded and equicontin-uous in their one-dimensional parameter c.By the law of large numbers in (A2), convergence holds for every fixed c. A finite-grid argument together with the preceding uniform Lipschitz bounds then yields sup 
+
+> c∈K
+
+|AS (c) − A(c)| p
+
+−→ 0 (15) and sup 
+
+> c∈K
+
+|BM (c) − B(c)| p
+
+−→ 0. (16) It remains to control the denominator. By (A1), the integrand defining A(c) is strictly positive on the support of πx. Hence A(c) > 0 for every c > 0. Since A(c) is continuous in 
+
+c, compactness of K gives inf c∈K A(c) > 0. From equation 13, inf  
+
+> c∈K
+
+B(c) = 1
+
+Zx
+
+inf  
+
+> c∈K
+
+A(c) > 0.
+
+Combining this fact with equation 15–equation 16 and the continuous mapping theorem gives sup 
+
+> c∈K
+
+bTM,S (c) − Zx
+
+> p
+
+−→ 0. (17) We now connect the uniform convergence result to the actual BayesNDE iteration. First, the importance-sampling initializer is consistent. Indeed, by (A1), 
+
+Eq
+
+πx(Z)
+
+q(Z)
+
+
+
+=
+
+Z
+
+πx(z) dz = Zx,
+
+18 and the random variable πx(Z)/q (Z) is integrable because its expectation equals the finite constant Zx. Therefore, by the law of large numbers, 
+
+bZIS 
+
+> p
+
+−→ Zx. (18) Choose, for example, 
+
+K =
+
+Zx
+
+2 , 3Zx
+
+2
+
+
+
+.
+
+By equation 18, bZIS ∈ K with probability tending to one. Furthermore, by equation 17, sup 
+
+> c∈K
+
+bTM,S (c) − Zx < Zx
+
+4with probability tending to one. On this event, 
+
+bTM,S (K) ⊂
+
+3Zx
+
+4 , 5Zx
+
+4
+
+
+
+⊂ K. 
+
+Thus, once initialized in K, every subsequent bridge iterate remains in K. If the iteration converges to the reported fixed point bZx, then 
+
+bZx = bTM,S ( bZx), bZx ∈ K, 
+
+and hence 
+
+| bZx − Zx| ≤ sup 
+
+> c∈K
+
+bTM,S (c) − Zx
+
+> p
+
+−→ 0.
+
+Therefore, bZxp
+
+−→ Zx = pˆθ(x).
+
+□
+
+Proof of Theorem 2 
+
+Fix x and abbreviate 
+
+p(z) = pˆθ(z | x), q(z) = eqx(z), Z = Zx,
+
+so that πx(z) = Zp (z). Here 
+
+eqx(z) = (1 − ϵ)qx(z) + ϵp Z (z)is the defensive proposal used by BayesNDE. Let N = Mb + S, with Mb/N → sp ∈ (0 , 1) and S/N → sq = 1 − sp.For independent posterior and proposal samples, the asymptotically optimal bridge func-tion of Meng and Wong [1996] is proportional to 
+
+h⋆(z) = 1
+
+spπx(z) + sqZq (z) ∝ 1
+
+spp(z) + sqq(z).
+
+Define 
+
+d(z) = spp(z) + sqq(z), O =
+
+Z p(z)q(z)
+
+d(z) dz. 
+
+19 Under h⋆(z), the relative bridge estimator can be written as 
+
+bZZ =
+
+> 1
+> S
+
+PSs=1 U (ezs)
+
+> 1
+> Mb
+
+PMb 
+
+> j=1
+
+V (z⋆j ), U (z) = p(z)
+
+d(z), V (z) = q(z)
+
+d(z). (19) Since Eq[U ] = Ep[V ] = O, the joint central limit theorem gives 
+
+√N
+
+ U S − O 
+
+V Mb − O 
+
+ d
+
+−→ N 
+
+
+
+0,
+
+Var q(U )/s q 00 Var p(V )/s p
+
+ 
+
+.
+
+Applying the delta method to g(a, b ) = a/b at ( O, O) yields 
+
+√N bZZ − 1
+
+!
+
+> d
+
+−→ N (0 , σ 2), σ2 = 1
+
+O2
+
+Var q(U )
+
+sq
+
++ Var p(V )
+
+sp
+
+
+
+. (20) The variance simplifies using 
+
+spEq[U 2] + sqEp[V 2] = 
+
+Z spp(z)2q(z) + sqp(z)q(z)2
+
+d(z)2 dz 
+
+=
+
+Z p(z)q(z)
+
+d(z) dz = O. (21) Together with Eq[U ] = Ep[V ] = O and sp + sq = 1, this gives Var q(U )
+
+sq
+
++ Var p(V )
+
+sp
+
+= O − O 2
+
+spsq
+
+.
+
+Substitution into equation 20 therefore yields 
+
+pMb + S bZx
+
+Zx
+
+− 1
+
+!
+
+> d
+
+−→ N 
+
+
+
+0, 1
+
+spsq
+
+Ox(eqx)−1 − 1
+
+.
+
+It remains to characterize the overlap. First, for fixed p(z) ≥ 0, define 
+
+fz (q) = p(z)qspp(z) + sqq , q ≥ 0.
+
+For p(z) > 0, 
+
+∂f z (q)
+
+∂q = spp(z)2
+
+[spp(z) + sqq]2 ≥ 0,
+
+so the overlap integrand is nondecreasing in its second argument. Because the defensive proposal satisfies 
+
+eqx(z) = (1 − ϵ)qx(z) + ϵp Z (z) ≥ ϵp Z (z)pointwise, it follows that 
+
+Ox(eqx) ≥ O x(ϵp Z ).
+
+20 Moreover, under the Gaussian latent prior used by BayesNDE, pZ (z) > 0 for all z, and hence 
+
+Ox(ϵp Z ) > 0. For the upper bound, by the weighted harmonic–arithmetic mean inequality, 
+
+p(z)q(z)
+
+spp(z) + sqq(z) =
+
+ sp
+
+q(z) + sq
+
+p(z)
+
+−1
+
+≤ spq(z) + sqp(z),
+
+with the left-hand side defined as zero whenever p(z)q(z) = 0. Integrating gives 
+
+Ox(q) ≤ sp + sq = 1 .
+
+Equality holds if and only if p(z) = q(z) almost everywhere. Taking q = eqx therefore gives 0 < Ox(ϵp Z ) ≤ O x(eqx) ≤ 1,
+
+with the upper bound attained if and only if eqx = px almost everywhere. 
+
+## A.2 Datasets in experiments 
+
+S1. Data Generating Processes for Synthetic Distributions Independent Gaussian mixture. Following [Liu et al., 2021], we consider an inde-pendent Gaussian mixture (Independent GMM) distribution and extend the original two-dimensional construction to p dimensions. Specifically, we generate X = ( X1, . . . , X p)⊤ with mutually independent coordinates, where each coordinate follows the same three-component Gaussian mixture, Xj ∼ 13 N (−1, 0.12) + 13 N (0 , 0.12) + 13 N (1 , 0.12), for j = 1 , . . . , p . Equiv-alently, the joint density is 
+
+p(x) = 
+
+> p
+
+Y
+
+> j=1
+
+13
+
+X
+
+> μ∈{− 1,0,1}
+
+ϕ(xj ; μ, 0.12)
+
+
+
+, where ϕ(·; μ, σ 2) denotes the Gaussian density with mean μ and variance σ2. This con-struction yields 3 p equally weighted modes located at the Cartesian product {− 1, 0, 1}p. As 
+
+p increases, the number of modes therefore grows exponentially, providing an increasingly challenging benchmark for evaluating the ability of density estimators to recover highly mul-timodal distributions in higher dimensions. 
+
+Involute distribution. The involute distribution is constructed by first sampling a la-tent variable R ∼ Uniform(0 , 2π) and then independently generating X1 | R = r ∼N (r sin(2 r), 0.42) and X2 | R = r ∼ N (r cos(2 r), 0.42). Thus, conditional on R = r, the ob-servation is centered along the nonlinear curve ( r sin(2 r), r cos(2 r)) with isotropic Gaussian perturbation. The corresponding marginal density is 
+
+p(x) = 12π
+
+Z 2π
+
+> 0
+
+ϕ(x1; r sin(2 r), 0.42)ϕ(x2; r cos(2 r), 0.42) dr 
+
+21 , which can be evaluated numerically when the ground-truth density is required. In contrast to the isolated modes of Independent GMM, this distribution concentrates probability mass around a highly nonlinear curved structure and is therefore used to assess the ability of density estimators to capture complex nonlinear geometries. 
+
+S2. Details of data preprocessing for the outlier-detection datasets used in our study. 
+
+Shuttle. The Shuttle dataset ( http://odds.cs.stonybrook.edu/shuttle-dataset/ ) is de-rived from the Statlog Shuttle classification dataset and contains nine numerical features. The original training and test sets were combined before constructing the outlier-detection benchmark. Samples from the five smallest classes, namely classes 2, 3, 5, 6, and 7, were grouped together as outliers, while samples from class 1 were treated as inliers. Samples from class 4 were discarded. The resulting dataset contains 49,097 observations, including 3,511 outliers (7.15%). 
+
+Cardio. The Cardio dataset ( http://odds.cs.stonybrook.edu/cardio-dataset/ ) is de-rived from the UCI Cardiotocography dataset and consists of 21 numerical features extracted from fetal-heart-rate and uterine-contraction measurements. The original observations were classified by expert obstetricians into normal, suspect, and pathologic fetal states. For the ODDS outlier-detection benchmark, the suspect class was discarded, the 1,655 normal obser-vations were treated as inliers, and the 176 pathologic observations were treated as outliers. The resulting dataset contains 1,831 observations with an outlier proportion of 9.61%. 
+
+Pendigits. The Pendigits dataset ( http://odds.cs.stonybrook.edu/pendigits-dataset/ )is derived from the UCI Pen-Based Recognition of Handwritten Digits dataset. Each observa-tion is represented by 16 numerical features corresponding to eight sampled two-dimensional coordinates along a handwritten pen trajectory. The original dataset contains ten digit classes, from 0 to 9. In the ODDS benchmark, digit 0 was designated as the outlier class and downsampled to 156 observations, whereas the 6,714 observations corresponding to digits 1–9 were treated as inliers. The resulting dataset contains 6,870 observations with an outlier proportion of 2.27%. 
+
+Common preprocessing and data splitting. For each dataset, every feature was transformed to the interval [0 , 1] using feature-wise minimum and maximum values. The observations and their labels were then jointly permuted using NumPy random seed 0. After permutation, the final 10% of the observations were retained as the test set. Of the remaining observations, the final 10% were used for validation and the rest were used for training. This produces an approximately 81/9/10 training/validation/test split. The resulting split sizes are reported in Table 4. Class labels were not provided as inputs to any of the density-estimation models. 
+
+S3. Details of data preprocessing for the Real word datasets used in our study. 
+
+BANK. The BANK dataset relates to a marketing campaign of a Portuguese banking institu-tion, where the goal is to predict whether the client will subscribe a deposit. Label encoding was used for discrete features in the raw data with values between 0 and n classes . Then a uniform noise of ( −0.2, 0.2) was added to each feature. At last, the raw data was applied a feature scaling through a min–max normalization and randomly split into 90% training set 22 Table 4: Basic descriptions of the three datasets used for outlier detection in our study. # examples Dataset Dim( z) Dim( x) Outliers (%) Test outliers ( k) Train Validation Test Shuttle 3 9 7.15 365 39770 4418 4909 Cardio 5 21 9.61 15 1484 164 183 Pendigits 5 16 2.27 13 5565 618 687   
+
+> Outliers (%) is the outlier rate of the full dataset; Test outliers ( k) is the number of outliers in the test split, which sets kin precision@ k. Dim( z) denotes the latent dimension used by Roundtrip. For BayesNDE, we set Dim( z) = Dim( x), corresponding to 9, 21, and 16 for Shuttle, Cardio, and Pendigits, respectively.
+
+and 10% test. Note that for neural density estimators, 10% of the training set is kept for validation. BANK is used for unconditional density estimation. 
+
+ParkTele. The Parkinsons Telemonitoring dataset (UCI archive 189) contains biomedical voice measurements from 42 patients with early-stage Parkinson’s disease, recruited for a six-month trial of a telemonitoring device. Each example comprises 16 dysphonia measures derived from a sustained phonation: five jitter variants, six shimmer variants, the noise-to-harmonics and harmonics-to-noise ratios, and the nonlinear measures RPDE, DFA and PPE. Two of the 16 were removed because they are definitional multiples of other columns: 
+
+Jitter:DDP equals 3 ×Jitter:RAP and Shimmer:DDA equals 3 ×Shimmer:APQ3 (the observed ratios lie in [2 .9697 , 3.0294] and [2 .9942 , 3.0062], departing from exactly three only through the five-decimal rounding of the published file). Retaining them makes the design matrix numerically singular, so that a continuous density on R16 is not well defined. The remaining 14 features were scaled by a per-feature min–max normalization, and the same split as the BANK dataset was used. The subject identifier, age, sex, test time and the two UPDRS scores were discarded. ParkTele is used for unconditional density estimation. We note that the 5,875 recordings come from 42 subjects, so the random split places recordings of the same subject in both the training and the test set; all methods share the identical split. 
+
+Pendigits10. The Pen-Based Recognition of Handwritten Digits dataset (UCI archive 81) contains pen trajectories collected from 44 writers on a pressure-sensitive tablet. Each digit is resampled to eight equally spaced points along the trajectory, giving 16 integer coordinates in [0 , 100], and is labelled with one of the ten digit classes. Because a continuous density is not defined on an integer lattice, a uniform noise of (0 , 1) was added to each coordinate with a fixed random seed, so that all methods see identical inputs; with unit lattice spacing, the expected log-density under uniform dequantization provides a lower bound on the discrete log-probability mass by Jensen’s inequality. 
+
+Vehicle. The Statlog Vehicle Silhouettes dataset (UCI archive 149) describes four vehicle types (bus, Opel, Saab, van) by 18 integer-valued shape descriptors extracted from silhouette images, including compactness, circularity, radius ratio, the axis-aligned and principal-axis moments, scatter ratio, elongatedness, hollows ratio and the skewness and kurtosis about the major and minor axes. A uniform noise of (0 , 1) was added to each feature for the same reason as in Pendigits10. 23 EEGEye. The EEG Eye State dataset (UCI archive 264) records one continuous 117-second measurement from an Emotiv EEG headset, giving 14 electrode channels per time point, with the eye state (open or closed) determined from a simultaneous video recording. Four of the 14,980 examples are documented measurement artifacts in which individual channels reach values above 7 × 10 5 against a median near 4 .3 × 10 3; these were removed using the criterion that the robust z-score |x − median |/MAD exceeds 100 in any channel, leaving 14,976 examples. 
+
+MNIST. MNIST (http://yann.lecun.com/exdb/mnist/) contains 28 × 28 grayscale images of handwritten digits. The images were flattened into 784-dimensional vectors and scaled to [0 , 1]. The descriptions of the five tabular datasets and the image dataset (MNIST), including feature dimension and sample size, are summarized in Table 5. Table 5: Basic descriptions of the 6 datasets for density estimation used in our study. BANK and ParkTele are used for unconditional density estimation; Pendigits10, Vehicle and EEG-Eye for conditional density estimation, where dim( x) counts only the continuous features and the class label is the conditioning variable. Dataset Domain Dim( z) Dim( x) # of examples Train Validation Test Vehicle Transportation 6 18 684 77 85 ParkTele Medicine 8 14 4,760 528 587 Pendigits10 Handwriting 8 16 8,902 990 1,100 EEGEye Neuroscience 5 14 12,130 1,348 1,498 BANK Finance 8 17 36,621 4,069 4,521 MNIST Image 10 784 50,000 10,000 10,000 
+
+## A.3 Conditional Density Estimation 
+
+BayesNDE extends directly to conditional density estimation when an observed conditioning variable y is available. We use a conditional generative model 
+
+pθ(x | z, y ), z ∼ pZ (z),
+
+where y is provided as an additional input to the generative network. For a fitted model ˆθ,the conditional density of interest is 
+
+pˆθ(x | y) = 
+
+Z
+
+pˆθ(x | z, y )pZ (z) dz. 
+
+Thus, defining 
+
+πx,y (z) = pˆθ(x | z, y )pZ (z),
+
+24 its normalizing constant is 
+
+Zx|y =
+
+Z
+
+πx,y (z) dz = pˆθ(x | y),
+
+and the corresponding latent posterior is 
+
+pˆθ(z | x, y ) = πx,y (z)
+
+Zx|y
+
+.
+
+Conditional density evaluation therefore follows exactly the same procedure as in the unconditional case. HMC targets the unnormalized log posterior log pˆθ(x | z, y ) + log pZ (z); posterior samples are split into proposal-fitting and bridge subsets; an observation-specific proposal qx,y (z) is fitted from the former; and bridge sampling estimates Zx|y. No modifi-cation of the bridge-sampling estimator is required beyond replacing πx by πx,y throughout. For categorical conditioning variables used in our experiments, y is one-hot encoded and supplied to the conditional generative network. 
+
+## A.4 implementation 
+
+S1. Details of network regimes for the independent gussian datasets used in our simulation study. 
+
+We used two network regimes determined by the observed dimension p. For low-dimensional data ( p ≤ 10), the generator G and encoder E were fully connected multilayer perceptrons with five hidden layers of width 256. For higher-dimensional data ( p > 10), G and E
+
+were residual networks with five width-256 hidden blocks. The data-space and latent-space discriminators used hidden widths 256–256–128–64 in both regimes. Hidden layers used LeakyReLU activations. 
+
+S2. EGM initialization 
+
+We initialize the generator G, encoder E, and discriminators Dx and Dz using encoding generative modeling (EGM). The EGM objective is 
+
+LEGM = λadv ,x Ladv ,x + λadv ,z Ladv ,z + λrec ,x Lrec ,x + λrec ,z Lrec ,z 
+
++ λcorr Lcorr + λvar Llogvar + λMMD ,marg LMMD ,marg 
+
++ λMMD ,joint LMMD ,joint + λSW LSW ,
+
+(22) 
+
+Adversarial losses. The discriminators minimize the least-squares objective 
+
+LD = 12
+
+n
+
+Ex∼P ∗
+
+(0 .9 − Dx(x)) 2 + Ez∼PZ
+
+(0 .1 − Dx(G(z))) 2o
+
++ 12
+
+n
+
+Ez∼PZ
+
+(0 .9 − Dz (z)) 2 + Ex∼P ∗
+
+(0 .1 − Dz (E(x))) 2o
+
+,
+
+(23) while G and E minimize 
+
+Ladv ,x = Ez∼PZ
+
+(0 .9 − Dx(G(z))) 2, Ladv ,z = Ex∼P ∗
+
+(0 .9 − Dz (E(x))) 2. (24) Discriminator and generator/encoder updates alternate one-to-one. 25 Reconstruction losses. 
+
+Lrec ,x = Ex∼P ∗
+
+h1 
+
+> p
+
+x − G(E(x)) 22
+
+i
+
+, Lrec ,z = Ez∼PZ
+
+h1 
+
+> p
+
+z − E(G(z)) 22
+
+i
+
+. (25) 
+
+Correlation matching. The correlation matching is 
+
+Lcorr = 1
+
+p2
+
+> p
+
+X
+
+> i=1
+> p
+
+X
+
+> j=1
+
+Corr( x′
+
+> i
+
+, x′ 
+
+> j
+
+) − Corr( xi, xj )2 , x′ = G(E(x)) . (26) 
+
+Marginal MMD. With the one-dimensional Gaussian kernel kh(u, v ) = exp {− (u−v)2/(2 h2)}
+
+and bandwidths H = {0.05 , 0.1, 0.2, 0.5, 1.0},
+
+LMMD ,marg = 1
+
+|H| 
+
+X
+
+> h∈H
+
+1
+
+p
+
+> p
+
+X
+
+> j=1
+
+1
+
+n2
+
+> n
+
+X
+
+> a,b =1
+
+h
+
+kh(xaj , x bj ) + kh(˜ xaj , ˜xbj ) − 2kh(xaj , ˜xbj )
+
+i
+
+. (27) 
+
+Joint MMD. Both samples are first standardized coordinatewise by the pooled minibatch mean m and variance v (treated as constants), ¯ x = ( x − m)/√v + 10 −6, and likewise ¯ ˜x.With κs(u, v) = exp {−∥ u − v∥22/(2 sp )} and s ∈ S = {0.5, 1, 2},
+
+LMMD ,joint = max 
+
+n
+
+0, 1
+
+|S| 
+
+X
+
+> s∈S
+
+1
+
+n2
+
+> n
+
+X
+
+> a,b =1
+
+κs( ¯ xa, ¯xb) + κs(¯ ˜xa, ¯˜xb) − 2κs( ¯ xa, ¯˜xb)o
+
+. (28) 
+
+Sliced Wasserstein. Using the same standardization, let Θ = [ e1, . . . , ep, θ1, . . . , θL−p]with L = 64, where the ej are coordinate axes and the θl are fixed random unit vectors. For each direction ωl, let u(l)(1) ≤ · · · ≤ u(l)(n) and v(l)(1) ≤ · · · ≤ v(l)(n) be the sorted projections ω⊤ 
+
+> l
+
+¯xa
+
+and ω⊤ 
+
+> l
+
+¯˜xa. Then 
+
+LSW = 1
+
+nL 
+
+> L
+
+X
+
+> l=1
+> n
+
+X
+
+> i=1
+
+ u(l)(i) − v(l)(i)
+
+2. (29) The conditional-variance stabilization term is 
+
+Llogvar = Ez∼PZ
+
+"
+
+1
+
+p
+
+> p
+
+X
+
+> j=1
+
+log  σ2 
+
+> j
+
+(z) + 10 −8 − log(0 .01) 2
+
+#
+
+. (30) Throughout, the generator is stochastic, G(z) = μ(z) + σ(z) ⊙ ϵ, ϵ ∼ N (0, I p), with 
+
+σ2 
+
+> j
+
+(z) = softplus( ·)+10 −6, and PZ = N (0, I p). All expectations are estimated on minibatches of size n = 256; we write {xa}na=1 ∼ P ∗ and { ˜xa = G(za)}na=1 , za ∼ PZ . For the high-dimensional independent-GMM experiments, λadv ,x = λadv ,z = 1, λrec ,x = 3, λrec ,z = 1, 
+
+λcorr = 0 .3, λMMD ,marg = 1000, λMMD ,joint = 100, λSW = 300, and λvar = 0. For the low-dimensional independent-GMM experiments, G and E are five-layer width-256 multilayer perceptrons and the EGM learning rate is 10 −3. The final configurations use λadv ,x = λadv ,z =
+
+λrec ,z = 1, λcorr = 0 .3, and λvar = 0 .01. The data-space reconstruction weight is λrec ,x = 1 for the 2D settings and λrec ,x = 3 for the 5D and 10D settings. The marginal-MMD penalty is disabled except in the 5D configuration, where λMMD ,marg = 100. 26 For the five real datasets, training uses Adam at learning rate 10 −3 with batch size 256, and the shared weights are λadv ,x = λadv ,z = 1, λrec ,x = 3, λrec ,z = 1, an overall cycle weight of 5, a KL weight of 5 ×10 −5, and one discriminator update per generator update. The variance target is 0 .01 with numerical stabilization 10 −8, and the joint-MMD and sliced-Wasserstein penalties are disabled. The remaining regularization weights are fixed per dataset to the values in Table 7. The EGM step is chosen by the pooled generation rank mentioned in S4, on validation samples only. 
+
+S3. Alternating latent and generator updates 
+
+After EGM initialization, the sample-specific latent variables and generative parameters are refined by alternating stochastic updates. For a mini-batch B, the latent representations are updated by minimizing the negative log posterior 
+
+Jz = 1
+
+|B| 
+
+X
+
+> i∈B
+
+
+
+− log pθ(xi | zi) + 12∥zi∥22
+
+
+
+. (31) The latent variables are optimized using Adam with learning rate 0 .005. Conditional on the updated latent variables, the generator is optimized using 
+
+Jiter = − 1
+
+|B| 
+
+X
+
+> i∈B
+
+log pθ(xi | zi) + λPP LMMD ,PP + λiter corr Lcorr + λiter var Llogvar . (32) Here, LMMD ,PP is a prior-predictive multi-scale MMD penalty comparing the observed mini-batch with samples generated from fresh z ∼ N (0 , I ). Terms not enabled in a given con-figuration have zero weight. For the involute distribution, the generator is optimized using AdamW with a constant learning rate of 10 −6. For the independent Gaussian mixture, it is optimized using Adam with learning rate 0 .005, kept constant for p ≥ 15 and decayed as 0.005 (1 + t/ 10) −0.6 at epoch t for p ≤ 10. For the real datasets, the iterative regularization weights are likewise fixed per dataset (Table 7). Every run starts from the EGM checkpoint frozen in the preceding stage, uses Adam at learning rate 0 .005 with batch size 256, and is trained for 2 ,000 epochs with a checkpoint every 50. The reported epoch is the one maximizing the validation decoder log-likelihood, frozen before any test point is scored. 
+
+S4. Step/Epoch selections 
+
+All architecture, regularization, EGM-step, and iterative-epoch decisions were made with-out access to the test observations. Selection used fixed validation observations and fixed random seeds. For simulation experiments, both the EGM checkpoint and the iterative-updating check-point were selected with the same criterion, computed from held-out observations and gen-erated samples. For a checkpoint grid E and the diagnostic set M, we minimized the equal-weight average percentile rank 
+
+be = arg min 
+
+> e∈E
+
+1
+
+|M| 
+
+X
+
+> m∈M
+
+rm(e), rm(e) = {e′ ∈ E : dm(e′) < d m(e)}
+
+|E| − 1 , (33) where dm(e) is diagnostic m at checkpoint e, oriented so that smaller is better. The diag-nostics are RBF MMD, mean symmetric KL, sliced Wasserstein distance, mean marginal 27 Wasserstein distance, mean KS statistic, dimension-normalized correlation error, one minus the local inverse Simpson’s index [LISI; Korsunsky et al., 2019], computed on the union of held-out and generated samples labeled by their source and rescaled to [0 , 1] so that 1 indi-cates perfect mixing, and one minus the fraction of adequately reproduced marginal standard deviations. This criterion requires neither ground-truth density nor known mixture centres. For the conditional datasets every diagnostic was computed per class and averaged with weights proportional to the observed class frequencies. The test split was evaluated only after all choices had been frozen. For Real UCI datasets, The EGM configuration and step are chosen by the validation generation-diagnostic rank sum; the iterative configuration and epoch by the validation decoder log-likelihood. 
+
+S5. Posterior simulation and bridge estimation 
+
+For each evaluation point, HMC was initialized near E(x) using four chains, step size 0.003, and 10 leapfrog steps. The independent-GMM configuration retained 1600 posterior draws after 800 burn-in transitions. Half of the retained posterior draws were used to fit the proposal and the other half were reserved for bridge estimation. The involute and UCI evaluations used four HMC chains, an initial step size of 0 .003, 10 leapfrog steps, 800 burn-in transitions per chain, and 1600 retained draws in total, divided equally between proposal fitting and bridge estimation. For MNIST, we used four chains with the same initial step size and number of leapfrog steps, 400 burn-in transitions per chain, 800 retained draws in total (400 for proposal fitting and 400 for bridge estimation), and 5000 proposal draws. In all experiments, chains were initialized from the encoder with independent Gaussian perturbations of standard deviation 0 .01, and the step size was adapted during the first 80% of burn-in toward a target acceptance probability of 0 .75. The observation-specific proposal was constructed by fitting a five-component, full-covariance Gaussian mixture to the proposal-fitting HMC draws. Its fitted weights and means were re-tained, and its Gaussian kernels were replaced by Student-t kernels with three degrees of freedom. Let bΣGMM  
+
+> k
+
+denote the covariance returned by the GMM fit. The GMM was fitted with diagonal covariance regularizer δ = 10 −3. Before Cholesky factorization, the implemen-tation further formed LkL⊤ 
+
+> k
+
+= bΣGMM  
+
+> k
+
++ ηkI, η k ≥ δ, starting with ηk = δ and increasing it by factors of ten only if the factorization failed. Thus the scale used by the proposal includes both the GMM covariance regularization and the additional numerical jitter; it is not the unregularized within-component sample covariance. The proposal was augmented by a standard-normal defensive component of weight 0 .05, and 20,000 proposal samples were drawn. The bridge fixed point was initialized by the importance-sampling estimate and iterated on the log scale until numerical convergence, with tolerance 10 −5 and at most 1000 iterations. The bridge fractions were formed using a quantity [Vehtari et al., 2021] denoted by Meff .In the implementation, draws from all HMC chains are pooled, randomly permuted, and divided into proposal-fitting and bridge subsets. The bridge subset is treated as a single sequence, an effective sample size is computed separately for each latent coordinate, and the minimum over coordinates is used as Meff , truncated to the interval [1 , M b]. The resulting fractions are sp = Meff   
+
+> Meff +S
+
+, s q = SMeff +S .
+
+Because the permutation does not preserve within-chain temporal order, this quantity should be understood as a heuristic weighting parameter computed from the pooled and shuffled bridge subset, rather than a conventional multi-chain Markov-chain ESS. All poste-28 rior kernels, proposal densities, importance weights, and bridge updates were evaluated on the log scale. 
+
+S6. Bridge Sampling Ablation and Running Time 
+
+In table 3, Both estimators are evaluated on the same 500 held-out test points with M
+
+= 400 and the same defensive mixture proposal, so the training recipe is held fixed and the only difference is how the normalising constant Z = pθ(xobs ) is estimated from the posterior draws. For picture 5 (a), only the HMC budget M varies; the number of proposal draws is held at the production value S = 20000 throughout. Each point is the mean over three independent Monte Carlo replicates of the estimator, with the model, data, test points and budgets held identical across replicates. Beyond M = 400 the rank correlation of bridge sampling saturates, and the remaining differences are within about one standard error across replicates, as the estimate converges to the fitted model’s density pˆθ rather than to the true density. 100 200 400 800 1600 
+
+> M
+> 0.52 0.54 0.56 0.58 0.60 0.62 0.64
+> Spearman(log  p)
+> a
+> Bridge sampling Importance sampling
+> CFMs MAF Roundtrip RealNVP BayesNDE ResFlow 10 0
+> 10 1
+> 10 2
+> 10 3
+> Running time (min)
+> b
+
+Figure 5: (a) Sampling-budget curve on the 15-dimensional independent GMM benchmark: rank correlation between log ˆ p and the ground-truth log-density against the posterior budget 
+
+M . Shaded bands are ±1 standard error over three estimator replicates, and the dotted horizontal line marks the highest accuracy importance sampling attains at any budget, which bridge sampling already exceeds at M = 400. (b) Running time on BANK: the time to fit each estimator plus the time the fitted estimator takes to score 500 test points, drawn uniformly at random without replacement from the 4521-row test split. All six methods use all 17 columns and were timed on one node of the same type (Intel Xeon 6442Y, four cores, a single NVIDIA A40). The vertical axis is logarithmic. Panel (b) of Figure 5 turns to cost, reporting for each method the time to fit the model plus the time to score the 500 test points. The axis is logarithmic because the totals span two and a half orders of magnitude, from 2 .1 minutes for CFMs to 756 minutes for Resflow. Testing is timed with the whole 500 × 17 test array handed to each method at once, on one card. The flows score it in a single forward pass and CFMs in a single solve of its 29 density ODE. Roundtrip draws its 500 × S importance samples as one array, and BayesNDE advances the 500 × 4 HMC chains in lockstep, returning a 500 × M × 8 array of posterior draws, then carries its proposal draws and bridge iterations as 500 × S arrays. The two Monte Carlo estimators each have a sampling budget to choose, and one rule picks it for both: the cheapest budget whose per-point estimates still rank the test set in agreement with that method’s own converged estimate at Spearman ≥ 0.85. Roundtrip’s rank agreement with its own converged estimate is 0 .700 at 2 500 samples and 0 .758 at 10 000, so it is timed at 40 000; BayesNDE reaches 0 .850 at M = 100 and is timed there. At either budget testing is a small part of the total — 8 .6 seconds for Roundtrip and 20 .0seconds for BayesNDE, against 6 .0 and 63 .8 minutes of training. The training part covers model fitting only. BayesNDE runs in 64 .2 minutes in total. That is longer than CFMs, MAF and Roundtrip (2 .1, 2 .6 and 6 .1 minutes) and about one and a half times RealNVP’s 43 .6 minutes, and twelve times shorter than Resflow’s 756 minutes. On the same data, BayesNDE’s mean test log-likelihood exceeds Roundtrip’s by 5 .7 nats. 
+
+## A.5 Baseline methods 
+
+We compare BayesNDE against six density-estimation baselines spanning autoregressive flows, coupling flows, free-form residual flows, continuous-time flow matching, and the GAN-based estimator that is closest to our own setting. Every method is trained on exactly the same train/validation split, is evaluated on a byte-identical set of held-out points (we assert equality of the SHA-256 digests of the evaluation matrices across all methods). All baselines run their original authors’ code, taken unmodified from the public releases; only the data interface and the input width are adapted. 
+
+Conditioning. BayesNDE fits a single model pθ(x | z, y ) in which the one-hot label is concatenated to the input of every residual block of the generator, of the encoder, and of both discriminators; one set of parameters is shared across all labels and is fitted on the full training split. The baselines are unconditional density estimators whose public implementa-tions have no label pathway, so for each of them we fit one independent unconditional expert per observed label, seeded at 42 + y, and report the expert’s density as p(x | y). Neither construction assigns a density to the discrete label itself, and both are evaluated on the same points. 
+
+MADE. Masked Autoencoder for Distribution Estimation provides the autoregressive, single-pass reference point. We call the official maf-master entry point experiments.train made([100,100 
+
+'relu ', 'sequential '), which builds ml.models.mades.GaussianMade : two hidden lay-ers of 100 ReLU units, sequential input ordering, no batch normalization, and one Gaussian conditional per coordinate. Training uses the authors’ ml.trainers.SGD with Adam at step size 10 −3, weight decay 10 −6, minibatch 100, validation monitored every epoch, and early stopping with patience 30. 
+
+MAF. Masked Autoregressive Flow stacks MADE blocks to obtain a deeper autoregres-sive density. We call experiments.train maf([100,100], 'relu ', 10, 'sequential '),30 giving ml.models.mafs.MaskedAutoregressiveFlow with 10 MADE blocks, each with two hidden layers of 100 ReLU units and sequential ordering, and batch normalization between consecutive blocks. The trainer is the same as for MADE with the authors’ flow step size 10 −4.
+
+Real NVP. Real NVP is the affine-coupling counterpart, whose Jacobian is triangular by construction rather than by masking order. We call experiments.train Real NVP([100,100], 
+
+'tanh ', 'relu ', 10) , giving ml.models.nvps.Real NVP with 10 coupling layers, scale and translation networks of two hidden layers of 100 units with tanh and ReLU activations re-spectively, and batch normalization. Optimisation settings match MAF. 
+
+CFMs. Conditional Flow Matching (CFMs) learns a continuous-time velocity field by re-gression against a conditional probability path, avoiding ODE simulation during training [Lipman et al., 2023, Tong et al., 2024]. We use the TorchCFM implementation from the official conditional-flow-matching repository of Tong et al. [2024], including its 
+
+CFMLitModule , conditional flow-matching objective, and VelocityNet implementation. 
+
+Resflow. Residual Flows give an invertible free-form architecture with an unbiased log-determinant estimator, and are the strongest baseline we find in high dimension. We use the official residual-flows layers with 100 iResBlock s. Each block is a residual network of Swish activations and spectrally normalised linear layers with Lipschitz coefficient 0 .9, 5 power iterations, and domain/codomain exponents 2 .0; following the authors’ train toy.py 
+
+condition literally, the final layer is zero-initialised only when its output width is 2. The log-determinant uses the unbiased geometric Russian-roulette series ( n dist= 'geometric ',one sample, no exact trace). We train with Adam at learning rate 10 −3 and weight decay 10 −5, batch size 500, for 50 ,000 iterations, refreshing the Lipschitz constants every 5 training iterations and with 200 iterations before each evaluation, validating every 100 iterations and retaining the best-validation checkpoint. 
+
+Roundtrip. Roundtrip is the closest comparator to our setting: it places a latent vari-able under a generative network and estimates pointwise density by one-sided importance sampling. We use the authors’ original TensorFlow density-estimation implementation and architecture: a generator with 10 hidden layers of 512 units, an encoder with 10 hidden layers of 256 units, a latent discriminator with two hidden layers of 128 units, and a data discriminator with four hidden layers of 256 units. Training uses Adam with learning rate 2 × 10 −4, batch size 64, cycle weights α = β = 10, and an image pool of size 50. Models are trained for at most 100 epochs, with validation-based model selection beginning at epoch 30 and early-stopping patience 5. Pointwise densities are estimated using the authors’ one-sided importance sampler with a degree-one Student-t proposal, 40 ,000 importance samples. Selections of standard deviation and proposal scale follows the original paper. 
+
+Execution environments. MADE, MAF and Real NVP are the original Theano 1.0.5 implementations and are executed in a dedicated Python 3.10 environment through a sub-process worker; CFMs and Resflow run under PyTorch 1.12 on a single GPU; Roundtrip 31 and BayesNDE run under the project TensorFlow environment. Because the three envi-ronments cannot share a process, we verified that the evaluation matrices they read are byte-identical by comparing SHA-256 digests computed by independent, separately audited implementations of the same hashing routine. 32 Table 6: Network architecture used by BayesNDE for conditional MNIST image generation and density estimation. Images are scaled to [0 , 1] 784 , the class label y ∈ { 0, 1}10 is one-hot encoded, and the latent variable is z ∈ R10 . For convolutional layers, k, s, and c denote kernel size, stride, and number of output channels, respectively. All convolutions use same padding. BN denotes batch normalization and LReLU has negative slope 0 .2. The decoder has two output heads that parameterize a Gaussian distribution in logit space. 
+
+Conditional decoder Gθ Image discriminator Dx
+
+Inputs: z ∈ R10 and y ∈ { 0, 1}10 Inputs: x ∈ [0 , 1] 784 and y ∈ { 0, 1}10 
+
+Concat( z, y ) ∈ R20 Reshape x to 28 × 28 × 1; tile y to 28 × 28 × 10 FC 6272, LReLU Concat( x, tile( y)): 28 × 28 × 11 Reshape to 7 × 7 × 128 Conv ( k = 5, s = 2, c = 32), LReLU: 14 × 14 × 32 Tile y to 7 × 7 × 10 and concatenate: 7 × 7 × 138 Conv ( k = 5, s = 2, c = 64), LReLU: 7 × 7 × 64 Transposed conv ( k = 3, s = 2, c = 64), BN, LReLU: 14 × 14 × 64 Conv ( k = 3, s = 2, c = 128), LReLU: 4 × 4 × 128 Transposed conv ( k = 3, s = 2, c = 32), BN, LReLU: 28 × 28 × 32 Flatten to 2048; concatenate y: 2058 Conv ( k = 3, s = 1, c = 32), BN, LReLU FC 128, LReLU Two parallel Conv heads ( k = 1, s = 1, c = 1) FC 1 (linear score) Flatten heads to mθ(z, y ), r θ(z, y ) ∈ R784 
+
+vθ = vmin +( vmax −vmin )[1 −exp {− softplus( rθ)}]
+
+vmin = 10 −4 and vmax = 4 
+
+Conditional encoder Eϕ Latent discriminator Dz
+
+Inputs: x ∈ [0 , 1] 784 and y ∈ { 0, 1}10 Input: z ∈ R10 
+
+Reshape x to 28 × 28 × 1; tile y to 28 × 28 × 10 FC 256, BN, Tanh Concat( x, tile( y)): 28 × 28 × 11 FC 256, BN, Tanh Conv ( k = 3, s = 2, c = 32), BN, LReLU: 14 × 14 × 32 FC 128, BN, Tanh Conv ( k = 3, s = 2, c = 64), BN, LReLU: 7 × 7 × 64 FC 64, BN, Tanh Conv ( k = 3, s = 1, c = 128), BN, LReLU: 7 × 7 × 128 FC 1 (linear score) Flatten to 6272; concatenate y: 6282 FC 256, LReLU FC 10 (linear latent code) For image generation, a logit L ∼ N (mθ, diag( vθ)) is drawn and the displayed image is sigmoid( L). 
+
+33 Table 7: Regularization weights for the real datasets, fixed on validation data before any test point is scored. EGM Iterative Dataset z α λvar λcorr λiter var λiter corr λPP 
+
+BANK 8 0.1 0.01 0.3 0 0.3 1000 ParkTele 8 0 0 0.3 0 0.3 1000 Pendigits10 8 0 0 0.3 0.01 0.3 0Vehicle 6 0 0 0 0 0 0EEGEye 5 0.1 0.01 0 0.01 0 0Table 8: Sampling-budget sweep at p = 15, mean ± standard error over three estimator replicates on 500 test points. ∆ is bridge minus importance sampling. Spearman(log p)
+
+M Bridge IS ∆100 0.5804 ± 0.0049 0.5270 ± 0.0033 +0 .0535 200 0.6034 ± 0.0090 0.5501 ± 0.0146 +0 .0534 400 0.6311 ± 0.0080 0.5932 ± 0.0053 +0 .0379 800 0.6300 ± 0.0042 0.6014 ± 0.0022 +0 .0286 1600 0.6207 ± 0.0011 0.6039 ± 0.0009 +0 .0168 34
