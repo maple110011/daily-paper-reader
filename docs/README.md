@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-02</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-03</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 0 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-02 23:13:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-03 21:49:13 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 18 篇推荐（精读 8 篇，速读 10 篇）</p>
-<p>精读：《Scalable Diffusion SBI for Compositional Inference under Simulator Misspecification》（9.0/10）, 《High-Dimensional Simulation-Based Inference in Latent Spaces》（9.0/10）</p>
-<p>速读：《MCMC-Free Uncertainty Quantification for Deep Generative Inference for Spatially Varying Coefficient Models at Scale》（7.0/10）, 《BAM! Bayesian Anything Model: a foundation model for generative computational imaging》（7.0/10）, 《On skew-symmetric distributions and their use in Monte Carlo sampling algorithms: coordinate-free, Gibbs-style and manifold versions of the Barker proposal》（7.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日无新推荐，系统未产出可展示论文。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Scalable Diffusion SBI for Compositional Inference under Simulator Misspecification">Scalable Diffusion SBI for Compositional Inference under Simulator Misspecification</span></li><li><span class="dpr-home-dashboard-paper-title" title="High-Dimensional Simulation-Based Inference in Latent Spaces">High-Dimensional Simulation-Based Inference in Latent Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="Amortized Data Borrowing with Exchangeability-Aware Neural Posterior Estimation">Amortized Data Borrowing with Exchangeability-Aware Neural Posterior Estimation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>6</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MCMC-Free Uncertainty Quantification for Deep Generative Inference for Spatially Varying Coefficient Models at Scale">MCMC-Free Uncertainty Quantification for Deep Generative Inference for Spatially Varying Coefficient Models at Scale</span></li><li><span class="dpr-home-dashboard-paper-title" title="BAM! Bayesian Anything Model: a foundation model for generative computational imaging">BAM! Bayesian Anything Model: a foundation model for generative computational imaging</span></li><li><span class="dpr-home-dashboard-paper-title" title="On skew-symmetric distributions and their use in Monte Carlo sampling algorithms: coordinate-free, Gibbs-style and manifold versions of the Barker proposal">On skew-symmetric distributions and their use in Monte Carlo sampling algorithms: coordinate-free, Gibbs-style and manifold versions of the Barker proposal</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>4</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span></div>
+
 </section>
 </div>
 
