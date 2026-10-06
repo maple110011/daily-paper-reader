@@ -1,0 +1,3416 @@
+A UNIFIED FRAMEWORK FOR BAYESIAN DATA ASSIM-
+ILATION WITH GENERATIVE MODELS AND OBSERVA-
+TION INTERPOLANTS
+Nikolaj T. Mücke∗,1,2, Benjamin Sanderse1,3
+1Scientific Computing, Centrum Wiskunde & Informatica
+2Faculty of Civil Engineering and Geosciences, Delft University of Technology
+3Centre for Analysis, Scientific Computing and Applications, Eindhoven University of Technology
+N.T.Mucke-1@tudelft.nl, b.sanderse@cwi.nl
+ABSTRACT
+Bayesian data assimilation combines model forecasts with noisy observations, but
+sampling high-dimensional, non-Gaussian posteriors remains challenging. We
+introduce an observation-interpolant framework that turns pretrained stochastic
+interpolant, flow matching, and diffusion models into posterior samplers with-
+out retraining. Conditioning the interpolant path on observations yields a shared
+likelihood-score correction to the drift or velocity, unifying stochastic and de-
+terministic posterior sampling. The resulting SDEs and ODEs sample the exact
+posterior when the intermediate likelihood score is known. For practical compu-
+tation, we approximate this score using a closed-form Gaussian surrogate with
+a bias-corrected mean and covariance inflated by the model’s source covariance.
+Jacobian-free and ensemble-shared approximations make the method tractable
+in high dimensions. We evaluate the framework on linear–Gaussian dynamics,
+stochastic two-dimensional Navier–Stokes, and urban airflow with up to O(104)
+degrees of freedom.
+1
+INTRODUCTION
+Data assimilation (DA) estimates unknown states of dynamical systems by combining prior model
+predictions with noisy observations. Bayesian DA combines these sources of information in a
+posterior distribution, which can be approximated by an ensemble of samples. Ensemble Kalman
+filters provide an efficient approximation but rely on Gaussian assumptions, whereas particle filters
+are more general but typically require many more samples (Evensen et al., 2022). Neural network
+surrogates can be used to accelerate the forward model (Mücke et al., 2024; Cheng et al., 2023; Chen
+et al., 2023), but the learned surrogates themselves are typically deterministic and therefore require a
+priori model-error distributions that are hard to specify for high-dimensional and nonlinear stochastic
+systems.
+Generative models offer an alternative, by learning to sample directly from a distribution of interest.
+Two flow-based families dominate: stochastic interpolants (SIs) (Albergo et al., 2025; Albergo
+& Vanden-Eijnden, 2023; Chen et al., 2024), whose probability paths admit both ODE and SDE
+samplers, and flow matching (FM) (Lipman et al., 2023), which is typically sampled through a
+deterministic ordinary differential equation (ODE). Denoising diffusion (Ho et al., 2020; Song et al.,
+2021) corresponds to SDE sampling of an FM-type model. In DA, and posterior sampling in general,
+they are trained on the prior and modified at sampling time to incorporate observations. All three are
+increasingly applied to physical forecasting, yet methods for turning them into posterior samplers
+have been developed model by model, each tied to whether the generator is stochastic or deterministic.
+A unified view. For data assimilation, we view stochastic interpolants, flow matching, and denoising
+diffusion as different samplers within one posterior-sampling framework, rather than distinct methods.
+Each can be described by an interpolant that connects a tractable source distribution to the transition
+*Corresponding author.
+1
+arXiv:2610.03396v1  [cs.LG]  2 Oct 2026
+
+
+Prior drift/velocity
+Likelihood guidance
+Posterior drift/velocity
+Source 
+distribution
+Prior distribution
+Likelihood distribution
+Posterior
+distribution
+Observation interpolant
+Observation
+Pseudo-time
+¯yτ = ατHx0 + βτy
+τ = 0
+τ = 1
+p(x1|x0)
+p(x1|y, x0)
+p(x0)
+p(y|x1)
+Stochastic interpolants 
+Diffusion models
+Flow matching
+¯s¯yτ
+τ (xτ, x0) = (∇xτ ¯µτ)⊤¯Σ−1
+τ (¯yτ −¯µτ)
+Observation interpolant likelihood
+Hxτ −H µs
+τ(xτ, x0)
+β2
+τR + H Σs
+τ(xτ, x0) H⊤
+Inflated covariance
+Bias corrected mean
+dX∗
+τ = [vτ + wτsy
+τ ] dτ
+dX∗
+τ =
+
+vτ + 1
+2g2
+τsτ + wτsy
+τ
+
+dτ + gτ dW τ
+dX∗
+τ = [bτ + wτsy
+τ ] dτ + γτ dW τ
+Posterior sampling dynamics
+Figure 1: Unified posterior sampling for stochastic interpolants, flow matching, and diffusion
+models. Left: interpolating the observation yields closed-form guidance that steers the pretrained
+prior flow p(x1 | x0) toward the posterior p(x1 | y, x0), without retraining. Right: the weighted
+guidance wτ shifts the prior drift to the posterior drift.
+prior p(x1 | x0) (Albergo et al., 2025; Lipman et al., 2023; Ma et al., 2024; Holderrieth et al., 2025).
+Given a pretrained model that samples from this prior, we modify its sampling dynamics to target
+p(x1 | y, x0) without retraining. Conditioning the interpolant on observations gives a common
+likelihood-score correction to its velocity or drift (Proposition B.1). Different choices of diffusion
+coefficient yield deterministic or stochastic samplers. Adjusting the drift accordingly preserves
+the conditioned interpolant’s distribution at each pseudo-time, so all resulting samplers target the
+same posterior. In practice, one closed-form Gaussian surrogate approximates the likelihood score
+for all three. The samplers differ only in their diffusion coefficient and likelihood-score weighting
+(Figure 1).
+Contributions. Our contributions are summarized as follows:
+• Unified posterior-sampler family. One guidance term with weight wτ = κτ + 1
+2g2
+τ turns
+any interpolant-based generative model into a family of posterior samplers.
+• Observation-interpolant likelihood surrogate. We interpolate the observation with the
+same schedules as the state and derive its exact conditional mean and covariance, including
+source-noise bias and covariance inflation. A Gaussian approximation then gives a common
+likelihood-score surrogate for all three samplers.
+• Scalable covariance approximations. A Jacobian-free covariance and an ensemble-shared
+Jacobian make the sparse-observation regime feasible at field scale.
+2
+RELATED WORK
+Flow-based generative models in physics applications. Flow-based generative models are increas-
+ingly used for probabilistic physical forecasting, sampling the next state given the current one via
+noise around neural-operator predictions (Lippe et al., 2023), latent autoregressive dynamics with a
+diffusion decoder (Gao et al., 2024), or direct conditional sampling with denoising diffusion (Kohl
+et al., 2026), flow matching (Fotiadis et al., 2025), and stochastic interpolants (Chen et al., 2024;
+Mücke & Sanderse, 2026).
+Posterior sampling and data assimilation with generative models. Generative models are in-
+creasingly used to solve inverse problems (Daras et al., 2024). A common approach is to train
+a flow-based model to sample from the prior and, at inference time, condition its dynamics on
+sparse and noisy observations by modifying the velocity or drift through the score decomposition,
+∇log pτ(x | y) = ∇log pτ(x)+∇log pτ(y | x). This principle underlies posterior-sampling meth-
+ods based on diffusion models (Song et al., 2021; Chung et al., 2023; Bao et al., 2024; Qu et al., 2024;
+Rozet & Louppe, 2023), flow matching (Pokle et al., 2024; Yan et al., 2025; Martin et al., 2025), and
+stochastic interpolants (Chen et al., 2025). These methods differ mainly in how they approximate the
+likelihood score. Most use a Tweedie-type estimate of the terminal sample and differentiate through
+it to obtain the score (Song et al., 2021; Rozet & Louppe, 2023; Qu et al., 2024; Pokle et al., 2024;
+Martin et al., 2025), while others combine related approximations with Monte Carlo estimation (Chen
+et al., 2025). They also differ in their treatment of the likelihood covariance, using either the original
+2
+
+
+covariance (Chung et al., 2023) or an inflated one (Song et al., 2023). Closest to our work is Yan
+et al. (2025), who interpolate the observations within a flow-matching formulation. In contrast, we
+develop a unified framework for diffusion models, flow matching, and stochastic interpolants. We
+interpolate the observations using the same schedules as the state, rather than evaluating the original
+likelihood at a single estimated terminal state. Deriving the conditional source-noise moments then
+gives a bias-corrected mean and inflated covariance for a common Gaussian likelihood surrogate
+across all three samplers.
+3
+PRELIMINARIES
+Bayesian inverse problems and data assimilation
+For n = 1, . . . , N, consider the Markov
+model (Carrassi et al., 2018; Evensen et al., 2022):
+un ∼p
+ un  un−1
+,
+yn = Hun + ηn,
+ηn ∼pη,
+(1)
+where un ∈RNu is the state, yn ∈RNy the observation, and H ∈RNy×Nu the observation matrix.
+The transition prior and noise-induced likelihood define the one-step posterior:
+p
+ un  yn, un−1
+= p(yn | un) p
+ un  un−1
+p(yn | un−1)
+.
+(2)
+Feeding each posterior sample into the next step gives an autoregressive assimilation procedure.
+Interpolation-based generative modelling
+To model the transition prior, let x0 = un−1 be the
+conditioning state and x1 = un the target. We use the general interpolant
+xτ = ατx0 + βτx1 + στε,
+ε ∼N(0, I),
+τ ∈[0, 1],
+(3)
+where τ is pseudo-time, ε is independent of (x0, x1), and β0 = 0, β1 = 1, and α1 = σ1 = 0. The
+schedule στ specifies the noise standard deviation conditional on both endpoints.
+Flow matching (FM) typically sets ατ ≡0 and σ0 = 1, connecting a standard Gaussian source to
+p(x1 | x0). Its marginal velocity is learned through (Lipman et al., 2023; Liu et al., 2023)
+Lvel(θ) = Eτ,x0,x1,ε
+vθ
+τ(xτ, x0) −
+
+˙βτx1 + ˙στε
+
+2
+,
+(4)
+using data pairs (x0, x1), τ ∼U(0, 1), and Gaussian noise. Sampling then consists of drawing X0
+from the source and integrating the ODE from τ = 0 to τ = 1:
+FM-ODE:
+dXτ = vτ(Xτ, x0) dτ,
+X0 ∼N(0, I).
+(5)
+With the exact velocity and well-posed dynamics, X1 ∼p(x1 | x0). We omit the learned parameters
+θ below.
+Diffusion models (DM) typically learn the marginal score sτ(x, x0) := ∇x log pτ(x | x0) on
+Gaussian-source paths (Ho et al., 2020; Song et al., 2021). However, for the general interpolant (3),
+the score and velocity satisfy
+vτ(x, x0) =
+˙βτ
+βτ
+x +
+ 
+˙ατ −
+˙βτ
+βτ
+ατ
+!
+x0 + κτsτ(x, x0),
+κτ :=
+˙βτ
+βτ
+σ2
+τ −στ ˙στ,
+(6)
+for differentiable schedules with βτ, στ > 0 on (0, 1) (Appendix A). Thus, FM and DM are equivalent,
+and a velocity trained via flow matching can be used to sample via the SDE:
+DM-SDE:
+dXτ =
+
+vτ(Xτ, x0) + 1
+2g2
+τsτ(Xτ, x0)
+
+dτ + gτ dWτ,
+X0 ∼N(0, I).
+(7)
+Here, Wτ is standard Brownian motion, and gτ > 0 is the diffusion term. Unlike στ, gτ controls
+sampling dynamics rather than interpolant marginals; setting gτ = 0 recovers the FM ODE. Our
+labels FM-ODE and DM-SDE distinguish these sampling choices, independently of which field was
+trained.
+Stochastic interpolants (SI) can also connect the conditioning state directly to the transition prior.
+Following Chen et al. (2024), we set α0 = 1 and σ0 = 0 and replace the Gaussian noise in (3) by the
+3
+
+
+Brownian source γτWτ. Since Wτ ∼N(0, τI), this preserves the interpolant’s one-time marginals
+when στ = γτ
+√τ. In this setting, one can learn the SDE drift directly via:
+Ldrift(θ) = Eτ,x0,x1,ε
+bθ
+τ(xτ, x0) −
+
+˙ατx0 + ˙βτx1 + ˙γτ
+√τ ε
+
+2
+.
+(8)
+Here, ˙γτ
+√τ = ˙στ −στ/(2τ), so this objective is fully determined by the schedules in (3). Sampling
+proceeds by integrating
+SI-SDE:
+dXτ = bτ(Xτ, x0) dτ + γτ dWτ,
+X0 = x0,
+(9)
+from τ = 0 to τ = 1. Note that γτ is natively chosen as the diffusion term. The SI drift can
+be decomposed into velocity and score, bτ = vτ + 1
+2γ2
+τsτ. It therefore shares the velocity–score
+structure of the preceding samplers.
+4
+UNIFIED POSTERIOR SAMPLER
+We use the general interpolant of Section 3 to sample the one-step posterior p(x1 | y, x0) without
+retraining the prior model by conditioning the drift/velocity on the observations.
+Define the intermediate likelihood
+Φy
+τ (x, x0) := p(y | Xτ = x, x0) = E[p(y | x1) | Xτ = x, x0] ,
+(10)
+and its score sy
+τ := ∇x log Φy
+τ . Conditioning preserves the interpolant’s schedules and anchor,
+while shifting its score and velocity by sy
+τ and κτsy
+τ , respectively (Proposition B.1). Applying
+marginal-preserving ODE/SDE dynamics to this conditioned path (Albergo et al., 2025; Ma et al.,
+2024) yields the following unified posterior sampler:
+Theorem 4.1 (Unified posterior sampler). Let the prior model define an interpolant path with velocity
+vτ and score sτ whose terminal law is p(x1 | x0), and let Φy
+τ be the intermediate likelihood (10).
+Assume the posterior-path density p∗
+τ is positive and C2 on (0, 1) × RNu. Let gτ ≥0 be a chosen
+sampler diffusion, equal to γτ for the native SI sampler and zero for the FM ODE, measurable with
+g ∈L2([0, 1]), and assume that the SDE below and its Fokker–Planck equation are well posed with
+unique solutions for the stated initial law. Then
+dX∗
+τ =
+
+vτ(X∗
+τ , x0) + 1
+2g2
+τ sτ(X∗
+τ , x0)
+
+|
+{z
+}
+prior drift bτ
+dτ +
+ κτ + 1
+2g2
+τ
+
+|
+{z
+}
+=: wτ
+sy
+τ (X∗
+τ , x0) dτ + gτ dWτ,
+(11)
+initialised from the source law py
+0 = p0 (unchanged by conditioning because β0 = 0), has marginals
+py
+τ (x | x0) ∝Φy
+τ (x, x0) pτ(x) for all τ ∈[0, 1], and in particular generates X∗
+1 ∼p(x1 | y, x0).
+See Appendix B for a proof. While analogous results exist for individual model families, to our
+knowledge this is the first unified posterior-sampling result explicitly covering stochastic interpolants,
+flow matching, and diffusion models. As a result, given a trained drift, bτ, velocity, vτ, or score sτ,
+one can sample from the posterior distribution via one of the following ODEs/SDEs:
+SI-SDE (gτ = γτ) :
+dX∗
+τ = [bτ + wτsy
+τ ] dτ + γτ dWτ,
+X∗
+0 = x0,
+DM-SDE (gτ > 0) :
+dX∗
+τ =
+
+vτ + 1
+2g2
+τsτ + wτsy
+τ
+
+dτ + gτ dWτ,
+X∗
+0 ∼N(0, I),
+FM-ODE (gτ = 0) :
+dX∗
+τ = [vτ + κτsy
+τ ] dτ,
+X∗
+0 ∼N(0, I).
+4.1
+A CLOSED-FORM LIKELIHOOD SCORE FROM OBSERVATION INTERPOLATION
+The posterior drift in Eq. (11) depends on the likelihood score sy
+τ at every intermediate state, yet the
+conditional expectation that defines it in Eq. (10) is intractable. Estimating it by Monte Carlo or by
+differentiating through simulated trajectories becomes prohibitive when repeated at every sampler
+step. We remove this barrier by interpolating the observation alongside the state, so that at every
+pseudo-time the sampler conditions on an observation matched to its current state:
+¯yτ(x0, y) = ατHx0 + βτy,
+¯y0 = α0Hx0,
+¯y1 = y.
+(12)
+4
+
+
+which reduces to βτy for FM and DM (ατ ≡0). This scales the measured endpoint contribution by
+βτ and includes the source contribution ατHx0. We can then replace the likelihood score from (11)
+with the interpolated likelihood score, ¯s¯yτ
+τ
+:= ∇xτ log ¯Φ¯yτ
+τ
+= ∇xτ log p(¯y | Xτ = x, x0).
+Linearity of H lets us write ¯yτ as Hxτ plus a residual containing both observation and source noise.
+Its exact conditional moments follow from the prior score and its derivative. They differ from the
+naive mean Hxτ and covariance β2
+τR because the source noise is correlated with the intermediate
+state:
+Lemma 4.2 (Interpolated-observation likelihood). Let H be linear with matrix H and η ∼N(0, R)
+independent of (x1, ε) given x0. Then, writing the zero-mean source noise process as χs
+τ := στε
+reveals:
+¯yτ = Hxτ + ¯ητ,
+¯ητ := βτη −Hχs
+τ,
+(13)
+and the conditional mean and covariance of p(¯yτ | x0, xτ) are
+¯µτ(xτ, x0) = Hxτ −H µs
+τ(xτ, x0),
+¯Στ(xτ, x0) = β2
+τR + H Σs
+τ(xτ, x0) H⊤,
+(14)
+with source moments µs
+τ := E[χs
+τ | xτ, x0] and Σs
+τ := Cov(χs
+τ | xτ, x0).
+Lemma 4.3 (Source conditional moments). For the path (3), the conditional moments of the source
+process are
+µs
+τ(x, x0) = −σ2
+τ sτ(x, x0),
+Σs
+τ(x, x0) = σ2
+τ I + σ4
+τ ∇xsτ(x, x0).
+(15)
+Both proofs are in Appendix C. The source mean and covariance for the SI (χs
+τ = γτWτ, στ =
+γτ
+√τ) are computed as follows:
+µs
+τ = −γ2
+ττAτ(βτbτ −cτ) ,
+Σs
+τ = γ2
+ττI + γ4
+ττ 2Aτ
+
+βτ∇xbτ −˙βτI
+
+,
+Aτ and cτ defined in (29). The FM/DM score is recovered from the velocity through (28).
+4.2
+PRACTICAL APPROXIMATIONS
+Gaussian likelihood. The moments in Lemmas 4.2–4.3 are exact for an exact prior score, but the
+conditional likelihood is not necessarily Gaussian. However, we approximate it by a Gaussian with
+these moments and differentiate through its mean, holding its covariance fixed:
+¯s¯yτ
+τ (xτ, x0) = (∇xτ ¯µτ)⊤¯Σ−1
+τ (¯yτ −¯µτ),
+¯Στ = β2
+τR + HΣs
+τH⊤.
+(16)
+This closure is exact in the linear–Gaussian regime. Section 5 evaluates its accuracy empirically.
+Compared with the naive likelihood N(Hxτ, β2
+τR), the mean correction −Hµs
+τ removes the expected
+source contribution, while the additional covariance captures its residual uncertainty. Retaining prior
+correlations allows observations to inform unobserved degrees of freedom, particularly under sparse
+sensing.
+Jacobian-free approximation. Dropping the score Jacobian consistently from the mean Jacobian
+and covariance gives ¯Στ ≈β2
+τR + σ2
+τHH⊤and (∇x¯µτ)⊤≈H⊤. This approximation is accurate
+when σ2
+τ∥∇2
+x log pτ∥≪1 and is best suited to dense, informative observations. The covariance
+is state-independent and precomputable, requiring only an Ny × Ny solve per member beyond
+prior-model evaluations.
+Ensemble-shared Jacobian. Sparse observations benefit from the prior correlations discarded above.
+Computing the required Jacobian projections separately costs Ny Jacobian–vector products per
+member per step. We instead evaluate them at the ensemble mean and share the resulting Ny × Ny
+factorisation across all E members, reducing the Jacobian work to O(Ny) network passes and one
+factorisation per step. Refreshing the shared Jacobian every k-th step further reduces its evaluation
+cost by a factor of k, while schedule coefficients are updated at every step.
+Jacobian damping. For stability with strongly nonlinear priors, we introduce λ ∈[0, 1] through the
+parameterisation-specific covariances
+f
+Σs(λ),SI
+τ
+= γ2
+ττI + γ4
+ττ 2Aτ
+
+λβτJbτ −˙βτI
+
+,
+f
+Σs(λ),FM
+τ
+= σ2
+τI + λσ4
+τ∇xsτ.
+(17)
+For SI, damping affects only the learned drift Jacobian; for FM, it scales the full score-Jacobian
+correction. Thus λ = 0 recovers the Jacobian-free covariance for FM, whereas SI retains the
+analytical term −γ4
+ττ 2Aτ ˙βτI.
+5
+
+
+Initial state, n=0
+Posterior samples, n=1
+Posterior samples, n=2
+Observations, n=1
+Observations, n=2
+Pseudo-time
+Pseudo-time
+Physical step
+Physical step
+Observations used 
+for likelihood score
+Figure 2: Sequential assimilation with the unified sampler. From a single initial state, u0, an
+ensemble of posterior samples are generated via the guided SDE/ODE (Algorithm 1). Each posterior
+member then initializes the next forecast, yielding an autoregressive rollout of (2).
+4.3
+IMPLEMENTATION
+All three samplers need only the pre-trained model and an ODE/SDE solver, and share the assimilation
+loop in Algorithm 1. Recovered coefficients degenerate at τ = 0 (in particular, the FM guidance
+representation is singular because β0 = 0), so the first step uses the prior drift only and the correction
+is applied from τ = ∆τ onwards. Independent draws give an ensemble. Feeding each posterior
+sample un back before assimilating yn+1 advances the autoregressive assimilation in physical time
+n (see Figure 2). The solver and number of pseudo-time steps are chosen post-training, here forward
+Euler for the guided ODE and Euler–Maruyama for the SDEs. Schedules, architectures, and training
+details are in Appendix D.
+5
+RESULTS
+Algorithm 1 Unified posterior assimilation step
+1: Input: x0 = un−1, y = yn, trained model,
+schedules, diffusion gτ, steps M
+2: Initialise X∗from sampler source
+3: Set ∆τ = 1/M
+4: for τ = 0, ∆τ, . . . , 1 −∆τ do
+5:
+Form prior drift bτ (use native bτ for SI;
+otherwise vτ + 1
+2g2
+τsτ)
+6:
+if τ = 0 then
+7:
+Set likelihood correction rτ = 0
+8:
+else
+9:
+Compute ¯yτ = ατHx0 + βτy
+10:
+Compute source moments µs
+τ, Σs
+τ
+11:
+Set ¯µτ = HX∗−Hµs
+τ
+12:
+Set ¯Στ = β2
+τR + HΣs
+τH⊤
+13:
+Compute ¯s¯yτ
+τ
+= (∇x¯µτ)⊤¯Σ−1
+τ (¯yτ −¯µτ)
+14:
+Set rτ = (κτ + 1
+2g2
+τ)¯s¯yτ
+τ
+15:
+end if
+16:
+Draw noise z ∼N(0, I)
+17:
+X∗←X∗+ (bτ + rτ) ∆τ + gτ
+√
+∆τ z
+18: end for
+19: Return: un = X∗
+We evaluate three increasingly realistic prob-
+lems: a linear–Gaussian system with an ex-
+act posterior, stochastically forced 2D Navier–
+Stokes, and a 2D slice of a 3D urban airflow. All
+cases use synthetic data, which means that we
+have direct access to the full ground truth states
+for evaluation. The samplers of Section 4.3 are
+reported as Ours SI-SDE, DM-SDE, and FM-
+ODE, using either a Jacobian-free approxima-
+tion (Jac-free) or a shared Jacobian updated ev-
+ery tenth pseudo-step (shared). The field ex-
+periments are assimilated autoregressively with
+ensembles of 64 members.
+Baselines, scenarios, and metrics.
+We
+compare with FlowDAS (Chen et al., 2025),
+SDA
+(Rozet
+&
+Louppe,
+2023),
+D-Flow
+SGLD (Parikh et al., 2026; Ben-Hamu et al.,
+2024), Guided FM (Yan et al., 2025), and
+SURGE (Wei et al., 2026). All methods use
+the same prior trained SI or FM (DM is derived
+from the trained FM) to isolate the effect of the
+posterior sampling techniques rather than the quality of the training. See Appendix D for details on
+the neural network architecture and training. According to Wei et al. (2026), both SDA and FlowDAS
+perform better when combined with SURGE, so we report only the SURGE-enhanced versions.
+6
+
+
+For Navier–Stokes, we additionally include an ensemble Kalman filter (Evensen et al., 2022) and
+bootstrap particle filter (Carrassi et al., 2018) using the true solver. Hyperparameters are tuned on
+separate short trajectories. Details are given in Appendix F.
+We consider super-resolution from 322 or 162 to 1282 (where the observation operator is simply
+subsampling grid points), and random sensors covering 5% or 1.5625% of the domain for the
+Navier–Stokes case and 1.5625% or 0.78125% for the urban case, with Gaussian observation noise.
+Navier–Stokes uses all four settings and urban airflow the two sparse-sensor settings. For the field
+cases, we report RMSE, CRPS, and runtime per assimilation step, and additional metrics in the
+appendix. For the linear–Gaussian case, we report Gaussian KL divergence to the exact posterior.
+Metric definitions are given in Appendix E. For the Navier-Stokes and the Urban test case, the metrics
+are computed and aggregated over several autoregressive posterior sampling steps. All runs are
+performed on an NVIDIA GeForce RTX 3090 with 24 GB memory.
+5.1
+SIMPLE ANALYTICAL TEST CASE
+50
+100
+250
+500
+Number of sampler steps M
+10
+4
+10
+3
+10
+2
+10
+1
+100
+101
+102
+Gaussian-fit KL(reference  generated)
+Guided FM (FIG): undefined at M=250, 500
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS
+FlowDAS + SURGE
+SDA
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+EnKF
+Particle filter
+Figure 3: KL to the exact posterior vs. sampler
+steps M (five seeds).
+The first case is a 2D linear–Gaussian system
+with Nu = Ny = 2 of Appendix G: u1 =
+u0 + ξ, y1 = Hu1 + η with standard-normal
+noises and H = R = I. The exact posterior,
+SI drift, and FM velocity are known in closed
+form, so no network is trained and the samplers
+are isolated from model error. We use 100,000
+samples for all methods.
+Figure 3 shows the KL divergence to the exact
+posterior versus the number of sampler steps M.
+With the full inflated covariance, all three of our
+samplers converge to the exact posterior within
+sampling constraints (KL ≈10−4), matching
+the EnKF and particle filter in their ideal linear–
+Gaussian regime; the Jacobian-free variant per-
+forms significantly worse (KL ≈0.12–0.24).
+Among the baselines, only FlowDAS+SURGE also recovers the exact posterior. However, it is
+worth noting that with increasing number of SDE steps, it diverges, suggesting high sensitivity to
+hyperparameters. Guidance alone does not converge at any step count (SDA KL ≈0.27, FlowDAS
+≥0.49), Guided FM collapses, and SDA+SURGE and D-Flow SGLD perform modestly at moderate
+M but diverge as M grows at fixed per-step hyperparameters. Density panels and a full table of
+results are in Appendix G.
+5.2
+STOCHASTIC NAVIER–STOKES
+The second case is an incompressible fluid on the torus T 2 = [0, 2π]2, governed by the stochastically
+forced two-dimensional vorticity equation,
+dω + v · ∇ω dt = ν∆ω dt −αω dt + ε dξ,
+(18)
+where v = ∇⊥ψ with −∆ψ = ω and dξ a temporally white forcing on four Fourier modes.
+Trajectories are generated with JAX-CFD (Kochkov et al., 2021) on a 2562 pseudo-spectral grid
+at ν = 10−3 and down-sampled to 1282; we assimilate 15 consecutive steps at interval ∆t = 0.5,
+observing vorticity through y = H(ω) + η with η ∼N(0, 0.052I) (data generation details in
+Appendix H).
+Table 1 summarizes accuracy and cost, while Figure 4 shows reconstructions for the 5%-sensor
+case. In dense super-resolution settings, our samplers achieve the best RMSE and CRPS; at 322, the
+Jacobian-free covariance matches the shared approximation at roughly one-tenth the cost. Under
+sparse observations, however, covariance quality becomes critical: the shared inflated covariance
+reduces SI-SDE RMSE by 2–4× relative to the Jacobian-free variant, which, like Guided FM, over-
+smooths toward the prior mean. SI-SDE is therefore the strongest of our samplers in this regime.
+SDA+SURGE and D-Flow SGLD remain competitive, but SDA+SURGE collapses the ensemble,
+while D-Flow costs ≈700 s per step—about an order of magnitude more than SI-SDE (shared) and
+7
+
+
+True state
+Observations
+SI-SDE (shared)
+SI-SDE (Jac-free)
+SDA+SURGE
+FlowDAS+SURGE
+D-Flow SGLD
+Posterior mean
+-2
+0
+2
+vorticity
+Ensemble std.
+0
+0.4
+0.8
+1.2
+vorticity std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (vorticity)
+Figure 4: Navier–Stokes, sparse sensors at 5%: truth and observations (left), and the posterior mean,
+ensemble standard deviation, and absolute error at the final assimilation step. One colour scale per
+row. All methods and scenarios: Figures 7–10.
+two orders more than the Jacobian-free samplers. SI-SDE (shared) also achieves the best or tied-best
+CRPS in three of four scenarios among methods using E = 64. Classical filters with E = 64 are not
+competitive; the E = 1000 EnKF reference attains the lowest sparse-scenario errors but requires the
+true solver and >100 s per step. Additional convergence, error, and enstrophy results are given in
+Appendix H.
+Table 1: Navier–Stokes: vorticity RMSE and CRPS across the four observation scenarios, with
+per-step cost (lower is better). E = 64 and M = 100 sampler steps. Bold marks the best value in
+each column, together with every value equal to it to 2 decimal places in unscaled units.
+Vorticity RMSE (×10−1)
+Vorticity CRPS (×10−1)
+Cost (s/step)
+162
+322
+5%
+1
+64
+162
+322
+5%
+1
+64
+162
+322
+5%
+1
+64
+Ours – ensemble-shared inflated covariance (Jacobian refreshed every k = 10 steps)
+Ours (SI-SDE)
+2.024 0.667 1.731
+3.854
+1.062 0.347 0.872 2.073
+41.3
+77.7
+68.4
+41.8
+Ours (DM-SDE)
+2.162 0.638 3.424
+6.834
+1.154 0.333 1.823 3.830
+87.2
+164.1 144.3
+88.6
+Ours (FM-ODE)
+2.102 0.626 3.828
+7.038
+1.128 0.327 2.051 3.945
+89.1
+164.9 144.7
+89.3
+Ours – Jacobian-free covariance
+Ours (SI-SDE)
+2.765 0.670 6.969
+8.500
+1.518 0.355 3.952 4.818
+6.9
+7.1
+7.1
+6.9
+Ours (DM-SDE)
+2.759 0.672 6.756
+8.362
+1.501 0.351 3.754 4.681
+13.0
+13.3
+13.2
+13.0
+Ours (FM-ODE)
+2.733 0.686 7.026
+8.460
+1.492 0.359 3.897 4.732
+13.0
+13.2
+13.1
+13.0
+FlowDAS + SURGE
+5.066 1.540 8.632 11.896 3.853 1.164 6.742 9.426
+32.2
+33.5
+33.2
+33.7
+SDA + SURGE
+3.699 1.577 1.616
+2.970
+2.642 1.080 1.130 2.092
+64.7
+68.3
+69.5
+69.6
+D-Flow SGLD
+2.455 2.010 1.974
+2.313
+1.272 1.004 0.992 1.179 671.6 693.7 701.5 704.2
+Guided FM (FIG)
+2.986 0.780 7.231
+8.461
+1.623 0.415 4.082 4.756
+13.6
+14.0
+14.1
+14.2
+EnKF
+2.683 2.161 2.768
+6.222
+1.680 1.320 1.384 3.319
+7.5
+7.5
+7.5
+7.5
+Particle filter
+8.753 8.388 8.240
+8.577
+6.914 6.613 6.478 6.751
+7.3
+6.8
+6.8
+6.8
+EnKF reference (E = 1000) 1.442 0.941 0.935
+1.053
+0.779 0.511 0.516 0.565 102.0 102.4 103.0 122.2
+5.3
+URBAN AIRFLOW
+The third case considers coupled velocity (u, v, w) and temperature fields over an urban area with
+several buildings, simulated with the building-resolving LES code uDALES (Suter et al., 2022).
+The 128 × 128 × 128 m3 domain has 1 m resolution and is periodic in the horizontal directions.
+Simulations are spun up for 100 s and sampled every 2 s, retaining a horizontal slice at 2 m height.
+We initialize from a different held-out flow state and forecast 145 physical steps, assimilating sparse
+velocity observations every third step (49 updates). White noise with standard deviation 0.05 is
+added to all velocity observations. Both velocity and temperature are reconstructed, so temperature is
+inferred only through its coupling to the observed flow. Table 2 reports rollout-averaged results at
+8
+
+
+True temperature
+True velocity
+Velocity observations
+SI-SDE (shared)
+SI-SDE (Jac-free)
+SDA+SURGE
+FlowDAS+SURGE
+D-Flow SGLD
+Posterior mean
+0
+1.5
+3
+temperature 
+Ensemble std.
+0
+0.15
+0.3
+0.45
+temperature 
+ std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (temperature 
+)
+Figure 5: Urban airflow, sparse sensors at 0.78125%: true potential temperature, true velocity
+magnitude, and observed velocity sensors (left), followed by the posterior mean, ensemble standard
+deviation, and absolute error of the unobserved temperature at the final forecast step.
+both sensor densities, and Figure 5 shows temperature reconstructions at 0.78125% density. Further
+details are in Appendix I.
+Table 2 reveals a split between observed and unobserved variables. The computational cost per step
+is omitted as timings are approximately the same as for the Navier-Stokes case. DM-SDE gives the
+lowest velocity RMSE and CRPS and best calibration (see spread-skill figures in Figure 21) among
+our samplers, whereas SI-SDE gives the lowest temperature RMSE and CRPS at both sensor densities.
+The shared covariance improves SI-SDE temperature RMSE from 0.38/0.43 to 0.36/0.42. D-Flow
+SGLD is the closest baseline, matching the best velocity or CRPS values but costing significantly
+more per step. Both SURGE ensembles are severely underdispersed. Over the long rollout, velocity
+errors decrease as the observations correct the mismatched initial state, while errors in the unobserved
+temperature accumulate (Appendix I). Figure 5 nevertheless shows that SI-SDE recovers the broad
+thermal-plume structure and places uncertainty around unresolved fine scales.
+6
+CONCLUSION
+Table 2: Urban (uDALES): rollout-averaged velocity RMSE
+(V-RMSE), temperature RMSE (T-RMSE), velocity CRPS
+(V-CRPS), and temperature CRPS (T-CRPS). Mean over 4–5
+held-out trajectories (cell-dependent), E = 64, and M = 50
+sampler steps. Bold marks the best value in each column,
+including ties to 2 decimal places.
+V-RMSE
+T-RMSE
+V-CRPS
+T-CRPS
+1
+64
+1
+128
+1
+64
+1
+128
+1
+64
+1
+128
+1
+64
+1
+128
+Ours – shared covariance (Jacobian refresh k = 10)
+Ours (SI-SDE)
+0.60 0.67 0.36 0.42 0.33 0.38 0.21 0.25
+Ours (DM-SDE)
+0.56 0.62 0.45 0.55 0.30 0.34 0.28 0.36
+Ours (FM-ODE)
+0.59 0.66 0.40 0.51 0.33 0.37 0.25 0.33
+Ours – Jacobian-free covariance
+Ours (SI-SDE)
+0.61 0.68 0.38 0.43 0.34 0.38 0.23 0.26
+Ours (DM-SDE)
+0.57 0.63 0.47 0.56 0.30 0.34 0.29 0.37
+Ours (FM-ODE)
+0.60 0.66 0.42 0.52 0.33 0.37 0.26 0.34
+FlowDAS + SURGE 0.88 0.89 0.53 0.55 0.66 0.66 0.40 0.42
+SDA + SURGE
+0.73 0.80 0.47 0.55 0.53 0.58 0.34 0.41
+D-Flow SGLD
+0.57 0.62 0.36 0.43 0.32 0.35 0.21 0.25
+Guided FM (FIG)
+0.59 0.65 0.41 0.51 0.33 0.36 0.25 0.33
+We introduced a unified posterior-
+sampling framework for stochastic in-
+terpolants, flow matching, and dif-
+fusion models based on a shared
+observation-interpolant likelihood cor-
+rection.
+With the full covariance,
+all three samplers closely approxi-
+mate the exact posterior in the linear–
+Gaussian test. On Navier–Stokes, our
+methods achieve the best accuracy un-
+der dense observations among all the
+generative posterior samplers, while
+the shared covariance substantially im-
+proves SI-SDE under sparse observa-
+tions. In the urban case, DM-SDE
+performs best on observed velocity,
+while SI-SDE best limits error growth
+in temperature inferred from velocity
+alone. There, the Jacobian-free approximation remains close to the shared variant at 3–4× lower cost.
+Thus the best sampler and covariance approximation are problem-dependent: prior correlations are
+decisive for sparse Navier–Stokes, but provide only modest gains in the urban case.
+9
+
+
+Limitations. The exactness result assumes an exact prior and likelihood score, while the practical
+method uses a Gaussian approximation, stopped covariance gradients, and approximate Jacobians.
+These approximations can introduce bias, as seen for the Jacobian-free variant in the analytical and
+sparse Navier–Stokes cases. The current formulation also assumes linear Gaussian observations,
+and the shared covariance becomes costly as the observation dimension grows. Finally, one-step
+autoregressive assimilation neither reweights past states nor uses future observations, so model
+and approximation errors may accumulate over long rollouts. Extending the method to nonlinear
+observations, smoothing, and broader model mismatch remains future work.
+ACKNOWLEDGMENTS
+This research was funded by the National Growth Fund of the Netherlands and administered
+by the Netherlands Organisation for Scientific Research (NWO) under the AINed XS grant
+NGF.1609.242.037.
+REPRODUCIBILITY STATEMENT
+Theoretical claims and assumptions from Section 4 are formally proven in Appendices A, B, and C.
+Comprehensive experimental configurations—including architectures, metrics, baselines, and data
+generation—are detailed in Appendices D through I (including specific configurations in H.1). The
+code used to produce the results presented in the paper can be found in https://github.com/
+nmucke/scientific-stochastic-interpolants.
+ETHICS STATEMENT
+The research presented here introduces a unified framework for Bayesian data assimilation using flow-
+based generative models. The methodology is evaluated exclusively on physical systems, specifically
+linear-Gaussian dynamics, two-dimensional Navier-Stokes equations, and urban airflow simulations.
+This work does not involve human subjects, sensitive personal datasets, or applications that risk
+generating harmful insights or propagating societal bias. The foundational contributions strictly
+advance physical forecasting methodologies and present no foreseeable negative societal impacts.
+AI USE STATEMENT
+In this work, we used generative AI tools for formulating mathematical claims, providing critical
+ingredients for proving mathematical claims, assisting in the writing of proofs, proposing or refining
+hypotheses, designing or providing feedback on research methodology or experiments, implementing
+methods, supporting qualitative and thematic data analysis, and interpreting results. We have not used
+generative AI for generating synthetic data sets, developing theoretical models, or cleaning datasets;
+translation is not applicable to this work.
+Additionally, we used AI for creating scientific figures, suggesting experimental parameters, writ-
+ing/editing code, creating artifacts, drafting text, analyzing literature, searching for information,
+editing for readability, identifying literature, and formatting references.
+We have reviewed all AI-assisted work. We take responsibility for the final content of this work,
+including text, claims, or artifacts produced with the aid of generative AI.
+REFERENCES
+Michael S. Albergo and Eric Vanden-Eijnden. Building Normalizing Flows with Stochastic In-
+terpolants.
+In International Conference on Learning Representations (ICLR), 2023.
+URL
+https://openreview.net/forum?id=li7qeBbCR1t. arXiv:2209.15571.
+Michael S. Albergo, Nicholas M. Boffi, and Eric Vanden-Eijnden. Stochastic Interpolants: A Unifying
+Framework for Flows and Diffusions. Journal of Machine Learning Research, 26(209):1–80, 2025.
+URL https://jmlr.org/papers/v26/23-1605.html. arXiv:2303.08797.
+10
+
+
+Feng Bao, Zezhong Zhang, and Guannan Zhang. An Ensemble Score Filter for Tracking High-
+Dimensional Nonlinear Dynamical Systems. Computer Methods in Applied Mechanics and
+Engineering, 432:117447, December 2024. doi: 10.1016/j.cma.2024.117447. arXiv:2309.00983.
+Heli Ben-Hamu, Omri Puny, Itai Gat, Brian Karrer, Uriel Singer, and Yaron Lipman. D-Flow:
+Differentiating through Flows for Controlled Generation. In Proceedings of the 41st International
+Conference on Machine Learning (ICML), volume 235 of Proceedings of Machine Learning
+Research, pp. 3462–3483, July 2024. URL https://proceedings.mlr.press/v235/
+ben-hamu24a.html. arXiv:2402.14017.
+Alberto Carrassi, Marc Bocquet, Laurent Bertino, and Geir Evensen. Data assimilation in the
+geosciences: An overview of methods, issues, and perspectives. WIREs Climate Change, 9(5):
+e535, September 2018. doi: 10.1002/wcc.535. arXiv:1709.02798.
+Siyi Chen, Yixuan Jia, Qing Qu, He Sun, and Jeffrey A. Fessler.
+FlowDAS: A Stochastic
+Interpolant-based Framework for Data Assimilation. In Advances in Neural Information Process-
+ing Systems (NeurIPS), volume 38, 2025. URL https://openreview.net/forum?id=
+1nWqhiulqD. arXiv:2501.16642 [eess].
+Yifan Chen, Mark Goldstein, Mengjian Hua, Michael S. Albergo, Nicholas M. Boffi, and Eric
+Vanden-Eijnden. Probabilistic Forecasting with Stochastic Interpolants and Föllmer Processes.
+In Proceedings of the 41st International Conference on Machine Learning (ICML), volume
+235 of Proceedings of Machine Learning Research, pp. 6728–6756. PMLR, July 2024. URL
+https://proceedings.mlr.press/v235/chen24n.html. arXiv:2403.13724.
+Yuming Chen, Daniel Sanz-Alonso, and Rebecca Willett. Reduced-order autodifferentiable ensemble
+Kalman filters. Inverse Problems, 39(12):124001, October 2023. ISSN 0266-5611. doi: 10.1088/
+1361-6420/acff14.
+Sibo Cheng, Jianhua Chen, Charitos Anastasiou, Panagiota Angeli, Omar K. Matar, Yi-Ke Guo,
+Christopher C. Pain, and Rossella Arcucci. Generalised Latent Assimilation in Heterogeneous
+Reduced Spaces with Machine Learning Surrogate Models. Journal of Scientific Computing, 94
+(1):11, 2023. ISSN 1573-7691. doi: 10.1007/s10915-022-02059-4.
+Hyungjin Chung, Jeongsol Kim, Michael T. McCann, Marc L. Klasky, and Jong Chul Ye. Dif-
+fusion Posterior Sampling for General Noisy Inverse Problems. In International Conference
+on Learning Representations (ICLR), 2023. URL http://arxiv.org/abs/2209.14687.
+arXiv:2209.14687 [stat.ML].
+Giannis Daras, Hyungjin Chung, Chieh-Hsin Lai, Yuki Mitsufuji, Jong Chul Ye, Peyman Milanfar,
+Alexandros G. Dimakis, and Mauricio Delbracio. A Survey on Diffusion Models for Inverse Prob-
+lems, September 2024. URL http://arxiv.org/abs/2410.00083. arXiv:2410.00083
+[cs].
+Geir Evensen, Femke C. Vossepoel, and Peter Jan van Leeuwen. Data Assimilation Fundamentals: A
+Unified Formulation of the State and Parameter Estimation Problem. Springer Textbooks in Earth
+Sciences, Geography and Environment. Springer International Publishing, Cham, 2022. ISBN
+978-3-030-96708-6. doi: 10.1007/978-3-030-96709-3. URL https://library.oapen.
+org/handle/20.500.12657/54434.
+Stathi Fotiadis, Noah D. Brenowitz, Tomas Geffner, Yair Cohen, Michael Pritchard, Arash Vahdat,
+and Morteza Mardani. Adaptive Flow Matching for Resolving Small-Scale Physics. In Proceedings
+of the 42nd International Conference on Machine Learning (ICML), volume 267 of Proceedings
+of Machine Learning Research, pp. 17489–17521, July 2025. URL https://proceedings.
+mlr.press/v267/fotiadis25a.html. arXiv:2410.19814 [cs].
+Han Gao, Sebastian Kaltenbach, and Petros Koumoutsakos. Generative learning for forecasting the
+dynamics of high-dimensional complex systems. Nature Communications, 15(1):8904, October
+2024. ISSN 2041-1723. doi: 10.1038/s41467-024-53165-w. URL https://www.nature.
+com/articles/s41467-024-53165-w.
+11
+
+
+Tilmann Gneiting and Adrian E. Raftery.
+Strictly Proper Scoring Rules, Prediction, and Es-
+timation.
+Journal of the American Statistical Association, 102(477):359–378, 2007.
+doi:
+10.1198/016214506000001437.
+Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising Diffusion Probabilistic Models. In Advances
+in Neural Information Processing Systems (NeurIPS), volume 33, pp. 6840–6851. Curran Asso-
+ciates, Inc., December 2020. URL https://proceedings.neurips.cc/paper/2020/
+hash/4c5bcfec8584af0d967f1ab10179ca4b-Abstract.html. arXiv:2006.11239
+[cs].
+Peter Holderrieth, Marton Havasi, Jason Yim, Neta Shaul, Itai Gat, Tommi Jaakkola, Brian Karrer,
+Ricky T. Q. Chen, and Yaron Lipman. Generator Matching: Generative modeling with arbitrary
+Markov processes. In International Conference on Learning Representations (ICLR), 2025. URL
+https://openreview.net/forum?id=RuP17cJtZo. arXiv:2410.20587 [cs.LG].
+Dmitrii Kochkov, Jamie A. Smith, Peter Norgaard, Gideon Dresdner, Ayya Alieva, and Stephan
+Hoyer. JAX-CFD: Computational fluid dynamics in JAX. https://github.com/google/
+jax-cfd, 2021. GitHub repository.
+Georg Kohl, Li-Wei Chen, and Nils Thuerey. Benchmarking Autoregressive Conditional Diffusion
+Models for Turbulent Flow Simulation. Neural Networks, 199:108641, July 2026. ISSN 0893-6080.
+doi: 10.1016/j.neunet.2026.108641. arXiv:2309.01745 [cs].
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow Matching
+for Generative Modeling. In International Conference on Learning Representations (ICLR), 2023.
+URL https://openreview.net/forum?id=PqvMRDCJT9t. arXiv:2210.02747 [cs].
+Phillip
+Lippe,
+Bastiaan
+S.
+Veeling,
+Paris
+Perdikaris,
+Richard
+E.
+Turner,
+and
+Jo-
+hannes
+Brandstetter.
+PDE-Refiner:
+Achieving
+Accurate
+Long
+Rollouts
+with
+Neural
+PDE
+Solvers.
+In
+Advances
+in
+Neural
+Information
+Processing
+Systems
+(NeurIPS), volume 36, pp. 67398–67433, 2023.
+doi:
+10.52202/075280-2946.
+URL
+https://proceedings.neurips.cc/paper_files/paper/2023/hash/
+d529b943af3dba734f8a7d49efcb6d09-Abstract-Conference.html.
+arXiv:2308.05732 [cs].
+Xingchao Liu, Chengyue Gong, and Qiang Liu.
+Flow Straight and Fast: Learning to Gener-
+ate and Transfer Data with Rectified Flow. In International Conference on Learning Repre-
+sentations (ICLR), 2023. URL https://openreview.net/forum?id=XVjTT1nw5z.
+arXiv:2209.03003 [cs].
+Nanye Ma, Mark Goldstein, Michael S. Albergo, Nicholas M. Boffi, Eric Vanden-Eijnden, and
+Saining Xie. SiT: Exploring Flow and Diffusion-based Generative Models with Scalable Interpolant
+Transformers. In Computer Vision – ECCV 2024, volume 15135 of Lecture Notes in Computer
+Science, pp. 23–40. Springer, 2024. doi: 10.1007/978-3-031-72980-5_2. arXiv:2401.08740 [cs].
+Ségolène Martin, Anne Gagneux, Paul Hagemann, and Gabriele Steidl. PnP-Flow: Plug-and-Play
+Image Restoration with Flow Matching. In International Conference on Learning Representations
+(ICLR), 2025. URL https://proceedings.iclr.cc/paper_files/paper/2025/
+hash/708e58b0b99e3e62d42022b4564bad7a-Abstract-Conference.html.
+arXiv:2410.02423 [cs].
+Nikolaj T. Mücke and Benjamin Sanderse. Physics-aware generative models for turbulent fluid flows
+through energy-consistent stochastic interpolants. Computers & Fluids, 314:107098, June 2026.
+doi: 10.1016/j.compfluid.2026.107098. arXiv:2504.05852 [cs].
+Nikolaj T. Mücke, Sander M. Bohté, and Cornelis W. Oosterlee. The deep latent space particle
+filter for real-time data assimilation with uncertainty quantification. Scientific Reports, 14(1):
+19447, August 2024. ISSN 2045-2322. doi: 10.1038/s41598-024-69901-7. URL https:
+//www.nature.com/articles/s41598-024-69901-7. Publisher: Nature Publishing
+Group.
+12
+
+
+Meet Hemant Parikh, Yaqin Chen, and Jian-Xun Wang. D-Flow SGLD: Source-Space Posterior
+Sampling for Scientific Inverse Problems with Flow Matching, 2026. URL http://arxiv.
+org/abs/2602.21469. arXiv:2602.21469.
+Ashwini Pokle, Matthew J. Muckley, Ricky T. Q. Chen, and Brian Karrer. Training-free Linear
+Image Inverses via Flows. Transactions on Machine Learning Research, 2024. URL https:
+//openreview.net/forum?id=PLIt3a4yTm. arXiv:2310.04432 [cs].
+Yongquan Qu, Juan Nathaniel, Shuolin Li, and Pierre Gentine. Deep Generative Data Assimilation in
+Multimodal Setting. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR) Workshops, pp. 449–459, June 2024. doi: 10.1109/CVPRW63382.2024.00050.
+URL
+https://openaccess.thecvf.com/content/CVPR2024W/EarthVision/
+html/Qu_Deep_Generative_Data_Assimilation_in_Multimodal_Setting_
+CVPRW_2024_paper.html. arXiv:2404.06665 [cs].
+François Rozet and Gilles Louppe. Score-based Data Assimilation. In Advances in Neural Informa-
+tion Processing Systems (NeurIPS), 2023. URL https://openreview.net/forum?id=
+VUvLSnMZdX. arXiv:2306.10574.
+Jiaming Song, Arash Vahdat, Morteza Mardani, and Jan Kautz. Pseudoinverse-Guided Diffusion
+Models for Inverse Problems. In International Conference on Learning Representations (ICLR),
+2023. URL https://openreview.net/forum?id=9_gsMA8MRKQ.
+Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and
+Ben Poole. Score-Based Generative Modeling through Stochastic Differential Equations. In
+International Conference on Learning Representations (ICLR), February 2021. URL https:
+//openreview.net/forum?id=PxTIG12RRHS. arXiv:2011.13456 [cs].
+Ivo Suter, Tom Grylls, Birgit S. Sützl, Sam O. Owens, Chris E. Wilson, and Maarten van Reeuwijk.
+uDALES 1.0: a large-eddy simulation model for urban environments.
+Geoscientific Model
+Development, 15(13):5309–5335, 2022. ISSN 1991-9603. doi: 10.5194/gmd-15-5309-2022. URL
+https://gmd.copernicus.org/articles/15/5309/2022/.
+Lifu Wei, Yinuo Ren, Naichen Shi, and Yiping Lu. SURGE: Approximation and Training Free
+Particle Filter for Diffusion Surrogate, 2026. URL http://arxiv.org/abs/2605.18745.
+arXiv:2605.18745.
+Yici Yan, Yichi Zhang, Xiangming Meng, and Zhizhen Zhao. FIG: Flow with Interpolant Guidance
+for Linear Inverse Problems. In International Conference on Learning Representations (ICLR),
+2025. URL https://openreview.net/forum?id=fs2Z2z3GRx.
+A
+VELOCITY–SCORE DUALITY AND THE MARGINAL-PRESERVING SDE
+FAMILY
+This appendix establishes the structural facts on which the model-agnostic method rests: for an
+interpolant path the velocity and the score determine each other in closed form (Proposition A.2),
+the probability-flow ODE belongs to a one-parameter family of SDEs sharing the same marginals
+(Proposition A.3), and both velocity and score can be read off the trained network for each model
+class (Section A.1). The first two are known (Albergo et al., 2025; Song et al., 2021; Ma et al., 2024).
+We state and prove them in the notation of Section 3 for completeness.
+Throughout, consider the interpolant path of Eq. (3),
+xτ = ατx0 + βτx1 + στε,
+ε ∼N(0, I) independent of x1,
+(19)
+with x0 deterministic, E∥x1∥2 < ∞, βτ > 0 for τ ∈(0, 1], and schedules continuously differentiable
+with στ > 0 on the open interval (0, 1). All identities below are stated on (0, 1). Whenever the score
+is recovered from the velocity, we additionally require ˙βτστ −˙στβτ̸ = 0. (For stochastic interpolants
+στ = γτ
+√τ vanishes and is not differentiable at τ = 0. The endpoints are covered by the initial
+condition and the terminal constraint xτ=1 = x1, consistent with the hypotheses of Theorem 4.1.)
+Let pτ denote the marginal density of xτ and sτ = ∇x log pτ its score.
+13
+
+
+Lemma A.1 (Tweedie identities for the interpolant path). Writing mτ := ατx0 + βτx1, so that
+xτ = mτ + στε with στε Gaussian with covariance σ2
+τI independent of mτ,
+E[mτ | xτ] = xτ + σ2
+τ sτ(xτ),
+(20)
+E[ε | xτ] = −στ sτ(xτ),
+(21)
+E[x1 | xτ] =
+1
+βτ
+ xτ + σ2
+τsτ(xτ) −ατx0
+
+,
+(22)
+Cov(ε | xτ) = I + σ2
+τ ∇xsτ(xτ).
+(23)
+Proof. Equation (20) is Tweedie’s formula for the additive-Gaussian-noise model xτ = mτ + στε.
+Since ε = (xτ−mτ)/στ, (21) follows, and x1 = (mτ−ατx0)/βτ gives (22). For (23), differentiate
+E[mτ | xτ = x] in x: on the one hand, by (20), ∇xE[mτ | x] = I + σ2
+τ∇xsτ. On the other,
+differentiating the conditional Gaussian mean directly gives the standard second-order Tweedie
+identity ∇xE[mτ | x] = σ−2
+τ Cov(mτ | x). Hence Cov(mτ | x) = σ2
+τI + σ4
+τ∇xsτ, and
+Cov(ε | x) = σ−2
+τ Cov(mτ | x) (as ε = (x −mτ)/στ with x fixed) yields (23).
+Proposition A.2 (Velocity–score identity). The marginal velocity and the score of the path (19)
+satisfy the exact linear relation
+vτ(x) =
+˙βτ
+βτ
+x +
+ 
+˙ατ −
+˙βτατ
+βτ
+!
+x0 + στ
+ ˙βτ
+βτ
+στ −˙στ
+!
+sτ(x),
+(24)
+where the score coefficient is the velocity–score coefficient κτ = στ(
+˙βτ
+βτ στ −˙στ) of Eq. (6). When
+˙βτστ −˙στβτ̸ = 0, this is equivalently
+sτ(x) = βτ vτ(x) −˙βτ x −( ˙ατβτ −˙βτατ) x0
+στ ( ˙βτστ −˙στβτ)
+.
+(25)
+Proof. By definition vτ(x) = E[ ˙ατx0+ ˙βτx1+ ˙στε | xτ = x]. Since x0 is deterministic, substitute
+(22) and (21):
+vτ(x) = ˙ατx0 +
+˙βτ
+βτ
+ x + σ2
+τsτ −ατx0
+
+−˙στστsτ
+=
+˙βτ
+βτ
+x +
+ 
+˙ατ −
+˙βτατ
+βτ
+!
+x0 +
+ ˙βτ
+βτ
+σ2
+τ −˙στστ
+!
+sτ,
+(26)
+which is (24). Multiplying the isolated score term by βτ and rearranging yields (25).
+Proposition A.3 (Marginal-preserving SDE family). Let pτ be the marginals of the path (19) with
+velocity vτ and score sτ, and suppose p ∈C2((0, 1) × RNu). Let gτ ≥0 be measurable with
+g ∈L2([0, 1]). Assume that the SDE
+dXτ =
+
+vτ(Xτ) + 1
+2g2
+τsτ(Xτ)
+
+dτ + gτ dWτ,
+X0 ∼p0,
+(27)
+and its Fokker–Planck equation are well posed with unique solutions for the initial law p0 (allowing
+the point mass p0 = δx0 used by SI, which has no density). Then the SDE has marginal law pτ for all
+τ ∈[0, 1]. Setting gτ = 0 gives the probability-flow ODE whenever that ODE is well posed.
+Proof. Since sτ = ∇log pτ, we have pτsτ = ∇pτ. Hence the score drift and diffusion cancel in the
+Fokker–Planck equation:
+−∇·
+ 
+vτ + 1
+2g2
+τsτ
+
+pτ
+
++ 1
+2g2
+τ∆pτ = −∇·(vτpτ) = ∂τpτ,
+where the last equality is the interpolant’s continuity equation. Thus pτ solves the Fokker–Planck
+equation with initial law p0 (interpreted weakly when p0 is a point mass). Uniqueness gives the
+claimed marginals. Taking gτ = 0 yields the probability-flow ODE.
+A.1
+READING THE VELOCITY AND SCORE FROM THE TRAINED NETWORK
+The two model classes train different objects. Proposition A.2 converts either into the pair (vτ, sτ)
+that the samplers use.
+14
+
+
+Flow matching.
+The trained object is the velocity vθ itself, and the path has ατ = 0 with source
+schedule στ. Specialising (25),
+sτ(x) = βτ vθ(x, un−1, τ) −˙βτ x
+στ ( ˙βτστ −˙στβτ)
+,
+(28)
+which for rectified flow (στ = 1−τ, βτ = τ) reduces to sτ(x) = (τ vθ −x)/(1−τ). Note that (28)
+degenerates as τ →1 (where στ →0), which is why the DM-SDE lift uses an endpoint-vanishing
+diffusion gτ.
+Stochastic interpolants.
+The trained object is the SDE drift bτ = E[ ˙ατx0 + ˙βτx1 + ˙γτWτ |
+Xτ = x] of Eq. (9), with στ = γτ
+√τ. It decomposes as bτ = vτ + 1
+2γ2
+τsτ (Chen et al., 2024),
+which follows from Lemma A.1: since γτWτ := στε at fixed τ, Eq. (21) gives
+E[˙γτWτ | Xτ = x] = ˙γτ
+γτ E[γτWτ | Xτ = x] = −˙γτγττ sτ(x),
+while the noise term of the drift carries ˙στ E[ε | Xτ = x] = −˙στστ sτ(x) with ˙στστ =
+1
+2
+d
+dτ (γ2
+ττ) = ˙γτγττ + 1
+2γ2
+τ. The remaining terms coincide, so bτ −vτ = 1
+2γ2
+τsτ. This is also
+the reconciliation of the two noise parametrisations: the ˙γτWτ regression target (the Itô drift of
+d(γτWτ) for a genuine Wiener process) and the pathwise derivative ˙στε of the equal-in-law source
+στε differ, upon conditioning, by exactly the score term that the SDE’s diffusion restores. Adding
+1
+2γ2
+τsτ to (24) and solving for the score,
+sτ(x, x0) = Aτ[βτbτ(x, x0, τ) −cτ(x, x0)] ,
+(29)
+with Aτ =
+h
+τγτ( ˙βτγτ −βτ ˙γτ)
+i−1
+and cτ(x, x0) = ˙βτx + (βτ ˙ατ −˙βτατ)x0 as stated by Chen
+et al. (2024). The velocity, when needed separately, is vτ = bτ −1
+2γ2
+τsτ.
+B
+CONDITIONING THE INTERPOLANT PATH: PROOFS
+Throughout, x0 is fixed and y = H(x1) + η, with η independent of (x1, ε) given x0.
+B.1
+POSTERIOR PATH
+Proposition B.1 (Conditioning identities). The conditioned path retains the interpolant representation
+(3), with the endpoint drawn from the posterior:
+xτ = ατx0 + βτx1 + στε,
+x1 ∼p(x1 | y, x0) ,
+ε ∼N(0, I),
+(30)
+with independent x1 and ε. Denoting its score and velocity by s⋆
+τ and v⋆
+τ, respectively, we have, for
+τ ∈(0, 1),
+s⋆
+τ = sτ + ∇x log Φy
+τ ,
+(31)
+v⋆
+τ = vτ + κτ∇x log Φy
+τ ,
+(32)
+where arguments (x, x0) are suppressed, Φy
+τ is defined in (10), and κτ in (6).
+Proof. Since ε is independent of (x1, y) given x0, conditioning changes only the law of x1, giving
+(30). By Bayes’ rule,
+pτ(x | y, x0) = Φy
+τ (x, x0) pτ(x | x0)
+p(y | x0)
+.
+(33)
+Taking ∇x log gives (31). Applying the velocity–score identity (24) to both paths, whose schedules
+and source coincide, then gives (32).
+15
+
+
+B.2
+PROOF OF THEOREM 4.1
+Proof. By Proposition B.1, the posterior marginals form an interpolant path. Under the theorem’s
+well-posedness assumptions, Proposition A.3 therefore gives a sampler with these marginals:
+dX∗
+τ =
+
+v⋆
+τ(X∗
+τ , x0) + 1
+2g2
+τ s⋆
+τ(X∗
+τ , x0)
+
+dτ + gτ dWτ,
+X∗
+0 ∼py
+0 .
+Substituting (31)–(32) into its drift and suppressing the common arguments gives
+v⋆
+τ + 1
+2g2
+τs⋆
+τ = vτ + 1
+2g2
+τsτ
+|
+{z
+}
+prior drift
++
+ κτ + 1
+2g2
+τ
+
+|
+{z
+}
+wτ
+∇x log Φy
+τ ,
+which is exactly (11). At τ = 1, the interpolant equals x1, so the sampler’s terminal law is
+p(x1 | y, x0).
+Finally, the initial law is unchanged by conditioning. Since β0 = 0, the source xτ=0 = α0x0 + σ0ε
+is independent of y given x0. Thus Φy
+0 = p(y | x0) on the source support and py
+0 = p0. The sampler
+starts from N(0, I) for FM/DM and from δx0 for SI, including when the source has no density.
+C
+PROOF OF LEMMA 4.2 AND LEMMA 4.3
+Proof of Lemma 4.2. Recall the general state interpolant and the observation interpolant,
+xτ = ατx0 + βτx1 + χs
+τ,
+χs
+τ = στε,
+(34)
+¯yτ = ατHx0 + βτy,
+(35)
+where y = Hx1+η with η ∼N(0, R) independent of the source driver ε. Substituting y = Hx1+η
+into (35),
+¯yτ = H(ατx0 + βτx1) + βτη.
+(36)
+From (34), ατx0 + βτx1 = xτ −χs
+τ, giving
+¯yτ = Hxτ + βτη −Hχs
+τ
+|
+{z
+}
+= ¯ητ
+,
+(37)
+which is Eq. (13). Since η is independent of x1 and of the source driver, η ⊥(χs
+τ, xτ) | x0, so
+E[η | xτ, x0] = 0,
+Cov(η | xτ, x0) = R.
+(38)
+Taking conditional expectation of (37),
+E[¯yτ | xτ, x0] = Hxτ + βτ E[η | xτ, x0] −H E[χs
+τ | xτ, x0] = Hxτ −H µs
+τ,
+(39)
+which is the mean in (14). Because the cross terms between η and χs
+τ vanish upon conditioning,
+Cov(¯yτ | xτ, x0) = β2
+τ Cov(η | xτ, x0) + H Cov(χs
+τ | xτ, x0) H⊤= β2
+τR + H Σs
+τ H⊤,
+(40)
+which is the covariance in (14).
+Proof of Lemma 4.3. The source process is χs
+τ = στε, so µs
+τ = στ E[ε | xτ, x0] and Σs
+τ =
+σ2
+τ Cov(ε | xτ, x0). The Tweedie identities of Lemma A.1 give E[ε | xτ] = −στsτ (21) and
+Cov(ε | xτ) = I + σ2
+τ∇xsτ (23), hence
+µs
+τ = −σ2
+τ sτ(x, x0),
+Σs
+τ = σ2
+τ I + σ4
+τ ∇xsτ(x, x0),
+(41)
+which is Eq. (15).
+D
+IMPLEMENTATION DETAILS
+Interpolant schedules.
+SI priors use the quadratic schedule ατ = 1 −τ, βτ = τ 2, γτ = 1 −τ (so
+στ = (1 −τ)√τ), and the FM priors use linear schedules with only a noise source term, ατ = 0,
+βτ = τ, στ = 1 −τ.
+16
+
+
+Pseudo-time integration.
+Sampling uses M uniform pseudo-time steps: Euler–Maruyama for the
+SDE members and forward Euler for the guided ODE.
+Architecture.
+The field-case priors (SI drift and FM velocity networks alike) are conditional U-
+Nets: four resolution levels with two ConvNeXt-style blocks per level (inner channel multiplier 2),
+circular padding, and multi-head spatial attention (four heads, rotary positional embedding) in the
+bottleneck. Pseudo-time enters through a learned scalar embedding, and the five most recent physical
+states are supplied as additional input channels to the first convolution, realising the conditioning on
+un−1 (and a short history). The initial conditioning history consists of five consecutive states from
+the trajectory supplying the initial condition. Thereafter, each ensemble member updates its own
+history with its generated states. Channel widths per level: Navier–Stokes (8, 16, 32, 64) for the SI
+prior and (16, 32, 64, 128) for the FM prior, one field channel (vorticity). Urban (32, 64, 128, 256),
+four field channels (three velocity components and temperature), with solid cells excluded via the
+building mask. Hyperparameters were chosen based on hyperparameter tuning.
+Training.
+All priors are trained by simulation-free regression of their target (SI drift or FM velocity)
+under an MSE loss, with per-channel standardised fields: AdamW (learning rate 10−4, weight decay
+10−6) with cosine annealing to 10−5, batch size 32, up to 103 epochs with early stopping, dropout
+0.1, adaptive EMA-based gradient clipping, and mixed precision. Navier–Stokes uses 160 training
+trajectories and 20 validation trajectories for the early stopping. The urban case uses 150 LES runs for
+training and 20 runs for validation. The same trained FM checkpoint per case serves every FM and
+DM sampler and the same trained SI checkpoint serve every SI sampler. No prior is ever retrained or
+fine-tuned for assimilation.
+E
+EVALUATION METRICS
+All metrics are computed per physical step from the posterior ensemble {x(e)}E
+e=1 against the truth
+x∗(or the exact posterior in the analytical case) and then averaged over steps and trajectories.
+Spatial averages run over the kept grid points i ∈I (in the urban case, solid cells are excluded);
+¯x = 1
+E
+P
+e x(e) denotes the ensemble mean. The urban per-variable metrics (velocity, temperature)
+apply the same formulas with I restricted to the channels of that variable.
+Ensemble-mean RMSE.
+The RMSE of the ensemble mean,
+RMSE =
+
+1
+|I|
+P
+i∈I
+ ¯xi −x∗
+i
+21/2
+,
+(42)
+not the member-averaged RMSE, which would additionally count ensemble spread.
+CRPS.
+Per grid point, the unbiased ensemble estimator of the continuous ranked probability
+score (Gneiting & Raftery, 2007),
+CRPSi = 1
+E
+E
+X
+e=1
+x(e)
+i
+−x∗
+i
+ −
+1
+2E(E −1)
+X
+e̸=e′
+x(e)
+i
+−x(e′)
+i
+,
+(43)
+averaged over I; the 1/(E(E −1)) normalisation makes the spread term unbiased for E|X −X′|.
+Spread–skill.
+The ratio of corrected mean ensemble spread to skill,
+ratio =
+q
+E+1
+E
+
+1
+|I|
+P
+i∈I si
+.
+RMSE,
+(44)
+with si the ensemble standard deviation at point i and
+p
+(E + 1)/E the finite-ensemble correction.
+We report |1 −ratio|, so 0 is perfectly calibrated.
+KL from the exact posterior (analytical case).
+With sample moments (µp, Σp) of the method
+ensemble and exact posterior moments (µq, Σq), we report the Gaussian KL from the reference to
+the fitted ensemble distribution:
+DKL(q∥p) = 1
+2
+ tr(Σ−1
+p Σq) + (µp −µq)⊤Σ−1
+p (µp −µq) −d + log det Σp −log det Σq
+
+, (45)
+17
+
+
+where d is the state dimension. Because µp and Σp are estimated from a finite ensemble, this reported
+KL is generally nonzero even for independent samples from the exact posterior. Increasing the
+number of integration steps alone does not remove this sampling error.
+Sliced W1.
+The 1-Wasserstein distance averaged over random one-dimensional projections: for unit
+directions θj, j = 1, . . . , 128, the projected distance W1(θj) is computed by integrating the absolute
+difference between the empirical quantile functions of the two projected sample sets, and we report
+1
+128
+P128
+j=1 W1(θj).
+Cost.
+Wall-clock seconds per assimilation step, at matched ensemble size on the same hardware.
+Enstrophy spectrum (Navier–Stokes).
+The spectral diagnostic of the reconstructions, the radially
+averaged enstrophy spectrum Z(k), is defined where it is used, in Eq. (53) of Appendix H.3.
+F
+METHOD DESCRIPTIONS AND COMPARISON TO ALTERNATIVES
+Our method shares building blocks with the baselines below but assembles them differently. For
+each method we state how the state is evolved, how the likelihood term is approximated, the per-step
+network cost, and which hyperparameters were tuned; quantitative comparisons are in Section 5.
+Tuned hyperparameters were selected by RMSE sweeps per observation scenario (and, where
+indicated, per step count M) on a held-out trajectory not used for evaluation; Table 3 collects all
+sampler hyperparameters. Throughout, ˆu1
+τ = E[x1 | xτ, u0] denotes the one-step denoiser.
+FlowDAS.
+FlowDAS (Chen et al., 2025), commits to the SI-SDE and estimates the likelihood score
+by Monte Carlo: the gradient of a softmax-weighted squared residual through J one-step predictions
+ˆu1,j
+τ , entering the drift with a tuned constant step size ζ in place of our analytic weight wτ. We
+instead read the score off the closed-form observation interpolant, removing sampling variance and
+per-step trajectory backprop; the trade-off is our Gaussian surrogate, whose bias is controlled by the
+covariance choice rather than the number of samples. Cost: two forwards (prior drift and denoiser
+endpoint) and one backward per step, independent of J. Key limitation: ζ is scenario-dependent
+and may require tuning, and there is no inflated source covariance. In our implementation, stability
+can also depend on the solver step count M, and overly large ζ can lead to divergence. Tuned: the
+guidance step size ζ, per scenario and M; the number of one-step samples is fixed at J = 25.
+Guided FM (FIG).
+FIG (Yan et al., 2025) guides the deterministic FM probability-flow ODE
+for static linear inverse problems: after each prior-velocity step, k inner corrector steps push the
+state along H⊤times the normalised observation residual with magnitude c (1 −τ)/τ, using a
+measurement interpolant equivalent to ours. Cost: one forward per step, no backward (the corrector
+differentiates only through the linear H) – the cheapest guided sampler in the comparison. Key
+limitation: treats xτ ≈x1, uses no covariance, and the corrector is not derived from a probability
+path, so the guidance magnitude c(1 −τ)/τ is not data-adaptive. Tuned: the corrector scale c, per
+scenario and M; the number of inner corrector steps k is set by the observation operator (sweep-
+selected: k = 1 for super-resolution, k = 3 for sparse sensors), and the measurement-interpolant
+noise is fixed to zero as in the original work.
+SDA.
+SDA (Rozet & Louppe, 2023) applies Tweedie-based guidance on a diffusion prior: the
+gradient of a Gaussian likelihood at the Tweedie denoiser, taken through the network, with a ΠGDM-
+style inflated isotropic covariance scaled by a tunable factor γsda. Its original form composes locally
+learned segment scores into a joint trajectory score and conditions all states at once. We use its
+single-window form and are autoregressive, keeping per-step cost and prior dimension fixed as the
+horizon grows (but not propagating cross-window correlations as a joint smoother would). Cost:
+two forwards and one backward per step. Tuned: the covariance inflation γsda, per scenario and M.
+Key limitation: SDA is tied to the native reverse diffusion. Its bias therefore stems entirely from
+the Gaussian–Tweedie likelihood surrogate, whose isotropic covariance carries no model source
+information. Because the guidance weight is inherited from the fixed diffusion rather than derived
+from a probability path, it does not extend to samplers with modified or vanishing diffusion (wτ̸ = g2
+τ),
+unlike Theorem 4.1.
+18
+
+
+D-Flow SGLD.
+Original D-Flow (Ben-Hamu et al., 2024) optimizes the FM source x0 by gradient
+descent through the full FM-ODE rollout, with prior regularization supplied implicitly by the learned
+flow. D-Flow SGLD (Parikh et al., 2026), used here, instead runs a preconditioned SGLD chain over
+x0 ∼N(0, I) through the rollout (6-step RK2, backpropagated with gradient checkpointing), with
+energy given by the squared data misfit plus an explicit ℓ2 source penalty λ∥x0∥2; zero Langevin
+noise recovers MAP-style source optimization. Cost: the entire rollout repeats at every SGLD step
+(12 forwards and 12 backwards per step at our settings) – the only baseline backpropagating through
+a full multi-step generative rollout, and by far the most expensive. Tuned: the SGLD step size η and
+the source penalty λ, per case (in our sweeps η is the dominant knob); the Langevin noise scale and
+the preconditioner constants follow the original paper.
+SURGE.
+SURGE (Wei et al., 2026) is a sequential Monte-Carlo wrapper: a guided reverse-SDE
+proposal with Girsanov-corrected importance weights that telescope to the exact terminal likelihood,
+making the target asymptotically exact as the number of particles N →∞. The guidance controls
+proposal efficiency and therefore finite-N degeneracy. In our implementation, particles resample
+when the effective sample size drops below N/2. We report it wrapping the FlowDAS and SDA
+guidance. Measured implementation cost: one additional denoiser forward per step relative to
+the wrapped method, with no additional backward pass. Tuned: nothing SURGE-specific – the
+resampling threshold is fixed at ESS < N/2, and the wrapped guidance keeps the hyperparameters
+tuned for its standalone counterpart (ζ, γsda). Key limitation: particle degeneracy in high dimension.
+Diffusion prior for DM-based methods.
+SDA, SURGE, and DM-SDE require a diffusion prior;
+we construct it from the trained FM velocity via the velocity–score identity (Appendix A), so all
+generative methods use the same network.
+Table 3: Sampler hyperparameters for all methods. Tuned entries were selected by RMSE sweeps
+on a held-out trajectory, per observation scenario and – where a range is given – per step count M;
+ranges span the values used across the scenario/M grid. Fixed entries follow the original works. In
+the linear–Gaussian case our samplers use the exact covariance without damping (λ = 1) and the
+baselines reuse the Navier–Stokes tuning (FIG: k = 1, c = 1). The full per-scenario, per-M matrices
+are provided in the configuration files released with the code.
+Method
+Hyperparameter
+Role
+Selection
+Navier–Stokes
+Urban
+Ours (all samplers)
+λ
+Jacobian damping (shared cov.)
+tuned
+0.9 (SR) / 0.95 (sparse)
+0.95
+k
+Jacobian refresh cadence
+fixed (cost dial)
+10
+10
+FlowDAS
+ζ
+guidance step size
+tuned
+2 × 10−3–0.15
+5 × 10−4
+J
+Monte-Carlo x1 samples
+fixed
+25
+25
+Guided FM (FIG)
+c
+corrector step-size scale
+tuned
+5–20
+160
+k
+inner corrector steps
+operator type
+1 (SR) / 3 (sparse)
+3
+w
+measurement-interpolant noise
+fixed
+0
+0
+SDA
+γsda
+likelihood covariance inflation
+tuned
+10−4–10−2
+5 × 10−4
+D-Flow SGLD
+η
+SGLD step size
+tuned
+5 × 10−3
+5 × 10−3
+λ
+source penalty
+tuned
+10−4
+10−3
+s
+Langevin noise scale
+fixed
+10−3
+10−3
+ω, δ
+pSGLD preconditioner
+fixed
+0.99, 10−3
+0.99, 10−3
+K
+SGLD steps (6-step RK2 rollout)
+= M
+M
+M
+SURGE
+ESS threshold
+resampling trigger
+fixed
+N/2
+N/2
+ζ, γsda
+wrapped guidance
+carried over
+as above
+as above
+EnKF
+inflation / localisation
+analysis regularisation
+none
+1.0 / none
+–
+Particle filter
+resampling
+scheme
+fixed
+systematic
+–
+G
+ANALYTICAL TEST CASE: SETUP AND ADDITIONAL RESULTS
+G.1
+SETUP
+The analytical test case is the linear-Gaussian system with Nu = Ny = 2
+p
+ u1  u0
+= N(u0, I),
+p
+ y1  u1
+= N(Hu1, R),
+H = I, R = I,
+(46)
+i.e. Eq. (1) with identity forward and observation operators and unit Gaussian noise.
+19
+
+
+(a) prior p(x1 | x0)
+(a) Prior conditional.
+(b) likelihood p(y | x1)
+(b) Likelihood.
+(c) exact posterior
+(c) Exact posterior.
+(d) sampled posterior (SI-SDE)
+(d) Sampled posterior (SI-
+SDE).
+Figure 6: Analytical linear–Gaussian case.
+For a Gaussian conditional target p(x1 | x0) = N(µ1(x0), Σ1), the SI drift is available in closed
+form (Proposition B.9 of Chen et al., 2024). Specialised to µ1(x0) = x0 and Σ1 = I, it reads
+b(x, x0, τ) = ˙ατx0 + ˙βτµ1(x0) + (βτ ˙βτ + τγτ ˙γτ) ¯Σ−1
+τ (x −¯µτ(x0)),
+(47)
+where
+¯µτ(x0) = ατx0 + βτµ1(x0),
+¯Στ = (β2
+τ + τγ2
+τ) I,
+(48)
+are the mean and covariance of the interpolant xτ conditioned on x0. Note that the second drift
+term involves the prior mean µ1(x0) = x0, not ¯µτ(x0); the two coincide only for schedules with
+ατ + βτ = 1.
+The flow matching velocity is available in closed form for the same target. For linear schedules
+(στ = 1 −τ, βτ = τ) and µ1(x0) = x0 this reduces to
+v(x, x0, τ) = x0 +
+2τ −1
+τ 2 + (1 −τ)2 (x −τx0).
+(49)
+The same velocity drives both the FM-ODE and, via the score identity (28), the DM-SDE sampler
+with the endpoint-vanishing diffusion gτ = √στβτ.
+The true posterior is
+p
+ u1  y1, u0
+= N
+ u0 + K(y1 −Hu0), I −KH
+
+,
+(50)
+where
+K = H⊤(HH⊤+ R)−1 = 1
+2 I.
+(51)
+G.2
+ADDITIONAL RESULTS
+Figure 6 visualises the case in two dimensions: the prior conditional, likelihood, exact posterior,
+and the posterior sampled with the closed-form drift. Table 4 reports, for every method, the KL
+divergence and the sliced-W1 distance to the exact posterior at M = 50 and M = 500, alongside the
+wall-clock cost of one assimilation.
+H
+NAVIER–STOKES TEST CASE: SETUP AND ADDITIONAL RESULTS
+This appendix outlines the setup in greater detail and presents additional results: the data generation
+and forcing, qualitative reconstructions for each observation scenario, convergence in the number of
+sampler steps M, per-assimilation-step error curves, the enstrophy spectra of the reconstructions, and
+the ablations. Throughout: five held-out trajectories, E = 64 ensemble members, 15 assimilation
+steps, observation noise η ∼N(0, 0.052I).
+20
+
+
+Table 4: Analytical case: Gaussian-fit KL divergence and sliced-W1 to the exact posterior at M = 50
+and M = 500 sampler steps (mean over five seeds, 100,000-sample ensembles), and wall-clock
+seconds per assimilation at M = 500. The EnKF and particle filter perform a single analysis step (no
+M); both operate in their ideal linear–Gaussian regime here. A dash marks a collapsed ensemble
+with no finite KL.
+Gaussian KL
+Sliced-W1
+Cost
+M=50
+M=500
+M=50
+M=500
+s
+Ours (SI-SDE)
+0.0004
+6.8×10−5
+0.011
+0.005
+4.9
+Ours (DM-SDE)
+0.0012
+8.2×10−5
+0.014
+0.005
+8.1
+Ours (FM-ODE)
+0.0018
+8.0×10−5
+0.017
+0.004
+6.1
+Ours (SI-SDE), Jac.-free
+0.116
+0.134
+0.155
+0.167
+3.5
+Ours (DM-SDE), Jac.-free
+0.171
+0.161
+0.182
+0.183
+3.8
+Ours (FM-ODE), Jac.-free
+0.241
+0.224
+0.208
+0.209
+1.6
+FlowDAS
+0.491
+3.78
+0.481
+0.438
+67.7
+FlowDAS + SURGE
+4.7×10−5
+87.8
+0.005
+0.649
+69.1
+SDA
+0.270
+0.263
+0.322
+0.318
+6.1
+SDA + SURGE
+0.173
+2.36
+0.150
+0.339
+8.5
+D-Flow SGLD
+0.096
+56.1
+0.190
+0.628
+9.9
+Guided FM (FIG)
+0.470
+–
+0.354
+0.654
+1.9
+EnKF
+7.3×10−5
+0.005
+0.01
+Particle filter
+6.4×10−5
+0.004
+0.01
+H.1
+FORCING AND DATA GENERATION
+The stochastic forcing in Eq. (18) is temporally white and supplied to four Fourier modes,
+dξ(t, x) =
+X
+k∈K
+h
+cos(k · x) dW k,c
+t
++ sin(k · x) dW k,s
+t
+i
+,
+K = {(6, 0), (7, 0), (5, 5), (8, 8)},
+(52)
+with independent standard Wiener processes W k,c and W k,s and forcing amplitude ε = 1.
+The trajectories are simulated with JAX-CFD (Kochkov et al., 2021) with a pseudo-spectral (Fourier)
+discretisation of Eq. (18) on a 2562 grid over the torus T 2 = [0, 2π]2, with viscosity ν = 10−3
+and linear drag α = 0.1. Time integration uses forward Euler–Maruyama on the vorticity Fourier
+coefficients with a fine step of dt = 10−4. Initial conditions are random divergence-free velocity
+fields with peak wavenumber k = 4 and maximum velocity 7.
+Each trajectory is integrated for 500000 time steps, corresponding to a time horizon of T = 50,
+and stored every 0.5 time units, i.e at every 5000 time step. This yields 100 coarse snapshots per
+trajectory, of which the first 50 are discarded so that the retained states are statistically spun up.
+The stored fields are finally down-sampled from 2562 to the 1282 resolution used for training and
+assimilation, so that the observation operators of Section 5 act on a 1282 state.
+H.2
+ABLATIONS
+On the Navier–Stokes case, we study the computational approximations introduced in Section 4.2.
+For the ensemble-shared covariance, we vary the Jacobian refresh rate k to quantify the trade-off
+between accuracy and computational cost. Table 5 collects the results.
+H.3
+ENSTROPHY SPECTRA
+Pointwise metrics do not reveal which scales are misrepresented. Figure 14 therefore compares the
+radially averaged enstrophy spectrum of each posterior mean with the truth:
+Z(k) =
+
+ 1
+2|ˆω(k)|2
+|k|∈shell(k) ,
+(53)
+using 60 radial bins and averaging over the 15 assimilated steps. This diagnostic is computed directly
+from vorticity.
+21
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.15
+0.3
+0.45
+vorticity std
+Absolute error
+0
+0.25
+0.5
+0.75
+|error| (vorticity)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.15
+0.3
+0.45
+vorticity std
+Absolute error
+0
+0.25
+0.5
+0.75
+|error| (vorticity)
+Figure 7: Navier–Stokes, super-resolution 322 →1282: true vorticity and observations (top), followed by the
+posterior-mean state, ensemble standard deviation, and absolute error for our methods and the retained baselines
+at the final assimilation step. “Shared” denotes the ensemble-shared covariance and “JF” the Jacobian-free
+covariance.
+22
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.25
+0.5
+0.75
+vorticity std
+Absolute error
+0
+0.5
+1
+1.5
+|error| (vorticity)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.25
+0.5
+0.75
+vorticity std
+Absolute error
+0
+0.5
+1
+1.5
+|error| (vorticity)
+Figure 8: Navier–Stokes, super-resolution 162 →1282: true vorticity and observations (top), followed by the
+posterior-mean state, ensemble standard deviation, and absolute error for our methods and the retained baselines
+at the final assimilation step. “Shared” denotes the ensemble-shared covariance and “JF” the Jacobian-free
+covariance.
+23
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.4
+0.8
+1.2
+vorticity std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (vorticity)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.4
+0.8
+1.2
+vorticity std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (vorticity)
+Figure 9: Navier–Stokes, sparse sensors (5%): true vorticity and observations (top), followed by the posterior-
+mean state, ensemble standard deviation, and absolute error for our methods and the retained baselines at the
+final assimilation step. “Shared” denotes the ensemble-shared covariance and “JF” the Jacobian-free covariance.
+24
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.4
+0.8
+1.2
+vorticity std
+Absolute error
+0
+1
+2
+3
+|error| (vorticity)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+-2
+0
+2
+vorticity
+Standard deviation
+0
+0.4
+0.8
+1.2
+vorticity std
+Absolute error
+0
+1
+2
+3
+|error| (vorticity)
+Figure 10: Navier–Stokes, sparse sensors (1.5625%): true vorticity and observations (top), followed by the
+posterior-mean state, ensemble standard deviation, and absolute error for our methods and the retained baselines
+at the final assimilation step. “Shared” denotes the ensemble-shared covariance and “JF” the Jacobian-free
+covariance.
+25
+
+
+Versus sampler steps M
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+Vorticity RMSE
+(a) Super-resolution 322 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+Vorticity RMSE
+(b) Super-resolution 162 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+Vorticity RMSE
+(c) Sparse sensors (5%).
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+Vorticity RMSE
+(d) Sparse sensors (1.5625%).
+Versus assimilation step
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+Vorticity RMSE
+(e) Super-resolution 322 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+Vorticity RMSE
+(f) Super-resolution 162 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+Vorticity RMSE
+(g) Sparse sensors (5%).
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+Vorticity RMSE
+(h) Sparse sensors (1.5625%).
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+EnKF
+Particle filter
+Figure 11: Navier–Stokes: ensemble-mean vorticity RMSE as a function of the number of sampler steps M (top
+two rows) and assimilation step at the largest M (bottom two rows), for all observation scenarios.
+26
+
+
+Versus sampler steps M
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+CRPS
+(a) Super-resolution 322 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+CRPS
+(b) Super-resolution 162 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+CRPS
+(c) Sparse sensors (5%).
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+CRPS
+(d) Sparse sensors (1.5625%).
+Versus assimilation step
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+CRPS
+(e) Super-resolution 322 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+CRPS
+(f) Super-resolution 162 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+CRPS
+(g) Sparse sensors (5%).
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+CRPS
+(h) Sparse sensors (1.5625%).
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+EnKF
+Particle filter
+Figure 12: Navier–Stokes: CRPS as a function of the number of sampler steps M (top two rows) and assimilation
+step at the largest M (bottom two rows), for all observation scenarios.
+27
+
+
+Versus sampler steps M
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+|1
+spread/skill|
+(a) Super-resolution 322 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+|1
+spread/skill|
+(b) Super-resolution 162 →1282.
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+|1
+spread/skill|
+(c) Sparse sensors (5%).
+25
+50
+100
+250
+Number of sampler steps M
+10
+1
+100
+|1
+spread/skill|
+(d) Sparse sensors (1.5625%).
+Versus assimilation step
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(e) Super-resolution 322 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(f) Super-resolution 162 →1282.
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(g) Sparse sensors (5%).
+0
+2
+4
+6
+8
+10
+12
+14
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(h) Sparse sensors (1.5625%).
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+EnKF
+Particle filter
+Figure 13: Navier–Stokes: Spread-skill as a function of the number of sampler steps M (top two rows) and
+assimilation step at the largest M (bottom two rows), for all observation scenarios.
+28
+
+
+Full spectrum
+100
+101
+102
+Wavenumber k
+100
+102
+104
+106
+Z(k)
+(a) Super-resolution 322 →1282.
+100
+101
+102
+Wavenumber k
+100
+102
+104
+106
+Z(k)
+(b) Super-resolution 162 →1282.
+100
+101
+102
+Wavenumber k
+100
+102
+104
+106
+Z(k)
+(c) Sparse sensors (5%).
+100
+101
+102
+Wavenumber k
+100
+102
+104
+106
+Z(k)
+(d) Sparse sensors (1.5625%).
+High-wavenumber detail (k ≥30)
+3 × 101 4 × 101
+6 × 101
+Wavenumber k
+10
+1
+100
+101
+102
+103
+Z(k)
+(e) Super-resolution 322 →1282.
+3 × 101 4 × 101
+6 × 101
+Wavenumber k
+10
+1
+100
+101
+102
+103
+Z(k)
+(f) Super-resolution 162 →1282.
+3 × 101 4 × 101
+6 × 101
+Wavenumber k
+10
+1
+100
+101
+102
+103
+Z(k)
+(g) Sparse sensors (5%).
+3 × 101 4 × 101
+6 × 101
+Wavenumber k
+10
+1
+100
+101
+102
+103
+Z(k)
+(h) Sparse sensors (1.5625%).
+Truth
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+Figure 14: Navier–Stokes: radially-averaged enstrophy spectra Z(k) of the posterior mean for every method
+(colours) against the true spectrum (black), for all four observation scenarios. Top two rows: the full wavenumber
+range. Bottom two rows: the same panels zoomed to k ≥30, where the methods separate – a curve below the
+truth has an over-smoothed posterior mean, one above it carries spurious small-scale enstrophy. Spectra are
+averaged over the 15 assimilated steps of one held-out trajectory at the largest sampler-step count M. A method
+with no saved run at this M, or whose posterior diverged there, carries no curve.
+29
+
+
+Table 5: Navier–Stokes ablation of the covariance approximation of Section 4.2: the ensemble-shared
+inflated covariance at Jacobian refresh cadences k ∈{1, 5, 10} (the shared Jacobian is recomputed
+every k of the M sampler steps) against the Jacobian-free covariance. Same metrics and scenarios as
+Table 1, with per-step cost (lower is better). E = 64 and M = 50 sampler steps. Bold marks the best
+value in each column, together with every value equal to it to 2 decimal places in unscaled units.
+Vorticity RMSE (×10−1)
+CRPS (×10−1)
+Spread–skill (×10−1)
+Cost (s/step)
+162
+322
+5%
+1
+64
+162
+322
+5%
+1
+64
+162
+322
+5%
+1
+64
+162
+322
+5%
+1
+64
+Ensemble-shared inflated covariance – Jacobian refreshed every step (k = 1)
+Ours (SI-SDE)
+2.087
+0.701
+1.330
+2.885
+1.105
+0.367
+0.672
+1.532
+2.742
+2.509
+2.577
+2.503
+64.9
+215.2
+174.5
+65.5
+Ours (DM-SDE)
+2.248
+0.640
+1.470
+4.548
+1.178
+0.334
+0.740
+2.480
+1.572
+0.637
+1.079
+1.929
+134.2
+442.4
+360.3
+135.2
+Ours (FM-ODE)
+1.895
+0.607
+1.612
+4.870
+1.005
+0.318
+0.821
+2.675
+1.448
+1.110
+1.385
+1.996
+134.8
+440.4
+360.4
+135.3
+Ensemble-shared inflated covariance – Jacobian refreshed every k = 5 steps
+Ours (SI-SDE)
+2.076
+0.689
+1.727
+3.925
+1.104
+0.362
+0.886
+2.157
+2.827
+2.701
+2.676
+2.861
+25.8
+56.2
+48.3
+25.8
+Ours (DM-SDE)
+2.166
+0.642
+3.125
+6.621
+1.157
+0.335
+1.656
+3.723
+1.490
+0.796
+1.639
+2.111
+53.5
+115.9
+99.7
+53.5
+Ours (FM-ODE)
+2.085
+0.623
+5.506
+6.839
+1.121
+0.327
+2.784
+3.849
+1.651
+1.632
+1.986
+2.085
+53.6
+116.0
+99.8
+53.7
+Ensemble-shared inflated covariance – Jacobian refreshed every k = 10 steps
+Ours (SI-SDE)
+2.142
+0.684
+2.247
+5.066
+1.152
+0.360
+1.182
+2.873
+2.825
+2.822
+2.943
+3.269
+20.7
+38.8
+34.2
+20.9
+Ours (DM-SDE)
+2.344
+0.649
+4.389
+7.339
+1.261
+0.339
+2.387
+4.138
+1.557
+0.921
+1.909
+1.988
+43.6
+82.1
+72.2
+44.3
+Ours (FM-ODE)
+2.279
+0.641
+5.263
+7.517
+1.234
+0.336
+2.868
+4.236
+1.656
+1.843
+2.061
+1.933
+44.5
+82.4
+72.4
+44.6
+Jacobian-free covariance
+Ours (SI-SDE)
+2.905
+0.693
+7.069
+8.520
+1.618
+0.373
+4.079
+4.910
+2.694
+3.368
+3.256
+2.811
+3.4
+3.6
+3.6
+3.5
+Ours (DM-SDE)
+2.845
+0.679
+6.805
+8.370
+1.553
+0.354
+3.804
+4.705
+1.623
+1.209
+2.172
+1.539
+6.5
+6.6
+6.6
+6.5
+Ours (FM-ODE)
+2.817
+0.694
+7.076
+8.471
+1.545
+0.365
+3.948
+4.756
+1.670
+2.022
+2.114
+1.478
+6.5
+6.6
+6.6
+6.5
+I
+URBAN AIRFLOW TEST CASE: SETUP AND ADDITIONAL RESULTS
+This appendix provides additional information and results for the urban-airflow case, including
+qualitative reconstructions and error trajectories over 145 forecast steps. The reported run uses one
+held-out trajectory, E = 64 ensemble members, M = 50 sampler steps, and sensor densities of
+1.5625% and 0.78125% of fluid cells. Starting from a different held-out flow state, observations are
+assimilated every third forecast step, for 49 posterior updates. Metrics are evaluated at every step
+over fluid cells only, with buildings masked. Due to computational complexities, this case includes
+only solver-free generative methods; no conventional-filter or KL reference is reported.
+The uDALES solver.
+The data are generated with uDALES (Suter et al., 2022), an open-source,
+building-resolving large-eddy simulation code for urban microclimate and air quality derived from
+DALES. It solves the filtered incompressible Navier–Stokes and scalar-transport equations on a
+staggered Cartesian grid, using the Vreman model for subgrid stresses and an immersed-boundary
+representation of buildings. Momentum, temperature, and building-surface energy are coupled within
+a periodic 128 × 128 × 128 m3 domain discretized at 1 m resolution.
+Qualitative reconstructions.
+Figures 15–18 show the true field, observations, reconstruction,
+uncertainty, and error for each retained method. Each figure corresponds to one variable and sensor
+density. As in the Navier–Stokes figures, we omit the DM-SDE variants and show only the SURGE
+versions of FlowDAS and SDA.
+30
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+1.5
+3
+4.5
+velocity magnitude
+Standard deviation
+0
+0.25
+0.5
+0.75
+velocity magnitude std
+Absolute error
+0
+0.5
+1
+1.5
+|error| (velocity magnitude)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+1.5
+3
+4.5
+velocity magnitude
+Standard deviation
+0
+0.25
+0.5
+0.75
+velocity magnitude std
+Absolute error
+0
+0.5
+1
+1.5
+|error| (velocity magnitude)
+Figure 15: Urban airflow, velocity magnitude, sparse sensors (0.78125%): true state and velocity observations
+(top), followed by the posterior-mean state, ensemble standard deviation, and absolute error for our methods and
+the retained baselines at the final forecast step. “Shared” denotes the ensemble-shared covariance and “JF” the
+Jacobian-free covariance; solid cells are masked.
+31
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+0
+1.5
+3
+temperature 
+Standard deviation
+0
+0.15
+0.3
+0.45
+temperature 
+ std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (temperature 
+)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+0
+1.5
+3
+temperature 
+Standard deviation
+0
+0.15
+0.3
+0.45
+temperature 
+ std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (temperature 
+)
+Figure 16: Urban airflow, potential temperature θℓ, sparse sensors (0.78125%): true state and velocity obser-
+vations (top), followed by the posterior-mean state, ensemble standard deviation, and absolute error for our
+methods and the retained baselines at the final forecast step. “Shared” denotes the ensemble-shared covariance
+and “JF” the Jacobian-free covariance; solid cells are masked.
+32
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+1.5
+3
+4.5
+velocity magnitude
+Standard deviation
+0
+0.25
+0.5
+0.75
+velocity magnitude std
+Absolute error
+0
+0.6
+1.2
+1.8
+|error| (velocity magnitude)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+1.5
+3
+4.5
+velocity magnitude
+Standard deviation
+0
+0.25
+0.5
+0.75
+velocity magnitude std
+Absolute error
+0
+0.6
+1.2
+1.8
+|error| (velocity magnitude)
+Figure 17: Urban airflow, velocity magnitude, sparse sensors (1.5625%): true state and velocity observations
+(top), followed by the posterior-mean state, ensemble standard deviation, and absolute error for our methods and
+the retained baselines at the final forecast step. “Shared” denotes the ensemble-shared covariance and “JF” the
+Jacobian-free covariance; solid cells are masked.
+33
+
+
+True state
+Observations
+Ours
+SI-SDE (shared)
+FM-ODE (shared)
+SI-SDE (JF)
+FM-ODE (JF)
+State
+0
+1.5
+3
+temperature 
+Standard deviation
+0
+0.2
+0.4
+0.6
+temperature 
+ std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (temperature 
+)
+Baselines
+FlowDAS+SURGE
+SDA+SURGE
+D-Flow SGLD
+Guided FM (FIG)
+State
+0
+1.5
+3
+temperature 
+Standard deviation
+0
+0.2
+0.4
+0.6
+temperature 
+ std
+Absolute error
+0
+0.8
+1.6
+2.4
+|error| (temperature 
+)
+Figure 18: Urban airflow, potential temperature θℓ, sparse sensors (1.5625%): true state and velocity observations
+(top), followed by the posterior-mean state, ensemble standard deviation, and absolute error for our methods and
+the retained baselines at the final forecast step. “Shared” denotes the ensemble-shared covariance and “JF” the
+Jacobian-free covariance; solid cells are masked.
+34
+
+
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+6 × 10
+1
+7 × 10
+1
+8 × 10
+1
+9 × 10
+1
+RMSE (fluid cells)
+(a) Velocity, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+5 × 10
+1
+6 × 10
+1
+7 × 10
+1
+8 × 10
+1
+9 × 10
+1
+RMSE (fluid cells)
+(b) Velocity, sparse 1.5625%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+100
+2 × 10
+1
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+RMSE (fluid cells)
+(c) Temperature θℓ, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+2 × 10
+1
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+RMSE (fluid cells)
+(d) Temperature θℓ, sparse 1.5625%.
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+Figure 19: Urban airflow: RMSE (fluid cells) vs. forecast step for velocity and temperature at both
+sensor densities; observations are assimilated every third step.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+CRPS
+(a) Velocity, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+CRPS
+(b) Velocity, sparse 1.5625%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+2 × 10
+1
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+CRPS
+(c) Temperature θℓ, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+10
+1
+2 × 10
+1
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+CRPS
+(d) Temperature θℓ, sparse 1.5625%.
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+Figure 20: Urban airflow: CRPS vs. forecast step for velocity and temperature at both sensor densities;
+observations are assimilated every third step.
+35
+
+
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(a) Velocity, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+10
+1
+100
+|1
+spread/skill|
+(b) Velocity, sparse 1.5625%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+100
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+|1
+spread/skill|
+(c) Temperature θℓ, sparse 0.78125%.
+0
+20
+40
+60
+80 100 120 140
+Assimilation step
+100
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+|1
+spread/skill|
+(d) Temperature θℓ, sparse 1.5625%.
+Ours SI-SDE (shared)
+Ours DM-SDE (shared)
+Ours FM-ODE (shared)
+Ours SI-SDE (Jac-free)
+Ours DM-SDE (Jac-free)
+Ours FM-ODE (Jac-free)
+FlowDAS + SURGE
+SDA + SURGE
+D-Flow SGLD
+Guided FM (FIG)
+Figure 21: Urban airflow: spread–skill deviation vs. forecast step for velocity and temperature at both
+sensor densities; observations are assimilated every third step.
+36

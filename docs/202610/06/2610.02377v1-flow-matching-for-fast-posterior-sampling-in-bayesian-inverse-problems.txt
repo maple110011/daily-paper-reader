@@ -1,0 +1,2245 @@
+Flow Matching for Fast Posterior Sampling in
+Bayesian Inverse Problems
+Jan Blechschmidt, Oliver G. Ernst, Moritz Poguntke, Bj¨orn Sprungk
+October 5, 2026
+Sampling from the posterior is the central task of computational Bayesian inverse
+problems. The standard workhorse in Bayesian inference—Markov chain Monte Carlo
+(MCMC)—is sequential, yields correlated samples, and must be rerun for each observa-
+tion. Conditional flow matching offers an amortized alternative: a transport map, trained
+once on joint samples of parameter and data, that yields independent approximate pos-
+terior samples for any observation at negligible online cost, without new likelihood eval-
+uations. We give a careful, MCMC-literate assessment of flow matching for PDE-based
+inverse problems with function-valued parameters. Exploiting the flow’s tractable den-
+sity, we derive computable accuracy estimates of the underlying approximate posterior
+in total-variation distance and Kullback–Leibler divergence and, moreover, propose a hy-
+brid sampler that is asymptotically exact by Metropolization. We validate the accuracy
+estimates and demonstrate the amortization in several numerical examples, including
+electrical impedance tomography and a likelihood-free Lotka–Volterra model.
+1. Introduction
+For the past three decades Markov chain Monte Carlo (MCMC) has been the workhorse for sam-
+pling from posterior distributions in Bayesian inference and Bayesian inverse problems.
+Modern
+variants — dimension-robust proposals such as preconditioned Crank–Nicolson [Cot+13; HSV14],
+likelihood-informed [CLM16; RS18] and adaptive [Haa+06; HST01] schemes — are well understood
+theoretically and remarkably reliable in practice. Their cost profile, however, is fixed by design: the
+Markov chain is sequential, its samples are correlated, every step requires at least one evaluation
+of the forward model, and the entire computation must be repeated from scratch for each new ob-
+servation. In applications where the same inverse problem is solved again and again for a stream
+of measurements — electrical impedance tomography (EIT) being a prototypical example — this
+per-observation cost is the dominant obstacle to online or real-time uncertainty quantification.
+A different paradigm, going back to El Moselhy and Marzouk [EM12] and systematically developed
+in [Par15; Mar+17], is to construct a transport map pushing a simple reference distribution forward
+to the posterior: once the map is available, we can generate, in parallel, arbitrarily many independent
+samples from (an approximation to) the posterior. If the transport map is of block-triangular struc-
+ture and trained to generate the joint distribution of unknown parameters and observable data, then
+a classical disintegration argument in [Mar+17, Sec. 7] shows that this transport map reproduces
+the posterior for (almost) all possible observations. Hence, transport-based sampling for Bayesian
+inverse problems is amortized: after an offline training phase approximate posterior samples for
+any new observation are available at negligible online cost (= evaluation of the transport map),
+and no further likelihood evaluations are needed. These are substantial promises, in particular for
+PDE-based Bayesian inverse problems with computationally expensive likelihoods.
+For the construction and training of suitable transport maps, generative machine learning has sup-
+plied several flexible and scalable approaches in recent years. In the foundational works [EM12;
+1
+arXiv:2610.02377v1  [math.NA]  1 Oct 2026
+
+
+Par15; Mar+17] the authors focused on monotone triangular transport maps motivated by the clas-
+sical Knothe–Rosenblatt rearrangement. More recently, Baptista et al. [Bap+24] use monotone gen-
+erative adversarial networks (GANs) [Goo+14] for learning suitable transport maps and Wang et al.
+[Wan+25] employ continuous-time normalizing flows in the form of neural ordinary differential equa-
+tions [Che+18; Gra+19] to derive conditional optimal transport maps. Score-based diffusion models
+[Son+21] have been applied to Bayesian inverse problems as well, e.g., in [Chu+23; Bal+23]. Closely
+related to these is the flow matching approach to learn a neural ODE-based transport map [Lip+23;
+LGL23; ABV23]. Its significant advantage over [Che+18; Gra+19] is that expensive likelihood-based
+training is replaced by a simple least-squares regression that requires no ODE solves during train-
+ing, reducing training cost by orders of magnitude. Bayesian flow matching, i.e., flow matching
+for sampling conditional distributions, has been derived and discussed in detail in [Che+25; Hag25;
+WS25] but demonstrated primarily on low-dimensional benchmarks and imaging-type applications.
+Very recently, [Kr¨u+26] compare three different machine learning approaches for transport sam-
+pling of posteriors in Bayesian inverse problems — GANs, invertible neural networks, and Bayesian
+flow matching — and found Bayesian flow matching to be the “clear winner”. Moreover, due to
+the likelihood-free training, flow matching can also be used for simulation-based inference [Wil+23;
+CBL20] where the likelihood is either unknown or computationally intractable — and, hence, classical
+MCMC methods, which rely on likelihood evaluations, are not applicable.
+Thus, flow matching seems to be one of the most promising approaches for transport-based sampling
+of conditional distributions. What is missing so far in the literature, in our view, is a careful, MCMC-
+literate assessment of the performance of flow matching for PDE-based Bayesian inverse problems —
+not compared to other transport-based approaches but rather to competitive gold-standard MCMC
+algorithms and done on Bayesian inverse problems of increasing difficulty. Furthermore, this paper
+aims to provide computable a-posteriori bounds, both lower and upper, of the accuracy of the
+learned flow matching posteriors. These bounds are derived by means of (Markov chain) Monte
+Carlo theory and exploit a combination of flow matching and the independent Metropolis–Hastings
+algorithm, which yields a computationally efficient, asymptotically unbiased flow matching-based
+sampler outperforming standard MCMC samplers in some challenging Bayesian inverse problems.
+In this regard, we also mention previous works on the combination of transport maps and MCMC,
+namely, Parno and Marzouk [PM18], in which monotone triangular transport maps were exploited for
+posterior-adapted proposals accelerating MCMC and Grenioux et al. [Gre+23], in which discrete-time
+normalizing flows were also studied as proposals within independent Metropolis–Hastings. Moreover,
+we also refer to [BDD24] for a-priori error bounds for unconditional flow matching in Wasserstein
+distance which, however, are not computable in practice.
+Our contributions
+are summarized as follows:
+1. We give a self-contained account of this methodology addressed to the inverse problems and
+UQ communities, assembling its mathematical and computational ingredients in a unified and
+rigorous measure-transport-anchored presentation (Section 3).
+2. Exploiting the tractable density of the flow and using classical Monte Carlo theory we derive
+computable bounds on the accuracy of the learned posterior in total variation (TV) distance
+and Kullback–Leibler (KL) divergence (Section 3.4).
+3. As a by-product of the above we derive, similar to [Gre+23], an asymptotically correct hybrid
+sampler, in which the bias of flow matching samples is removed via Metropolization (Sec-
+tion 3.3).
+4. We demonstrate the efficiency and accuracy of flow matching for PDE-based Bayesian inverse
+problems in a number of numerical experiments, in which we1
+• validate the derived accuracy estimates for the learned posterior for a simple illustrative
+example (Section 4.1),
+1All examples will be published upon acceptance as code on GitHub
+2
+
+
+• conduct systematic parameter studies on the accuracy of flow matching for Bayesian
+inversion in the stationary diffusion equation for an increasing number of observations, a
+decaying noise level and an increasing number of KL terms (Section 4.2), and
+• illustrate the benefits of flow matching-based sampling compared to MCMC as an amor-
+tized sampler in EIT (Section 4.3), where a single offline training enables real-time pos-
+terior sampling for a stream of new measurements, and for a stochastic Lotka–Volterra
+model, where the likelihood is intractable and classical MCMC methods, which rely on
+likelihood evaluations, are not applicable (Section 4.4).
+In Section 5 we weigh the advantages and disadvantages of both approaches against each other and
+state when to rely on which. Once trained, the flow matching model provides a sampler for new ob-
+servations at negligible cost — in contrast to MCMC. This advantage comes with clearly identifiable
+limitations, which our experimental studies map out: accuracy of flow matching approximations can
+degrade for strongly concentrated posteriors (e.g., due to small observational noise) and for obser-
+vations unlikely under the prior, because flow matching spreads the training data according to the
+prior predictive distribution whereas MCMC focuses its likelihood evaluations (after burn-in) near
+the center of the posterior probability mass.
+This paper is deliberately computational and proof-of-concept in character. A deeper mathemati-
+cal analysis of Bayesian flow matching, in particular the development of remedies for the outlined
+shortcomings, is the subject of future work.
+Problem setting and outline
+We consider the inverse problem of inferring an unknown parameter
+x ∈X from a noisy observation y ∈Y related through the forward model
+y = F(x) + ε,
+(1)
+where F : X →Y denotes the forward operator — typically the composition of a PDE solution
+operator with an observation operator — and ε is observational noise, independent of x.
+The
+parameter space X is in general a function space, while Y = Rm throughout. Since (1) is ill-posed in
+the sense of Hadamard [Had23], we adopt the Bayesian approach [Stu10]: endowing x with a prior
+distribution πX and assuming a Gaussian observational noise ε ∼N(0, Γ), the posterior distribution,
+i.e., the conditional distribution of x given the observation y, is given by Bayes’ rule as a change of
+measure with respect to the prior [Stu10],
+dπy
+dπX
+(x) =
+1
+Z(y) exp
+ −1
+2
+y −F(x)
+2
+Γ
+
+(2)
+with Z(y) =
+R
+X exp
+ −1
+2
+y −F(x)
+2
+Γ
+
+πX(dx).
+In the following, we focus mainly on the finite-dimensional case Xh = Rd and an absolutely continuous
+prior πX with Lebesgue density also denoted by πX : Rd →[0, ∞). Then, the posterior πy also admits
+a Lebesgue density given by
+πy(x) =
+1
+Z(y) exp
+
+−1
+2
+y −F(x)
+2
+Γ
+
+πX(x),
+x ∈Rd.
+(3)
+In this paper we use πX, πy etc. to denote both the measures and their Lebesgue densities.
+The computational task is then to sample from πy, either for a single observation y or — the setting
+emphasized in this paper — for multiple observations y under the same prior and forward model.
+Two features of (3) are important for the design of sampling algorithms: the normalization Z(y) is
+unavailable, so algorithms may access the posterior only through ratios of the unnormalized density;
+and each evaluation of F requires one solve of the forward model, which dominates the computational
+cost in the PDE-based problems of Section 4.
+Section 2 recalls the Metropolis–Hastings MCMC variants used as baselines.
+Section 3 presents
+conditional sampling via flow matching including the proposed sample-based diagnostics. Section 4
+contains the numerical study, and Section 5 collects our findings, limitations, and open questions.
+3
+
+
+2. Posterior sampling via Markov chain Monte Carlo
+Markov chain Monte Carlo constructs an ergodic Markov chain {X(k)}k≥1 on X or Xh = Rd, re-
+spectively, with πy as its invariant distribution, so that the states approximately follow the posterior
+for sufficiently large k. We restrict attention to the Metropolis–Hastings (MH) class, which contains
+the de facto standard algorithms for Bayesian inverse problems and suffices for the comparisons in
+this paper; we recall the general mechanism, discuss its efficiency, and recall three variants of MH
+algorithms commonly used as baselines.
+2.1. The Metropolis–Hastings algorithm
+Given the current state x(k), an MH transition consists of two steps: a candidate ˜x is drawn from a
+proposal density q(˜x|x(k)), and is accepted, i.e. X(k+1) = ˜x, with probability
+α
+ x(k), ˜x
+
+= min
+
+1,
+πy(˜x)
+πy(x(k))
+q(x(k) | ˜x)
+q(˜x|x(k))
+
+,
+(4)
+otherwise the chain remains at X(k+1) = x(k); generic pseudocode is recorded as Algorithm 1 in
+Appendix A. Only ratios of the posterior enter (4), so Z(y) is never needed, but every iteration
+costs at least one evaluation of F and hence one forward solve. Under mild positivity assumptions
+[RC99] on q, the resulting chain is ergodic and converges to the posterior in total variation from any
+initialization,
+lim
+k→∞dTV
+ L(X(k)), πy
+= 0,
+dTV(µ1, µ2) :=
+sup
+A∈B(X)
+|µ1(A) −µ2(A)|,
+(5)
+where L(X(k)) denotes the law of X(k). Note that for absolutely continuous µ1, µ2 on Rd one has
+dTV(µ1, µ2) = 1
+2
+R
+|µ1(x) −µ2(x)| dx. Moreover, the average taken along the path of the Markov
+chain converges to the true posterior expectation, i.e., for f : Xh →R being absolutely integrable
+w.r.t. πy we have under mild assumptions [RC99] that almost surely
+lim
+n→∞
+1
+n
+n
+X
+k=1
+f(X(k)) = EX∼πy [f] .
+What distinguishes good from poor MH samplers, i.e., a good from a poor choice for the proposal
+q, is not these asymptotic guarantees but rather the rate of convergence in (5) and the asymptotic
+variance of the path average estimator
+1
+n
+Pn
+k=1 f(X(k)). A common computable measure for the
+efficiency of a Markov chain Monte Carlo algorithm is therefore its effective sample size (ESS) given
+by
+ESSf(n) =
+n
+1 + 2 P∞
+k=0 Corr(f(X0), f(Xk)) ≤n,
+n ∈N,
+where — given stationarity X0 ∼πy — the quantity ESSf(n) corresponds to the number of inde-
+pendent samples w.r.t. πy yielding the same variance or statistical efficiency of the empirical average
+of f(X(k)) as n correlated samples taken from the Markov chain.
+Computational aspects
+MH algorithms share a common cost structure that frames the comparison
+in this paper. The Markov chain is inherently sequential — each state depends on its predecessor
+— so sampling typically parallelizes only across independent chains or across proposal generation.
+Its output is correlated, so the effective sample size falls short of the chain length, often by orders
+of magnitude in the case of poor mixing. Every iteration spends at least one forward solve, the
+dominant cost in PDE-based Bayesian inverse problems. Moreover, the entire computation is tied
+to a single observation y: a new measurement requires running a new Markov chain.
+The flow
+matching methodology assessed in the next section targets precisely these computational bottlenecks
+— independent samples, generated in parallel, at negligible per-sample cost, amortized over all
+observations — while giving up the asymptotic exactness that the Metropolis–Hastings correction
+provides. In Sections 3.3 and 3.4 we show how the two approaches can be recombined to recover
+it.
+4
+
+
+2.2. Common MH algorithms
+In this paper four MH variants serve as baselines; we recall them in the briefest terms and refer to
+the cited literature for details.
+Independent Metropolis–Hastings (IMH) uses a proposal q which does not depend on the current
+state, i.e., q(˜x|x(k)) = q(˜x) or ˜x = ζ with ζ ∼q, respectively. The performance of IMH depends
+crucially on the overlap between proposal and posterior: if q is a good proxy for πy, the chain
+behaves nearly like direct sampling, whereas a poor proxy produces long runs of rejections and
+highly correlated output. In Section 3.3 we exploit the flow matching approximation as proposal
+within IMH which yields unbiased samples as well as an empirical estimate of the accuracy of the
+flow matching proxy in TV distance.
+Random walk Metropolis (RWMH) [Met+53; Has70] proposes a Gaussian perturbation of the current
+state, ˜x = x(k) + ζ with ζ ∼N(0, Σ); the symmetric proposal density q(˜x|x(k)) ∝exp(−0.5∥˜x −
+x(k)∥2
+Σ) cancels in (4). This MH variant is simple and robust but requires careful tuning of Σ and
+mixes increasingly slowly as the dimension d grows.
+Preconditioned Crank–Nicolson (pCN) [Cot+13; HSV14] proposes, for a centered Gaussian prior
+πX,
+˜x =
+p
+1 −β2 x(k) + β ζ,
+ζ ∼πX,
+β ∈(0, 1).
+The proposal is reversible with respect to the prior, so the acceptance probability reduces to the
+likelihood ratio min{1, exp( 1
+2
+y−F(x(k))
+2
+Γ−1
+2
+y−F(˜x)
+2
+Γ)}. Crucially, pCN is well defined directly
+on the function space X and its convergence behavior is robust under mesh refinement [Cot+13;
+HSV14], which makes it a natural reference for the function-space examples of Section 4.
+Delayed rejection adaptive Metropolis (DRAM) [Haa+06] combines adaptive Metropolis [HST01],
+which periodically updates the proposal covariance from the chain history, with delayed rejection
+[Mir01], which upon rejection retries with a scaled proposal before the state is retained. DRAM
+often attains lower autocorrelation than RWMH on correlated posteriors, at the price of per-iteration
+overhead and of diminishing-adaptation conditions required for ergodicity.
+3. Posterior sampling via flow matching
+This section describes the transport-based sampler assessed in this paper. We first recall the struc-
+tural result reducing posterior sampling to a measure transport problem on the product of parameter
+and observation space (Section 3.1). We then introduce the representation of the transport map as the
+flow of a neural ordinary differential equation and explain why its classical, likelihood-based training
+is computationally prohibitive in the inverse problems context before presenting flow matching, the
+regression-based training that makes the approach practical (Section 3.2). Finally, we discuss how
+flow matching combined with MCMC can yield unbiased simulations of the posterior (Section 3.3)
+and how classical Monte Carlo theory yields computable lower and upper bounds on the accuracy of
+the flow matching approximation (Section 3.4).
+3.1. Posterior sampling as a transport problem
+The measure transport approach to computational Bayesian inference [EM12; Mar+17] seeks a map
+TX pushing forward a tractable reference distribution η on the parameter space X—throughout a
+standard Gaussian—to the posterior, TX∗η = πy, so that posterior sampling reduces to evaluating
+TX at reference samples. For a fixed observation y such a map can be constructed variationally from
+the unnormalized posterior density, e.g. within a class of monotone triangular functions [Mar+17].
+The approach pursued here differs in two respects: the map is constructed from samples of the joint
+distribution π of parameter and observation, i.e., of the prior and the prior predictive distribution,
+rather than from density evaluations, and it is conditional, i.e., the observation enters as a parameter,
+TX(· ; y). The theoretical basis is the following disintegration result; it is the finite-dimensional core of
+5
+
+
+the conditional sampling technique via triangular transports summarized in [Mar+17, Sec. 7, Lem. 1],
+and we state it in the block-triangular Banach space formulation of Baptista et al. [Bap+24].
+Let X, Y be separable Banach spaces, let S := X ×Y carry their product Borel σ-algebra, and denote
+by P(·) the corresponding sets of Borel probability measures, with µX, µY denoting the marginals
+of µ ∈P(S). By disintegration we can rewrite every µ ∈P(S) as
+µ(dx dy) = µ(dx|y) µY (dy)
+where the (regular version of the) conditional distribution µ(·|·): B(X) × Y →[0, 1] is uniquely
+determined µY -almost everywhere.
+Theorem 3.1. Let ν = νX ⊗νY ∈P(S) be a product reference measure and π ∈P(S) a target
+measure. Let T : S →S be a block-triangular map of the form
+T(x, y) =
+
+TX(x; y)
+y
+
+.
+(6)
+If T∗ν = π, then νY = πY and
+TX(· ; y)∗νX = π(·|y)
+for πY -a.e. y ∈Y.
+Proof. Since T leaves the second component unchanged, T∗ν = π implies that the Y-marginals
+coincide, hence νY = πY . For B ∈B(S) and y ∈Y, define the slice By := {x ∈X : (x, y) ∈B}. The
+triangular structure of T gives [T −1(B)]y = TX(· ; y)−1(By), and hence, by T∗ν = π, the product
+structure of ν, and Fubini’s theorem,
+π(B) = ν
+ T −1(B)
+
+=
+Z
+Y
+νX
+ TX(· ; y)−1(By)
+
+νY (dy) =
+Z
+Y
+ TX(· ; y)∗νX
+
+(By) πY (dy).
+On the other hand, the disintegration of π with respect to its Y-marginal yields
+π(B) =
+Z
+Y
+π(By |y) πY (dy),
+and the (πY -a.e.) uniqueness of the disintegration implies TX(· ; y)∗νX = π(·|y) for πY -a.e. y.
+Theorem 3.1 converts the approximation of the posterior with respect to all possible observations
+into a single transport problem on S, subject to the constraint that the observation component be
+carried along unchanged.
+For the construction of the transport map TX, we focus again on the finite-dimensional case Xh ∼= Rd
+and seek TX in a parametrized family {Tθ : θ ∈Θ}, Θ ⊆Rp of mappings Tθ : Rd × Y →Rd (e.g.,
+neural networks where θ consists of the weights and biases), and fix the reference measure as
+ν = η ⊗πY ,
+η := N(0, Id),
+(7)
+with Id ∈Rd×d denoting the identity matrix. Note that this already builds in the marginal matching
+νY = πY from the start. In the following let us denote the Lebesgue densities of ν and π again by
+ν(x, y) = νX(x) νY (y) and π(x, y) = π(x|y) πY (y), respectively, so that νX is the standard Gaussian
+density and πy(·) = π(·|y) the posterior density. Moreover, we introduce πy
+θ := Tθ(· ; y)∗η as the
+approximation of πy resulting from the transport map Tθ. How do we now determine θ? A common
+approach in the machine learning literature is the minimization of the joint KL divergence between
+T∗ν and π, which is actually equivalent to maximum likelihood estimation, as we explain below. Due
+to the product structure of (7) and the triangular structure of T(x, y) = (Tθ(x; y), y) the pushforward
+density under the triangular map factorizes as [T∗ν](x, y) = [Tθ(· ; y)∗νX](x) νY (y), which in turn
+yields
+DKL
+ π ∥T∗ν
+ := E(x,y)∼π
+
+log
+π(x, y)
+[T∗νX](x, y)
+
+= E(x,y)∼π
+
+log
+πy(x) πY (y)
+[Tθ(· ; y)∗νX](x) νY (y)
+
+= E(x,y)∼π
+
+log
+πy(x)
+[Tθ(· ; y)∗νX](x)
+
+= E(x,y)∼π [log πy(x)] −E(x,y)∼π [log πy
+θ(x)] ,
+6
+
+
+i.e., minimizing the joint divergence is equivalent to minimizing the expected negative log-likelihood
+L(θ) = −E(x,y)∼π [log πy
+θ(x)]
+(8)
+over the joint samples.
+In practice, this loss is estimated empirically by Monte Carlo sampling,
+requiring only the ability to draw samples from π. Moreover, the well-known ‘chain rule’ for the KL
+divergence yields
+DKL
+ π ∥T∗ν
+
+= DKL
+ πY ∥νY
+
+|
+{z
+}
+=0
++ Ey∼πY
+
+DKL
+ πy ∥Tθ(· ; y)∗η
+
+.
+Thus, minimizing the joint divergence also controls the expected posterior error over observations
+from the prior predictive distribution.
+Three features of this approach are central to the remainder of the paper. First, the joint distribution
+π — unlike any individual posterior — is easy to sample: drawing x ∼πX from the prior and
+simulating y through the forward model (1) produces joint samples at the cost of one forward solve
+each, without a single likelihood or posterior density evaluation. The training data for the learned
+transport are therefore cheap and, notably, available even when the likelihood is intractable. Second,
+maximum-likelihood estimation, i.e., minimization of the KL divergence, requires the computation of
+the pushforward density πy
+θ and of its gradients w.r.t. θ. The feasibility and computational efficiency
+of this may depend on the architecture of Tθ.
+And third, the training objective (8) yields only
+πY -almost everywhere guarantees for the approximation of πy by πy
+θ. Although pointwise guarantees
+are also available in the literature [AHS23] under additional assumptions, the simple practical flip
+side of the training in terms of expectations w.r.t. π is that for observations y belonging to the ‘tail
+region’ of the prior predictive distribution πY the approximation quality of TX(· ; y)∗νX can be very
+poor, in particular since with high probability no training data reaches such tail regions.
+In the following, we present a convenient approach for transport maps Tθ with computable push-
+forward density πy
+θ and explain how they can be trained computationally efficiently via the flow
+matching objective — which differs from the classical KL divergence-based loss (8) above.
+3.2. Neural transport maps and their training via Bayesian flow matching
+Generative machine learning provides several flexible function classes for constructing a block-
+triangular map with T∗ν ≈π. The one relevant here represents the transport map as the solution
+operator or flow map of an ordinary differential equation
+d
+dt x(t) = vθ
+ t, x(t); y
+
+,
+t ∈[0, 1],
+x(0) = x0 ∼η,
+(9)
+whose right-hand side vθ : [0, 1]×Rd ×Rm →Rd is a neural network with weights and biases denoted
+by θ ∈Rp taking as inputs time, state, and the observation. Equation (9) is also known as a neural
+ODE [Che+18]. If vθ is globally Lipschitz continuous in the state x, the Picard–Lindel¨of theorem
+guarantees the existence of a unique solution x(·; x0, y): [0, ∞) →Rd of (9) and that the solution
+map
+Tθ(x0; y) := x(1; x0, y)
+is a C1-diffeomorphism of Rd for every fixed y. Setting T(x, y) = (Tθ(x; y), y) yields exactly the
+block-triangular structure (6).
+Moreover, due to the ODE representation of the transport map
+the density of the pushforward πy
+θ = Tθ(· ; y)∗η is straightforward to compute.
+To this end, let
+pt : Rd × Y →[0, ∞) denote the Lebesgue density of the pushforward measure Tθ(t, x0; y)∗η where
+Tθ(t, x0; y) := x(t; x0, y).
+Then, by the instantaneous change-of-variables formula [Che+18], we
+have
+∂log pt(x(t); y)
+∂t
+= −∇· vθ
+ t, x(t); y
+
+,
+(10)
+so that integrating (9) backward from a point x and accumulating the divergence along the trajectory
+yields
+log πy
+θ(x) = log νX
+ x(0)
+
++
+Z 1
+0
+∇· vθ
+ t, x(t); y
+
+dt.
+(11)
+7
+
+
+This tractable density distinguishes deterministic flows from diffusion-based generative samplers and
+enables Metropolization as well as quantitative diagnostics, see Sections 3.3 and 3.4. In particular, it
+allows one to determine the parameters θ of the velocity field by maximum-likelihood/minimizing the
+KL divergence as outlined above, i.e., minimizing the loss (8) w.r.t. θ. In fact, this is the approach
+for training in the conditional continuous normalizing flows (CCNF) literature [Wan+25; Bap+24].
+The computational difficulty here, however, is that every evaluation of (8) — and of its gradient, at
+every step of stochastic gradient descent — requires solving the ODE (9) backward for every sample
+in the current batch via (11), differentiating through the unrolled numerical solver (or employing
+the adjoint method [Che+18], with its own stability issues), and evaluating the divergence ∇· vθ,
+whose parameter gradient involves mixed second derivatives of the network, in practice approximated
+by stochastic trace estimators [Gra+19]. For inverse problems, where X is discretized into a finely
+resolved space Xh ∼= Rd with large d, these nested ODE solves and second-order terms dominate the
+cost and render maximum-likelihood training prohibitively expensive.
+Bayesian flow matching
+Flow matching [Lip+23; LGL23; ABV23] retains the neural ODE repre-
+sentation (9) but replaces the maximum-likelihood objective (8) by a least-squares regression that
+requires no ODEs to be solved and no traces to be evaluated during training. Its conditional ex-
+tension [Che+25; Hag25; WS25] is referred to as guided or Bayesian flow matching. To derive the
+flow matching objective, let X0 ∼η and (X1, Y ) ∼π be independent2 and connect the endpoints by
+linear interpolation in the parameter component,
+Xt := (1 −t) X0 + t X1,
+t ∈[0, 1],
+(12)
+while the observation component is held fixed at Y . For each fixed observation y ∈Y, (12) de-
+fines a stochastic process on the parameter space [ABV23; WS25] whose time marginals pt(·|y) :=
+L(Xt|Y = y) connect the reference to the posterior: p0(·|y) = η since X0 is independent of Y , and
+p1(·|y) = πy since, given Y = y, the terminal point X1 is distributed according to the posterior πy.
+The stochastic process itself, however, is not causal — following a trajectory requires knowing its
+endpoint X1 in advance. The idea of flow matching is to replace it by a neural flow, resulting from
+a neural ODE (9) with initial state X0 ∼η and the same time marginals as the original process.
+Since the sample paths of (12) are affine in t, the pathwise derivative ˙Xt = X1 −X0 exists trivially
+but again depends on the terminal state X1. In order to get a causal process with the same time
+marginals one can consider conditioning ˙Xt on the current state Xt resulting in a velocity field
+v∗(t, x; y) = E
+h
+˙Xt
+ Xt = x, Y = y
+i
+= E
+
+X1 −X0
+ Xt = x, Y = y
+
+.
+(13)
+It can be shown under mild regularity assumptions, see [LGL23, Theorem 3.3] or [WS25, Theorem
+6.3], that this velocity field plugged into (9) yields the same time marginals pt(·|y) := L(Xt|Y = y),
+since it satisfies the corresponding continuity equation
+∂tpt + ∇· (pt v∗) = 0,
+(14)
+— a rewriting of (10). By the defining property of conditional expectation as the best approximation
+in the L2 sense, the velocity field (13) is the unique minimizer, over all measurable vector fields v, of
+E
+h
+∥˙Xt −v(t, Xt; Y )∥2
+2
+i
+. The flow matching objective is therefore not an ad hoc regression but exactly
+this best approximation problem, restricted to the parametric class vθ: Bayesian flow matching trains
+the network by
+min
+θ
+E
+hvθ(t, Xt; Y ) −(X1 −X0)
+2
+2
+i
+(15)
+where the expectation is taken over t ∼U[0, 1], X0 ∼η, and (X1, Y ) ∼π.
+In practice, this
+expectation is estimated by plain Monte Carlo, where sampling t ∼U[0, 1] and X0 ∼η is trivial and
+sampling (X1, Y ) ∼π requires one forward solve of F, and minimized via stochastic gradient descent
+which now requires only a simple backpropagation for computing gradients of the objective.
+2Other couplings, e.g., optimal couplings w.r.t. conditional Wasserstein distances [Che+25], are possible but not
+always computationally feasible.
+8
+
+
+If the so-trained velocity field vθ recovers the ideal field v∗, the neural transport block-triangular
+map (x, y) 7→(Tθ(x; y), y) propagates ν = η ⊗πY to π — as explained above.
+Flow matching
+thus trades the expensive objective (8) for a cheap regression whose minimizer provably provides
+the desired transport. However, the error incurred by finite network capacity, finite training data,
+inexact optimization, and ODE discretization at sampling time is not controlled by this argument,
+but a-priori error bounds — for the unconditional case — are available for instance in [BDD24]
+and the conditional setting is the subject of ongoing analysis — which is precisely why a-posteriori
+diagnostics such as those presented in Section 3.4 are highly relevant in applications.
+Computational aspects
+Applying flow matching for posterior sampling separates into two phases.
+Offline phase (training): one generates joint samples (x(i)
+1 , y(i)) ∼π by prior sampling and forward
+simulation, and minimizes (15) by stochastic gradient descent over minibatches of (t, x0, x1, y). On-
+line phase (sampling): given an observation y, draw x0 ∼η and integrate (9) with the trained field
+vθ(·, · ; y) using a standard ODE solver; the resulting Tθ(x0; y) are independent draws from the flow
+matching approximation of πy, generated in parallel at the cost of a few network evaluations each —
+no forward-model solves, no likelihood evaluations are required anymore. When necessary, the den-
+sity of the approximation is available through (11) at the cost of one further ODE solve. Pseudocode
+for data generation, training and sampling is given in Algorithms 2 to 4 in Appendix B.
+Remark 3.1 (Likelihood-free inference). Both training and sampling require only draws from the
+joint distribution π, i.e., prior samples pushed through the forward model; the likelihood is never
+evaluated. Bayesian flow matching therefore applies verbatim to simulation-based (likelihood-free)
+inverse problems in which π(y|x) is intractable but forward simulation is feasible [CBL20; Wil+23;
+Bap+24], such as the stochastic Lotka–Volterra model of Section 4.4. In contrast, the Metropolization
+of Section 3.3 and the diagnostics of Section 3.4 require the unnormalized posterior density and are
+hence available only for tractable likelihoods.
+3.3. Flow-based independent Metropolis–Hastings
+Bayesian flow matching provides an approximation to the posterior πy, which is easy to sample.
+However, the samples generated by flow matching are biased whenever the minimum of (15) is
+not reached — which is typically the case in practice.
+Often it is hard to judge a priori how
+close the flow matching approximation is to the true posterior πy for explicitly given data y. A
+combination of flow matching and Metropolization can remove this bias and provide asymptotically
+exact samples from the posterior πy. To this end, we use the flow matching distribution as the
+proposal distribution q within the IMH, i.e., the proposal distribution q is given by the pushforward
+of the reference distribution q = πy
+θ = Tθ(· ; y)∗η. Thus, we generate a Markov chain (X(k))k∈N
+where given X(k) = x a possible next state is proposed by independent samples ˜x = Tθ(x0; y) with
+x0 ∼η which are accepted with log acceptance probability
+log α(x, ˜x) = min {0, log πy(˜x) −log πy(x) + log πy
+θ(x) −log πy
+θ(˜x)}
+= min {0, log w(˜x) −log w(x)}
+where we set w(x) := πy(x)/πy
+θ(x). Thus, we need to compute the log flow matching density log πy
+θ(˜x)
+via numerical integration of the corresponding ODE (11), see above. This approach combines the
+generative capability of normalizing flows, which yields a flexible, high-dimensional proposal that
+closely approximates the posterior geometry, with the asymptotic correctness of MCMC methods.
+The proposal ˜x is generated independently of the current state x(k), allowing for parallel sampling
+of candidates prior to the acceptance step.
+Note that the idea of exploiting normalizing flows for enhancing MCMC sampling has already been
+proposed in previous works, e.g., [Gre+23].
+9
+
+
+3.4. Diagnostic metrics
+We now provide two sampling-based diagnostics for the accuracy of the flow matching approximation
+to πy. Both diagnostics exploit that the density πy
+θ(x) is computationally tractable.
+The first diagnostic is based on the flow-based IMH mentioned above. In fact, the mean acceptance
+rate of the (stationary) Markov chain generated by the IMH is closely related to the TV distance
+between proposal q and target distribution πy.
+Proposition 3.2 ([Eg´e+26]). Let the target πy and the proposal q have densities p and q, respectively,
+and let
+¯α := EX∼πy, e
+X∼q
+h
+α(X, e
+X)
+i
+denote the mean acceptance rate of the stationary IMH chain. Then
+1 −2 dTV(q, πy) ≤¯α ≤1 −dTV(q, πy).
+(16)
+These bounds are based on [NV19, Theorem 1] and formally shown in [Eg´e+26] with applications
+in multimodal sampling. For our purposes the decisive observation is the reverse reading of (16):
+running an IMH chain with proposal q = πy
+θ = Tθ(· ; y)∗η for n iterations, resulting in a path
+{x(k)}n
+k=1 based on the proposals {˜x(k)}n
+k=1, we can estimate ¯α empirically by
+α ≈1
+n
+n
+X
+k=1
+α(x(k), ˜x(k))
+and obtain a computable two-sided bound
+1 −¯α
+2
+≤dTV
+ πy
+θ, πy
+≤1 −¯α.
+(17)
+Note that this also yields a lower bound on the KL divergence between πy and πy
+θ by means of the
+well-known Pinsker’s inequality:
+dTV(µ1, µ2) ≤
+r
+1
+2DKL(µ1∥µ2),
+i.e.,
+DKL(πy∥πy
+θ) ≥1
+2 (1 −α)2 .
+A computable upper bound on the above KL divergence can be derived via the χ2 divergence and
+its relation to importance sampling. It is well known [GS02] that
+DKL(µ1∥µ2) ≤log
+ 1 + Dχ2(µ1∥µ2)
+
+,
+where the χ2 divergence is defined by
+Dχ2(µ1∥µ2) := Ex∼µ2
+"dµ1
+dµ2
+(x) −1
+2#
+= Ex∼µ2
+"dµ1
+dµ2
+(x)
+2#
+−1
+if the Radon–Nikodym derivative dµ1
+dµ2 exists, and Dχ2(µ1∥µ2) := ∞otherwise. Note that even in the
+first case we might have Dχ2(µ1∥µ2) = ∞. Now, considering the normalized importance weights
+¯Wi = Wi/
+N
+X
+j=1
+Wj,
+Wi := πy(Xi)
+πy
+θ(Xi)
+(18)
+for i.i.d. flow matching samples Xi ∼πy
+θ, it is also well known from importance sampling theory
+[Aga+17, Section 2.3] that by means of the law of large numbers we have almost surely
+ρ := lim
+n→∞n
+n
+X
+i=1
+¯W 2
+i = lim
+n→∞
+1
+n
+Pn
+i=1 W 2
+i
+( 1
+n
+Pn
+i=1 Wi)2 = Ex∼πy
+θ
+" πy(x)
+πθy(x)
+2#
+10
+
+
+given that Dχ2(πy∥πy
+θ) < ∞.
+Thus, ρ ≈1 indicates that DKL(πy∥πy
+θ) ≈0, implying the flow
+matching approximation is highly accurate. Conversely, ρ ≫1 indicates a significant mismatch.
+In practice, given a batch of flow matching samples x1, . . . , xn ∈X with associated importance
+weights ¯w1, . . . , ¯wn we can estimate
+1
+2 (1 −α)2 ≤DKL(πy∥πy
+θ) ≤log(ρ) ≈log
+ 
+n
+n
+X
+i=1
+¯w2
+i
+!
+(19)
+for n sufficiently large.
+In summary, we derived empirically computable lower and upper bounds on both the TV distance
+and the KL divergence between the true posterior and its flow matching approximation.
+Remark 3.2. The term N PN
+i=1 ¯W 2
+i ≥1 is related to the so-called effective sample size of importance
+sampling. It is defined by (PN
+i=1 ¯W 2
+i )−1 and quantifies the number of independent samples from πy
+which yield the same statistical efficiency for Monte Carlo as the importance weighted samples taken
+from the proposal distribution.
+Remark 3.3. In many machine learning applications such as image generation the quality of the
+generative model is evaluated via the Fr´echet inception distance, which is, in fact, the 2-Wasserstein
+distance between two Gaussian measures. That is, it is implicitly assumed that the target πy and
+πy
+θ are Gaussian. In image generation this seems to be a moderate assumption (specifically, when
+considered in latent spaces), but for our setting, i.e., non-Gaussian posteriors in Bayesian inverse
+problems, this assumption seems rather far-fetched.
+4. Numerical experiments
+This section applies the conditional flow model presented in Section 3, trained using Bayesian flow
+matching, to four example problems. The first example is a two-point boundary value problem with
+two unknown scalar parameters for which the exact posterior and the KL divergence to the true
+posterior can be approximated numerically. The second example is a stationary diffusion problem in
+one space dimension where the goal is to reconstruct a distributed diffusion coefficient. Thirdly, we
+consider the Bayesian formulation of electrical impedance tomography (EIT) [DIS17], a well-known
+challenging problem in the inverse problems community. Finally, we consider a stochastic Lotka–
+Volterra problem which poses the challenge that no likelihood is available and which was previously
+considered in [Wan+25], following the setup in [Wil12].
+For all four problems, we compare the learned posterior qualitatively and quantitatively against
+MCMC references where applicable.
+Furthermore, we study the influence of issues such as the
+concentration of the posterior and the likelihood of an observation under the prior on the learned
+posterior.
+4.1. Example with a two-dimensional parameter
+We consider a very simple Bayesian inverse problem which allows us to illustrate many of the key
+concepts introduced in the previous sections. It concerns the identification of two unknown parame-
+ters x = (ξ0, ξ1) in a two-point boundary value problem for a stationary diffusion equation. The first
+parameter ξ0 ∈R determines the spatially constant log-conductivity, while the second parameter
+ξ1 ∈R determines the Dirichlet data at the right-hand boundary. With z ∈D = (0, 1) denoting the
+spatial coordinate, the differential equation is given by
+−eξ0 u′′(z) = 1
+with u(0) = 0 and u(1) = ξ1,
+(20a)
+where u : [0, 1] →R denotes the solution, which is easily verified to be u(z) = 1
+2 e−ξ0 z (1−z)+ξ1 z.
+11
+
+
+Figure 1: The blue markers show 5000 samples from the prior predictive distribution of the obser-
+vations (20b) of the solution of (20a). The color intensity of the red markers at y1 to y20
+indicates the value πY (yi) of the prior predictive density at these locations.
+For our example we assume noisy observations that are given by evaluations of the solution u at two
+positions, i.e.,
+y =
+u(0.25)
+u(0.75)
+
++ ε
+with ε ∼N(0, 0.25 I2).
+(20b)
+In the following we consider a Gaussian prior on ξ0 ∼N(0, 1) and a uniform prior on ξ1 ∼U(90, 110).
+We condition the prior on 20 observations equally distributed between y(1) = (20, 68) and y(20) =
+(27, 71) in data space. Samples from the prior predictive distribution πY together with the values
+of the prior predictive density (likelihood) at these 20 sample observations are shown in Fig. 1. The
+corresponding likelihoods are seen to vary significantly.
+To compare our results, we run RWMH for every observation for one million steps after a burn-in
+of 100 000 steps and proposal covariance of Σ = I2. Additionally, we compute the true posterior
+numerically, which is feasible due to the low dimensionality of the problem. Flow matching training
+proceeded as follows: training ran over 4000 epochs with an initial learning rate of 10−3 and a cosine
+decay schedule with a final learning rate of 10−5. We consider a multilayer perceptron (MLP) with
+6 hidden layers, a hidden dimension of nhidden = 50, a batch size of 10 000 and a training set size of
+1 million pairs of the joint distribution, i.e., fewer samples than those seen by one RWMH run. The
+nonlinear activation function used in training is the swish function [RZL17].
+Figure 2 shows samples generated by RWMH as well as samples generated by the flow matching
+procedure for the observations y10, y15 and y20, respectively. Visually, for observations that are
+likely under the prior such as y10, both RWMH and FM generate samples that closely follow the
+true posterior. Observations that are less likely (y15) and highly unlikely (y20) under the prior show
+minor deviations between the FM samples and the true posterior. As is shown in Fig. 3, using a flow
+matching posterior as the proposal within IMH can eliminate this small deviation completely. The
+same holds true for all other sample points yi, i = 1, . . . , 20 with a minimum IMH acceptance rate of
+about 80%, as is shown in Fig. 4. Furthermore, this figure shows TV distances and Kullback–Leibler
+divergences for the sample points yi together with their respective bounds derived in (17) and (19),
+resp. The values for the true TV and KL distances were approximated by numerical integration of
+DKL
+ πyi ∥πyi
+θ
+
+=
+Z
+Ω
+πyi(x) log πyi(x)
+πyi
+θ (x)
+dx,
+dTV
+ πyi, πyi
+θ
+
+= 1
+2
+Z
+Ω
+πyi(x) −πyi
+θ (x)
+ dx
+with the midpoint rule on a 200×200 grid over Ω= [−10, 10]×[90, 110]. Both densities are normalized
+on the grid.
+12
+
+
+Figure 2: Samples from RWMH and flow matching with their marginal distributions. Shown are
+points y10, y15 and y20.
+Figure 3: Samples from RWMH and IMH with flow matching proposal with their marginal distri-
+butions.
+Shown are points y10, y15 and y20.
+The corresponding acceptance rates are
+α10 = 99.54%, α15 = 96.54% and α20 = 82.46%.
+Figure 4: Left: Marginal density for test observations and sample acceptance rate of IMH with FM
+proposal based on 500 000 FM samples. Middle: Estimated KL divergence with bounds.
+Right: Estimated TV distances with bounds.
+13
+
+
+4.2. Diffusion equation with distributed parameter
+As a second example, we consider a diffusion equation in one dimension with an unknown distributed
+diffusion coefficient σ(z) = exp(x(z)). The difference to Section 4.1 is that the diffusion parameter
+is no longer assumed to be constant but a function, and that both Dirichlet boundary values are
+assumed to be known. Thus, for the spatial variable z ∈D = (0, 1) we consider the boundary value
+problem
+−(σ(z) u′(z))′ = 0
+with u(0) = 0 and u(1) = 2,
+(21a)
+where u : [0, 1] →R denotes the solution. The prior distribution for the log-coefficient x : [0, 1] →R
+is modeled as a Gaussian random field with a Mat´ern 1/2 (exponential) covariance kernel
+k(z, z′) = exp
+
+−|z −z′|
+ℓKL
+
+,
+with unit marginal variance and correlation length ℓKL = 0.2. In practice, x is represented by a
+truncated Karhunen–Lo`eve (KL) expansion
+x(z) =
+nKL
+X
+i=1
+p
+λi φi(z) ξi,
+ξi ∼N(0, 1) i.i.d.,
+where (λi, φi)nKL
+i=1 are the nKL dominant eigenpairs of the covariance operator associated with the ker-
+nel k, so that the unknown is effectively parameterized by the coefficient vector ξ = (ξ1, . . . , ξnKL) ∈
+RnKL endowed with a standard Gaussian prior. Both x and σ are thus random fields depending on z
+and ξ; we write x(z) = x(z; ξ) and σ(z) = σ(z; ξ) and leave the dependence on ξ implicit. For fixed
+x the flux σu′ is constant, so the solution is again available in closed form as
+u(z) = 2
+R z
+0 σ(s)−1 ds
+R 1
+0 σ(s)−1 ds
+,
+and is evaluated numerically by a cumulative Simpson rule on a uniform grid of 512 points. As
+observations we consider point evaluations of the solution
+y = (yi)m
+i=1 + ε
+with ε ∼N(0, γ2 Im),
+(21b)
+where yi = u(i ∆t) with ∆t = 1/(m + 1).
+In the following, we compare FM against the MCMC algorithms pCN-MH and DRAM-MH. For pCN,
+we slightly tune the parameter β to obtain an acceptance rate close to 23.4% [RR01]. For DRAM,
+all computations are performed using the same setup, i.e., a covariance matrix update is performed
+every 1000 iterations, and the delayed rejection threshold is set to 0.2. The Markov chains used
+in the analysis are extracted after a burn-in period of 1M samples and thinned by a factor of 500.
+With a chain length (after burn-in) of 20 million, this results in 40 000 samples. We stick with this
+setup since it allows for a fair comparison over all studies. Further adaptations to this specific setup
+could improve the overall performance; however, difficulties with concentrated posteriors cannot
+be remedied completely. Unless indicated otherwise, the default architecture of the MLP used to
+approximate the FM vector-field is as follows: The models are trained using 2 million samples, and
+validated against 200 000 samples. The network takes (t, xt, y) as input and returns the velocity
+directly, with no further structure imposed; two modifications of this construction are introduced in
+Section 4.2.1. The neural network has 3 hidden layers of nhidden = 800 neurons each and uses the
+swish activation function. Learning begins with an initial learning rate of 10−3 on a cosine decay
+schedule with a final learning rate of 10−5. The batch size is set to 5000; the number of epochs is
+500. Samples are generated by integrating the learned field with a fourth-order Runge–Kutta scheme
+and 25 steps on the mesh tk = 1 −(1 −k/25)3, k = 0, . . . , 25, graded toward t = 1, for the reason
+given in Section 4.2.1; this applies to all results in this section.
+14
+
+
+4.2.1. Comparison of FM and MCMC
+Figures 5 and 6 display the posterior distributions obtained with flow matching and DRAM. The
+four panels correspond to different ground truths x⋆
+j, j = 1, . . . , 4, i.e., log-coefficient functions x
+which are used to generate the data: a sine function, which is highly unlikely under the given prior;
+a piecewise constant function; and two realizations of the prior truncated at 100 and 50 modes,
+respectively. Two observation settings are used for each of the four: m = 32, γ2 = 10−4 (Fig. 5)
+and m = 256, γ2 = 10−5 (Fig. 6), each for the same number of nKL = 128 terms.
+In both figures
+Figure 5: Posterior distributions for problem (21) obtained by DRAM (blue) and FM (red) for four
+different ground truth coefficients (black solid lines). The remaining solid lines indicate the
+posterior means and the shaded areas the pointwise 95% credible bands. The solution is
+observed at the 32 locations indicated by the vertical gray lines with an observation noise
+variance of γ2 = 10−4.
+Figure 6: Same as Fig. 5 except that the number of observations is increased to 256 and the ob-
+servation noise variance reduced to γ2 = 10−5, resulting in a more concentrated posterior
+distribution.
+the FM posterior mean and its 95% credible band are visually indistinguishable from those obtained
+with DRAM, indicating that FM produces an accurate approximation of the true posterior in terms
+of mean and uncertainty around the mean.
+A different picture emerges when the FM posterior is used as the proposal of an independence
+Metropolis–Hastings sampler (FM-IMH, Section 3.3). For the MLP with nhidden = 800 neurons per
+layer, the acceptance rates in Table 1 drop sharply from the setting of Fig. 5 to that of Fig. 6. Hence,
+as the posterior concentrates, the FM posterior deviates from the true posterior much more than the
+two figures suggest.
+The discrepancy becomes visible in the latent coefficients ξi rather than in the field; Fig. 12 in
+Appendix C shows the marginals of ξ1, . . . , ξ4 in the setting of Fig. 6. Three observations guide
+the modifications below. First, the data constrain the coefficients very unequally: for x⋆
+2, x⋆
+3, x⋆
+4 the
+posterior standard deviation of ξ2 is about 5.5 × 10−3, i.e., roughly 180 times smaller than its prior
+standard deviation, whereas, e.g., ξ64 and ξ128 retain posterior standard deviations between 0.93 and
+1. Second, the MLP misrepresents precisely the most strongly constrained coefficients: its marginal
+of ξ2 is about twice as wide as that of DRAM, and for x⋆
+3 and x⋆
+4 its mean of ξ4 is off by 0.7 to 0.8
+posterior standard deviations. Measured on the scale of the prior, these errors are of order 10−2 or
+smaller, which is why they cannot be seen in Fig. 6. Third, the FM loss sums the squared velocity
+15
+
+
+x⋆
+1
+x⋆
+2
+x⋆
+3
+x⋆
+4
+Fig. 5: m = 32, γ2 = 10−4
+MLP, nhidden = 800
+51.16
+76.03
+70.13
+69.97
+MLP + weights, nhidden = 800
+57.01
+79.37
+74.69
+74.80
+gauss, nhidden = 800
+31.97
+64.02
+51.18
+51.50
+gauss + weights, nhidden = 800
+43.20
+81.81
+71.40
+71.48
+gauss + weights, nhidden = 2400
+23.18
+65.55
+55.44
+55.59
+Fig. 6: m = 256, γ2 = 10−5
+MLP, nhidden = 800
+0.66
+11.21
+5.97
+5.47
+MLP + weights, nhidden = 800
+1.55
+36.20
+25.47
+27.17
+gauss, nhidden = 800
+1.07
+22.97
+14.67
+14.93
+gauss + weights, nhidden = 800
+3.70
+47.49
+33.02
+36.49
+gauss + weights, nhidden = 2400
+4.65
+51.63
+39.85
+39.89
+Table 1: Acceptance rate (%) of the FM-IMH sampler for the four ground truths x⋆
+1, . . . , x⋆
+4 at the
+two configurations shown in Figures 5 and 6; the best rate for each ground truth is set in
+bold.
+errors over all coordinates with equal weight, so that an error which is small on the scale of the prior
+but large relative to the posterior width is hardly penalized during training.
+We therefore consider two modifications of the MLP, which can be applied separately or together.
+With weights, the per-coordinate terms of the FM loss are weighted by wi ∝1/si, where s2
+i is the
+approximated posterior variance of ξi resulting from linearizing the parameter-to-observation map at
+the prior mean — i.e., the approximation to the posterior covariance matrix is then (J⊤J/γ2 + I)−1
+with J denoting the Jacobian of the parameter-to- observation map at ξ = 0. The weights thus
+require a single Jacobian, but neither a reference chain nor a trained model. With gauss, the i-th
+component of the velocity field takes the form
+vθ,i(t, x; y) = ωi(t) xi +
+ 1 −t ωi(t)
+
+ˆµi(y)
+|
+{z
+}
+exact for N
+ ˆµ(y),diag ψ2
+i
+
++ MLPi(t, x, y),
+ωi(t) =
+t ψ2
+i −(1 −t)
+t2ψ2
+i + (1 −t)2 ,
+(22)
+where the first term is the exact velocity field of a Gaussian posterior with mean ˆµ(y) = Wy + b,
+linear in y, and per-coordinate variances ψ2
+i . The parameters W, b and ψi are trained together with
+the MLP, starting from ψi = 1, so that the MLP, of the default architecture, only has to learn the
+deviation from a diagonal Gaussian posterior, and narrow marginals no longer have to be generated
+by the MLP alone. For small ψi, |ωi| becomes large shortly before t = 1, and equally spaced steps
+would leave the stability region of the Runge–Kutta scheme there; this is the reason for the graded
+mesh introduced above. All other settings are those of the MLP.
+Table 1 reports the acceptance rates of all four combinations with nhidden = 800. In the concentrated
+setting of Fig. 6, each modification raises the acceptance rate for every ground truth, the weighting
+more than the Gauss head, e.g., for x⋆
+3 from 5.97% to 25.47% and 14.67%, respectively, and the
+combination of both the most, to 33.02%. In the wider setting of Fig. 5, the weighted MLP performs
+best for three of the four ground truths, whereas the Gauss head without weights lowers the accep-
+tance rate. The combination of both modifications was additionally trained with nhidden = 2400,
+which further raises the acceptance rate on the concentrated posterior but lowers it on the wider
+one. In the marginals of Fig. 12, the combination with nhidden = 800 matches the widths of DRAM
+for ξ2 and ξ4 to within 3% for x⋆
+2, x⋆
+3, x⋆
+4. The plotted posterior, on the other hand, does not reveal
+the improvement: in the setting of Fig. 6, the MLP and the combination of both modifications with
+nhidden = 800 and nhidden = 2400 all reproduce the posterior mean and the bounds of the 95% band
+of DRAM to between 0.8% and 1.8% in relative L2, the MLP in fact slightly more closely than the
+other two. Across all models, the acceptance rate is lowest for x⋆
+1; we return to this in Section 4.2.2.
+In Table 2, we report the ESS of 1 000 000 consecutive samples of the chains generated by pCN,
+DRAM and FM-IMH. For FM-IMH the proposals are independent, so its ESS measures only the
+16
+
+
+correlation introduced by rejections, whereas for pCN and DRAM it reflects how quickly the chain
+explores the posterior. For the purpose of comparison, the ESS of pCN and DRAM is computed on
+the last 1 000 000 steps of the chains without thinning. For FM-IMH we draw 1 000 000 proposals,
+integrated as in Table 1, and run the independent sampler on them. The ESS is estimated for each
+latent coefficient ξi [Gey92], and we report the minimum over all nKL = 128 coefficients. DRAM
+yields a noticeably larger ESS than pCN in both observation settings; moreover, the ESS of pCN
+drops sharply for the more concentrated posterior, while that of DRAM barely changes. This is a
+well-known effect due to DRAM adapting its proposal covariance to the empirical covariance of the
+chain, whereas the pCN proposal is fixed to a multiple of the prior covariance scaled to achieve a
+pre-specified acceptance rate. As a consequence, pCN takes steps which are shorter than necessary
+in directions not informed by the data, thus exploring the posterior less effectively than DRAM. FM-
+IMH attains a larger ESS than DRAM for every model and ground truth except x⋆
+1 with the MLP
+on the concentrated posterior, by a factor between about 1.3 and more than 300. Since each step of
+all three samplers requires exactly one evaluation of the forward model, and the FM proposals can
+moreover be generated in parallel, FM-IMH is more cost-efficient than pCN or DRAM even when
+inference is required for only one observation y.
+x⋆
+1
+x⋆
+2
+x⋆
+3
+x⋆
+4
+Fig. 5: m = 32, γ2 = 10−4
+pCN
+104
+76
+83
+75
+DRAM
+1483
+1471
+1589
+1078
+FM-IMH
+MLP, nhidden = 800
+138 289
+470 585
+419 401
+416 965
+gauss + weights, nhidden = 800
+26 612
+585 327
+403 723
+418 203
+gauss + weights, nhidden = 2400
+18 243
+351 710
+257 563
+258 677
+Fig. 6: m = 256, γ2 = 10−5
+pCN
+3.31
+3.07
+3.68
+3.16
+DRAM
+1367
+1445
+1412
+1442
+FM-IMH
+MLP, nhidden = 800
+97
+24 846
+8995
+4281
+gauss + weights, nhidden = 800
+1749
+155 014
+87 703
+91 129
+gauss + weights, nhidden = 2400
+1894
+178 779
+136 480
+121 768
+Table 2: Effective sample size of 1 000 000 consecutive samples for the four ground truths x⋆
+1, . . . , x⋆
+4
+at the two configurations shown in Figures 5 and 6, minimum over the 128 latent coefficients.
+4.2.2. Observations outside the training support
+Across all models in Table 1, the acceptance rate is lowest for x⋆
+1, on the concentrated posterior by
+an order of magnitude, although its posterior is the least concentrated of the four: the posterior
+standard deviation of ξ2 is 9.1 × 10−3 for x⋆
+1 against 5.2 × 10−3 to 5.6 × 10−3 for the other three
+ground truths. Concentration therefore does not explain this ordering, and a second, independent
+mechanism is present.
+An amortized model is trained on pairs (x, y) drawn from the joint distribution, so its accuracy at
+a given y depends on how much training data lay near that y. The relevant statistic is the position
+of y in the distribution of observations seen during training, which we measure by the normalized
+radius
+r(y) =
+1
+√m
+
+y −µy
+σy
+
+2
+,
+(23)
+with µy, σy the per-channel training statistics, compared against the distribution of r over the training
+set itself. In the setting of Fig. 6, the observations of x⋆
+1, . . . , x⋆
+4 have radii r(y) = 2.53, 0.30, 0.88 and
+0.87, against a median training radius of 0.85. The radius orders the four ground truths exactly as
+the acceptance rate does, e.g., 4.65%, 51.63%, 39.85% and 39.89% for the combination of gauss and
+17
+
+
+Figure 7: Influence of m and the observation noise γ2 at nKL = 128. From left to right: acceptance
+rate and effective sample size of the FM-IMH sampler with the combination of gauss
+and weights of Section 4.2.1, nhidden = 800; effective sample sizes of the DRAM and pCN
+reference chains. Solid curves: mean over ground truths x⋆
+2, x⋆
+3, x⋆
+4 and three training seeds,
+shaded band: range across these ground truths; dashed curves: ground truth x⋆
+1. Effective
+sample sizes are minima over the nKL latent coefficients ξi of 1 000 000 samples, on one
+common scale in all panels.
+Figure 8: As Fig. 7, but at m = 32 with nKL varying.
+weights with nhidden = 2400 in Table 1. The sine observation lies at 2.96 times the median training
+radius, with only 0.12% of the 2 × 106 training observations beyond it: the extreme tail of the prior
+predictive distribution, where the model has almost no training data. Note that the criterion is a
+property of the observation and not of the ground-truth field. The piecewise constant truth is no
+more a draw of the Mat´ern prior than the sine is, yet its observation is the most central of the four
+and it yields the highest acceptance rate; conversely the sine, which is a single KL mode, produces
+the most extreme observation.
+On the concentrated posterior, the modifications of Section 4.2.1 raise the acceptance rate for x⋆
+1 by
+at most 4 percentage points, against 9 to 40 points for the other three ground truths (Table 1). This
+is consistent with an absence of training support rather than of capacity, and the same phenomenon
+recurs for a different forward operator in Section 4.3.3.
+4.2.3. Parameter studies
+Figure 7 varies the number of observations m and the noise variance γ2 at fixed nKL = 128, and
+Fig. 8 varies nKL at fixed m = 32, in both cases for the combination of gauss and weights with
+nhidden = 800 from Section 4.2.1, trained separately for each setting. The solid curves show the mean
+over x⋆
+2, x⋆
+3, x⋆
+4; x⋆
+1 is drawn separately as a dashed curve, for the reason given in Section 4.2.2 it lies
+below the range of the other three at nearly every point of both studies.
+The acceptance rate of FM-IMH decreases as the posterior concentrates. It falls with m at every
+noise level, most strongly for the smallest noise variance, from about 88% at m = 2 to 37% at
+m = 256 for γ2 = 10−5 (left panel of Fig. 7). It also falls with nKL (left panel of Fig. 8).
+The ESS of FM-IMH is of order 105 to 106 for x⋆
+2, x⋆
+3, x⋆
+4 throughout both studies, and above that of
+DRAM for all four ground truths. The ESS of DRAM hardly depends on m and γ2, whereas that
+of pCN drops by several orders of magnitude as the posterior concentrates, for the reason discussed
+in Section 4.2.1. With respect to nKL the order is reversed: the ESS of DRAM falls with the chain
+18
+
+
+dimension, while that of pCN levels off beyond nKL ≈32, which reflects the dimension independence
+of pCN.
+4.3. Electrical impedance tomography
+To illustrate the viability of our approach on an inverse problem known to be challenging, we consider
+electrical impedance tomography (EIT), a severely ill-posed problem in which a spatially distributed
+electrical conductivity is recovered from a small number of measurements at boundary electrodes.
+We adopt the rigorous Bayesian formulation of [DS16] and work with all three prior distributions
+studied there — log-Gaussian, level set, and star-shaped — extending the last from a single inclusion
+to two. We refer to that paper for the underlying well-posedness theory and give here only the model,
+the priors, and the parameters needed to reproduce our experiments.
+EIT is also the example where both the benefits and limitations of amortization become clear: A
+single conductivity image is one Bayesian inverse problem, but a clinical EIT device produces a new
+frame tens of times per second, and each frame is a new observation under the same prior and the
+same forward model. In this setting, a transport map needs to be trained only once, whereas a
+Markov chain must be restarted for each frame
+4.3.1. The complete electrode model
+Let D ⊂R2 be a bounded domain with conductivity σ : D →R, and let L electrodes be attached
+to disjoint arcs (eℓ)L
+ℓ=1 along the boundary ∂D with contact impedances κℓ> 0. Given a current
+pattern I = (Iℓ)L
+ℓ=1 with P
+ℓIℓ= 0, we solve the complete electrode model (CEM) of [SCI92] for the
+potential u in D and the electrode voltages V = (Vℓ)L
+ℓ=1,
+
+
+
+
+
+
+
+
+
+−∇· (σ∇u) = 0
+in D,
+R
+eℓσ ∂nu dS = Iℓ,
+for ℓ= 1, . . . , L,
+σ ∂nu = 0
+on ∂D \ S
+ℓeℓ,
+u + κℓσ ∂nu = Vℓ
+on eℓ, ℓ= 1, . . . , L,
+(24)
+which accounts for the shunting effect of the electrodes and their contact impedances and has been
+found to agree well with experimental EIT data [SCI92]. The solution is unique up to an additive
+constant, which corresponds to the choice of ground potential; following [DS16] we fix this by taking
+the representative with P
+ℓVℓ= 0.
+We set D to be the unit disk with L = 16 electrodes with contact impedances κℓ= 0.01 placed
+equidistantly along ∂D achieving 50% boundary coverage and inject J = 15 linearly independent
+adjacent current patterns of amplitude 0.1. We discretize (24) with continuous piecewise linear finite
+elements for the potential and a piecewise constant conductivity, taking on each triangle the value
+of σ at its centroid. Synthetic data are generated on a fine mesh of 75 878 triangular elements that
+conforms to the true inclusions, and the inversion runs on a coarser meshing of D consisting of 12 144
+elements; both are comparable in size to the meshes used in [DS16]. Solving (24) once per pattern
+yields a J × L array of electrode voltages. Since our measurement setup departs from [DS16] we
+state it explicitly: each pattern is referenced to the electrode following its sink, and the two injecting
+electrodes together with the reference are dropped. This leaves 13 entries for each of the J = 15
+patterns, i.e., m = 13 · 15 = 195 observations, and
+y = F(σ) + ε ∈Rm,
+ε ∼N(0, γ2 Im),
+(25)
+with γ = 2×10−4, i.e., an observation noise variance of 4×10−8. In the notation of (1), the unknown
+parameter x is thus the conductivity σ itself. As shown in [DS16, Prop. 2.7], F is continuous with
+respect to both uniform convergence and convergence in Lebesgue measure, which is what permits a
+rigorous Bayesian treatment directly on function space and is inherited by any prior pushed forward
+through a parametrization σ = σ(ξ) of the types to be considered below.
+19
+
+
+Throughout, ξ ∈Rd denotes the latent variable carrying a standard Gaussian prior, as the Karhunen–
+Lo`eve coefficients ξ do in Section 4.2, so that all three priors take the common form
+σ = σ(ξ),
+ξ ∼N(0, Id),
+log πy(ξ) = −Φ(ξ) −1
+2∥ξ∥2 + const,
+(26)
+with misfit Φ(ξ) =
+1
+2γ2 ∥F(σ(ξ)) −y∥2. Here σ(ξ) is short for the conductivity field σ(· ; ξ): D →R;
+where the spatial variable matters we write σ(z) = σ(z; ξ) and leave the dependence on ξ implicit.
+The synthetic ground truth is the one of [DS16]: a background σ = 2 containing two disjoint circular
+inclusions of radius 0.3 at ±(0.4, 0.4) with σ = 1.
+4.3.2. Priors
+All three priors of [DS16] are used, each written as a pushforward σ = σ(ξ) of the standard Gaussian
+latent in (26); typical draws are shown in Appendix D. We describe only where our choices differ
+from theirs.
+Log-normal
+σ(z) = exp(m0 + G(z; ξ)) with a Gaussian random field G with Whittle–Mat´ern
+covariance, truncated to the M × M lowest eigenfunctions ϕkℓof −∆on [−1, 1]2 with homoge-
+neous Neumann boundary conditions, i.e., normalized products of cosines ϕkℓ(z) ∝cos
+  kπ
+2 (z1 +
+1)
+
+cos
+  ℓπ
+2 (z2 + 1)
+
+, z = (z1, z2), with eigenvalues λkℓ,
+G(z; ξ) =
+M−1
+X
+k,ℓ=0
+√µkℓϕkℓ(z) ξkℓ,
+µkℓ= q (τ 2 + λkℓ)−α,
+λkℓ= π2
+4 (k2 + ℓ2),
+(27)
+with m0 = 1
+2 log 2, τ = 40, α = 6 and q = 1016 as in [DS16], giving a marginal standard deviation of G
+of about 0.125. [DS16] define the same prior on the square, truncate at nKL = 128 and restrict to the
+disk; we truncate at nKL = 32, d = 1024, which already captures 99.4% of the pointwise prior variance
+at nKL = 128. At γ = 2 × 10−4 our data have a mean relative error E [|ε|] /|F(σtrue)| = 1.2%.3
+Level set
+σ(z) = 1 + 1{G(z; ξ) > 0} with G as in (27), τ = 35, α = 5 and nKL = 32. Since
+G(z; c ξ) = c G(z; ξ) and only its sign enters, σ(c ξ) = σ(ξ) for every c > 0. The amplitude q is
+therefore meaningless, and we normalize G to unit marginal standard deviation. The same invariance
+makes the latent posterior scale-invariant.
+Star-shaped, two inclusions
+[DS16] parametrize the boundary of a single inclusion, which cannot
+represent their own two-inclusion truth, and name several inclusions as future work. We use two,
+each with its own center cj (a shared center would force nested inclusions), log-size ρj0 and Fourier
+boundary,
+∂Ωj = {cj + rj(θ)(cos θ, sin θ)},
+rj(θ) = exp
+
+ρj0 +
+5
+X
+k=1
+ajk cos kθ + bjk sin kθ
+
+,
+(28)
+with ajk, bjk ∼N(0, γ2
+k), γk = 0.3 k−2, cj ∼N(0, 0.32I2) and ρj0 ∼N(log 0.3 −1
+2
+P
+k γ2
+k, 0.152).
+Inclusions have conductivity 1 on a background of 2 and we impose no non-overlap constraint. The
+latent dimension is d = 26. This is the only one of the three priors whose support contains the
+truth.
+For both two-valued priors an element changes value only when an interface crosses its centroid,
+so ∂ξσ = 0 almost everywhere.
+Measured on the inversion mesh, a random latent perturbation
+of size 10−3 changes no element at all, whereas under the log-normal prior it changes all of them.
+Gauss–Newton Hessians, Laplace approximations and likelihood-informed subspaces are therefore
+unavailable for these two priors.
+3[DS16] report a relative error of 10% but do not state how it is defined. We could not reproduce this value, neither
+with our measurement setup nor with theirs, which uses absolute electrode voltages.
+20
+
+
+4.3.3. Results
+For each prior we condition the flow on y, draw n = 10 000 samples, and compare them with an
+MCMC reference posterior, with every step size tuned on stationary states; Fig. 9 shows the posterior
+means, and Appendix E gives the full comparison including standard deviations and the samplers.
+The same samples serve as proposals for IMH, for which we report the acceptance rate, the number
+of accepted moves and the effective sample size (ESS) of the chain (Table 3). We give the ESS for
+two quantities along the chain: the smallest over the latent coordinates ξi, as in Section 4.2, and
+the mean of the conductivity σ(ξ) over all elements. For the two-valued priors the mean and the
+standard deviation carry the same information, std =
+p
+p(1 −p) with p = P(σ = 1) = 2 −mean, so
+we score both through the inclusion probability p:
+• Under the star-shaped prior the flow reproduces the reference almost exactly, with a correlation
+of corr(pFM, pMCMC) = 0.9989 between the inclusion probabilities and an inclusion area of 0.182
+for both methods against a true value of 0.178.
+• Under the log-normal prior the two posterior means agree to a correlation of 0.995 and the
+standard deviations to 0.979; both means are far from the truth, for the reasons discussed
+below.
+• Under the level-set prior the flow locates both inclusions with corr(pFM, pMCMC) = 0.975 but
+is over-dispersed: its standard deviation is 1.5 times that of the reference, and it assigns an
+inclusion area of 0.222 against 0.180.
+On y, only the star-shaped flow yields a usable IMH chain: it accepts 7.5% (753 moves, ESS 78 in ξ
+and 192 in the mean conductivity), against 0.20% and 0.13% under the log-normal and the level-set
+prior (Table 3). Figure 9 shows that the flow reproduces the reference posterior mean under all
+three priors, including the two under which IMH accepts almost no steps, and the low acceptance
+there has two causes. First, y is out of distribution for both priors: its normalized radius (23) is
+r(y) = 3.73 under the log-normal and r(y) = 1.65 under the level-set prior, against a training median
+of about 0.97, and of the 2 × 106 training observations none and 530 (0.03%), respectively, lie as far
+out, whereas under the star-shaped prior r(y) = 0.94 is typical, exceeded by 35% of the training
+observations. Under the level-set prior this is visible directly in the fields: a prior draw covers about
+half of the disk with inclusion (area fraction 0.500±0.046), while the true inclusions cover only 0.178.
+The flow has therefore seen almost no data like y and has to extrapolate, and neural networks are
+notoriously unreliable outside the range of their training data [Xu+21]: the training objective does
+not constrain the learned velocity field there, so its behavior is set by the architecture rather than by
+the data. Second, the level-set latent posterior is hard to match for any flow, even in distribution:
+since σ depends on ξ only through the sign of G, πy is scale-invariant, and it is thin in every latent
+direction, because at the interface even modes carrying a few percent of the prior variance decide the
+sign; small latent errors of the flow therefore change the data misfit strongly, and the likelihood of its
+proposals varies over many orders of magnitude. The acceptance rate certifies the flow as a sampler
+of the latent posterior πy, not of the conductivity: scored on the identifiable inclusion probability p,
+the level-set flow agrees with the pCN reference at a correlation of 0.975.
+We discuss the out-of-distribution position of y separately, because it limits where amortized inference
+can be applied. MCMC requires only that the prior have support where the posterior concentrates;
+the likelihood supplies the transport. An amortized flow never sees the likelihood at training or test
+time — the prior is its training distribution — so it requires prior mass there. Support is therefore
+not enough: a prior can contain the truth exactly and still place almost no mass near it, and the
+flow then has to extrapolate as under the other two priors. For the star-shaped prior we therefore
+choose the size and center priors such that the truth is also a typical draw.
+On observations drawn from the prior, which are in distribution by construction, the picture changes.
+Over 20 prior-draw observations, IMH accepts 36.7%±2.5% (mean ± standard deviation) under the
+log-normal prior and 26.2%±17.9% under the star-shaped prior, but only 0.11%±0.02%, and at most
+0.15%, under the level-set prior (Table 3). For the star-shaped prior we exclude draws in which an
+inclusion crosses the boundary of the disk and use the first 20 remaining ones. Under the log-normal
+prior the low acceptance on y is therefore a consequence of its out-of-distribution position and not of
+the flow, whereas under the level-set prior it persists for the second reason above. The wide spread
+21
+
+
+Figure 9: Posterior means of the conductivity conditioned on y, one column per prior: MCMC
+reference (top) and flow matching with 10 000 samples (bottom), on a color scale shared
+within each column. Circles mark the true inclusions. Standard deviations and the sampler
+settings are in Appendix E.
+22
+
+
+under the star-shaped prior, from 0.3% to 52.8%, comes from the observations rather than from the
+flow: acceptance is lowest where a drawn inclusion boundary comes close to the electrodes. Figure 17
+in Appendix F shows the posterior means for one such observation, the second block of Table 3.
+We point out that low ESS values should be read as a warning rather than as a measurement. The
+reason is a drawback of IMH itself: once the chain reaches a proposal of high likelihood, whose
+posterior density is large relative to the flow’s density there, it rejects every subsequent proposal
+until one of comparable weight arrives, and remains stuck at that state in the meantime. Unlike a
+local sampler such as pCN, it cannot move away through small steps, since its proposals are drawn
+independently of the current state.
+Implementation details
+The architectures were obtained by a small and non-exhaustive hyperpa-
+rameter search. All three flows are MLPs with the Gauss head (22), trained on 2×106 pairs, validated
+on a further 2 × 105, and integrated with RK4 in 25 steps. For the star-shaped prior the MLP has 5
+hidden layers of width 800 with swish activations and is trained for 300 epochs; for the log-normal
+prior it has 4 layers of width 800 with GELU activations and is trained for 120 epochs. For the
+level-set prior we set ˆµ ≡0 and ψi ≡1 in (22), so that the linear part is the exact velocity between
+two standard Gaussians, and the MLP has 3 hidden layers of width 800 with swish activations and
+is trained for 120 epochs.
+Table 3: IMH with n = 10 000 flow-matching proposals (RK4, 25 steps) on y, on the prior draw of
+Fig. 17, and over 20 prior-draw observations. The ESS is given for the smallest over the
+latent coordinates ξi and for the mean conductivity over all elements.
+star-shaped
+log-normal
+level set
+Two inclusions setting, shown in Fig. 9
+acceptance
+7.5%
+0.20%
+0.13%
+accepted moves
+753
+19
+12
+ESS (ξ)
+78
+3
+6
+ESS (mean σ)
+192
+4
+21
+Typical prior draw, shown in Fig. 17
+acceptance
+52.8%
+38.6%
+0.09%
+accepted moves
+5 279
+3 857
+8
+ESS (ξ)
+1 841
+352
+6
+ESS (mean σ)
+2 906
+1 029
+9
+Acceptance over 20 prior draws
+mean ± sd
+26.2 ± 17.9%
+36.7 ± 2.5%
+0.11 ± 0.02%
+median
+29.7%
+36.5%
+0.11%
+range
+0.3–52.8%
+30.9–42.7%
+0.07–0.15%
+4.3.4. Dynamic Bayesian flow matching
+The static comparison assesses whether the flow is accurate; a clinical EIT device also requires
+sampling fast enough to image moving structures, and here the amortized model has a clear advantage
+over MCMC. We condition the star-shaped flow of Section 4.3.2, trained once, on each frame’s 195-
+vector of a time-varying phantom in turn; nothing is refitted between frames. The data are generated
+on the fine mesh with the measurement protocol and noise level of y, and every frame is an ordinary
+observation under the star-shaped prior. Two inclusions at (±0.42, 0) breathe between radius 0.20
+and 0.35, one cosine cycle per breath, over 720 frames: two breaths with both inclusions, then four in
+which only the right one breathes while the left stays at its exhaled radius. With 1 000 samples per
+frame the flow follows both phases (Fig. 10): after the second breath the reconstructed left inclusion
+stays at its exhaled size while the right one keeps breathing.
+The posterior standard deviation
+appears to capture where the reconstruction is uncertain: it is concentrated in a band along each
+inclusion boundary, the only place the two-valued field can vary, and this band is wider on the side
+facing the center of the disk, far from the electrodes, where EIT resolves the boundary least well.
+The posterior median deviates from the truth by an RMSE of 0.122 on average, ranging from 0.056
+to 0.205 over the frames. Its inclusion area
+R
+D 1σ(z)=1 dz, with σ the posterior median, differs from
+23
+
+
+the exact area by 0.002 on average and by at most 0.043 in any frame, with a correlation of 0.997
+over the frames. A frame takes 21.7 ms on a single consumer GPU (NVIDIA GeForce RTX 4070 Ti
+SUPER), i.e. 46 frames per second. Appendix G shows a second sequence, in which two inclusions
+orbit the center and then merge.
+Figure 10: Star-shaped flow on the breathing sequence at three of its 720 frames: both inclusions
+inhaled (frame 60), both exhaled (frame 120), and the right one inhaled after the left has
+stopped breathing (frame 300). Columns: truth, posterior median, posterior mean and
+posterior standard deviation; 1 000 samples per frame, RK4 with 10 steps, 21.7 ms per
+frame on one RTX 4070 Ti SUPER. White circles mark the true inclusions.
+MCMC needs millions of sequential forward solves for every single observation. All EIT flows, in
+contrast, are trained on 2 × 106 samples and validated on 2 × 105, whose 2.2 × 106 forward solves
+are independent and can be generated in parallel, once; every subsequent frame is answered by an
+ODE integration without any forward solve.
+4.4. Stochastic Lotka–Volterra
+We consider the stochastic Lotka–Volterra model introduced in [Wil12], which [Wan+25] use as one
+of their computational benchmarks; we follow their setup. The model consists of a continuous-time
+Markov jump process tracking interacting predator (S1) and prey (S2) populations. The state vector
+S(t) = (S1(t), S2(t))⊤, starting from a fixed initial condition S(0) = (50, 100)⊤, evolves through four
+discrete transition events defined by the jump vectors ζ1 = (1, 0)⊤, ζ2 = (−1, 0)⊤, ζ3 = (0, 1)⊤,
+and ζ4 = (0, −1)⊤. The probability rates of these transitions are governed by the propensity vector
+λ(S, x), parameterized by x ∈R4:
+λ(S, x) = (x1S1S2, x2S1, x3S2, x4S1S2)⊤.
+(29)
+Under stochastic mass-action kinetics, each propensity component is the product of a stochastic rate
+constant xj and a combinatorial function counting the distinct possible reactant interactions (e.g.,
+S1S2 for binary predation, or Si for unary events). Rather than a deterministic differential equation,
+24
+
+
+the underlying dynamical system governing the state trajectory S(t) is expressed exactly via the
+random time-change (Kurtz) representation:
+S(t) = S(0) +
+4
+X
+j=1
+ζj Nj
+Z t
+0
+λj(S(τ), x) dτ
+
+,
+(30)
+where N1, . . . , N4 are independent unit-rate Poisson processes. Exact state trajectories generated
+by this system are simulated using Gillespie’s algorithm, from which an observation vector y ∈Rm,
+m = 9, is constructed using time-series summary statistics (means, log-variances, and temporal
+auto/cross-correlations).
+In a Bayesian context, the exact likelihood π(y|x) is analytically in-
+tractable because evaluating it requires marginalizing over the high-dimensional, combinatorial latent
+space of all possible random jump sequences and event times that could produce y. This lack of a
+closed-form likelihood necessitates the use of likelihood-free inference (LFI) or Approximate Bayesian
+Computation (ABC) methodologies.
+The authors of [Wan+25] compare a CCNF, trained by minimizing the expected negative log-
+likelihood (NLL) (8), i.e., the KL divergence (see Section 3.2), against an ABC method. According to
+the authors, their CCNF model performs comparably to the asymptotically exact Sequential Monte
+Carlo-ABC (SMC-ABC) algorithm, while achieving a speedup factor of 30.
+As discussed in Section 3.2, and motivated in [Lip+23; LGL23] for the unconditional case, flow
+matching speeds up the training of continuous normalizing flows significantly, as it is simulation-free
+and requires no ODE solves during training. In our experiments, this decreases the training time
+from 25.5 minutes, using the exact setup4 of [Wan+25], to approximately 70 seconds, using Bayesian
+flow matching (Section 3.2) and our own architecture for the velocity field. Both training times are
+measured on our own hardware, an NVIDIA GeForce RTX 4070 Ti SUPER, and the former is in line
+with the training time reported in [Wan+25]. For the velocity field vθ(t, x; y) we employ a six-layer
+MLP with swish activation and a hidden dimension of nhidden = 112.
+As the stochastic Lotka–Volterra problem does not have a likelihood, we cannot compare it against
+MCMC methods, and in particular cannot compute the error measures derived in Section 3.4. Our
+focus is a qualitative comparison against the results provided by [Wan+25] with the same amount
+of training data, i.e., 50 000 and 500 000 samples, respectively. Our results are shown in Fig. 11.
+In particular, when comparing our model trained on the large training set, displayed in Fig. 11,
+against the SMC-ABC result from [Wan+25], a good agreement can be found. Comparing against
+COT-Flow, which is the CCNF trained with the NLL/KL-divergence objective in [Wan+25], our
+model matches the asymptotically exact SMC-ABC more closely.
+Using the smaller training set, the model does not learn the posterior distribution sufficiently well,
+as can be seen, e.g., by comparing the x3-marginal for the second set of observations. This, however,
+can also be observed in the figures presented in [Wan+25] and is due to the low number of training
+samples.
+4https://github.com/EmoryMLIP/COT-Flow
+25
+
+
+Figure 11: Posterior distribution of the flow-based model for two different observations, following the
+setup in [Wan+25]. The model is trained using flow matching and a training set of size
+50 000 (top) and 500 000 (bottom). The red point/bars represent the true parameter x⋆=
+(0.01, 0.5, 1, 0.01)⊤(left) and x⋆= (0.02, 0.02, 0.02, 0.02)⊤(right), the black cross/bars
+denote the MAP.
+5. Discussion
+In this paper we have discussed and evaluated Bayesian flow matching for approximate sampling
+from posteriors occuring in PDE-based Bayesian inverse problems. We have derived computable a-
+posteriori bounds on the TV distance and KL divergence between true posterior and flow matching
+approximation which mainly were based upon the acceptance rate of a hybrid sampler — an IMH
+using the flow matching approximation as proposal. The validity and accuracy of these bounds have
+been verified in Section 4.1.
+Moreover, we have compared flow matching against a state-of-the-art MCMC reference in various
+settings in Section 4.2 and Section 4.3. Across these examples, whenever the true observations were
+covered by the spread of observations within the training data, flow matching produced almost perfect
+fits to the MCMC generated samples in terms of posterior means, standard deviations and quantiles
+with negligible training and online cost compared to MCMC. However, the fit in TV distance can
+be sometimes disappointing: for instance, in the setting of Fig. 6, flow matching reproduces the
+posterior mean and the 95% band of DRAM samples to about 1% in relative L2-norm, yet accepts
+only 5% to 11% (Table 1). The explanation for these contrary observations is that flow matching
+can fit the marginals of the highly informed parameter directions rather poorly, which, due to their
+26
+
+
+comparably small posterior variance, do not significantly contribute to posterior mean and spread,
+but differences in the marginals is strongly punished in TV distance. In general, we noticed in our
+experiments that flow matching may suffer from large or accurate observational data. We have also
+discussed possible remedies for this in terms of accounting for the very different posterior spread
+across coordinates during training by weighting the loss with the (approximated) inverse posterior
+covariance and/or to include an additional linear layer in the neural network architecture for the
+velocity field, which can reproduce a Gaussian approximation to the posterior.
+Another limitation of flow matching found in our studies is the low performance when the true
+observations lie in the tails of the prior predictive distribution for the observables — a well-known
+effect in machine learning known as out-of-distribution error. In these cases MCMC is to be preferred.
+We note that, in principle, it can be checked whether the observations y at hand are sufficiently
+covered by prior prediction by comparing the normalized radius r(y) of Eq. (23) with that of the
+training observations.
+However, in our experiments we also verified the great potential and two important advantages of
+Bayesian flow matching over MCMC simulation: a) amortization and b) likelihood-free inference,
+both of which were clearly demonstrated in Section 4.3 for EIT applications and Section 4.4 for a
+stochastic Lotka–Volterra problem. In both problems the gold standard MCMC simulation would
+have either been simply infeasible (Section 4.4) or computationally prohibitively expensive ( Section
+4.3). Moreover, our hybrid method — IMH with flow matching proposal — is another promising
+method combining, in a way, the best of both worlds: Due to Metropolization (asymptotic) unbiased-
+ness is restored, and since the forward solves for the proposals are independent and can be carried
+out in parallel, it can still be significantly faster than a single run of a classical MCMC method —
+particularly since the flow matching-based IMH Markov chain showed outstandingly good mixing in
+our experiments.
+A theoretical foundation for flow matching-based posterior approximation in inverse problems is still
+largely missing. The distances used here to judge a learned posterior, the total variation distance
+bounded by the acceptance rate and the Kullback–Leibler divergence, are common choices in finite
+dimensions but ill-suited to high- and infinite-dimensional settings: two measures on a function space
+are easily mutually singular, which makes both distances degenerate even when the measures are
+close in every observable sense. Further directions therefore include an error analysis of flow matching
+in function space based on the Wasserstein distance, which does not have this defect; a systematic
+comparison of the total cost of both approaches at matched computational budgets, including the
+forward solves for the training data and the training of the network, which we have not attempted
+since its outcome depends strongly on the available hardware; and, on the practical side, addressing
+missing training support by combining the flow with adaptive error models [KS05; Cal+18], in which
+training samples are drawn in a region localized around the observations actually encountered and
+the flow is iteratively refined there, trading part of the amortization for accuracy.
+References
+[ABV23]
+Michael S. Albergo, Nicholas M. Boffi, and Eric Vanden-Eijnden. Stochastic Interpolants:
+A Unifying Framework for Flows and Diffusions. 2023. arXiv: 2303.08797 [cs.LG].
+[Aga+17]
+S. Agapiou et al. “Importance Sampling: Intrinsic Dimension and Computational Cost”.
+In: Statistical Science 32.3 (2017), pp. 405–431. doi: 10.1214/17-STS611.
+[AHS23]
+Fabian Altekr¨uger, Paul Hagemann, and Gabriele Steidl. “Conditional Generative Mod-
+els Are Provably Robust: Pointwise Guarantees for Bayesian Inverse Problems”. In:
+Transactions on Machine Learning Research (2023). issn: 2835-8856. url: https://
+openreview.net/forum?id=Wcui061fxr.
+[Bal+23]
+Lorenzo Baldassari et al. “Conditional Score-Based Diffusion Models for Bayesian Infer-
+ence in Infinite Dimensions”. In: Advances in Neural Information Processing Systems.
+Vol. 36. 2023. url: https://arxiv.org/abs/2305.19147.
+27
+
+
+[Bap+24]
+Ricardo Baptista et al. “Conditional Sampling with Monotone GANs: From Generative
+Models to Likelihood-Free Inference”. In: SIAM/ASA Journal on Uncertainty Quantifi-
+cation 12.3 (2024), pp. 868–900.
+[BDD24]
+Joe Benton, George Deligiannidis, and Arnaud Doucet. “Error Bounds for Flow Match-
+ing Methods”. In: Transactions on Machine Learning Research (2024). url: https:
+//openreview.net/forum?id=uqQPyWFDhY.
+[Cal+18]
+Daniela Calvetti et al. “Iterative Updating of Model Error for Bayesian Inversion”. In:
+Inverse Problems 34.2 (2018), p. 025008.
+[CBL20]
+Kyle Cranmer, Johann Brehmer, and Gilles Louppe. “The Frontier of Simulation-
+Based Inference”. In: Proceedings of the National Academy of Sciences 117.48 (2020),
+pp. 30055–30062. doi: 10.1073/pnas.1912789117.
+[Che+18]
+Ricky T. Q. Chen et al. “Neural Ordinary Differential Equations”. In: Advances in Neural
+Information Processing Systems. Vol. 31. 2018.
+[Che+25]
+Jannis Chemseddine et al. “Conditional Wasserstein Distances with Applications in
+Bayesian OT Flow Matching”. In: Journal of Machine Learning Research 26.141 (2025),
+pp. 1–47. url: http://jmlr.org/papers/v26/24-0586.html.
+[Chu+23]
+Hyungjin Chung et al. “Diffusion Posterior Sampling for General Noisy Inverse Prob-
+lems”. In: International Conference on Learning Representations. 2023. url: https:
+//openreview.net/forum?id=OnD9zGAGT0k.
+[CLM16]
+Tiangang Cui, Kody J.H. Law, and Youssef M. Marzouk. “Dimension-Independent
+Likelihood-Informed MCMC”. In: Journal of Computational Physics 304 (2016),
+pp. 109–137. doi: 10.1016/j.jcp.2015.10.008.
+[Cot+13]
+Simon L. Cotter et al. “MCMC Methods for Functions: Modifying Old Algorithms to
+Make Them Faster”. In: Statistical Science 28.3 (2013), pp. 424–446.
+[DIS17]
+Matthew M. Dunlop, Marco A. Iglesias, and Andrew M. Stuart. “Hierarchical Bayesian
+Level Set Inversion”. In: Statistics and Computing 27 (2017), pp. 1555–1584. doi: 10.
+1007/s11222-016-9704-8.
+[DS16]
+Matthew M. Dunlop and Andrew M. Stuart. “The Bayesian Formulation of EIT: Analysis
+and Algorithms”. In: Inverse Problems and Imaging 10.4 (2016), pp. 1007–1036.
+[Eg´e+26]
+Maxime Eg´ea et al. Multimodal Laplace-Based Sampling. in preparation. 2026.
+[EM12]
+Tarek A. El Moselhy and Youssef M. Marzouk. “Bayesian Inference with Optimal Maps”.
+In: Journal of Computational Physics 231.23 (2012), pp. 7815–7850. doi: 10.1016/j.
+jcp.2012.07.022.
+[Gey92]
+Charles J. Geyer. “Practical Markov Chain Monte Carlo”. In: Statistical Science 7.4
+(1992), pp. 473–483. doi: 10.1214/ss/1177011137.
+[Goo+14]
+Ian Goodfellow et al. “Generative Adversarial Nets”. In: Advances in Neural Information
+Processing Systems. Vol. 27. 2014, pp. 2672–2680.
+[Gra+19]
+Will Grathwohl et al. “FFJORD: Free-Form Continuous Dynamics for Scalable Re-
+versible Generative Models”. In: International Conference on Learning Representations.
+2019.
+[Gre+23]
+Louis Grenioux et al. “On Sampling with Approximate Transport Maps”. In: Proceedings
+of the 40th International Conference on Machine Learning. Ed. by Andreas Krause et
+al. Vol. 202. Proceedings of Machine Learning Research. PMLR, 2023, pp. 11698–11733.
+url: https://proceedings.mlr.press/v202/grenioux23a.html.
+[GS02]
+A. L. Gibbs and F. E. Su. “On Choosing and Bounding Probability Metrics”. In: Inter-
+national Statistical Review 70.3 (2002), pp. 419–435.
+[Haa+06]
+Heikki Haario et al. “DRAM: Efficient Adaptive MCMC”. In: Statistics and Computing
+16.4 (2006), pp. 339–354.
+[Had23]
+J. Hadamard. Lectures on Cauchy’s Problem in Linear Partial Differential Equations.
+Mrs. Hepsa Ely Silliman Memorial Lectures. Yale University Press, 1923. url: https:
+//books.google.de/books?id=vn5xmgEACAAJ.
+28
+
+
+[Hag25]
+Paul Hagemann. “Conditional Generative Models for Bayesian Inverse Problems”. PhD
+thesis. Technische Universit¨at Berlin, 2025. url: https://depositonce.tu-berlin.
+de/items/416bf4f2-a250-4e22-b1c7-11a28539ea48.
+[Has70]
+W. Keith Hastings. “Monte Carlo Sampling Methods Using Markov Chains and Their
+Applications”. In: Biometrika 57.1 (1970), pp. 97–109.
+[HST01]
+Heikki Haario, Eero Saksman, and Johanna Tamminen. “An Adaptive Metropolis Algo-
+rithm”. In: Bernoulli 7.2 (2001), pp. 223–242.
+[HSV14]
+Martin Hairer, Andrew M. Stuart, and Sebastian J. Vollmer. “Spectral Gaps for a
+Metropolis–Hastings Algorithm in Infinite Dimensions”. In: The Annals of Applied Prob-
+ability 24.6 (2014), pp. 2455–2490.
+[Kr¨u+26]
+Patrick Kr¨uger et al. How Well Do Generative Models Solve Inverse Problems? A Bench-
+mark Study. 2026. arXiv: 2601.23238 [cs.LG]. url: https://arxiv.org/abs/2601.
+23238.
+[KS05]
+Jari P. Kaipio and Erkki Somersalo. Statistical and Computational Inverse Problems.
+Springer, 2005.
+[LGL23]
+Xingchao Liu, Chengyue Gong, and Qiang Liu. “Flow Straight and Fast: Learning
+to Generate and Transfer Data with Rectified Flow”. In: International Conference on
+Learning Representations. 2023.
+[Lip+23]
+Yaron Lipman et al. “Flow Matching for Generative Modeling”. In: International Con-
+ference on Learning Representations. 2023.
+[Mar+17]
+Youssef Marzouk et al. “Sampling via Measure Transport: An Introduction”. In: Hand-
+book of Uncertainty Quantification. Ed. by Roger Ghanem, David Higdon, and Houman
+Owhadi. Cham: Springer, 2017, pp. 785–825. doi: 10.1007/978-3-319-11259-6_23-1.
+[Met+53]
+Nicholas Metropolis et al. “Equation of State Calculations by Fast Computing Ma-
+chines”. In: The Journal of Chemical Physics 21.6 (1953), pp. 1087–1092.
+[Mir01]
+Antonietta Mira. “On Metropolis–Hastings Algorithms with Delayed Rejection”. In:
+Metron 59.3-4 (2001), pp. 231–241.
+[NV19]
+Kirill Neklyudov and Dmitry Vetrov. Metropolis–Hastings View on Variational Infer-
+ence and Adversarial Training. 2019. url: https : / / openreview . net / forum ? id =
+Hkg313AcFX.
+[Par15]
+Matthew David Parno. “Transport Maps for Accelerated Bayesian Computation”. PhD
+thesis. Massachusetts Institute of Technology, 2015.
+[PM18]
+Matthew D. Parno and Youssef M. Marzouk. “Transport Map Accelerated Markov
+Chain Monte Carlo”. In: SIAM/ASA Journal on Uncertainty Quantification 6.2 (2018),
+pp. 645–682. doi: 10.1137/17M1134640.
+[RC99]
+Christian P. Robert and George Casella. Monte Carlo Statistical Methods. New York:
+Springer, 1999.
+[RR01]
+Gareth O. Roberts and Jeffrey S. Rosenthal. “Optimal Scaling for Various Metropolis–
+Hastings Algorithms”. In: Statistical Science 16.4 (2001), pp. 351–367.
+[RS18]
+Daniel Rudolf and Bj¨orn Sprungk. “On a Generalization of the Preconditioned Crank–
+Nicolson Metropolis Algorithm”. In: Foundations of Computational Mathematics 18.2
+(2018), pp. 309–343.
+[RZL17]
+Prajit Ramachandran, Barret Zoph, and Quoc V. Le. Searching for Activation Functions.
+2017. arXiv: 1710.05941 [cs.NE].
+[SCI92]
+Erkki Somersalo, Margaret Cheney, and David Isaacson. “Existence and Uniqueness for
+Electrode Models for Electric Current Computed Tomography”. In: SIAM Journal on
+Applied Mathematics 52.4 (1992), pp. 1023–1040.
+[Son+21]
+Yang Song et al. “Score-Based Generative Modeling through Stochastic Differential
+Equations”. In: International Conference on Learning Representations. 2021. url:
+https://openreview.net/pdf?id=PxTIG12RRHS.
+29
+
+
+[Stu10]
+Andrew M. Stuart. “Inverse Problems: A Bayesian Perspective”. In: Acta Numerica 19
+(2010), pp. 451–559. doi: 10.1017/S0962492910000061.
+[Wan+25]
+Zheyu Oliver Wang et al. “Efficient Neural Network Approaches for Conditional Optimal
+Transport with Applications in Bayesian Inference”. In: SIAM Journal on Scientific
+Computing (2025). doi: 10.1137/24M1678659.
+[Wil+23]
+Jonas Wildberger et al. “Flow Matching for Scalable Simulation-Based Inference”. In:
+Advances in Neural Information Processing Systems. Ed. by A. Oh et al. Vol. 36. Cur-
+ran Associates, Inc., 2023, pp. 16837–16864. url: https://proceedings.neurips.
+cc/paper_files/paper/2023/file/3663ae53ec078860bb0b9c6606e092a0-Paper-
+Conference.pdf.
+[Wil12]
+Darren J. Wilkinson. Stochastic Modelling for Systems Biology. Boca Raton: Taylor and
+Francis, 2012. isbn: 9781439837726. url: http://www.worldcat.org/search?qt=
+worldcat_org_all&q=9781439837726.
+[WS25]
+Christian Wald and Gabriele Steidl. Flow Matching: Markov Kernels, Stochastic Pro-
+cesses and Transport Plans. 2025. arXiv: 2501.16839 [cs.LG]. url: https://arxiv.
+org/abs/2501.16839.
+[Xu+21]
+Keyulu Xu et al. “How Neural Networks Extrapolate: From Feedforward to Graph Neural
+Networks”. In: International Conference on Learning Representations. 2021.
+A. The Metropolis–Hastings algorithm
+Algorithm 1 states the generic Metropolis–Hastings iteration of Section 2.1. The samplers used in
+this paper differ only in the proposal density q: random walk, pCN and DRAM propose locally
+around the current state (Section 2.2), whereas IMH draws its proposals independently of it, here
+from the flow (Section 3.3).
+Algorithm 1 Generic Metropolis–Hastings MCMC
+Require: unnormalized target density πy, proposal density q(·|·), initial state x(0), chain length N
+1: for k = 1, . . . , N do
+2:
+sample candidate ˜x ∼q( ·|x(k−1))
+3:
+compute the acceptance probability α = min
+n
+1,
+π(˜x|y)
+π(x(k−1) |y)
+q(x(k−1) | ˜x)
+q(˜x|x(k−1))
+o
+4:
+sample u ∼U[0, 1]
+5:
+if u ≤α then
+6:
+x(k) ←˜x
+▷accept
+7:
+else
+8:
+x(k) ←x(k−1)
+▷reject
+9:
+end if
+10: end for
+Ensure: states x(1), . . . , x(N)
+B. Flow matching in practice
+Algorithms 2 to 4 state the three stages used throughout Section 4: generating the training set from
+the prior and the forward map, fitting the velocity field, and drawing samples.
+30
+
+
+Algorithm 2 Training-set generation
+Require: prior πX, forward map F, noise covariance Γ, size N
+1: for j = 1, . . . , N do
+2:
+xj ∼πX
+3:
+εj ∼N(0, Γ)
+4:
+yj ←F(xj) + εj
+5: end for
+Ensure: pairs {(xj, yj)}N
+j=1 from the joint distribution
+Algorithm 3 Flow matching training
+Require: pairs {(xj, yj)}N
+j=1 from Algorithm 2, initial parameters θ0 of the velocity field vθ, batch
+size B
+1: θ ←θ0
+2: while not converged do
+3:
+draw B of the pairs, (Xℓ
+1, Y ℓ) for ℓ= 1, . . . , B
+4:
+Xℓ
+0 ∼N(0, Id),
+tℓ∼U[0, 1],
+Xℓ
+t ←tℓXℓ
+1 + (1 −tℓ)Xℓ
+0
+5:
+L(θ) ←1
+B
+B
+X
+ℓ=1
+vθ
+ tℓ, Xℓ
+t ; Y ℓ
+−
+ Xℓ
+1 −Xℓ
+0
+2
+2
+6:
+θ ←AdamStep(θ, ∇θL)
+7: end while
+Ensure: θ minimizing (15), i.e. minθ E
+hvθ(t, Xt; Y ) −(X1 −X0)
+2
+2
+i
+Algorithm 4 Approximate posterior sampling
+Require: trained vθ, observation y, number of samples n
+1: for j = 1, . . . , n do
+▷independent; done in one batch in practice
+2:
+Xj
+0 ∼N(0, Id)
+3:
+Xj
+1 ←solve
+d
+dtX(t) = vθ
+ t, X(t); y
+
+, t ∈(0, 1), from X(0) = Xj
+0
+4: end for
+Ensure: approximate posterior samples {Xj
+1}n
+j=1
+C. Marginals of the leading KL coefficients
+Figure 12 complements Fig. 6 by showing the posterior in the latent coefficients ξ1, . . . , ξ4 instead of
+the field, for the MLP and for the combination of gauss and weights of Section 4.2.1, both with
+nhidden = 800. The widely spread marginals of ξ1 and ξ3 are reproduced by both flows, whereas for
+the strongly constrained coefficients ξ2 and ξ4 the MLP is too wide or shifted. Apart from x⋆
+1, the
+combination of both modifications matches DRAM in all four coefficients.
+D. Draws from the EIT priors
+Figure 13 shows four draws from each of the three priors of Section 4.3.2, one row per prior; each
+column uses the same latent seed for all three. The log-normal draws are rough fluctuations around
+em0 =
+√
+2 without any preferred geometry; over the four draws σ ranges from 0.85 to 2.33. The
+level-set draws are two-valued, σ ∈{1, 2}, and since G is a centered Gaussian field every point lies
+in an inclusion with probability 1
+2: a draw covers about half of the disk with inclusion (area fraction
+0.500±0.046), split into many irregular components, several of which touch the boundary. The star-
+shaped draws, also two-valued, contain exactly two inclusions of radius about 0.3 near the center
+of the disk. Since the centers are drawn with standard deviation 0.3 and no non-overlap constraint
+31
+
+
+Figure 12: Marginal posterior densities of the KL coefficients ξ1, . . . , ξ4 (columns) for the four ground
+truths x⋆
+1, . . . , x⋆
+4 (rows) in the setting of Fig. 6 (nKL = 128, m = 256, γ2 = 10−5):
+DRAM (blue), FM with gauss and weights (red) and the MLP (orange, dashed), both
+with nhidden = 800. Histograms of 40 000 samples each; the row labels give the FM-IMH
+acceptance rates of the two flows from Table 1.
+32
+
+
+is imposed, the two inclusions frequently overlap, as in the first and third draws, and can extend
+beyond the disk, as in the second. Of the three priors, only the star-shaped one produces fields that
+resemble the ground truth of Section 4.3.1, two separated disks in a constant background.
+Figure 13: Four draws from each EIT prior on the inversion mesh, one row per prior and the same
+latent seed in each column.
+E. Flow matching against MCMC on the canonical observation
+Figures 14 to 16 extend Fig. 9 by the posterior standard deviations and the difference between the
+two posterior means, one figure per prior. Each shows the truth and the reference and flow-matching
+posterior means in the top row, and the difference of the means and the two standard deviations in
+the bottom row; means and standard deviations each share one color scale.
+Reference samplers
+For the star-shaped prior (d = 26) the reference is DRAM with 100 chains of
+2 × 105 steps, thinned by 200, at an acceptance rate of 42.7%. For the two priors with d = 1024 the
+reference is pCN. Under the log-normal prior we run 4 chains of 2 ×106 steps, thinned by 1000, with
+β = 0.045 and an acceptance rate of 22.8%. Under the level-set prior we run 100 chains of 6 × 105
+steps, thinned by 300, with β = 0.03 and an acceptance rate of 19.8%; on the 5 382 elements whose
+value is uncertain, the effective sample size is at least 2 039.
+Effective sample size
+Table 4 compares the effective sample size of these chains with that of
+IMH using the flow as proposal, for the smallest over the latent coordinates ξi and for the mean
+conductivity over all elements, as in Table 3. The ESS of the reference is computed per chain on the
+stored, thinned draws, summed over the chains and normalized by the total number of samples after
+burn-in. For pCN a sample costs one forward solve; the delayed-rejection stage of DRAM solves a
+second time after a first-stage rejection, so its cost per sample is higher. Per forward solve, IMH is
+ahead under all three priors, by a factor of about 35 in ξ and 11 in the mean conductivity under the
+star-shaped prior. Under the log-normal and the level-set prior IMH makes only 19 and 12 moves, so
+33
+
+
+its ESS there is a rough estimate. Not included is the one-time cost of the flow’s 2.2 × 106 training
+and validation samples.
+Table 4: Effective sample size of the MCMC reference chains on y, against IMH with 10 000 flow-
+matching proposals (Table 3).
+star-shaped
+log-normal
+level set
+sampler
+DRAM
+pCN
+pCN
+chains
+100
+4
+100
+burn-in per chain
+2 × 103
+2 × 105
+4 × 105
+samples per chain
+2 × 105
+2 × 106
+6 × 105
+thinning
+200
+1000
+300
+ESS (ξ)
+4 397
+641
+2 781
+ESS (mean σ)
+33 830
+1 741
+15 961
+ESS (ξ) per 104 samples
+2.2
+0.80
+0.46
+ESS (mean σ) per 104 samples
+16.9
+2.2
+2.7
+IMH, 104 flow-matching proposals
+ESS (ξ)
+78
+3
+6
+ESS (mean σ)
+192
+4
+21
+Star-shaped
+In Fig. 14 both methods place all of the uncertainty in a thin annulus around each
+interface, the only place a two-valued posterior can be uncertain, and in both the annulus is wider on
+the side facing the center of the disk, farthest from the electrodes. The difference of the two means
+is confined to the same annulus, in line with the agreement of the inclusion probabilities reported in
+Section 4.3.3.
+Log-normal
+In Fig. 15 both posterior means show the two inclusions only as blurred depressions,
+and both place a band of high conductivity along parts of the boundary where the truth is constant;
+the two methods are far from the truth in the same way, which is the out-of-distribution position of
+y discussed in Section 4.3.3 and not an error of the flow. The standard deviations are of similar size
+across the disk and lower inside the inclusions and at the electrodes. The standard deviation of the
+flow is the smoother of the two, since the reference still carries Monte Carlo noise.
+Level set
+In Fig. 16 the flow locates both inclusions, and both methods leave the region between
+them uncertain. The flow is over-dispersed, however: its standard deviation is larger throughout
+the background, and the difference of the means is positive inside the true inclusions and negative
+outside, i.e. the flow moves inclusion probability from the inclusions into the background. This is
+the larger inclusion area, 0.222 against 0.180, reported in Section 4.3.3.
+F. A prior draw as truth
+Figure 17 repeats the comparison of Appendix E on an observation that is in distribution by con-
+struction. For each prior we take one draw, which is not part of the training set, as ground truth
+and simulate its observation exactly as the training data were generated.
+For the star-shaped and the log-normal prior the flow is accurate enough on this observation that
+IMH with the flow as proposal serves as the reference: with 10 000 proposals it accepts 52.8% (5 279
+moves, ESS 1 841 in ξ and 2 906 in the mean conductivity) and 38.6% (3 857 moves, ESS 352 and
+1 029), respectively (Table 3). For the level-set prior the IMH chain visits only 9 distinct states in
+10 000 proposals, so its mean would show little more than those states and is not the posterior mean.
+The reference there is pCN with 60 chains of 1.8 × 106 steps each at β = 0.01 (acceptance 17.7%),
+which still yields an effective sample size of only about 360 per element (median over the uncertain
+elements) and 285 for the inclusion area. The remaining roughness of that panel is its Monte Carlo
+error.
+34
+
+
+Figure 14: Star-shaped prior (d = 26), conditioned on y, against DRAM. Top: truth and posterior
+means. Bottom: FM minus DRAM mean, and posterior standard deviations. Circles:
+true inclusions.
+Figure 15: Log-normal prior (M = 32), conditioned on y, against pCN; layout as in Fig. 14.
+35
+
+
+Figure 16: Level-set prior (M = 32), conditioned on y, against pCN; layout as in Fig. 14.
+Under the star-shaped prior both means recover the two overlapping inclusions of the draw, blurred
+only at the interface. Under the log-normal prior both means are nearly featureless: the fine-scale
+fluctuations of the draw lie in directions the 195 measurements do not inform (Section 4.3.2), and
+the posterior mean stays close to the prior mean except near the boundary. Under the level-set prior
+both means resolve structure only close to the boundary, and flow and reference agree on where they
+place it; the interior, farthest from the electrodes, remains uncertain.
+G. Moving and merging inclusions
+A second sequence, set up as in Section 4.3.4, tests whether the flow also follows inclusions that
+move and merge. Over 72 frames two inclusions of radius 0.25 first orbit the center of the disk once
+clockwise at radius 0.5 (48 frames) and then move straight to the center (24 frames), where they
+overlap and finally coincide in a single inclusion, halving the inclusion area. With 1 000 samples per
+frame the flow follows every stage (Fig. 18), including the merge, which this prior can only represent
+by placing its two inclusions on top of each other: the posterior median deviates from the truth
+by an RMSE of 0.109 on average, ranging from 0.061 to 0.157 over the frames, its inclusion area
+R
+D 1σ(z)=1 dz differs from the exact one by 0.002 on average and by at most 0.029 in any frame,
+with a correlation of 0.961 over the frames. In the top row of Fig. 18 the two posterior means rotate
+with the true inclusions; in the bottom row they approach each other, cover the union of the two
+overlapping disks in frames 62 and 67, and form a single disk in the last frame. Integrating with
+RK4 at 10 or at 25 steps gives the same posterior, with a per-frame RMS difference of at most 0.002
+in the mean, at 21.9 against 34.2 ms per frame, i.e. 46 against 29 frames per second on one RTX
+4070 Ti SUPER; the figure uses 10 steps.
+36
+
+
+Figure 17: A prior draw as ground truth, one column per prior: truth (top), flow-matching posterior
+mean (middle) and reference posterior mean (bottom), with IMH as the reference for the
+star-shaped and log-normal priors and pCN for the level-set prior. Color scales are shared
+within each column.
+37
+
+
+Figure 18: Posterior means of the star-shaped flow for ten of the 72 frames of the orbit-and-merge
+sequence. Top: the clockwise orbit; bottom: the move to the center and the merge. White
+circles mark the true inclusions.
+38

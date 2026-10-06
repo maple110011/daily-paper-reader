@@ -1,0 +1,1605 @@
+Amortized Structured Stochastic Variational Inference
+for Gaussian Process Latent Variable Models
+Maksym Tretiakov1,2, Sarah Filippi3, Vincent Fortuin2,4,5, Ruth Misener3
+Ruby Sedgwick6, James Odgers2,4,5
+1LMU Munich, 2Munich Center for Machine Learning (MCML), 3Imperial College London
+4University of Technology Nuremberg (UTN), 5Helmholtz AI, 6Xyme
+Abstract
+Many machine learning methods aim to approximate the lower-dimensional mani-
+fold on which the data lives. A desirable feature of such methods is that they should
+capture the epistemic uncertainty of this learned manifold. One model that achieves
+this is the Gaussian Process Latent Variable Model, in which a Gaussian Process
+(GP) mapping from the latent space provides an estimate of the uncertainty of the
+manifold. However, the effectiveness of this uncertainty estimation is limited by
+the mean-field variational approximation between the GP inducing points and the
+latent variables. In this work, we apply Amortized Structured Stochastic Variational
+Inference to allow the variational posterior for the latent space to be conditionally
+dependent on the value of the inducing points. We demonstrate that this more
+flexible variational posterior improves several metrics relating to the reconstruction
+of points on the data manifold.
+1
+Introduction
+In many real-world settings, observed high-dimensional data has a complex structure that can be
+naturally explained by a smaller number of unobserved factors. This general formulation is relevant
+for a broad class of models, starting from classical models, such as Probabilistic Principal Component
+Analysis [PPCA; Tipping and Bishop, 1999], to modern deep generative models, such as Variational
+Auto-Encoders [VAEs; Kingma and Welling, 2014]. These approaches can uncover interpretable
+low-dimensional structure and enable downstream inference tasks.
+Unfortunately, in many practical tasks where learning a data manifold is desirable, the data is likely
+to be both noisy and limited in number. In such cases, it is important to learn not only point estimates
+for the data manifold, but also to estimate the epistemic uncertainty of the manifold. One model that
+can achieve this is the Gaussian Process Latent Variable Model [GPLVM; Lawrence, 2005, Titsias
+and Lawrence, 2010, Damianou et al., 2016]. Thanks to its non-parametric Bayesian approach, this
+method can both learn arbitrarily complex data manifolds and remain robust to overfitting. These
+properties have allowed the GPLVM and its variants to be applied to a diverse set of applications,
+including biology [Reid and Wernisch, 2016, Ahmed et al., 2019, Sedgwick et al., 2025], chemical
+engineering [Odgers et al., 2025], causal learning [Dhir et al., 2024, 2025], and robotics [Jaquier
+et al., 2024, Rozo et al., 2025].
+However, all approaches to the GPLVM share a shortcoming: a Mean Field (MF) approximation in
+the variational family. Specifically, current methods approximate the posterior of the positions of the
+data in the latent space and the mapping from the latent space to the observations to be independent of
+one another [Lalchand et al., 2022]. This approach results in the model underestimating the epistemic
+uncertainty in the GP mapping. In this work, we apply Structured Stochastic Variational Inference
+[SSVI; Hoffman and Blei, 2015] to introduce dependence of the latent variable on the Sparse GP
+inducing points, thereby improving the approximation to the true posterior.
+Preprint.
+arXiv:2610.03647v1  [stat.ML]  2 Oct 2026
+
+
+The rest of the paper is laid out as follows: first, in Section 2, we provide an overview of the
+background required for this paper. Following this, in Section 3 we introduce our method and derive
+the Evidence Lower Bound (ELBO) and discuss the relationship of our approach to existing methods
+in Section 4. In Section 5, we demonstrate that our method outperforms the existing MF methods and
+argue that it provides a better estimate of the epistemic uncertainty. Finally, in Sections 6 and 7, we
+discuss some of the current limitations of our approach and suggest further work which could take
+advantage of our variational family.
+2
+Background
+The problem of learning the latent structure from high-dimensional data has been studied for a
+significant amount of time [Tipping and Bishop, 1999]. We follow a standard setup by assuming that
+we have high-dimensional observations, yn ∈RP , which we seek to describe by a lower-dimensional
+latent variable, xn ∈RQ, where P ≫Q. We assume that there exists a mapping f : RQ →RP ,
+such that the relationship between xn and yn is
+yn = f(xn) + ϵn,
+(1)
+with ϵn ∈RP representing random observation noise. For the duration of this paper, we assume
+it follows the distribution ϵn ∼N(0, σ2IP ), and place a prior on xn ∼N(0, IQ). For notational
+convenience, we will also use fn = f(xn) ∈RP .
+We assume that we have a large number of high-dimensional data points, Y ∈RN×P which are
+associated with values for the latent variables, X ∈RN×Q, and function values, F ∈RN×P . The
+matrices are constructed such that xn, fn, and yn are the nth row of X, F, and Y respectively. We
+assume that we have observed Y , and that the goal of our probabilistic model is to infer probability
+distributions for the possible values of X and F.
+We take a Bayesian approach in this paper, ideally aiming to learn a posterior distribution p(F, X|Y ).
+This requires us to specify a prior for both the function and the latent variables. While the prior over
+the latent space can be used to encode useful information [Damianou et al., 2016], we will use an
+independent spherical Normal prior for each xn, so
+p(xn) = N(0, IQ).
+(2)
+Instead of attempting to learn a parametric representation of f(·), we model it using Gaussian
+Processes (GPs). GPs are a non-parametric Bayesian technique in which each finite set of function
+values is assumed to follow a Multivariate Normal Distribution [Rasmussen and Williams, 2008]. We
+apply an independent zero-mean GP prior over each of the output dimensions of our high-dimensional
+observation, i.e., we take fp ∈RN to be the pth column of F and use the prior
+p(fp|X) = N(0, KXX).
+(3)
+The covariance matrix, KXX is given by a kernel function, [KXX]ij = k(xi, xj), which controls
+properties of the function and can be fit to data using the marginal likelihood [Rasmussen and
+Williams, 2008], which, following Titsias and Lawrence [2010], we assume to be an Automatic
+Relevance Determination (ARD) kernel for this paper.
+With these priors, we can factorize the model as
+p(Y, F, X) =
+N
+Y
+n=1
+p(yn|fn)p(xn)
+P
+Y
+p=1
+p(fp|X).
+(4)
+Ideally, a GPLVM would infer the posterior distribution for both the latent variables and the
+functions, i.e.
+p(X, F|Y ).
+Unfortunately, this is not possible as it would require p(Y ) =
+R
+p(Y |F)p(F|X)p(X)dXdF, which requires an intractable integral over the inverse of the kernel
+matrix K−1
+XX. Furthermore, as evaluating the likelihood of any new combination of latent variables
+would require computing the same inverse matrix K−1
+XX, sampling-based MCMC approaches would
+be prohibitively computationally expensive. When GPLVMs were first introduced by Lawrence
+[2005], the uncertainty of the position of the inputs xi was ignored, resulting in a MAP estimate for
+the latent space.
+2
+
+
+In order to approximate the uncertainty in the latent space, we need to use a Variational Inference
+(VI) approach. VI is a method in machine learning and statistics that approximates the posterior by
+minimizing the KL divergence between an approximate posterior, q(·), and the true posterior [Blei
+et al., 2017]. This is achieved by maximizing an objective known as the Evidence Lower Bound
+(ELBO). To apply Variational Inference to GPs, it is necessary to augment the GP with a set of fake
+data points, known as inducing points [Titsias, 2009, Hensman et al., 2013]. These inducing points
+are drawn from the stochastic process but are not associated with any observation. Mathematically,
+we augment each of the P independent GP mappings from the latent space to one dimension of
+the output space, fp : RQ →R, with M additional points. Each output dimension’s M inducing
+points have inputs in the latent space Zp ∈RM×Q and random output variables up ∈RM. For
+practical reasons of saving compute, each of the Zp inputs is assumed to have a single value, so
+Z = Z1 = · · · = ZP . For notational convenience, we also introduce U ∈RP ×M, which is the
+matrix formed by stacking the set of the output vectors, up.
+As up is drawn from the same GP prior as fp, the augmented prior for each output dimension is
+(up1, . . . , upM, fp1, . . . , fpN)⊤∼N
+ 0, K(XZ)(XZ)
+
+.
+where
+K(XZ)(XZ) =
+
+KZZ
+KZX
+KXZ
+KXX
+
+.
+(5)
+Furthermore, it is possible to write down each of the P conditional distributions for function values for
+each observed dimension, fp ∈RN, given a particular value of the inducing points. This distribution
+is identical to the distribution of predictions in the standard GP, so
+p(fp|up, X) = N(µf
+p, Σf
+p)
+(6)
+where the values for the mean and covariance matrix are given by
+µf
+p = KXZK−1
+ZZup
+Σf
+p = KXX −KXZK−1
+ZZKZX.
+This dependence has been exploited in various ways, notably by Hensman et al. [2013] to apply
+Stochastic Variational Inference (SVI) to GPs.
+In the context of GPLVMs, it allows us to write a tractable ELBO which includes an approximation
+of the uncertainty in the latent space [Titsias and Lawrence, 2010]. In order to derive an ELBO, it is
+necessary to specify a variational family to approximate the posterior. To the best of our knowledge,
+all prior work has made a simplifying assumption at this point: they have made a Mean Field (MF)
+restriction between the latent variable and the GP posterior, so the variational posterior factorizes as
+q(F, X, U) =
+P
+Y
+p=1
+p(fp | X, up)q(up)
+N
+Y
+n=1
+q(xn).
+(7)
+By noting that the contribution to the ELBO from the KL divergence between the variational posterior
+and prior of p(fp|up, X) is zero, as the two terms are equal [Titsias and Lawrence, 2010, Damianou
+et al., 2016], the ELBO for MF-GPLVM can be written as
+LMF =
+N
+X
+n=1
+
+Ep(fn|xn,U)q(xn)q(U)[log (p(yn | fn, xn, U))]
+−DKL(q(xn)||p(xn))
+
+−DKL(q(U)||p(U)).
+(8)
+Typically, a normal distribution is used for all of the variational posterior distributions, so q(up) =
+N(µp, Σp) and q(xn) = N(µn, Σn). The ELBO can either be optimized directly by maximizing
+this objective over the constants {µp, Σp}P
+p=1 and {µn, Σn}N
+n=1, or by using an amortized strategy in
+which the parameters of the latent variable variational posterior are defined as the output of a function
+of the observations, i.e. (µn, Σn) = g(yn) with g : RP →RQ × RQ×Q, and the function g(·) being
+parametrized by a neural network which is learned during training [Lalchand et al., 2022].
+The key issue with this variational posterior is that every likely value for every latent variable, q(xn),
+is combined with every likely value of the inducing points, q(U), when evaluating the expected log
+likelihood of yn. This enforces a trade-off between accurately representing the uncertainty of the GP
+mapping and data points in the latent space. As VI is generally mode-seeking [Minka, 2005], it tends
+to underestimate the epistemic uncertainty of the data manifold.
+3
+
+
+3
+Structured Stochastic Variational Inference for GPLVMs
+Although the MF-GPLVM provides a tractable ELBO, which has been shown to achieve a good
+approximation of the latent space, the MF assumption is a strong and incorrect one. In essence we are
+asserting that the latent variable posterior, q(X), should not depend on the mapping from the latent
+space to the observed space. This seems intuitively incorrect, and the more precise mathematical issue
+can be seen in the expression for p(fp|up, X) in (6). In that equation, the mean of the distribution of
+fp depends on both the precise value of the inducing points, up, and the kernel matrix, KXZ. After
+conditioning on the observed data through the likelihood, p(yn|fn), the posterior distribution for U
+and X becomes conditionally dependent.
+The main contribution of this paper is to allow the variational posterior to capture this dependence, by
+relaxing the MF assumption explained in Equation 7. We do this by applying Structured Stochastic
+Variational Inference [Hoffman and Blei, 2015], a general framework that relaxes the independence
+assumptions of MF inference. The insight of SSVI is to take the conditional independence structure
+of the full posterior and mirror it with a conditional independence structure of the variational posterior.
+Concretely, the variational posterior is assumed to have the factorization
+q(F, X, U) =
+P
+Y
+p=1
+p(fp|up, X)q(up)
+N
+Y
+n=1
+q(xn | U).
+(9)
+The key difference between this and Equation (7) is that now the variational posterior of the latent
+variables, xn, depends on the global variables, U. This can be done while maintaining a parametric
+form of the posterior by keeping the same parametrization of the inducing points as the MF case
+where q(up) = N(µp, Σp), with µp, Σp being constant values, but now making the parameters
+of q(xn|U) = N(µn, Σn) functions of the inducing points, i.e. (µn, Σn) = h(yn, U) with h :
+RP × RM×P →RQ × RQ×Q. The goal of the VI procedure is now to learn the constant values
+µp, Σp, as well as the mapping h(·, ·) which most closely matches the true posterior.
+By once again noting that the KL contribution from the GP values, F, is zero due to the shared
+conditional distribution of F given U and X, the ELBO for the SSVI objective can be written as
+LS =
+N
+X
+n=1
+Eq(U)
+h
+ˆLn(U)
+i
+−DKL(q(U) ∥p(U))
+(10)
+where
+ˆLn(U) = Ep(fn|xn,U) q(xn|U)[log p(yn | fn, xn, U)] −DKL(q(xn | U) ∥p(xn)) .
+(11)
+The term within the expectation of the inducing points, ˆLn(U)1, is called the Local ELBO. As in
+the Mean Field case, the SSVI ELBO decomposes into a term depending on the global variables
+q(U), and a sum over terms which depend on the local variables yn. This decomposition allows
+the objective to be stochastically optimized through mini-batching over the observations, allowing
+our method to scale to large datasets. The conditional variational distribution for the latent space,
+q(xn | U), may depend on U in an arbitrarily complex way, making the expectation Eq(U) intractable.
+We therefore approximate it using K Monte Carlo samples Uk ∼q(U), yielding
+LS ≈1
+K
+K
+X
+k=1
+N
+X
+n=1
+ˆLn(Uk) −DKL
+ q(U) ∥p(U)
+
+.
+(12)
+This expression can be evaluated either using Monte Carlo techniques to evaluate the expectations,
+or, for special cases such as the ones we present in our examples, the expressions are analytically
+tractable. We present further details of our ELBO in Appendix B.
+1In order to fully define ˆLn values for yn, µn, Σn, and parameters of the GP are all required in addition to U. The
+inclusion of U in this notation is to emphasize the dependence of ˆLn(·) on a particular value of the random variable, which is
+the key difference between the local ELBO and the standard ELBO.
+4
+
+
+Table 1: Performance comparison on the Oilflow, qPCR, MNIST, and FMNIST datasets under
+the standard configuration. Values are reported as mean ± standard deviation over 5 runs. The
+final negative ELBO is not reported for IWVI-GPLVM because it optimizes a different importance-
+weighted objective that is not directly comparable to the standard ELBO.
+Dataset
+GPLVM type
+Train RMSE
+Test RMSE
+Train NLPD
+Test NLPD
+Final neg. ELBO
+Oilflow
+MF
+0.0528 ± 0.0040
+0.1581 ± 0.0088
+−15.9416 ± 0.5589
+28.5091 ± 4.6286
+−5.2531 ± 0.2447
+A-MF
+0.0460 ± 0.0045
+0.0496 ± 0.0053
+−14.8375 ± 0.5922
+−14.3680 ± 0.9450
+−4.8859 ± 0.2265
+IWVI-GPLVM
+0.0343 ± 0.0025
+0.0375 ± 0.0023
+−17.8099 ± 0.7425
+−17.4136 ± 0.4695
+–
+A-S (Ours)
+0.0418 ± 0.0032
+0.0479 ± 0.0028
+−19.8808 ± 0.7041
+−18.8218 ± 0.6210
+−6.4527 ± 0.0449
+qPCR
+MF
+0.4993 ± 0.0141
+0.6018 ± 0.0405
+36.1396 ± 1.0722
+50.4384 ± 5.1887
+46.9602 ± 0.2065
+A-MF
+0.4795 ± 0.0109
+0.5190 ± 0.0061
+35.3542 ± 0.6533
+38.7142 ± 0.8894
+47.4945 ± 0.2714
+IWVI-GPLVM
+0.4354 ± 0.0053
+0.4731 ± 0.0175
+32.4221 ± 0.4552
+35.5986 ± 1.3582
+–
+A-S (Ours)
+0.4282 ± 0.0047
+0.4701 ± 0.0132
+29.8229 ± 0.4723
+33.5050 ± 1.2980
+44.9380 ± 0.3163
+MNIST
+A-MF
+0.1550 ± 0.0006
+0.1568 ± 0.0003
+−342.5288 ± 2.8080
+−333.9984 ± 1.5725
+−294.0345 ± 2.8327
+IWVI-GPLVM
+0.1540 ± 0.0010
+0.1581 ± 0.0011
+−348.0312 ± 5.5166
+−328.9493 ± 5.6709
+–
+A-S (Ours)
+0.1515 ± 0.0001
+0.1537 ± 0.0007
+−359.8706 ± 2.1250
+−348.4373 ± 3.0311
+−306.3421 ± 1.0179
+FMNIST
+A-MF
+0.1339 ± 0.0004
+0.1342 ± 0.0006
+−456.6282 ± 3.1032
+−454.4614 ± 4.2266
+−409.8799 ± 2.5766
+IWVI-GPLVM
+0.1340 ± 0.0009
+0.1380 ± 0.0011
+−458.0779 ± 5.4105
+−436.8031 ± 6.0015
+–
+A-S (Ours)
+0.1294 ± 0.0003
+0.1299 ± 0.0004
+−484.1356 ± 1.8203
+−481.3409 ± 2.7219
+−425.9231 ± 1.0856
+0
+30K
+60K
+90K
+Iteration
+15
+0
+15
+Train NLPD
+Training NLPD Comparison
+MF
+A-MF
+A-S
+(a) Oilflow
+0
+30K
+60K
+90K
+Iteration
+40
+60
+Train NLPD
+Training NLPD Comparison
+MF
+A-MF
+A-S
+(b) qPCR
+0
+60K
+120K 180K
+Iteration
+500
+0
+500
+1000
+Train NLPD
+Training NLPD Comparison
+A-MF
+A-S
+(c) FMNIST
+0
+60K
+120K 180K
+Iteration
+0
+500
+1000
+Train NLPD
+Training NLPD Comparison
+A-MF
+A-S
+(d) MNIST
+Figure 1: The training NLPD progression during training across all datasets. The A-S-GPLVM and
+A-MF-GPLVM converge at similar rates, but the A-S-GPLVM converges to a better optimum.
+3.1
+Local and Global Variables for Stochastic Variational Inference
+One important choice of our variational family which we have not discussed so far is the choice to
+specify our variational posterior as q(X|U)q(U), rather than q(U|X)q(X). The structure of the exact
+posterior can be written equally well in both forms: p(X, U, F|Y ) = p(F|U, X)p(U|X)p(X) =
+p(F|U, X)p(X|U)p(U). Instead, the reason to prefer q(X|U)q(U) over the alternative is computa-
+tional.
+We are interested in developing a method which can scale to a larger number of observations than
+can reasonably be expected to all be fit into memory at once. To do this, we need to use Stochastic
+Variational Inference [SVI; Hoffman et al., 2013]. SVI relies on models whose variables can be split
+into two sets: local variables, which are associated with individual data points, and global variables,
+which are associated with many or all data points. The key insight of SVI is to realize that it is
+possible to get an unbiased estimate of the gradient for the parameters of the global variables by using
+only a subset of the data. Structured Stochastic Variational Inference [Hoffman and Blei, 2015] relies
+on this same insight, but with additional dependencies in the variational posterior.
+In GPs, U are the global variables shared across the full dataset [Hensman et al., 2013], and in
+GPLVMs the local variables are latent variables, xn. This means that the ELBO decomposes into a
+sum of per-data point contributions, which in turn allows us to estimate LS using only an index set I,
+where |I| ≪N, as
+˜LS =
+N
+K|I|
+K
+X
+k=1
+X
+n∈I
+ˆLn(Uk) −DKL
+ q(U) ∥p(U)
+
+.
+(13)
+This mini-batched version of the objective is the one we use in our experiments.
+4
+Related work
+A closely related work is the GP state-space model work of Ialongo et al. [2019], who remove the
+mean-field factorization between latent state trajectories and the GP transition posterior in recurrent
+5
+
+
+(a) MF-GPLVM
+(b) A-MF-GPLVM
+(c) A-S-GPLVM
+Figure 2: The three latent spaces and reciprocal length scales for the oil flow dataset. The A-S-
+GPLVM has found a slightly more tightly clustered latent space and has been more aggressive about
+turning off non-informative dimensions.
+(a) A-S-GPLVM.
+(b) A-MF-GPLVM.
+Figure 3: The distribution of training points in latent space for FMNIST for the A-S-GPLVM and
+A-MF-GPLVM. The A-S-GPLVM latent space has learned substantially more structure than the
+A-MF-GPLVM. In fact, the A-S-GPLVM appears to have collapsed the latent predictions into a
+semantically meaningful curve within the latent space, capturing the relative similarity of the classes
+with sandals, sneakers, and ankle boots at one end and trousers and dresses at the other. The A-MF-
+GPLVM seems to try to capture a similar shape, but achieves a much less clear separation between
+the groupings.
+GP models. Their coupled approximation improves calibration while preserving similar time and
+space complexity as the mean-field alternative. This work approaches the same conceptual challenge:
+that decoupling latent variables from the GP posterior can be too restrictive, but Ialongo et al. [2019]
+study sequential GP state-space models, whereas we consider the latent variable setting.
+A complementary approach to improving variational inference in GP models is to tighten the vari-
+ational objective through importance weighting. Salimbeni et al. [2019] develop this approach for
+deep Gaussian processes, providing a mechanism to trade additional computation for a tighter lower
+bound. Adapted to the sparse GPLVM setting, importance-weighted variational inference offers
+an alternative to our explicit coupling of the latent-variable and inducing-variable posteriors. An
+amortized IWVI-GPLVM therefore provides a relevant baseline for comparing these two approaches
+to improving variational inference while retaining the same underlying sparse GPLVM model.
+Besides the Bayesian GPLVM [Titsias and Lawrence, 2010] and Generalised GPLVM [Lalchand et al.,
+2022], discussed in the background section, there have been several other lines of work within the
+GPLVM field. One such line of work is the Random Feature Latent Variable Model (RFLVM), which
+replaces the sparse variational GP approximation with Random Fourier Feature (RFF) approximation
+6
+
+
+Table 2: Predictive uncertainty evaluation on the Oilflow, qPCR, MNIST, and FMNIST datasets.
+Values are reported as mean ± standard deviation over 5 runs. The best result for each dataset and
+metric is shown in bold.
+Dataset
+GPLVM type
+Train CRPS ↓
+Test CRPS ↓
+Train coverage
+Test coverage
+Oilflow
+MF
+0.0423 ± 0.0031
+0.0832 ± 0.0114
+0.9867 ± 0.0026
+0.9385 ± 0.0191
+A-MF
+0.0400 ± 0.0020
+0.0416 ± 0.0030
+0.9912 ± 0.0045
+0.9862 ± 0.0074
+IWVI-GPLVM
+0.0238 ± 0.0020
+0.0251 ± 0.0015
+0.9979 ± 0.0006
+0.9954 ± 0.0026
+A-S (Ours)
+0.0247 ± 0.0021
+0.0274 ± 0.0021
+0.9863 ± 0.0019
+0.9705 ± 0.0097
+qPCR
+MF
+0.3454 ± 0.0061
+0.4077 ± 0.0165
+0.9587 ± 0.0024
+0.9383 ± 0.0116
+A-MF
+0.3364 ± 0.0031
+0.3573 ± 0.0089
+0.9650 ± 0.0020
+0.9477 ± 0.0076
+IWVI-GPLVM
+0.2459 ± 0.0030
+0.2613 ± 0.0049
+0.9763 ± 0.0005
+0.9689 ± 0.0047
+A-S (Ours)
+0.2381 ± 0.0015
+0.2558 ± 0.0079
+0.9686 ± 0.0007
+0.9589 ± 0.0056
+MNIST
+A-MF
+0.1007 ± 0.0001
+0.1016 ± 0.0001
+0.9269 ± 0.0001
+0.9247 ± 0.0004
+IWVI-GPLVM
+0.1008 ± 0.0009
+0.1024 ± 0.0010
+0.9314 ± 0.0008
+0.9272 ± 0.0008
+A-S (Ours)
+0.0978 ± 0.0001
+0.0989 ± 0.0002
+0.9270 ± 0.0002
+0.9248 ± 0.0004
+FMNIST
+A-MF
+0.0889 ± 0.0001
+0.0890 ± 0.0002
+0.9330 ± 0.0001
+0.9324 ± 0.0004
+IWVI-GPLVM
+0.0898 ± 0.0008
+0.0916 ± 0.0005
+0.9371 ± 0.0008
+0.9321 ± 0.0027
+A-S (Ours)
+0.0859 ± 0.0003
+0.0861 ± 0.0001
+0.9337 ± 0.0002
+0.9333 ± 0.0007
+(a) FMNIST
+(b) MNIST
+Figure 4: Sample reconstructions using the A-S-GPLVM. Each image shows the posterior predictive
+mean of the reconstructed observation. The model is able to produce a reasonable quality of
+reconstruction, although the difference in quality to the A-MF-GPLVM (see Figure 13, Appendix I)
+is not immediately obvious.
+of the mapping from latent variables to observations [Gundersen et al., 2021]. In their approach
+Gundersen et al. [2021] used a point MAP estimate for the latent variables X, which was conditioned
+on the RFF approximation. Later work in this line by Li et al. [2024] and Yang et al. [2025] applied a
+VI approach to approximating the RFLVM posterior. A different approach by Xu et al. [2024] used
+the same sparse GP formulation of the mapping from the latent to observed space, but used Annealed
+Importance Sampling (AIS) to tighten the lower bound of the GPLVM. As far as we are aware, no
+prior work has proposed a method for making the latent space conditional on the GP mapping as we
+do here.
+5
+Experiments
+We compare our extension of the GPLVM framework, the Amortized-Structured-GPLVM (A-S-
+GPLVM), which applies SSVI with amortization of the latent variables, to variants of the mean field
+approach. On the smaller scale datasets we compare against two inference strategies: the MF-GPLVM
+with SVI, which directly approximates the MF-GPLVM variational posterior by optimizing the param-
+eters of the latent variable distribution {µn, Σn}N
+n=1 and the inducing point variational distribution
+{µp, Σp}P
+p=1, and the Amortized-MF-GPLVM (A-MF-GPLVM), where the latent variables are also
+amortized. We base our implementation of these on Lalchand et al. [2022]. The initialization is the
+same for all models, and is reported in Appendix D. A Bayesian diagram for the A-MF-GPLVM
+and A-S-GPLVM is given in Figure 6, in Appendix A. For larger datasets, we do not include the
+non-amortized MF-GPLVM.
+7
+
+
+Motivated by the alternative bound-tightening approach discussed in Section 4, we additionally com-
+pare against an amortized importance-weighted variational GPLVM (IWVI-GPLVM), following the
+importance-weighted approach of Salimbeni et al. [2019]. This baseline retains the same underlying
+sparse GPLVM model but improves the variational objective through importance weighting rather
+than introducing the explicit posterior dependence used by A-S-GPLVM. It therefore allows us to as-
+sess whether the benefits of structured inference persist when compared with an alternative approach
+to tightening the variational bound. We use the same model and optimization hyperparameters as for
+the other amortized models, with the additional IWVI-specific parameter, the number of importance
+samples, set to 5.
+Data setup.
+The experiments are conducted on four standard datasets: two small-scale ones and
+two larger datasets. Our small-scale datasets are the Oilflow dataset, consisting of 1000 twelve-
+dimensional data points belonging to three classes corresponding to different phases of oil flow in a
+pipeline [Bishop and James, 1993], and the qPCR dataset, consisting of 48-dimensional single-cell
+data obtained from mice with 10 classes [Guo et al., 2010]. For our larger-scale experiments, we
+use the MNIST [LeCun et al., 1998] and Fashion MNIST [Xiao et al., 2017], which we subsample
+to contain 1500 examples from each of the 10 classes. Code to recreate the Oilflow experiment
+using the A-S-GPLVM model is provided in the accompanying repository (see https://github.com/
+jamesacodgers/conditional_overlaping_gaussian_processes).
+Evaluation Metrics.
+To evaluate the quality of our posterior approximation, we use five metrics.
+First, we use the negative ELBO from our model, which should give a lower value if our posterior is
+able to achieve a value closer to the true posterior. As the ELBO is also influenced by hyperparameters,
+which can differ between models, we also use additional metrics to evaluate the reconstruction quality
+of our learned data manifold. We define our variational reconstruction distribution with
+q(yn) =
+Z
+p(yn|fn)q(fn, xn, U)dfndxndU,
+(14)
+for each of our data points. We report two values calculated from this: the Negative Log Predictive
+Density (NLPD) of q(yn) evaluated at the true data point, and the Root Mean Squared Error (RMSE)
+between the true observation yn and the mean of q(yn).
+To evaluate predictive uncertainty more directly, we additionally report the Continuous Ranked
+Probability Score (CRPS) and empirical coverage of marginal 95% posterior predictive intervals.
+CRPS evaluates the full predictive distribution and rewards both calibration and sharpness, with
+lower values indicating better predictions. Empirical coverage measures the fraction of observed
+values contained in the corresponding 95% predictive intervals; values closer to 0.95 indicate better
+calibration.
+We also split our data into training and test sets. The training set is the data used to train the GP
+hyperparameters, the inducing point parameters, and either the values of the latent variables or the
+amortization network for the latent variables. The test data were not seen during training, and we use
+this data to evaluate if our model can generalize well to unseen observations. For the smaller datasets,
+we use a 90/10 train–test split, while for the MNIST and FMNIST datasets, we used 1000 training
+points and 500 test points per class.
+Data pre-processing.
+For all datasets, we apply mean-centering as a preprocessing step. Specif-
+ically, each observed dimension is centered by subtracting its empirical mean, computed over the
+training set.
+5.1
+Results.
+Table 1 reports the train and test RMSE and NLPD, as well as the final negative ELBO where
+applicable. Compared with the A-MF-GPLVM, the A-S-GPLVM achieves lower RMSE and NLPD
+on all four datasets. Two-sided Welch’s t-tests show that these improvements are statistically
+significant, with the exception of the train and test RMSE improvements on Oilflow.
+The comparison with IWVI-GPLVM is more mixed on the smaller datasets. IWVI-GPLVM achieves
+lower train and test RMSE on Oilflow, whereas the A-S-GPLVM achieves significantly lower train
+and test NLPD. On qPCR, the A-S-GPLVM achieves significantly lower train and test NLPD, while
+8
+
+
+2
+0
+2
+x[1]
+2
+0
+2
+4
+y[0]
+y[0] vs x[1]
+(a) MF-GPLVM
+2
+0
+2
+x[1]
+2
+0
+2
+4
+y[0]
+y[0] vs x[1]
+(b) A-MF-GPLVM
+2
+0
+2
+x[8]
+2
+0
+2
+4
+y[0]
+y[0] vs x[8]
+(c) A-S-GPLVM
+Figure 5: Latent slice through the most informative latent dimension and a histogram of the learned
+posterior distribution of the training data along the horizontal axis. Curves show predictive means;
+shaded areas denote predictive uncertainty for each output. The epistemic uncertainty at points far
+from the training data clearly increases more rapidly with the A-S-GPLVM than with the MF models.
+its lower RMSE is not statistically significant. On MNIST and FMNIST, the A-S-GPLVM achieves
+significantly lower train and test RMSE and NLPD than IWVI-GPLVM.
+Table 2 provides a more direct evaluation of predictive uncertainty. The A-S-GPLVM achieves
+significantly lower train and test CRPS than the A-MF-GPLVM on all four datasets. Compared
+with IWVI-GPLVM, the A-S-GPLVM achieves significantly lower train and test CRPS on MNIST
+and FMNIST. On Oilflow, IWVI-GPLVM obtains slightly lower CRPS, but the differences are
+not statistically significant. On qPCR, the A-S-GPLVM obtains lower CRPS, with a statistically
+significant difference on the training set. The empirical coverage results are more mixed and do not
+show uniform dominance by any single method. Nevertheless, the A-S-GPLVM achieves coverage
+closer to the nominal 95% level than IWVI-GPLVM on both Oilflow and qPCR.
+The poor performance of the non-amortized MF-GPLVM on test data is because q(xn) needs to be
+numerically optimized for each test point, which is a non-convex optimization and can converge to
+poor local optima. Figure 1 shows the convergence of the training NLPD across the four datasets.
+The A-S-GPLVM seems to converge at very similar rates to the A-MF-GPLVM, but to a better final
+value. In Appendix I, Figures 12, 15 and 16 show similar plots for the other metrics we tested. The
+strong performance of the A-S-GPLVM compared to the MF variants suggests that our approach is
+using the greater flexibility of the variational family to achieve a better approximation of the exact
+posterior, and hence better performance.
+We show two-dimensional projections of the latent space onto the two most significant dimensions
+of the GP, as in Titsias and Lawrence [2010], for the oil flow and FMNIST datasets in Figure 2 and
+Figure 3. For A-S-GPLVM, latent samples are obtained by first sampling the inducing variables U
+from their variational posterior q(U), finding q(X | U), and sampling from that latent distribution.
+For the MF-GPLVM and the A-MF-GPLVM, latent samples are generated by sampling q(X) directly.
+In both figures, the GPLVM variants all find comparable latent spaces, but the A-S-GPLVM produces
+results with tighter clusters than the (A-)MF-GPLVM. This is particularly pronounced for the FMNIST
+dataset in Figure 3, where the A-S-GPLVM latent space has taken on a crescent shape, with one
+end containing footwear (sandal, sneaker, ankle boot), the other end taking clothing items (trouser,
+dress), and a clear gap containing no data between them. The A-MF-GPLVM also seems to be
+attempting to capture a similar shape; however, the separation between the two prongs is much less
+pronounced. This shows that, for this dataset, our method more effectively captures meaningful
+semantic information from the images. Figure 2 also plots the reciprocal of the ARD kernel’s learned
+length scales. The A-S-GPLVM has been more aggressive in switching off uninformative dimensions,
+but learned comparable length scales for the informative dimensions. The latent plots for the qPCR
+and MNIST datasets are shown in Appendix I and exhibit similar behavior.
+Figure 4 shows the mean of q(yn) from the A-S-GPLVM for eight data points, demonstrating
+reasonable reconstruction quality. We provide similar plots for the A-MF-GPLVM reconstructions
+in Figure 13, Appendix I, which are visually of similar quality. While the improvements of the
+A-S-GPLVM reconstructions over the A-MF-GPLVM are mostly statistically significant, as shown
+in Table 3, the visual similarity suggests that further work improving other aspects of the GPLVM
+model would be needed to make it a truly effective generative model.
+9
+
+
+While the reconstructions are an important measure of latent space estimation quality, a specific
+advantage of GPs is their ability to increase epistemic uncertainty away from the data. We visualize
+this in Figure 5, which shows a slice of the prediction of the GP from the latent to one of the observed
+dimensions along the single most informative latent coordinate, i.e., the coordinate with the shortest
+GP length scale, with other coordinates fixed at zero. Figure 5 shows that the MF-GPLVMs have
+a slow increase in the epistemic uncertainty of the GP mapping between the region where there
+is a significant probability of observing a latent variable, roughly corresponding to [−2, 2] on the
+x axis, and the region where there is a low probability of observing a latent variable. In contrast, the
+uncertainty of the GP mapping learned by the A-S-GPLVM increases much more rapidly away from
+the high-probability inputs. We show similar plots for four output dimensions of the Oilflow dataset in
+Figure 10, Appendix I. We do not expect the A-S-GPLVM to achieve a perfect estimation of the exact
+epistemic uncertainty of the posterior due to the approximation on the GP mapping [Wenger et al.,
+2022, 2024] and other restrictions of the variational posterior. However, the A-S-GPLVM shows a
+clear improvement in the epistemic uncertainty estimation and, as all of the methods presented here
+share the same GP approximation, these results indicate that the coupling of the variational posteriors
+for the GP and the latent space is directly responsible for this difference in epistemic uncertainty
+estimation.
+6
+Limitations
+Computational overhead.
+Compared with the amortized mean-field GPLVM, the A-S-GPLVM
+introduces additional computational cost because the structured objective requires Monte Carlo
+samples Uk ∼q(U), as in Equation 12. For each sampled global state, the encoder must evaluate a
+conditional local posterior q(xn | Uk) and the expected likelihood must be evaluated. The K sampled
+inducing-variable states can be processed in parallel, so the dominant practical cost is often increased
+memory usage rather than a fully sequential increase in wall-clock time. We empirically quantify this
+in Appendix G, where we show that the A-S-GPLVM suffers a slight wall-clock slowdown, but a
+significant increase in memory usage. Further work on how to informatively select samples of U, e.g.
+via importance sampling, could help alleviate this cost.
+Restrictive variational family.
+A second limitation is that, while our variational posterior is
+more expressive than the MF-GPLVM alternative, we still make strong assumptions on the form
+of our variational posterior. For example, we assume q(xn | U) is a normal distribution with a
+diagonal Gaussian covariance and q(U) = QP
+p=1 q(up). As a result, we expect that the A-S-GPLVM
+method proposed here still does not accurately match the exact posterior and further work on how to
+effectively relax those approximations may yield similar improvements in performance.
+7
+Conclusion
+This work introduces SSVI for GPLVMs by coupling the variational posterior of the latent variables
+to the inducing variables. Across Oilflow, qPCR, MNIST, and FMNIST, the A-S-GPLVM achieves
+statistically significant improvements in train and test CRPS over the A-MF-GPLVM. Its RMSE and
+NLPD improvements are also statistically significant, except for RMSE on Oilflow.
+Compared with IWVI-GPLVM, the A-S-GPLVM achieves significantly lower train and test NLPD on
+all four datasets, and significantly lower RMSE and CRPS on MNIST and FMNIST. Results on the
+smaller datasets are more mixed, and empirical 95% coverage does not show uniform improvement.
+Together, these findings provide quantitative evidence that structured posterior dependence improves
+the quality of the learned predictive distribution. The qualitative uncertainty plots additionally show
+a more rapid increase in uncertainty away from the observed data (Figure 5), consistent with our
+motivation to better capture epistemic uncertainty in the learned data manifold.
+Future work will explore how to use the improved uncertainty of the data manifold. For example, as a
+method of improving the sharing of information and uncertainty estimates in multiobjective Bayesian
+optimization, as in Sedgwick et al. [2025].
+10
+
+
+References
+Sumon Ahmed, Magnus Rattray, and Alexis Boukouvalas. GrandPrix: scaling up the Bayesian
+GPLVM for single-cell data. Bioinformatics, 35(1):47–54, January 2019.
+Christopher M Bishop and Gwilym D James. Analysis of multiphase flows using dual-energy gamma
+densitometry and neural networks. Nuclear Instruments and Methods in Physics Research Section
+A: Accelerators, Spectrometers, Detectors and Associated Equipment, 327(2-3):580–593, 1993.
+David M. Blei, Alp Kucukelbir, and Jon D. McAuliffe.
+Variational Inference: A Review for
+Statisticians. Journal of the American Statistical Association, 112(518):859–877, 2017. doi:
+10.1080/01621459.2017.1285773.
+Andreas C Damianou, Michalis K Titsias, and Neil D Lawrence. Variational inference for latent
+variables and uncertain inputs in Gaussian processes. The Journal of Machine Learning Research,
+17(1):1425–1486, 2016.
+Anish Dhir, Samuel Power, and Mark van der Wilk. Bivariate Causal Discovery using Bayesian
+Model Selection, May 2024.
+Anish Dhir, Ruby Sedgwick, Avinash Kori, Ben Glocker, and Mark van der Wilk. Continuous
+Bayesian Model Selection for Multivariate Causal Discovery, June 2025.
+Gregory Gundersen, Michael Zhang, and Barbara Engelhardt. Latent variable modeling with random
+features. In Arindam Banerjee and Kenji Fukumizu, editors, Proceedings of The 24th International
+Conference on Artificial Intelligence and Statistics, volume 130 of Proceedings of Machine
+Learning Research, pages 1333–1341. PMLR, 13–15 Apr 2021. URL https://proceedings.mlr.
+press/v130/gundersen21a.html.
+Guoji Guo, Mikael Huss, Guang Q. Tong, Chong Wang, Liang L. Sun, Neil D. Clarke, and Paul
+Robson. Resolution of cell fate decisions revealed by single-cell gene expression analysis from
+zygote to blastocyst. Developmental Cell, 18(4):675–685, 2010. doi: 10.1016/j.devcel.2010.02.012.
+James Hensman, Nicolo Fusi, and Neil D. Lawrence. Gaussian processes for big data. In Proceedings
+of the Twenty-Ninth Conference on Uncertainty in Artificial Intelligence (UAI), pages 282–290.
+AUAI Press, 2013.
+Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick,
+Shakir Mohamed, and Alexander Lerchner.
+β-VAE: Learning basic visual concepts with a
+constrained variational framework. In International conference on learning representations, 2017.
+Matthew D. Hoffman and David M. Blei. Structured stochastic variational inference. In Francis
+Bach and David Blei, editors, Proceedings of the Eighteenth International Conference on Artificial
+Intelligence and Statistics (AISTATS), volume 38 of Proceedings of Machine Learning Research,
+pages 361–369, San Diego, California, USA, 2015. JMLR Workshop and Conference Proceedings.
+Matthew D. Hoffman, David M. Blei, Chong Wang, and John Paisley. Stochastic Variational Inference.
+Journal of Machine Learning Research, 14(40):1303–1347, 2013. ISSN 1533-7928.
+Alessandro Davide Ialongo, Mark Van Der Wilk, James Hensman, and Carl Edward Rasmussen.
+Overcoming mean-field approximations in recurrent Gaussian process models. In Kamalika
+Chaudhuri and Ruslan Salakhutdinov, editors, Proceedings of the 36th International Conference on
+Machine Learning, volume 97 of Proceedings of Machine Learning Research, pages 2931–2940.
+PMLR, 09–15 Jun 2019. URL https://proceedings.mlr.press/v97/ialongo19a.html.
+Noémie Jaquier, Leonel Rozo, Miguel González-Duque, Viacheslav Borovitskiy, and Tamim As-
+four. Bringing motion taxonomies to continuous domains via GPLVM on hyperbolic manifolds,
+September 2024.
+Diederik P. Kingma and Max Welling. Auto-encoding variational Bayes. In 2nd International
+Conference on Learning Representations, ICLR 2014, Banff, AB, Canada, April 14-16 2014.
+Conference Track Proceedings.
+11
+
+
+Vidhi Lalchand, Aditya Ravuri, and Neil D. Lawrence. Generalised Gaussian Process Latent Variable
+Models (GPLVM) with Stochastic Variational Inference, April 2022.
+Neil D. Lawrence. Probabilistic non-linear principal component analysis with Gaussian process
+latent variable models. In Yair Weiss, Bernhard Schölkopf, and John C. Platt, editors, Advances in
+Neural Information Processing Systems (NeurIPS), volume 17, pages 613–620, Vancouver, British
+Columbia, Canada, 2005. MIT Press.
+Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning applied to
+document recognition. Proceedings of the IEEE, 86(11):2278–2324, 1998. ISSN 0018-9219.
+Ying Li, Zhidi Lin, Feng Yin, and Michael Minyi Zhang. Preventing model collapse in Gaussian
+process latent variable models. arXiv preprint arXiv:2404.01697, 2024.
+Thomas Minka. Divergence measures and message passing. https://tminka.github.io/papers/message-
+passing/, December 2005.
+James A. C. Odgers, Ruby Sedgwick, Chrysoula Dimitra Kappatou, Ruth Misener, and Sarah Lucie
+Filippi. Weighted Sum of Gaussian Process Latent Variable Models. In Proceedings of The 28th
+International Conference on Artificial Intelligence and Statistics, pages 3610–3618. PMLR, 2025.
+URL https://proceedings.mlr.press/v258/odgers25a.html.
+Carl Edward Rasmussen and Christopher K. I. Williams. Gaussian processes for machine learning.
+Adaptive computation and machine learning. MIT Press, Cambridge, Mass., 3. print edition, 2008.
+ISBN 978-0-262-18253-9.
+John E. Reid and Lorenz Wernisch. Pseudotime estimation: deconfounding single cell time series.
+Bioinformatics, 32(19):2973–2980, October 2016.
+Leonel Rozo, Miguel González-Duque, Noémie Jaquier, and Søren Hauberg. Riemann2: Learning
+Riemannian submanifolds from Riemannian data. In Yingzhen Li, Stephan Mandt, Shipra Agrawal,
+and Emtiyaz Khan, editors, Proceedings of The 28th International Conference on Artificial Intelli-
+gence and Statistics, volume 258 of Proceedings of Machine Learning Research, pages 3097–3105.
+PMLR, 03–05 May 2025. URL https://proceedings.mlr.press/v258/rozo25a.html.
+Hugh Salimbeni, Vincent Dutordoir, James Hensman, and Marc Deisenroth. Deep Gaussian processes
+with importance-weighted variational inference. In Kamalika Chaudhuri and Ruslan Salakhutdinov,
+editors, Proceedings of the 36th International Conference on Machine Learning, volume 97 of
+Proceedings of Machine Learning Research, pages 5589–5598. PMLR, 09–15 Jun 2019. URL
+https://proceedings.mlr.press/v97/salimbeni19a.html.
+Ruby Sedgwick, John P. Goertz, Molly M. Stevens, Ruth Misener, and Mark van der Wilk. Transfer
+learning Bayesian optimization for competitor DNA molecule design for use in diagnostic assays.
+Biotechnology and Bioengineering, 122(1):189–210, 2025. ISSN 1097-0290. doi: 10.1002/bit.
+28854.
+Michael E. Tipping and Christopher M. Bishop. Probabilistic Principal Component Analysis. Journal
+of the Royal Statistical Society Series B: Statistical Methodology, 61(3):611–622, September 1999.
+ISSN 1369-7412. doi: 10.1111/1467-9868.00196.
+Michalis Titsias. Variational Learning of Inducing Variables in Sparse Gaussian Processes. In
+Proceedings of the Twelfth International Conference on Artificial Intelligence and Statistics, pages
+567–574. PMLR, April 2009.
+Michalis Titsias and Neil D. Lawrence. Bayesian Gaussian process latent variable model. In
+Yee Whye Teh and D. Michael Titterington, editors, Proceedings of the Thirteenth International
+Conference on Artificial Intelligence and Statistics (AISTATS), volume 9 of Proceedings of Machine
+Learning Research, pages 844–851, Chia Laguna Resort, Sardinia, Italy, 2010. JMLR Workshop
+and Conference Proceedings.
+Jonathan Wenger, Geoff Pleiss, Marvin Pförtner, Philipp Hennig, and John P. Cunningham. Poste-
+rior and computational uncertainty in Gaussian processes. In Advances in Neural Information
+Processing Systems, 2022.
+12
+
+
+Jonathan Wenger, Kaiwen Wu, Philipp Hennig, Jacob R. Gardner, Geoff Pleiss, and John P. Cun-
+ningham. Computation-aware Gaussian processes: Model selection and linear-time inference. In
+Advances in Neural Information Processing Systems, 2024.
+Han Xiao, Kashif Rasul, and Roland Vollgraf. Fashion-MNIST: a novel image dataset for bench-
+marking machine learning algorithms. arXiv preprint arXiv:1708.07747, 2017.
+Jian Xu, Shian Du, Junmei Yang, Qianli Ma, Delu Zeng, and John Paisley. Variational learning of
+Gaussian process latent variable models through stochastic gradient annealed importance sampling.
+arXiv preprint arXiv:2408.06710, 2024.
+Zi Yang, Ying Li, Zhidi Lin, Michael Minyi Zhang, and Pablo M Olmos. Multi-view oriented
+GPLVM: Expressiveness and efficiency. arXiv preprint arXiv:2502.08253, 2025.
+13
+
+
+xn
+yn
+fp
+up
+θ
+µp
+Σp
+σ2
+y
+g
+Z
+N
+P
+xn
+yn
+fp
+up
+θ
+µp
+Σp
+σ2
+y
+h
+Z
+N
+P
+Figure 6: Graphical models comparing the GPLVM variants. Left: Amortized mean-field (A-MF-
+GPLVM), where the variational posteriors of the latent variables, xn, are independent of the inducing
+point values, up. Right: Amortized Structured (A-S-GPLVM, ours), which conditions the value of the
+latent variable variational posterior on the global inducing variables, capturing dependencies between
+local and global variational factors. The dashed line indicates a variable used for amortization.
+A
+Graphical Models
+B
+SSVI ELBO derivation details
+As stated in Section 3, we approximate the ELBO using K Monte Carlo samples Uk ∼q(U), yielding
+LS ≈1
+K
+K
+X
+k=1
+N
+X
+n=1
+ˆLn(Uk) −DKL
+ q(U) ∥p(U)
+
+.
+(15)
+To calculate the local ELBO, it is helpful to explicitly split the calculation across the P output
+dimensions. Recalling the conditional relationships from Equation (6), we can see that for one latent
+variable xn and inducing point sample for a single output upk ∈RM, then the function output for a
+single observation and output, fnpk ∈R, the conditional distribution is given by
+p(fnpk | upk, xn) = N(fnpk | µf
+npk, σf
+npk)
+(16)
+where µf
+npk, σf
+npk ∈R are given by
+µf
+npk = kθ(xn, Z)⊤K−1
+ZZupk,
+(17)
+σf
+npk = kθ(xn, xn) −kθ(xn, Z)K−1
+ZZkθ(xn, Z)⊤.
+(18)
+Note that σf
+npk is the variance of the distribution, but we have not included the squared term to keep
+the notation cleaner. Additionally, p(yn | fn, xn, Uk) = p(yn|fn) so we can further simplify our
+notation here by dropping xn and Uk from the notation of the likelihood.
+The local ELBO can then be written as a sum of the P expected log-likelihood terms
+Fnpk = Ep(fnpk|xn,Uk) q(xn|Uk)[log p(ynp | fnpk)]
+(19)
+and a KL divergence to give
+ˆLn(Uk) =
+P
+X
+p=1
+Fnpk −DKL(q(xn | Uk) ∥p(xn)) .
+(20)
+If the variational posterior is constrained to a parametric form, as it is in our case, the KL term
+DKL(q(xn | U)∥p(xn)) is available in closed form.
+Proceeding in a very similar way to the MF-GPLVM, we can take the expectation of the log-likelihood
+over p(fnpk|xn, Uk), giving
+Fnpk = −1
+2 log(2πσ2) −
+1
+2σ2 Eq(xn|Uk)
+h
+(ynp −µf
+npk)2 + σf
+npk
+i
+.
+(21)
+14
+
+
+We then define the so-called ψ-statistics, which are the required kernel expectations:
+ψ0n = Eq(xn)[kθ(xn, xn)] ∈R,
+ψ1n = Eq(xn)[kθ(xn, Z)] ∈R1×M,
+ψ2n = Eq(xn)[kθ(xn, Z)⊤kθ(xn, Z)] ∈RM×M.
+(22)
+We can separate the two terms in the latent variable expectation in Equation (21). The expectation of
+σf
+npk with respect to q(xn|Uk) is
+ˆσf
+npk = ψ0n −tr
+ K−1
+ZZψ2n
+
+.
+(23)
+Expanding the quadratic expectation term gives
+Eq(xn|Uk)
+
+(ynp −µf
+npk)2
+= y2
+np −2ynp Eq(xn|Uk)[µf
+npk] + Eq(xn|Uk)
+
+(µf
+npk)2
+.
+(24)
+For the ARD kernel we use, the expectations have closed-form solutions [Titsias and Lawrence,
+2010].
+Substituting the kernel expectations
+Eq(xn|Uk)
+
+µf
+npk
+
+= ψ1nK−1
+ZZupk,
+Eq(xn|Uk)
+
+(µf
+npk)2
+= u⊤
+pkK−1
+ZZψ2nK−1
+ZZupk.
+(25)
+For notational convenience, we use
+ˆµf
+npk = Eq(xn|Uk)[µf
+npk]
+(26)
+The expectations above were done for the pth output dimension of yn. As a result, for all dimensions
+of yn we obtain:
+P
+X
+p=1
+Fnpk = −P
+2 log(2πσ2) −
+1
+2σ2
+P
+X
+p=1
+h
+ˆσf
+npk + y2
+np −2ynp ˆµf
+npk + u⊤
+pkK−1
+ZZψ2nK−1
+ZZupk
+i
+. (27)
+C
+Amortized Encoder
+As noted by Hoffman and Blei [2015], the function h(·, ·) can be defined implicitly as h(yn, U) =
+arg maxmn,Sn ˆLn(U), however, this requires solving a new optimization problem for q(xn|U) at
+each training step and for each sample of U. To avoid this expensive step, amortized inference can be
+used. In our testing, we found several design choices improved performance, which we detail below.
+Encoder architecture.
+In our experiments, we used two separate two-hidden-layer multilayer
+perceptrons (MLPs), one to encode the mean and one to encode the log-variance. The rationale for
+this was that the magnitudes of variation in optimal means and variances differ significantly.
+Reparameterization of inducing variables.
+Both of these networks received the same inputs. The
+goal of these networks is to couple the information from the observation to the values of the inducing
+variables to improve the representation of the latent space. The naive way to do this would be to pass
+in the tuple (Uk, yn) for each observation and sample. While this approach is possible, we found that
+at late stages of training, when the variational distribution of the inducing variables, q(U), had a high
+degree of certainty, all of the samples of the inducing variables Uk lie very close to one another. In
+order to give a better-conditioned input to the network, while preserving the information required to
+couple the inducing points to the observations, we use the reparameterization trick to sample Uk.
+For each sample of upk ∈RM, we sample a standard normal variable ξpk ∼N(0, I) which we
+transform to be a sample from the variational posterior, q(up) = N(µp, Σp) using
+upk = µp + Lpξpk,
+(28)
+where Lp is the Cholesky factor of Σp. The main benefit of the reparameterization trick is that
+it allows gradients to propagate through samples of the global inducing variables U. However,
+as an added benefit, the reparameterized input Ξk is well spread out over the input space, while
+maintaining all of the sample-specific information required to couple the inducing sample to the
+output and condition the latent variable on the inducing point samples. Therefore, we pass the variable
+Ξk = {ξpk}P
+p=1.
+15
+
+
+Local variational posterior.
+We additionally apply a soft-plus transform to ensure that the variance
+of the variational posterior is strictly positive, so the local variational posterior becomes
+µnk = hµ(yn, Ξk),
+(29)
+log σnk = hσ(yn, Ξk),
+(30)
+Σnk = diag(softplus(log σnk) + ϵmin),
+(31)
+where ϵmin is a small positive constant ensuring numerical stability. These parameters define the
+local variational distribution q(xn | Uk) = N(µnk, Σnk).
+Annealed prior regularization.
+When training on larger datasets, we found that the mean encoder
+network was slow to converge to making predictions with variance approximately equal to one. To
+speed up this convergence, we adapted our local variable by scaling the KL regularization term up by
+a factor of β larger than one at the start of training, similar to the β-VAE [Higgins et al., 2017], so the
+local ELBO looks like
+ˆLβ
+n(Uk) = Ep(fn|xn,Uk) q(xn|Uk)
+
+log p(yn | fn, xn, Uk)
+
+−β DKL
+ q(xn | Uk) ∥p(xn)
+
+.
+(32)
+Over the course of training, we decay this variable from an initial value β > 1 to β = 1 at the end of
+training. We applied this only to the MNIST/FMNIST datasets, with an initial value of β = 10 and a
+quadratic decay rate to β = 1. It is important to emphasize that this variable does not change the
+objective at the end of training; its only function is to speed up convergence to the optimal variational
+posterior.
+Comparison to mean field amortization.
+In amortized mean field GPLVMs, the encoder takes
+only yn as input and produces a variational posterior q(xn) independent of the inducing variables.
+D
+Model Configuration
+For the smaller datasets (oil flow, qPCR), the hyperparameters are:
+• Latent Dimensionality (Q): 10 dimensions
+• Inducing Points (M): 32 per output dimension
+• Training Iterations: 100,000 for all four models
+• Batch Size: 32
+• Random Seeds: 0,1,2,3,4
+• Initial lengthscales of 1.0 and observation noise variance of 1.0
+• Number of samples from the inducing variables (K): 64
+• Learning rate: 1e−3
+• MLP hidden layer dims: (128, 64)
+For the larger datasets (MNIST, FMNIST), the hyperparameters are:
+• Latent Dimensionality (Q): 10 dimensions
+• Inducing Points (M): 64 per output dimension
+• Training Iterations: 200,000 for all three models
+• Batch Size: 32
+• Random Seeds: 0,1,2,3,4
+• Initial lengthscales of 1.0 and observation noise variance of 1.0
+• Number of samples from the inducing variables (K): 4
+• Learning rate: 1e−4
+• MLP hidden layer dims: (512, 256)
+16
+
+
+E
+Computational setup
+All experiments reported for Oilflow, qPCR, MNIST, and FMNIST using the hyperparameter config-
+urations described above were run on similar GPU nodes in a high-performance computing cluster.
+The precise hardware specifications varied slightly across runs. Detailed measurements of the runtime
+and memory overhead of the proposed structured approximation, measured on a representative node,
+are provided in Appendix G.
+Table 3: Two-sided Welch’s t-test p-values over 5 independent runs comparing A-MF-GPLVM and
+A-S-GPLVM.
+Dataset
+RMSE (train)
+RMSE (test)
+NLPD (train)
+NLPD (test)
+ELBO
+Oilflow
+0.12
+0.55
+< 10−3
+< 10−3
+< 10−4
+qPCR
+< 10−3
+< 10−3
+< 10−3
+< 10−3
+< 10−3
+MNIST
+< 10−4
+< 10−4
+< 10−4
+< 10−4
+< 10−4
+FMNIST
+< 10−4
+< 10−4
+< 10−4
+< 10−4
+< 10−4
+F
+Statistical significance of the observed improvements
+To assess whether the gains from the structured variational family are robust across random initializa-
+tion and stochastic optimization noise, we performed a two-sided Welch’s t-test over 5 independent
+runs, comparing A-MF-GPLVM and A-S-GPLVM on each dataset. The resulting p-values are
+reported in Table 3.
+Overall, the structured method yields statistically significant improvements on the probabilistic
+metrics across all datasets. In particular, for qPCR all reported differences are significant at the 10−3
+level or smaller, and for MNIST and FMNIST all reported differences are significant at the 10−4 level
+or smaller. On Oilflow, both NLPD improvements remain highly significant (p < 10−3), and the
+ELBO difference is also significant (p < 10−4), whereas the RMSE differences are not statistically
+significant (p = 0.12 on the training split and p = 0.55 on the test split).
+This distinction is important for interpreting the effect of the proposed method. In particular, the
+Oilflow result shows that the structured posterior can significantly improve the probabilistic quality
+of the model, as measured by NLPD and ELBO, even when the point-estimate accuracy measured by
+RMSE does not change significantly. This supports our claim that the main benefit of the structured
+variational family is in improving the posterior approximation and predictive uncertainty, rather than
+merely shifting the predictive mean.
+Table 4: Empirical runtime and peak GPU memory over 100 training iterations on Oilflow, using
+B = 32, M = 32, Q = 10, K = 32 and float64 precision.
+Metric
+A-MF-GPLVM
+A-S-GPLVM
+Wall-clock time (s)
+5.03
+8.36
+Peak GPU memory (MB)
+29.0
+598.7
+G
+Runtime and memory overhead
+The proposed structured approximation introduces two main sources of overhead relative to A-
+MF-GPLVM. First, the encoder input becomes larger, since the sampled inducing-variable state is
+concatenated with the observation rather than processing the observation alone. Second, each ELBO
+evaluation uses K Monte Carlo replicas. Both operations are parallelizable, so the primary practical
+trade-off is expected to be increased memory use rather than an inherently sequential increase in
+computation.
+To quantify this overhead empirically, we measured runtime and peak GPU memory on the Oilflow
+dataset for 100 training iterations using a minibatch size of B = 32, M = 32 inducing points, latent
+dimension Q = 10, 12 observed dimensions, K = 32 Monte Carlo samples, and float64 precision
+throughout. The experiments were run on an NVIDIA RTX 2080Ti GPU (22 GB VRAM) with an
+AMD EPYC 7282 CPU and CUDA 13.0. The results are shown in Table 4.
+17
+
+
+In this configuration, A-S-GPLVM increases the wall-clock time from 5.03 s to 8.36 s over 100
+iterations, corresponding to an approximate 1.66× increase. In terms of memory, peak GPU usage
+rises from 29.0 MB to 598.7 MB. This is consistent with the fact that the K inducing-variable samples
+can be processed in parallel, so the dominant cost of the structured estimator is storing the replicated
+computation graph and intermediate activations.
+We emphasize that these measurements characterize the present implementation rather than an
+unavoidable algorithmic constant. In our current codebase, the additional wall-clock overhead is
+partly influenced by implementation details in a shared layered design across models. The more
+stable conclusion is that the proposed method preserves the same sparse, minibatched stochastic
+variational structure as amortized mean-field GPLVMs, but pays a memory cost in exchange for a
+richer posterior approximation.
+H
+Ablation studies
+To better isolate the source of the improvement in A-S-GPLVM, we carried out ablations on the
+encoder architecture, the number of inducing points, and the number of sampled inducing-variable
+states. The corresponding plots are shown in Figures 7, 8, and 9.
+Encoder architecture.
+We first varied the widths of the two-hidden-layer MLP encoder across
+the settings [16, 8], [32, 16], [64, 32], [128, 64], and [256, 128] for both A-MF-GPLVM and A-S-
+GPLVM. Across this range, the total encoder size did not have a strong effect on performance, while
+A-S-GPLVM consistently outperformed A-MF-GPLVM on the probabilistic metrics (ELBO and
+NLPD). This supports our claim that the main benefit does not come from increased encoder capacity.
+Increasing encoder size in the mean-field model only makes the deterministic map yn 7→q(xn) more
+flexible, whereas the structured model can adapt the local posterior to the sampled global GP state
+through q(xn | U). In particular, even a small encoder with SSVI remains better than a larger encoder
+with MFVI.
+Number of inducing points.
+We next fit the Oilflow dataset using 16, 32, and 64 inducing points.
+Across all tested values, A-S-GPLVM performed better than A-MF-GPLVM on ELBO and NLPD,
+and often performed comparably to or better than A-MF-GPLVM with twice as many inducing points.
+We also observe that the margin between the two models becomes smaller with larger numbers of
+inducing points. In our current implementation, we suspect this happens because the encoder input
+dimension in A-S-GPLVM grows with the number of inducing points and becomes too large for the
+small MLP used in this ablation.
+Number of inducing-variable samples.
+Finally, we varied the number of sampled inducing-
+variable states K. In the ablation plots, we compare K = 4 and K = 64, and also show the effect
+of using learning rates 10−3 and 3 × 10−4. Larger values of K lead to better results, which is
+consistent with the reduced variance of the gradient estimator when more samples are used. In
+memory-constrained settings, however, increasing K may not be possible. The ablation also shows
+that for small K, lowering the learning rate can recover performance by countering the increased
+gradient variance, at the cost of slower convergence.
+Taken together, these ablations support the interpretation that the main gains come from the structured
+variational family rather than from increased encoder capacity, while also clarifying the dependence
+of performance on the number of inducing points and inducing-variable samples.
+18
+
+
+(a) ELBO
+(b) NLPD
+(c) RMSE
+Figure 7: Ablation over encoder architecture on the Oilflow dataset. We compare A-MF-GPLVM and
+A-S-GPLVM across different two-hidden-layer MLP encoder widths.
+19
+
+
+(a) ELBO
+(b) NLPD
+(c) RMSE
+Figure 8: Ablation over the number of inducing points on the Oilflow dataset. We compare A-MF-
+GPLVM and A-S-GPLVM for different values of the number of inducing points.
+(a) ELBO
+(b) NLPD
+(c) RMSE
+Figure 9: Ablation over the number of sampled inducing-variable states on the Oilflow dataset.
+20
+
+
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[0]
+y[0] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[1]
+y[1] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[2]
+y[2] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[3]
+y[3] vs x[1]
+(a) MF-GPLVM
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[0]
+y[0] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[1]
+y[1] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[2]
+y[2] vs x[1]
+2.5 0.0
+2.5
+x[1]
+2.5
+0.0
+2.5
+y[3]
+y[3] vs x[1]
+(b) A-MF-GPLVM,
+2.5 0.0
+2.5
+x[8]
+2.5
+0.0
+2.5
+y[0]
+y[0] vs x[8]
+2.5 0.0
+2.5
+x[8]
+2.5
+0.0
+2.5
+y[1]
+y[1] vs x[8]
+2.5 0.0
+2.5
+x[8]
+2.5
+0.0
+2.5
+y[2]
+y[2] vs x[8]
+2.5 0.0
+2.5
+x[8]
+2.5
+0.0
+2.5
+y[3]
+y[3] vs x[8]
+(c) A-S-GPLVM
+Figure 10: Latent slice through the most informative latent dimension. Curves show predictive
+means; shaded areas denote predictive uncertainty for each output. The A-S-GPLVM GP mapping
+has significantly larger predictive uncertainty away from the data.
+I
+Additional Results Plots
+We have included additional plots relating to the experiments described in Section 5 here.
+21
+
+
+(a) MF-GPLVM
+(b) A-MF-GPLVM
+(c) A-S-GPLVM
+Figure 11: Latent space comparison on the qPCR dataset, for (a) MF-GPLVM, (b) A-MF-GPLVM,
+(c) A-S-GPLVM.
+0
+30K
+60K
+90K
+Iteration
+60
+80
+100
+120
+ELBO Loss
+ELBO Loss
+MF
+A-MF
+A-S
+0
+30K
+60K
+90K
+Iteration
+0.40
+0.60
+0.80
+1
+Train RMSE
+Training RMSE
+MF
+A-MF
+A-S
+0
+30K
+60K
+90K
+Iteration
+30
+40
+50
+60
+70
+Train NLPD
+Training NLPD
+MF
+A-MF
+A-S
+Figure 12: Training dynamics comparison across inference methods on the qPCR dataset. The panels
+show the ELBO, RMSE, and NLPD trajectories over training iterations. A-S-GPLVM converges to a
+lower final NLPD than MF-GPLVM and A-MF-GPLVM.
+22
+
+
+(a) MNIST
+(b) FMNIST
+Figure 13: Sample reconstructions using the A-MF-GPLVM. Each image shows the posterior
+predictive mean of the reconstructed observation.
+23
+
+
+(a) A-S-GPLVM
+(b) A-MF-GPLVM
+Figure 14: Latent spaces for the MNIST dataset.
+24
+
+
+0
+60K
+120K 180K
+Iteration
+0
+500
+1000
+ELBO Loss
+ELBO Loss
+A-MF
+A-S
+0
+60K
+120K 180K
+Iteration
+0.150
+0.175
+0.200
+0.225
+0.250
+0.275
+Train RMSE
+Training RMSE
+A-MF
+A-S
+0
+60K
+120K 180K
+Iteration
+0
+500
+1000
+Train NLPD
+Training NLPD
+A-MF
+A-S
+Figure 15: Training dynamics comparison across inference methods on the MNIST dataset. The
+panels show the ELBO, RMSE, and NLPD trajectories over training iterations.
+0
+60K
+120K 180K
+Iteration
+500
+0
+500
+1000
+ELBO Loss
+ELBO Loss
+A-MF
+A-S
+0
+60K
+120K 180K
+Iteration
+0.15
+0.20
+0.25
+0.30
+Train RMSE
+Training RMSE
+A-MF
+A-S
+0
+60K
+120K 180K
+Iteration
+500
+0
+500
+1000
+Train NLPD
+Training NLPD
+A-MF
+A-S
+Figure 16: Training dynamics comparison across inference methods on the Fashion-MNIST dataset.
+The panels show the ELBO, RMSE, and NLPD trajectories over training iterations.
+25

@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-04 22:34:08 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 00:50:58 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日筛选 5 篇，精读 2 篇：心脏模型个性化与胶质瘤诊断中的不确定性量化，均获 8.0 分。最值得关注的是不确定性量化正走向医疗落地，从心脏超声个性化建模到胶质瘤 AI 诊断的可信评估都有对应工作。普通读者若关心 AI 医疗可靠性，可先看这两篇精读，速读三篇则偏采样与生成方法。</p>
+<p>今日精选4篇，精读2篇聚焦生成模型加速贝叶斯推断：《Flow Matching for Fast Posterior Sampling in Bayesian Inverse Problems》以9.0分领跑，《A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants》以8.0分紧随。</p>
+<p>最值得看的是&quot;流匹配/生成模型做快速后验采样&quot;与&quot;生成模型+观测插值的统一数据同化框架&quot;这两条线，分别解决逆问题采样慢和同化框架零散的问题；速读中GP潜变量模型的结构化随机变分推断（7.0）也值得顺带了解。</p>
+<p>普通读者可先从流匹配那篇的动机与实验图入手，理解&quot;生成模型替代传统MCMC做快速后验&quot;的思路，再决定是否深入数据同化统一框架。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,9 +83,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Uncertainty Quantification in Cardiac Model Personalisation from Ultrafast Ultrasound">Uncertainty Quantification in Cardiac Model Personalisation from Ultrafast Ultrasound</span></li><li><span class="dpr-home-dashboard-paper-title" title="Towards Trustworthy AI for Glioma Diagnosis: A Task-Aware Evaluation of Uncertainty Quantification">Towards Trustworthy AI for Glioma Diagnosis: A Task-Aware Evaluation of Uncertainty Quantification</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Flow Matching for Fast Posterior Sampling in Bayesian Inverse Problems">Flow Matching for Fast Posterior Sampling in Bayesian Inverse Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants">A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FUND: Density Flow for Sampling Unnormalised Distributions">FUND: Density Flow for Sampling Unnormalised Distributions</span></li><li><span class="dpr-home-dashboard-paper-title" title="LoCoVSR: Local Context Diffusion Posterior Sampling for Video Super-Resolution">LoCoVSR: Local Context Diffusion Posterior Sampling for Video Super-Resolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Bayesian inference for multiple network data">Efficient Bayesian inference for multiple network data</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Amortized Structured Stochastic Variational Inference for Gaussian Process Latent Variable Models">Amortized Structured Stochastic Variational Inference for Gaussian Process Latent Variable Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Very High-Energy GRB Afterglow Fits with Neural-Network Emulation and Bayesian inference">Very High-Energy GRB Afterglow Fits with Neural-Network Emulation and Bayesian inference</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
 </section>
 </div>
 
