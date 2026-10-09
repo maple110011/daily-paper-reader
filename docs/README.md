@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-07</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-07 23:55:33 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:26:58 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,8 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 5 篇推荐（精读 2 篇，速读 3 篇）</p>
-<p>精读：《Spectra: Exact Component Transport for Test-Time Prior Adaptation in Simulation-Based Inference》（9.0/10）, 《A perspective note on likelihood approximation and inference for complex simulation models using a chain of aggregated normalizing flows》（8.0/10）</p>
-<p>速读：《Generalized Matheron Variational Implicit Processes》（7.0/10）, 《Efficient subsampling-rate selection for practical Multilevel Markov chain Monte Carlo》（6.0/10）, 《Bayesian Machine Learning Methods For Large Scale Demand Estimation》（6.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>2026-10-09日报：12篇中精读5篇、速读7篇，两篇9分精读聚焦贝叶斯预测与扩散先验采样。</p>
+<p>最值得看变分贝叶斯线性神经网络中似然</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +79,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Spectra: Exact Component Transport for Test-Time Prior Adaptation in Simulation-Based Inference">Spectra: Exact Component Transport for Test-Time Prior Adaptation in Simulation-Based Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="A perspective note on likelihood approximation and inference for complex simulation models using a chain of aggregated normalizing flows">A perspective note on likelihood approximation and inference for complex simulation models using a chain of aggregated normalizing flows</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="The Impact of Likelihood Tempering on the Limiting Predictive Moments of Variational Bayesian Linear Neural Networks">The Impact of Likelihood Tempering on the Limiting Predictive Moments of Variational Bayesian Linear Neural Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Noise, Denoise, Correct: MCMC Posterior Sampling with Diffusion Priors in Three Steps">Noise, Denoise, Correct: MCMC Posterior Sampling with Diffusion Priors in Three Steps</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparsifying Stochasticity, Not Capacity: Partial Stochasticity via Deep Weight Factorization of Prior Scales">Sparsifying Stochasticity, Not Capacity: Partial Stochasticity via Deep Weight Factorization of Prior Scales</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,12 +92,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generalized Matheron Variational Implicit Processes">Generalized Matheron Variational Implicit Processes</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient subsampling-rate selection for practical Multilevel Markov chain Monte Carlo">Efficient subsampling-rate selection for practical Multilevel Markov chain Monte Carlo</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Machine Learning Methods For Large Scale Demand Estimation">Bayesian Machine Learning Methods For Large Scale Demand Estimation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Astrophysical Uncertainties in Dark Matter Direct Detection with Simulation-Based Inference">Learning Astrophysical Uncertainties in Dark Matter Direct Detection with Simulation-Based Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="ProximalFM: Amortized Proximal Causal Inference under Hidden Confounding">ProximalFM: Amortized Proximal Causal Inference under Hidden Confounding</span></li><li><span class="dpr-home-dashboard-paper-title" title="Anchored Reversible Jump Sequential Monte Carlo">Anchored Reversible Jump Sequential Monte Carlo</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayesian-ml <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span></div>
 </section>
 </div>
 
