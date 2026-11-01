@@ -1,0 +1,971 @@
+Title: Characterizing the Separability Gap in Prior-Data Fitted Networks
+
+URL Source: https://arxiv.org/pdf/2610.14989v1
+
+Published Time: Wed, 14 Oct 2026 01:05:16 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+Preprint 
+
+# CHARACTERIZING THE SEPARABILITY GAP IN PRIOR -DATA FITTED NETWORKS 
+
+Julius Kobialka, Manuel H ¨ ulskamp, Thomas Nagler, David R ¨ ugamer 
+
+Department of Statistics, LMU Munich Munich Center for Machine Learning 
+
+first.lastname@stat.uni-muenchen.de 
+
+# ABSTRACT 
+
+Prior-data fitted networks (PFNs) are transformers pretrained on simulated datasets to approximate Bayesian posterior predictive distributions. Standard PFN theory assumes a separable task prior, under which the feature distribution and the mechanism generating labels from features are independent. We show that com-mon PFN priors are non-separable, even in simple settings. Consequently, stan-dard pretraining targets a predictive distribution based on a task posterior updated using both the labeled context and the query features. We characterize its differ-ence from the predictive based on the context posterior alone and show that this difference vanishes under posterior concentration. Under misspecification (i.e., when the true joint distribution lies outside the prior’s support), however, prior non-separability can favor better feature fit at the expense of conditional label fit. We illustrate the consequences for feature attribution, Bayesian optimization, and martingale checks of Bayesian behavior. The same dependence also enables PFNs to learn from additional unlabeled observations. We demonstrate this with SemiTabICL, a PFN explicitly pretrained to use these observations, which im-proves accuracy over a matched supervised baseline. Our findings highlight the need for explicit rules on unlabeled data use in PFN evaluation and establish the dependence between feature and label distributions as a consequential prior design choice. 
+
+# 1 INTRODUCTION 
+
+Tabular foundation models such as TabPFN and TabICL are prior-data fitted networks (PFNs; Grin-sztajn et al., 2025; 2026; Hollmann et al., 2023; 2025; Qu et al., 2025; 2026). A PFN is an approx-imator to a family of posterior predictive distributions (PPDs; Nagler, 2023), usually implemented as a transformer with parameters θ and pretrained on simulated datasets drawn from a prior Π over tasks. A common data prior choice are structural causal models (SCMs). We use uppercase letters for random data and lowercase letters for their realizations. At inference, the PFN receives an ob-served context dn = {yi, xi}ni=1 and a query feature vector x and returns a predictive distribution 
+
+qθ (y | x, d n) in its forward pass. For classification, PFNs are pretrained by cross-entropy on sim-ulated contexts and query pairs drawn from the same task. The target is therefore the conditional distribution of the query label given its feature vector and the context (Nagler, 2023, Theorem 2.2). A trained PFN approximates this target with finite capacity and a finite pretraining budget. While previous research on PFNs has asked how accurately a trained network approximates its target PPD, we ask a prior question: Which predictive distribution does pretraining actually target? As outlined below, our motivation stems from the (often implicitly made) assumption of separability of the data prior, which has so far received too little attention. 
+
+Bayesian target Concretely, let p ∼ Π denote a task distribution, with conditional label distribu-tion p(y | x). Here, we distinguish between two types of posterior predictives: 
+
+query-updated predictive: π(y | x, d n) = 
+
+Z
+
+p(y | x) dΠ( p | dn, x),
+
+context-updated predictive: ¯π(y | x, d n) = 
+
+Z
+
+p(y | x) dΠ( p | dn).
+
+(1) 1arXiv:2610.14989v1 [cs.LG] 10 Oct 2026 Preprint −4 0 4     
+
+> x1
+> −404
+> x2
+> −404
+> x1
+> −404
+> x2
+> Context, Class 0 Context, Class 1 Query Decision Boundary
+
+Figure 1: Illustration of the anticausal setting from Sch¨ olkopf et al. (2012): Two Gaussian class centers μ0, μ 1 generate the features from the label, such that the location of an unlabeled point is informative about the labeling mechanism. The mechanism in the left figure does not allow the query’s location to update the belief about the centers; the right figure does use the point’s position. The query-updated predictive π is the PPD that minimizes pretraining cross-entropy. The context-updated predictive ¯π averages the same label distribution under the task posterior given the context alone. Both predictives condition on the context features and labels, and evaluate the label distribu-tion at x. However, only π uses x to update the task posterior. Crucially, the existing literature assumes that PFN pretraining targets the context-updated pre-dictive ¯π. Nagler (2023) notes in Remark 2.1 that this requires the feature distribution and the la-beling mechanism to be independent under the prior, a property we call separability , but regards the query-dependent alternative π as unintuitive. This distinction especially matters for the SCM priors used to pretrain state-of-the-art PFNs, as they are typically not separable. The setting of Figure 1 exemplifies this difference using the anticausal setting from Sch¨ olkopf et al. (2012). The task is a pair of class centers μ0, μ 1 drawn from N (0 , τ 2I2), Y is determined by a fair coin flip, and the features are drawn from that label’s Gaussian, X | Y = k ∼ N (μk, σ 2I2). If the context contains many points of class 0 but only a few of class 1, the posterior pins down μ0 (blue cluster) but leaves μ1 (red cluster) comparatively uncertain. For a query x far from both clusters (white star), the query-updated predictive π is more likely to assign it label 1 due to the smaller probability of x belonging to features of class 0, while the context-updated predictive ¯π does not take the feature likelihood into account. Most current PFNs are trained on non-separable priors like in the previous example. This therefore not only demonstrates that the two models in Eq. (1) lead to different predictive distributions, but also shows that PFNs have a close link to semi-supervised machine learning as they leverage the unlabeled query features. In this paper, we outline how this perspective proves useful for unlocking empirical performance gains as well as obtaining a better understanding of the working mechanisms of PFNs. 
+
+Our contributions By studying the difference of predictives in Eq. (1) through various lenses, we make the following contributions: • We prove that prior non-separability already arises in simple SCMs and that mixing (separable) priors, as in TabPFN, TabICL, and Mitra, preserves separability if and only if the regimes share the same prior over feature distributions or the same prior over conditional label distributions. • We characterize a predictive gap between π and ¯π at finite context sizes and show that it vanishes for typical queries under posterior concentration. Under misspecification, their common limit can nevertheless have an arbitrarily large optimality gap relative to the best supported conditional label law. • We study the practical consequences for downstream use and evaluation of PFNs, including interpretability, Bayesian optimization, semi-supervised prediction, and martingale checks. We test which type of predictive standard pretraining recovers and whether additional unlabeled rows improve prediction. 2Preprint 
+
+# 2 PROPERTIES OF THE DIFFERENT PREDICTIVES 
+
+Model and notation We identify a task with its distribution p, comprising a feature law pX and a conditional label law pY |X . We use lowercase p for both a probability law and its density or mass function, with the meaning determined by the argument; for example, p(y | x) = pY |X (y | x) and 
+
+p(x) = pX (x). The prior Π is a distribution over these task laws, so posterior integrals are taken directly over p. Given a task p ∼ Π, let X1, . . . , Xn denote the context features and X the query feature. Given a task p ∼ Π, the context rows (Y1, X1), . . . , (Yn, Xn) and the query row (Y, X)
+
+are independent and identically distributed (iid) draws from p. Each feature vector is drawn from pX
+
+and its label from pY |X , that is, Xi ∼ pX and Yi | Xi ∼ p(· | Xi), and likewise for (Y, X). The random context is Dn = ( Yi, Xi)ni=1 , its realization is dn = ( yi, xi)ni=1 , and the predictor receives 
+
+(X, D n).The following definition is central in this work. 
+
+Definition 1 (Separable prior) . Identify each task p = pY |X pX with the pair (pX , p Y |X ). The prior is separable if its induced law on these pairs factorizes as 
+
+Π = Π X ⊗ ΠY |X , dΠ( p) = dΠX (pX ) dΠY |X (pY |X ).
+
+Here ΠX and ΠY |X are the marginal priors over the feature law and conditional label law. Thus these two laws are independent under Π. Otherwise the prior is non-separable .Under separability, the marginal posterior of pY |X does not depend on the query feature x:
+
+dΠ( pY |X | dn, x) = dΠ( pY |X | dn) ∝
+
+> n
+
+Y
+
+> i=1
+
+pY |X (yi | xi) dΠY |X (pY |X ); 
+
+see Proposition A.1 in Appendix A.1. Separability is thus sufficient for equality of the two predic-tives in Eq. (1), i.e. π = ¯ π. As shown in the following, a non-separable prior permits π̸ = ¯ π, but does not require it at every context and query. Under a non-separable prior, the context features are also informative about pY |X , and ¯π uses this information because the posterior Π( · | dn) contains their likelihood Qni=1 pX (xi). The two predictives therefore differ only in the feature likelihood 
+
+pX (x) of the query. 2.1 SCM PRIORS ARE NON -SEPARABLE 
+
+In an SCM prior, a random graph, random node functions, and a random choice of the response node generate the features and the label jointly. The feature distribution and the conditional label distribution are then two functionals of the same random mechanism, and thus we should not expect separability to hold for these priors. In fact, it already fails in simple cases like a linear Gaussian SCM with a random label node (see Proposition A.2). Mixing multiple generator regimes provides another potential source of non-separability. The origi-nal TabPFN prior mixes SCM and Bayesian neural network datasets equally (Hollmann et al., 2023). TabICL mixes neural and tree-based SCM datasets in a 70 /30 ratio (Qu et al., 2025). Mitra mixes SCM and tree-based priors (Zhang et al., 2025b), and Mitra-v2 adds a hybrid SCM to this outer mix-ture (Tao et al., 2026). TabICLv2 also combines neural, tree, Gaussian-process, and other functions within individual SCMs (Qu et al., 2026). Even if the feature and label laws of these priors were separable within each regime, their mixture is non-separable when both induced laws differ across regimes, as the following result shows (proof in Appendix A.2.1). 
+
+Proposition 1. Let ΠX,s and ΠY |X,s be priors on the induced feature and conditional label laws for s ∈ { 0, 1}. For λ ∈ (0 , 1) , set 
+
+Π = (1 − λ) Π X, 0 ⊗ ΠY |X, 0 + λ ΠX, 1 ⊗ ΠY |X, 1.
+
+Then Π is separable if and only if ΠX, 0 = Π X, 1 or ΠY |X, 0 = Π Y |X, 1.
+
+A mixture of regimes that differ in both their feature and their label distributions, as in all of the production priors above, is therefore non-separable, whatever the structure within each regime. 3Preprint -0.5 0.0 0.5 -0.5 0.0 0.5 -0.1 0.0 0.1 -0.1 0.0 0.1 Target Di ff erence Network Di ff erence Single-Class Context Two-Class Context Standard Decoupled 
+
+Figure 2: Recovery of the query-updated predictive on the non-separable ordered-cluster prior with context length n = 2 . Standard pretraining follows the identity line, indicating recovery of π,whereas the difference for the decoupled PFN remains near zero, indicating recovery of ¯π. In single-class contexts, both labeled rows come from the same cluster, so the query is evidence about the unobserved center and the difference between π and ¯π is larger (note the different axis ranges). 2.2 FINITE -SAMPLE DIFFERENCE 
+
+So far, we have shown that PFN pretraining targets π, and that priors of current PFNs are unlikely to be separable, so that we should expect π̸ = ¯ π.To better understand this difference, we first characterize how observing the query feature changes the predictive at a fixed context, and then examine what remains as the context grows. At finite context sizes, the two predictives differ as follows (proof in Appendix A.3.1). 
+
+Corollary 1. Let Πn = Π( · | dn), with dΠn(p) ∝ Qni=1 pX (xi) p(yi | xi)dΠ( p), be the posterior given the context, and let m(x | dn) = EΠn [pX (x)] be the feature predictive. Then 
+
+∆π (y | x, d n) := π(y | x, d n) − ¯π(y | x, d n) = Cov Πn
+
+ p(y | x), p X (x)
+
+m(x | dn) , (2) 
+
+where ∆π (y | x, d n) denotes the predictive gap between the two predictives. 
+
+The predictive gap can be interpreted as a correction term of the context-updated predictive to ac-count for the posterior covariance between the label density at x and the conditional feature like-lihood pX (x) of the query, which it otherwise ignores. Observing the query feature reweights the posterior toward tasks under which that feature value is likely. The query-updated predictive π there-fore assigns more probability to a label than ¯π exactly when these upweighted tasks also predict that label at the query more strongly. Under a separable prior, the covariance is always zero. The size of ∆π is not monotone in n or m(x | dn) in general. A small feature predictive with a small covariance gives a small correction, and a diffuse posterior need not induce a nonzero covariance. It is large where tasks with comparable posterior weight disagree both in their feature likelihood and in their prediction at x.Figure 2 tests which predictive standard PFN pretraining recovers. We pretrain TabICL, denoted by qθ (·), on a non-separable ordered-cluster prior, whose finite task space makes π and ¯π exactly computable (Appendix C.1). Under standard pretraining, the Bayes-optimal target is π. In contrast, under a decoupled setting, each query label is drawn from a fresh task p′ ∼ Π( · | dn), so the target is ¯π. At n = 2 , the deviation of the learned query-updated predictive from the context-updated predictive, qθ (1 | x, d n) − ¯π(1 | x, d n), follows the exact difference ∆π (1 | x, d n) along the identity line. The decoupled PFN’s deviation remains near zero. Each PFN thus approximates its own Bayes-optimal target. 2.3 CONSISTENCY 
+
+The covariance in (2) describes the correction at a given context. Under posterior concentration, this correction vanishes for typical queries as the number of context rows grows. The following result makes this precise. TV and H denote the total variation and Hellinger distances (proof in Appendix A.3.2). 4Preprint 
+
+Proposition 2. Let each task p have joint density p(y, x), and let Dn consist of iid rows from the true joint density p0. Write Πn = Π( · | Dn); all almost-sure statements refer to the iid context sequence generated by p0. Suppose there is a joint density p∗ = p∗  
+
+> Y|X
+
+p∗ 
+
+> X
+
+such that, for every ϵ > 0,
+
+Πn
+
+ {p : H(p, p ∗) > ϵ } → 0 almost surely .
+
+Set δn = R TV( p, p ∗) dΠn(p). Then δn → 0 almost surely, and 
+
+Z
+
+TV  ˘π(· | x, D n), p ∗  
+
+> Y|X
+
+(· | x)p∗ 
+
+> X
+
+(x) dx ≤ 2δn , ˘π ∈ { π, ¯π}.
+
+By the triangle inequality, the integrated total variation between π and ¯π is at most 4δn. Thus, the query correction in Eq. (2) vanishes for features drawn from p∗ 
+
+> X
+
+. If the true feature law satisfies 
+
+p0,X ≪ p∗ 
+
+> X
+
+, this also gives convergence of all three integrated distances for queries drawn from 
+
+p0,X . When p∗ is the unique KL-optimal joint density, both predictives approach its conditional distribution. The query correction therefore vanishes for typical queries as the context grows. 2.4 MISSPECIFICATION 
+
+Although the gap between π and ¯π vanishes with the sample size, non-separability of the prior can still affect the common limit. To see why, let p0 denote the true joint density. The joint KL divergence decomposes as 
+
+DKL (p0 ∥ p) = DKL (p0,X ∥ pX ) + DY |X 
+
+> KL
+
+(p0 ∥ p),
+
+where the expected conditional KL divergence, 
+
+DY |X 
+
+> KL
+
+(p0 ∥ p) := Ep0,X 
+
+DKL 
+
+ p0(· | X) ∥ p(· | X) ,
+
+measures loss in predictive performance relative to the true mechanism. When the posterior concen-trates at a joint KL minimizer p∗, this limiting law minimizes the sum of the two terms. In particular, it can favor a mechanism that predicts labels less accurately if that mechanism better explains the features. This tradeoff disappears under separability, but can otherwise lead to bad models. 
+
+Proposition 3. Let p0 be the true joint density, and let p∗ minimize DKL (p0 ∥ p) over the support of 
+
+Π, with DKL (p0 ∥ p∗) < ∞.(i) If Π is separable, then DY |X 
+
+> KL
+
+(p0 ∥ p∗) = inf p∈supp Π DY |X 
+
+> KL
+
+(p0 ∥ p).(ii) If Π is non-separable, the equality in (i) need not hold, and the gap can be arbitrarily large. 
+
+The proof can be found in Appendix A.4.1. Part (i) shows that a separable prior attains the best conditional label fit available in its support. Thus, the prior’s feature marginal ΠX does not affect how well the posterior fits the labels. Under non-separable priors, this is no longer guaranteed. Part (ii) shows that, in this case, a miscalibrated ΠX can make the posterior’s label predictions arbitrarily bad. We refer to this as the optimality gap .This tradeoff connects the common limit to the distinction between generative and discriminative estimation under misspecification (Liang & Jordan, 2008): the former optimizes joint fit, whereas the latter targets conditional fit. It is also related to the bias changes through which additional unlabeled data can degrade generative classifiers (Cozman et al., 2003), although the proposition concerns the shared limit with a single query row. If p0 is a supported joint density, then DY |X 
+
+> KL
+
+(p0 ∥ p∗) = 0 .Thus, more context can make π and ¯π agree without yielding the best label predictions available under the prior: under misspecification, both can favor better feature fit at the expense of label accuracy. 2.5 WHAT DOES THIS TELL US ?PFN pretraining targets the query-updated predictive π (Proposition A.1), which coincides with the context-updated predictive ¯π assumed in the literature when the feature likelihood cancels from the posterior over the labeling mechanism, as it does under separability (Definition 1). However, even 5Preprint -2 -1 0 1 20.3 0.4 0.5 0.6 0.7 -2 -1 0 1 20.2 0.4 0.6 0.8   
+
+> X1X2X3
+> (dummy) 0.00 0.05 0.10
+
+¹¼  
+
+> Partial Dependence
+> Feature X1
+> Predicted class-1 probability
+> ICE
+> Feature X1
+> Predicted class-1 probability
+> Exact SHAP
+> Feature Mean absolute attribution
+
+¹¼ ¼ X2 = ¡2       
+
+> X2=¡1
+> X2= 0
+> X2= 1
+> X2= 2 ¹¼Conditional Marginal
+
+Figure 3: Feature effects under a prior in which every task has a constant class-1 probability cp
+
+that is associated with its feature distribution. There are two tasks, a low-cp and a high-cp one. X1
+
+and X2 are discrete features shifted toward negative values in the former and toward positive values in the latter, so they indicate the task, while X3 is independent noise with the same distribution in both tasks. Left: PD of X1. Middle: ICE curves of X1 for fixed X2. Right: mean absolute exact SHAP attributions of π, conditional and marginal. Since no labeling mechanism depends on x, ¯π is constant and all its attributions are zero (dashed). π assigns importance to X1 and X2 because they identify the task, and none to the dummy feature X3.simple SCM priors do not have this property (Proposition A.2) and neither does a mixture of (poten-tially separable) priors if the regimes do not share their prior over feature distributions or over label-ing mechanisms (Proposition 1). Practically, at finite context sizes, the query can therefore update beliefs about the labeling mechanism, producing a predictive gap between what the PFN commu-nity reports to target and the query-updated predictive shown to be the actual target (Proposition A.1 and Eq. (2)). Under posterior concentration, this correction vanishes, and both predictives approach the same conditional distribution (Proposition 2). Under misspecification, however, restrictions in the prior’s support can make that common limit sacrifice label fit for feature fit (Proposition 3), resulting in an optimality gap . Both gaps can be seen as a separability gap , causing (potentially arbitrarily large) differences between the predictives under non-separable priors. For PFN design, the prior’s feature generator therefore affects the predictions themselves. A PFN pretrained on an SCM prior infers the labeling mechanism partly from the query’s feature values, and it can use additional unlabeled rows the same way (as demonstrated in the following Section 3). Whether this improves or degrades predictive performance on real data depends on whether the prior couples feature and label laws as the data do. 
+
+# 3 CONSEQUENCES OF NON -SEPARABLE PRIORS 
+
+We have shown that under a prior with coupled feature and label laws, the query can update the posterior over the labeling mechanism. This has many important consequences. 
+
+Interpretability methods Feature effect methods for model interpretability are also applicable to PFNs, where batched inference can bring down the cost of repeated model evaluations (Rundel et al., 2024). Many interpretability methods, such as partial dependence (PD) and individual conditional expectation (ICE) plots vary selected features while averaging over, or fixing, the remaining coordi-nates (Goldstein et al., 2015). For a PFN approximating π, varying x changes both p(y | x) and the posterior Π( · | x, d n) over tasks (Eq. (2)). The resulting curve therefore combines variation within labeling mechanisms with evidence about which mechanism generated the query. For example, if every task has a constant class probability cp := p(1 | x), but cp is associated with the task’s feature distribution, then π(1 | x, d n) can vary with x even though ¯π(1 | x, d n) is constant, as illustrated in Figure 3. This effect can arise within the data support, in addition to the familiar extrapolation problem of PD plots (Apley & Zhu, 2020). The marginalization convention of SHapley Additive exPlanations (SHAP; Lundberg & Lee, 2017) does not remove it either. Conditional SHAP aver-ages missing coordinates under their distribution given the retained coordinates, whereas marginal 6Preprint SHAP averages under their unconditional distribution (Molnar, 2025). Both still evaluate the same query-updated predictor at each completed input. Thus, these methods can faithfully explain the PFN’s predictions while attributing importance to features that identify the task rather than change its conditional label distribution. 
+
+PFN for Bayesian optimization PFNs are increasingly used as surrogate models in Bayesian optimization (BO; M¨ uller et al., 2023; Rogers & Ponnada, 2026; Yu et al., 2026). BO needs the predictive distribution of the response y at a candidate x chosen from previous evaluations dn:
+
+πBO (y | x, d n). If each input is selected using the observed history and randomization independent of p, and an evaluation at x follows p(y | x), this predictive is 
+
+πBO (y | x, d n) = 
+
+Z
+
+p(y | x) dΠBO (p | dn), where dΠBO (p | dn) ∝
+
+> n
+
+Y
+
+> i=1
+
+p(yi | xi) dΠ( p).
+
+Under separability, the feature likelihood pX (x) Qni=1 pX (xi) in the PFN posterior depends only on pX (see Proposition A.1 in Appendix A). It cancels when we marginalize over the feature law, so 
+
+π = πBO . Therefore, the PFN provides exactly the predictive needed for BO. Under non-separability, the feature likelihood can also update the labeling mechanism. Standard PFN pretraining thus treats both the previous inputs and the candidate as task-generated evidence, even though the BO algorithm chose them. As a result, its target π is usually different from πBO .Replacing π by ¯π removes the influence of the new candidate, but not the influence of the history. In either case, a PFN trained on a non-separable prior does not provide the predictive needed for BO. 
+
+Amortization gap Following H¨ ulskamp et al. (2026), the amortization gap of a PFN is its excess over the Bayes-optimal predictor: ∆θ (x, d n) = DKL 
+
+ π(· | x, d n) ∥ qθ (· | x, d n). Since π mini-mizes the pretraining loss (Proposition A.1), the expected gap equals the excess pretraining loss of the PFN (Appendix B). When analyzing how closely a given PFN approximates its target posterior predictive distribution, as, e.g., in M¨ uller et al. (2022; 2024) and H¨ ulskamp et al. (2026), it must be carefully evaluated which predictive from Eq. (1) is targeted precisely. A reference computed from the context posterior alone, such as an unweighted average over MCMC draws from Π( · | dn),estimates ¯π rather than π. The discrepancy between this reference and the PFN decomposes into 
+
+qθ (y | x, d n) − ¯π(y | x, d n) =  qθ (y | x, d n) − π(y | x, d n) + ∆ π (y | x, d n),
+
+so any divergence computed against ¯π is corrupted by the predictive gap of Corollary 1. In the example of Fig. 2, this overstates the gap of the standard PFN by a factor of about 95 . When pX
+
+can be evaluated, weighting each draw by the query’s feature likelihood removes the bias and can provide the correct reference π. Under a separable prior, no correction is needed since π = ¯ π.
+
+Martingale checks A martingale check, as employed in the context of PFNs (Falck et al., 2024; Fong et al., 2023; Ng et al., 2026), asks whether generating additional observations Yn+1 ∼ π(· | 
+
+xn+1 , d n) and updating on them (e.g., by updating the context Dn+1 = ( dn, (Yn+1 , xn+1 )) ) leaves a prediction at a fixed query unchanged on average. Under a non-separable prior, the predictor treats externally generated features as evidence about the labeling mechanism, so even an exact Bayesian predictor can drift; i.e., in general it holds 
+
+EYn+1 ∼π(·| xn+1 ,d n)
+
+π(A | x, D n+1 )̸ = π(A | x, d n). (3) The desired equality holds under separability. Without it, the appended feature provides evidence about the task, and the label sampler omits conditioning on the tracked query. Thus, drift can arise without PFN approximation error, although non-separability does not force drift at every query. For the underlying argument, refer to Appendix A.5. Resampling features with a Bayesian bootstrap (Ng et al., 2026; Rubin, 1981) averages these drifts without guaranteeing that they cancel. To illustrate this failure, we evaluate the exact predictives π and ¯π of the non-separable ordered-cluster prior (Appendix C.1) on 2000 contexts of size n = 2 , with eight queries each. Future features that are then appended to the context are fixed at the query (i.e., each new context row is a labeled copy of the query location) or at one context feature selected once per context-query pair. Labels are drawn sequentially from the respective predictive where the query stays fixed throughout, and each appended row updates the context through its joint likelihood. We measure cumulative expected 7Preprint 1 10 100 1000 0.00 0.05 0.10 0.15 0.20 1 10 100 1000 Horizon K 
+
+> RMS Cumul. Drift At the Query At a Context Feature
+
+¼ ¹¼1 10 100 1000 1e-5 1e-4 1e-3 1e-2 dotted: / k ¡1        
+
+> 110 100 1000
+> dotted: /k¡1
+> Step k
+> Drift (abs. value) At the Query At a Context Feature
+
+¼ ¹¼
+
+Figure 4: Non-separable priors can induce drift in exact Bayesian predictives. Curves show the RMS of the cumulative expected drift across 2000 contexts of size n = 2 , with eight queries each, under the ordered-cluster prior. Every future feature is fixed at the query (left) or at one selected context feature (right), and labels are sampled from the predictive being evaluated with absolute conditional one-step drifts in the right figure. No trained network is involved. drift as the expected class-1 prediction after the appended rows minus its initial value, holding the initial context, query, and repeated future feature fixed. For details, refer to Appendix A.5. The results in Figure 4 show substantial drift in both predictives. This demonstrates that the exact target can drift under the diagnostic’s sampling protocol, irrespective of the network’s approximation error. 
+
+PFNs as semi-supervised predictors By Corollary A.1, PFNs pretrained on non-separable pri-ors are already semi-supervised predictors: π uses the unlabeled query x as evidence about the labeling mechanism. While they are currently limited to only use the additional evidence in the single query row, there is no structural reason not to integrate further unlabeled rows V into the prediction, turning PFNs into full semi-supervised predictors. Sch¨ olkopf et al. (2012) argue that this addition of unlabeled data should help especially in anti-causal and confounded tasks, which SCM priors already generate. Hence, integrating such unlabeled rows V into existing training pipelines and architectures should prove beneficial, which we show for both the ordered-cluster prior (see Appendix C.1) and the full-sized production prior of TabICLv2. As such, we pretrained a novel 8.5M-parameter TabICL variant, SemiTabICL , to not just use the unlabeled information in the query x, but instead also explicitly allow for the incorporation of an additional set of unlabeled context rows V which are processed exactly as regular context rows, only with an additional learned embedding vector instead of the label embedding (see Appendix C.3). Following Guo et al. (2010), we evaluate SemiTabICL in the standard setting of semi-supervised learning with a low number of labeled training points relative to a large number of unlabeled training points. To this end, we reuse the TALENT benchmark (Liu et al., 2025) and convert it into a benchmark for semi-supervised classification, that we call semi-TALENT , by splitting the official training fold of the classification datasets into labeled partitions of n ∈ { 16 , 32 , 64 , 96 } rows and unlabeled partitions across multiple repetitions. We compare SemiTabICL to a baseline TabICL model pretrained without additional unlabeled context rows, as well as a self-training PFN variant where unlabeled rows predicted with high confidence are iteratively appended with their predicted labels before the prediction on the test set is made (Yarowsky, 1995). Figure 5 shows the differences in accuracy for these two settings across a range of labeled training rows n and the multiples thereof added as additional unlabeled rows k. SemiTabICL consistently improves upon the baseline by 0.4–1.1 percentage points, while the self-training hurts performance in almost every setting, increasingly so with more labeled rows. Appendix C.3 contains further details on the evaluation as well as another comparison on the UCI datasets used in Guo et al. (2010); Sch¨ olkopf et al. (2012). Importantly, when incorporating the capability to use additional unlabeled rows, it must be carefully specified whether these may coincide with the test rows, a point we will cover in the following paragraph. 
+
+Evaluation protocols Once PFNs condition on unlabeled rows, the distinction between inductive and transductive inference matters for evaluation (Sch¨ olkopf et al., 2012). An inductive model predicts each test row on its own, whereas a transductive one predicts the test rows jointly, so the 8Preprint 2 4 8 10                            
+
+> Unlabeled Rows Multiple
+> 16 32 64 96
+> Labeled Rows  n
+> +0.61 +0.83 +1.03 +1.07 +0.50 +0.65 +0.73 +0.76 +0.47 +0.51 +0.56 +0.57 +0.40 +0.44 +0.49 +0.51
+> SemiTabICL vs. Baseline
+> 24810
+> Unlabeled Rows Multiple
+> 16 32 64 96
+> −0.20 −0.20 −0.04 +0.11 −0.14 −0.22 −0.19 −0.15 −0.27 −0.44 −0.52 −0.48 −0.44 −0.61 −0.71 −0.65
+> Self-Training vs. Baseline
+
+Figure 5: Accuracy gains (percentage points) for semi-supervised classification on the semi-TALENT benchmark for a range of labeled context dataset sizes ( n) and multiples thereof of unla-beled context rows. Left: SemiTabICL vs. identical baseline trained and evaluated without unlabeled context rows. Right: Semi-supervised extension of the baseline model via self-training vs. no addi-tional self-training prediction for one row may depend on the others. Semi-supervised predictions induced by training on non-separable priors or explicitly for SemiTabICL stay inductive as long as unlabeled and other test rows are disjoint. Once they overlap, a method gains information that an inductive competitor does not have, which can lower the Bayes-optimal loss. Current benchmarks serve the test data in different ways, but none of them ensures that the prediction for one test row cannot use the others. No current tabular foundation model is designed to exploit this. Still, several pipelines already let test rows affect each other’s predictions through shared preprocessing or compute optimizations (Appendix B). Benchmarks should therefore state whether transductive inference is permitted and, if it is not, enforce invariance to the other test rows throughout preprocessing and prediction. 
+
+# 4 DISCUSSION 
+
+This article has highlighted a subtle but important discrepancy between the typical formulation of the posterior predictive distribution in the PFN literature and the actual target of PFN pretraining under non-separable priors. We further showed that this discrepancy has several practical implica-tions for interpretability, Bayesian optimization, martingale checks, and semi-supervised learning. Depending on the application, these effects can be unwanted or beneficial. We argue that the distinc-tion between the query-updated predictive π and the context-updated predictive ¯π is important when designing PFN pretraining and evaluation protocols, especially in the presence of non-separable pri-ors. Although this difference vanishes under the stated concentration conditions, coupling feature and label distributions can still sacrifice label fit for feature fit under misspecification. Our experi-ments confirm recovery of the query-updated target and show that explicitly incorporating additional unlabeled rows yields predictive gains with SemiTabICL on real tabular data. Separable priors avoid the issues discussed in this work, but also forgo potential gains from using un-labeled features. Our analysis already points to useful design principles for such priors. SCM priors can remain the basis for generative modeling of tabular data, but two independent SCM mechanisms should be drawn, one for generating the features and one for generating the label. One could also pretrain on a range of coupling strengths between the mechanisms. These findings make the depen-dence between feature and label laws a concrete design choice for PFNs and a promising direction for future work. 
+
+Limitations The main limitation of this work is that we mainly establish that non-separability 
+
+can have the issues discussed in this work. We do not yet know whether production-grade PFNs benefit or suffer from it in practice, and to what extent. Studying this is challenging, since available PFNs use diverse pretraining priors and many are not open-source. Further, we can only compare to meaningful comparator models after full-scale retraining of the model under a separable sibling of its prior. We hope that our work motivates future research in this direction. 9Preprint AI USE STATEMENT 
+
+In this work, we used generative AI tools to support the implementation of the presented methods in code and to draft and review mathematical proofs. We have not used generative AI tools to formulate research hypotheses and develop the theoretical and conceptual framework. Furthermore, other required disclosures such as data cleaning or data analysis are not applicable to this work. Additionally, we used generative AI tools to assist in the writing and presentation of this manuscript by improving readability and the presentation of the included figures. Furthermore, generative AI tools were used to explore and identify relevant literature in addition to our initial manual survey. We have reviewed all AI-assisted work. AI-generated code was reviewed manually as well as tested in detail. All modifications of the manuscript suggested by AI tools were carefully inspected. We take responsibility for the final content of this work, including text, claims or artifacts produced with the aid of generative AI. ACKNOWLEDGMENTS 
+
+This work was supported by the Bavarian AI Foundation Model Initiative (AI-Bay), funded by the Bavarian State Ministry of Science and the Arts. The authors gratefully acknowledge the compu-tational resources and support provided by the Erlangen National High Performance Computing Center (NHR@FAU) at Friedrich-Alexander-Universit¨ at Erlangen-N¨ urnberg (FAU). 
+
+# REFERENCES 
+
+Daniel W Apley and Jingyu Zhu. Visualizing the effects of predictor variables in black box super-vised learning models. Journal of the Royal Statistical Society Series B: Statistical Methodology ,82(4), 2020. Fabio G Cozman, Ira Cohen, and Marcelo C Cirelo. Semi-supervised learning of mixture models. In Proceedings of the 20th international conference on machine learning , 2003. Pierpaolo De Blasi and Stephen G. Walker. Bayesian asymptotics with misspecified models. Statis-tica Sinica , 23(1):169–187, 2013. doi: 10.5705/ss.2010.239. Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzm¨ uller, Prateek Desai, David Sali-nas, and Frank Hutter. TabArena: A living benchmark for machine learning on tabular data. 
+
+Advances in Neural Information Processing Systems , 2026. Fabian Falck, Ziyu Wang, and Christopher C. Holmes. Is in-context learning in large language models bayesian? A martingale perspective. In Proceedings of the 41st International Conference on Machine Learning , Proceedings of Machine Learning Research. PMLR, 2024. Edwin Fong, Chris Holmes, and Stephen G Walker. Martingale posterior distributions. Journal of the Royal Statistical Society Series B: Statistical Methodology , 85(5):1357–1391, 2023. Andrew Foong, Wessel Bruinsma, Jonathan Gordon, Yann Dubois, James Requeima, and Richard Turner. Meta-learning stationary stochastic process prediction with convolutional neural pro-cesses. Advances in Neural Information Processing Systems , 2020. Marta Garnelo, Dan Rosenbaum, Christopher Maddison, Tiago Ramalho, David Saxton, Murray Shanahan, Yee Whye Teh, Danilo Rezende, and S. M. Ali Eslami. Conditional neural processes. In Proceedings of the 35th International Conference on Machine Learning . PMLR, 2018a. Marta Garnelo, Jonathan Schwarz, Dan Rosenbaum, Fabio Viola, Danilo J Rezende, SM Eslami, and Yee Whye Teh. Neural processes. arXiv preprint arXiv:1807.01622 , 2018b. Alex Goldstein, Adam Kapelner, Justin Bleich, and Emil Pitkin. Peeking inside the black box: Visualizing statistical learning with plots of individual conditional expectation. Journal of Com-putational and Graphical Statistics , 24(1), 2015. L´ eo Grinsztajn, Klemens Fl¨ oge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Benjamin J¨ ager, Dominik Safaric, Simone Alessi, Adrian Hayler, Mihir Manium, Rosen Yu, Felix Jablonski, 10 Preprint Shi Bin Hoo, Anurag Garg, Jake Robertson, Magnus B¨ uhler, Vladyslav Moroshan, Lennart Pu-rucker, Clara Cornu, Lilly Charlotte Wehrhahn, Alessandro Bonetto, Bernhard schoelkopf, Sauraj Gambhir, Noah Hollmann, and Frank Hutter. TabPFN-2.5: Advancing the state of the art in tabular foundation models, 2025. L´ eo Grinsztajn, Klemens Fl¨ oge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Mihir Ma-nium, Shi Bin Hoo, Magnus B¨ uhler, Anurag Garg, Dominik Safaric, Jake Robertson, Ben-jamin J¨ ager, Simone Alessi, Adrian Hayler, Vladyslav Moroshan, Lennart Purucker, Philipp Singer, Alan Arazi, Julien Siems, Jan Hendrik Metzen, Georg Grab, Nick Erickson, Siyuan Guo, Eliott Kalfon, Simon Bing, David Salinas, Clara Cornu, Lilly Charlotte Wehrhahn, Diana Kri-uchkova, Kursat Kaya, Lydia Sidhoum, Marie Salmon, Jerry Chen, Madelon Hulsebos, Yann Le-Cun, Samuel M¨ uller, Bernhard schoelkopf, Sauraj Gambhir, Noah Hollmann, and Frank Hutter. TabPFN-3: Technical report, 2026. Yuanyuan Guo, Xiaoda Niu, and Harry Zhang. An extensive empirical study on semi-supervised learning. In 2010 IEEE International Conference on Data Mining . IEEE, 2010. Noah Hollmann, Samuel M¨ uller, Katharina Eggensperger, and Frank Hutter. TabPFN: A transformer that solves small tabular classification problems in a second. In The Eleventh International Con-ference on Learning Representations , 2023. Noah Hollmann, Samuel M¨ uller, Lennart Purucker, Arjun Krishnakumar, Max K¨ orfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 01 2025. doi: 10.1038/s41586-024-08328-6. Manuel H¨ ulskamp, Julius Kobialka, Emanuel Sommer, and David R¨ ugamer. On the uncertainty in prior-data fitted network pretraining. In 2nd ICML Workshop on Foundation Models for Structured Data , 2026. Dominik Janzing, Lenon Minorics, and Patrick Bl¨ obaum. Feature relevance quantification in ex-plainable AI: A causal problem. In International Conference on artificial intelligence and statis-tics . PMLR, 2020. Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker Newhouse, and Jeremy Bernstein. Muon: An optimizer for hidden layers in neural networks, 2024. URL https: //kellerjordan.github.io/posts/muon/ .Hyunjik Kim, Andriy Mnih, Jonathan Schwarz, Marta Garnelo, Ali Eslami, Dan Rosenbaum, Oriol Vinyals, and Yee Whye Teh. Attentive neural processes. In International Conference on Learning Representations , 2019. Jonas Landsgesell, Pascal Knoll, and Tizian Wenzel. ScoringBench: A benchmark for evaluating tabular foundation models with proper scoring rules. arXiv preprint arXiv:2603.29928 , 2026. Yingcong Li, Xiangyu Chang, Muti Kara, Xiaofeng Liu, Amit Roy-Chowdhury, and Samet Oy-mak. When and how unlabeled data provably improve in-context learning. Advances in Neural Information Processing Systems , 2026. Percy Liang and Michael I Jordan. An asymptotic analysis of generative, discriminative, and pseudo-likelihood estimators. In Proceedings of the 25th international conference on Machine learning ,2008. Si-Yang Liu, Hao-Run Cai, Qi-Le Zhou, Huai-Hong Yin, Tao Zhou, Jun-Peng Jiang, and Han-Jia Ye. TALENT: A tabular analytics and learning toolbox. Journal of Machine Learning Research ,26, 2025. Scott M Lundberg and Su-In Lee. A unified approach to interpreting model predictions. Advances in neural information processing systems , 2017. Christoph Molnar. Interpretable Machine Learning . 3 edition, 2025. ISBN 978-3-911578-03-5. URL https://christophm.github.io/interpretable-ml-book .Samuel M¨ uller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Trans-formers Can Do Bayesian Inference, 2022. 11 Preprint Samuel M¨ uller, Matthias Feurer, Noah Hollmann, and Frank Hutter. Pfns4bo: In-context learning for bayesian optimization. In International Conference on Machine Learning . PMLR, 2023. Samuel M¨ uller, Noah Hollmann, and Frank Hutter. Bayes’ power for explaining in-context learning generalizations. arXiv preprint arXiv:2410.01565 , 2024. Thomas Nagler. Statistical Foundations of Prior-Data Fitted Networks. In Proceedings of the 40th International Conference on Machine Learning , 2023. Kenyon Ng, Edwin Fong, David Tyler Frazier, Jeremias Knoblauch, and Susan Wei. TabMGP: Martingale Posterior with TabPFN. In Forty-third International Conference on Machine Learning ,2026. Tung Nguyen and Aditya Grover. Transformer Neural Processes: Uncertainty-Aware Meta Learn-ing Via Sequence Modeling. In Proceedings of the 39th International Conference on Machine Learning , Proceedings of Machine Learning Research. PMLR, 2022. Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Kopf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: An Imperative Style, High-Performance Deep Learning Library. In Proceedings of the 33rd Conference on Neural Information Processing Systems , 2019. Fabian Pedregosa, Ga¨ el Varoquaux, Alexandre Gramfort, Vincent Michel, Bertrand Thirion, Olivier Grisel, Mathieu Blondel, Peter Prettenhofer, Ron Weiss, Vincent Dubourg, et al. Scikit-learn: Machine learning in python. Journal of Machine Learning Research , 12, 2011. Lennart Purucker, Andrej Tschalzev, Nick Erickson, Gioia Blayer, David Holzm¨ uller, Alan Arazi, Alexander Pfefferle, Mustafa Tajjar, Ga¨ el Varoquaux, and Frank Hutter. Beyond IID: How general are tabular foundation models, really? arXiv preprint arXiv:2606.30410 , 2026. Jingang Qu, David Holzm¨ uller, Ga¨ el Varoquaux, and Marine Le Morvan. TabICL: A tabular foun-dation model for in-context learning on large data. In International Conference on Machine Learning , 2025. Jingang Qu, David Holzm¨ uller, Ga¨ el Varoquaux, and Marine Le Morvan. TabICLv2: A better, faster, scalable, and open tabular foundation model. In International Conference on Machine Learning ,2026. Theodore Rogers and Srividya Ponnada. Zero-shot bayesian optimization with TabPFN: Competi-tive with state-of-the-art without per-task training. In AutoML 2026 Methods Track , 2026. Donald B Rubin. The bayesian bootstrap. The annals of statistics , pp. 130–134, 1981. David Rundel, Julius Kobialka, Constantin von Crailsheim, Matthias Feurer, Thomas Nagler, and David R¨ ugamer. Interpretable machine learning for TabPFN. In World Conference on Explainable Artificial Intelligence , 2024. Bernhard Sch¨ olkopf, Dominik Janzing, Jonas Peters, Eleni Sgouritsa, Kun Zhang, and Joris Mooij. On Causal and Anticausal Learning. In Proceedings of the 29th International Coference on In-ternational Conference on Machine Learning , 2012. Gowthami Somepalli, Micah Goldblum, Avi Schwarzschild, C Bayan Bruss, and Tom Goldstein. Saint: Improved neural networks for tabular data via row attention and contrastive pre-training. 
+
+arXiv preprint arXiv:2106.01342 , 2021. Omar Swelam, Lennart Purucker, Jake Robertson, Hanne Raum, Joschka Boedecker, and Frank Hutter. Does TabPFN understand causal structures? In EurIPS 2025 Workshop: AI for Tabular Data , 2025. Yefan Tao, Xiyuan Zhang, Xinyi Liu, Boran Han, Danielle Maddix, Haoyang Fang, Zhen Han, Jiading Gai, Xuanqing Liu, Michael Bohlke-Schneider, Yuyang Wang, Gerald Friedland, Kevan Mah, Chris Lee, and Chris Kong. Mitra-v2 technical report, 2026. 12 Preprint David Yarowsky. Unsupervised word sense disambiguation rivaling supervised methods. In 33rd annual meeting of the association for computational linguistics , 1995. Rosen Yu, Cyril Picard, and Faez Ahmed. GIT-BO: High-dimensional bayesian optimization with tabular foundation models. In International Conference on Learning Representations , 2026. Xingxuan Zhang, Gang Ren, Han Yu, Hao Yuan, Hui Wang, Jiansheng Li, Jiayun Wu, Lang Mo, Li Mao, Mingchao Hao, et al. Limix: Unleashing structured-data modeling capability for gener-alist intelligence. arXiv preprint arXiv:2509.03505 , 2025a. Xiyuan Zhang, Danielle C. Maddix, Junming Yin, Nick Erickson, Abdul Fatir Ansari, Boran Han, Shuai Zhang, Leman Akoglu, Christos Faloutsos, Michael W. Mahoney, Cuixiong Hu, Huzefa Rangwala, George Karypis, and Bernie Wang. Mitra: Mixed synthetic priors for enhancing tabu-lar foundation models. In Advances in Neural Information Processing Systems , 2025b. 13 Preprint 
+
+# A FURTHER THEORETICAL RESULTS AND PROOFS 
+
+A.1 BAYES -OPTIMAL PREDICTIVE 
+
+Proposition A.1. Under our data model, the expected log loss over all conditional predictors q(y |
+
+x, d n) is minimized, uniquely up to null sets of (X, D n), by the conditional distribution of Y given 
+
+(X, D n). Its density π(y | x, d n) averages p(y | x) under the task posterior 
+
+dΠ( p | x, d n) ∝ pX (x)
+
+> n
+
+Y
+
+> i=1
+
+pX (xi) p(yi | xi) dΠ( p). (4) 
+
+This is equivalent to π in Eq. (1) . Under separability, the marginal posterior of pY |X is proportional to Qni=1 pY |X (yi | xi) dΠY |X (pY |X ), and hence does not depend on the query feature x. Therefore, the predictive equals ¯π(y | x, d n) wherever the posteriors are defined. Proof. Let D = ( X, D n), where X = ( X1, . . . , Xn, X) and Y = ( Y1, . . . , Y n, Y ), with realiza-tions x and y = ( y1, . . . , y n, y ). For any conditional distribution q,
+
+E[− log q(Y | D)] − E[− log π(Y | D)] = E[DKL (π(· | D) ∥ q(· | D))] ≥ 0,
+
+where π(· | D) is the conditional distribution of Y given D. Equality holds if and only if q(· | D) = 
+
+π(· | D) almost surely, proving uniqueness up to null sets of the inputs. By the independence of the rows given the task p, the joint density at (x, y), conditional on p, is 
+
+pX (x) p(y | x)
+
+> n
+
+Y
+
+> i=1
+
+pX (xi) p(yi | xi).
+
+Hence, conditioning on Xi = xi, X = x, and Yi = yi, Bayes’ rule gives 
+
+dΠ( p | x, d n) ∝ pX (x)
+
+> n
+
+Y
+
+> i=1
+
+pX (xi) p(yi | xi) dΠ( p),
+
+which is Eq. (4). Moreover, 
+
+π(y | x, d n) = 
+
+Z
+
+p(y | x) dΠ( p | x, d n),
+
+since, conditional on the task p and X, the distribution of Y is p(· | X).Under separability, the prior factorizes as 
+
+dΠ( p) = dΠX (pX ) dΠY |X (pY |X ).
+
+Thus, marginalizing the task posterior over pX gives 
+
+dΠ( pY |X | x, d n) ∝
+
+"Z
+
+pX (x)
+
+> n
+
+Y
+
+> i=1
+
+pX (xi) dΠX (pX )
+
+# nY
+
+> i=1
+
+pY |X (yi | xi) dΠY |X (pY |X )
+
+∝
+
+> n
+
+Y
+
+> i=1
+
+pY |X (yi | xi) dΠY |X (pY |X ),
+
+because the bracketed factor does not depend on pY |X . Consequently, 
+
+π(y | x, d n) = 
+
+Z
+
+pY |X (y | x) dΠ( pY |X | dn) = ¯ π(y | x, d n).
+
+As a direct corollary, we can also derive the corresponding quantities when a set of unlabeled features is available. 14 Preprint 
+
+Corollary A.1. Let V = ( V1, . . . , Vk) be additional unlabeled feature rows that, conditional on the task p, are iid draws from pX and are independent of the context and query row. Let v denote their realizations. Then the expected log loss over all conditional predictors q(y | x, v, d n) is minimized, uniquely up to null sets, by 
+
+π(y | x, v, d n) = 
+
+Z
+
+p(y | x) dΠ( p | x, v, d n), (5) 
+
+where 
+
+dΠ( p | x, v, d n) ∝ pX (x)
+
+> k
+
+Y
+
+> j=1
+
+pX (vj )
+
+> n
+
+Y
+
+> i=1
+
+pX (xi)p(yi | xi) dΠ( p). (6) 
+
+Under a separable prior, the marginal posterior over pY |X does not depend on x or v, and hence 
+
+π(y | x, v, d n) = ¯ π(y | x, d n).
+
+Proof. Conditional on the task p, the labeled context rows, the unlabeled rows, and the query row are independent. Hence, the joint density of the observed features and context labels, conditional on 
+
+p, is proportional to 
+
+pX (x)
+
+> k
+
+Y
+
+> j=1
+
+pX (vj )
+
+> n
+
+Y
+
+> i=1
+
+pX (xi)p(yi | xi).
+
+Bayes’ rule therefore gives Eq. (6). Conditional on p and x, the query label has distribution p(· | x),so its conditional distribution given (x, v, d n) is 
+
+Z
+
+p(y | x) dΠ( p | x, v, d n).
+
+By the same log-loss argument as in Proposition A.1, this conditional distribution is the unique Bayes-optimal predictor up to null sets. If Π = Π X ⊗ ΠY |X , marginalizing the posterior over pX yields 
+
+dΠ( pY |X | x, v, d n) ∝
+
+> n
+
+Y
+
+> i=1
+
+pY |X (yi | xi) dΠY |X (pY |X ),
+
+because all factors involving x, v, and the context feature likelihood depend only on pX . Thus the unlabeled rows and the query feature do not update the posterior over the labeling mechanism, which gives π(y | x, v, d n) = ¯ π(y | x, d n).A.2 NON -SEPARABILITY OF SCM PRIORS 
+
+As discussed before, we should not expect independence to hold for SCM priors. The following shows that it already fails in simple cases such as a linear Gaussian SCM with a random label node. 
+
+Proposition A.2. Let (B, J ) be random, where B is an acyclic d × d matrix and J is a node, with 
+
+d ≥ 2. Conditional on (B, J ), let Z = BZ + E with E ∼ N (0 , D ) for a fixed positive diagonal matrix D, and let Y := ZJ and X := Z−J . If Var( Y | X, B, J ) is nonconstant under the prior on (B, J ), the induced prior is non-separable. This holds in particular when D = Id, J is uniform and independent of B, and B has a nonzero edge with positive probability. Proof. Let Σ = ( I −B)−1D(I −B)−T . Acyclicity gives det( I −B) = 1 and hence det Σ = det D.Since Σ−J, −J is positive definite, the block determinant formula and Gaussian conditioning give 
+
+det D = det Σ = det(Σ −J, −J ) ΣJJ − ΣJ, −J Σ−1 
+
+> −J, −J
+
+Σ−J,J 
+
+
+
+= det(Σ −J, −J ) Var( Y | X, B, J ).
+
+The feature law determines det(Σ −J, −J ), and the conditional label law determines Var( Y |
+
+X, B, J ). If the latter is nonconstant, these laws cannot be independent because the product is fixed. 15 Preprint Now consider the particular case D = Id, with J uniform and independent of B. The conditional variance is 
+
+Var( Y | X, B, J )−1 = (Σ −1)JJ = 1 + X
+
+> k:J→k
+
+B2 
+
+> kJ
+
+.
+
+Every finite acyclic graph has a node with no outgoing edges. If J is such a node, the sum in the last display is empty and the conditional variance is 1. If J instead has a nonzero outgoing edge J → k,it holds BkJ ̸ = 0 and, thus, 
+
+Var( Y | X, B, J ) = 
+
+
+
+1 + X
+
+> l:J→l
+
+B2
+
+> lJ
+
+−1
+
+≤ (1 + B2 
+
+> kJ
+
+)−1 < 1.
+
+On the event that B has a nonzero edge, both types of node exist. Since J is uniform and independent of B, each type is selected with conditional probability at least 1/d . Since the event has positive probability, the conditional variance is nonconstant under the prior. A.2.1 PROOF OF PROPOSITION 1Proposition 1 states that even for separable priors, mixtures are non-separable when both induced laws differ across regimes. 
+
+Proof. The marginals of Π are 
+
+ΠX = (1 − λ)Π X, 0 + λΠX, 1,
+
+ΠY |X = (1 − λ)Π Y |X, 0 + λΠY |X, 1,
+
+which implies 
+
+Π − ΠX ⊗ ΠY |X = λ(1 − λ)(Π X, 1 − ΠX, 0) ⊗ (Π Y |X, 1 − ΠY |X, 0).
+
+Since λ(1 − λ) > 0, the right-hand side vanishes iff (Π X, 1 − ΠX, 0) ⊗ (Π Y |X, 1 − ΠY |X, 0) = 0 .A tensor product of two finite signed measures is zero iff at least one factor is zero. Hence Π is separable iff ΠX, 0 = Π X, 1 or ΠY |X, 0 = Π Y |X, 1.A.3 CONSISTENCY AND THE FINITE -SAMPLE DIFFERENCE 
+
+A.3.1 PROOF OF COROLLARY 1
+
+Proof. By Eq. (4) and the definition of Πn, the posterior given the query has density pX (x)/m (x |
+
+dn) relative to Πn, so π(y | x, d n) = EΠn [p(y | x) pX (x)] /EΠn [pX (x)] , and E[AB ] =
+
+E[A]E[B] + Cov( A, B ).A.3.2 PROOF OF PROPOSITION 2Nagler (2023, Theorem 3.1) shows for classification with iid rows that ¯π converges to the conditional of the KL-optimal distribution in the prior’s support. The proof is based on the task posterior Πn
+
+formed from the joint likelihood, and it uses only that Πn concentrates in Hellinger distance. In the non-separable setting, the query feature itself changes the task posterior. The following proposition shows that concentration of the posterior over joint task laws is sufficient for convergence of both 
+
+π and ¯π, in both classification and regression problems. Sufficient KL-support and Hellinger-cover conditions for a unique KL-optimal density are given by De Blasi & Walker (2013, Corollary 1) and used in the PFN setting by Nagler (2023, Appendix A.2). Recall that, for two densities m and p with respect to a common dominating measure μ, the total variation and Hellinger distances are defined as 
+
+TV( m, p ) = 12
+
+Z
+
+|m − p| dμ, H(m, p ) = 
+
+Z 
+
+(√m − √p)2 dμ 
+
+1/2
+
+.
+
+16 Preprint 
+
+Proof. Since TV( m, p ) ≤ H(m, p ) and TV( m, p ) ≤ 1, we get 
+
+δn =
+
+Z
+
+TV( p, p ∗) dΠn(p)=
+
+Z
+
+> {H(p,p ∗)≤ϵ}
+
+TV( p, p ∗) dΠn(p) + 
+
+Z
+
+> {H(p,p ∗)>ϵ }
+
+TV( p, p ∗) dΠn(p)
+
+≤ ϵ + Π n
+
+ {p : H(p, p ∗) > ϵ }.
+
+Taking n → ∞ followed by ϵ → 0 gives lim sup n→∞ δn = 0 almost surely. For convergence of the two predictives π and ¯π, we first show that the integrated total variation of the conditional distributions is bounded by the total variation of the joint distributions. If m and p
+
+are joint densities on Y × X , the product of the label and feature spaces, with feature marginals mX
+
+and pX , then Z
+
+TV  m(· | x), p (· | x)pX (x) dx
+
+= 12
+
+Z Z 
+
+m(y | x)pX (x) − p(y, x) dy d x
+
+≤ 12
+
+Z Z 
+
+m(y | x)pX (x) − m(y, x) dy d x + 12
+
+Z Z 
+
+m(y, x) − p(y, x) dy d x
+
+= TV( mX , p X ) + TV( m, p )
+
+≤ 2 TV( m, p ). (7) Now let mn(y, x) = R p(y, x) dΠn(p) be the posterior predictive joint density of one further row, with feature marginal mn,X . Because the rows are conditionally iid, π(y | x, D n) =
+
+mn(y, x)/m n,X (x). Applying Eq. (7) to mn, gives 
+
+Z
+
+TV  π(· | x, D n), p ∗(· | x)p∗ 
+
+> X
+
+(x) dx ≤ 2 TV( mn, p ∗)= 2 TV 
+
+Z 
+
+p(y, x) dΠn(p), p ∗
+
+
+
+≤ 2
+
+Z
+
+TV( p, p ∗) dΠn(p)= 2 δn,
+
+The second inequality uses convexity of total variation. This proves the first bound. For the second bound, recall that ¯π(· | x, D n) is the posterior mixture of p(· | x). Convexity of total variation applied to this mixture gives, for every x,
+
+TV  ¯π(· | x, D n), p ∗(· | x) ≤
+
+Z
+
+TV  p(· | x), p ∗(· | x) dΠn(p).
+
+Integrating over p∗ 
+
+> X
+
+(x), changing the order of integration, and Eq. (7) give 
+
+Z
+
+TV  ¯π(· | x, D n), p ∗(· | x)p∗ 
+
+> X
+
+(x) dx ≤
+
+Z Z 
+
+TV  p(· | x), p ∗(· | x)p∗ 
+
+> X
+
+(x) dx
+
+
+
+dΠn(p)
+
+≤ 2
+
+Z
+
+TV( p, p ∗) dΠn(p)= 2 δn.
+
+A.4 MISSPECIFICATION 
+
+A.4.1 PROOF OF PROPOSITION 3
+
+Proof. (i) Under separability, the support of the induced pairs (pX , p Y |X ) is the Cartesian product 
+
+supp(Π X ) × supp(Π Y |X ). For every supported mechanism p, it then contains the pair (p∗ 
+
+> X
+
+, p ∗  
+
+> Y|X
+
+).17 Preprint Joint optimality of p∗ and the KL chain rule therefore give 
+
+DKL (p0,X ∥ p∗ 
+
+> X
+
+) + DY |X 
+
+> KL
+
+(p0 ∥ p∗) ≤ DKL (p0,X ∥ p∗ 
+
+> X
+
+) + DY |X 
+
+> KL
+
+(p0 ∥ p).
+
+The feature divergence DKL (p0,X ∥ p∗ 
+
+> X
+
+) is finite by the assumption on p∗. Canceling it and taking the infimum over p proves (i). (ii) We construct an explicit model to verify the claim. Suppose X and Y are independent N (0 , 1) 
+
+variables under p0, and let t > 0 be arbitrary. Consider a prior with positive mass on only the following two task densities p(A) and p(B):
+
+p(A) : X ∼ N (p2( t + 1) , 1) , Y | X ∼ N (0 , 1) ,p(B) : X ∼ N (0 , 1) , Y | X ∼ N (√2t, 1) .
+
+By the standard formula for KL divergence between Gaussians, 
+
+DKL (N (μ0, σ 20 ) ∥ N (μ1, σ 21 )) = 12
+
+ (μ0 − μ1)2
+
+σ21
+
++ σ20
+
+σ21
+
+− 1 − log 
+
+ σ20
+
+σ21
+
+ 
+
+,
+
+the feature and conditional KL divergences are 
+
+ DKL (p0,X ∥ p(A) 
+
+> X
+
+), D Y |X 
+
+> KL
+
+(p0 ∥ p(A)) = ( t + 1 , 0) ,
+
+ DKL (p0,X ∥ p(B) 
+
+> X
+
+), D Y |X 
+
+> KL
+
+(p0 ∥ p(B)) = (0 , t ).
+
+Thus, p(B) uniquely minimizes the joint KL divergence, while its conditional KL exceeds the sup-ported minimum by t. The prior contains both the true feature law and the true conditional label law, but not their pairing p0. The prior is therefore non-separable, and the penalty is unbounded as 
+
+t → ∞ .A.5 MARTINGALE CHECKS 
+
+Fix a label event A ⊆ Y , a query x and a future feature xn+1 . The diagnostic draws Yn+1 ∼ q(· | 
+
+xn+1 , d n), appends (Yn+1 , xn+1 ) to the context, and compares the expected updated prediction at 
+
+x with its initial value. For the exact target, the tower property gives 
+
+EYn+1 ∼π(·| xn+1 ,x,d n)
+
+π(A | x, (dn, (Yn+1 , xn+1 )))  = π(A | x, xn+1 , d n).
+
+Unlike the diagnostic in Eq. (3), this identity conditions the label sampler on the tracked query and retains the additional feature evidence on the right-hand side. The feature arguments represent distinct rows even when their values coincide. Sampling the entire future row from its joint posterior predictive conditional on (x, d n) recovers zero drift by another application of the tower property. 
+
+Cumulative drift in the experiments. For ˘π ∈ { π, ¯π}, fix an initial context dn, a query x, and a repeated future feature x⋆. Starting from Dn = dn, generate additional rows sequentially according to 
+
+Yn+k+1 | Dn+k ∼ ˘π(· | x⋆, D n+k), Dn+k+1 =  Dn+k, (Yn+k+1 , x⋆).
+
+Each appended row updates the context through its joint likelihood. For the label event A = {1},the cumulative expected drift after K appended rows is 
+
+∆K = E[˘ π(1 | x, D n+K ) | dn, x, x⋆] − ˘π(1 | x, d n).
+
+where the expectation is over future labels generated from ˘π. The feature x⋆ is either the query itself or one context feature selected uniformly once per context-query pair and held fixed throughout the rollout. The cumulative-drift panel of Fig. 4 reports the root mean square of these differences across 
+
+M = 2000 · 8 = 16000 context-query pairs: 
+
+RMS ˘π (K) = 
+
+"
+
+1
+
+M
+
+> M
+
+X
+
+> i=1
+
+ ∆(i)
+
+> K
+
+2
+
+#1/2
+
+,
+
+where ∆(i) 
+
+> K
+
+denotes ∆K evaluated for the ith context–query pair and its selected future feature. Thus, the expectation over future labels is taken before squaring, and the square root returns the 18 Preprint statistic to probability units. Squaring prevents positive and negative expected drifts from cancelling across pairs, while giving larger drifts more weight. The statistic measures the cumulative expected change from the initial prediction; it does not sum squared one-step changes. For binary labels at a repeated feature, the predictive after k appended rows depends on their labels only through the number of class-1 outcomes. We therefore propagate the probabilities of the k + 1 
+
+possible counts, integrating over all future label sequences without Monte Carlo sampling. 
+
+# B REMARKS AND FURTHER DETAILS 
+
+Details on the amortization gap Following H¨ ulskamp et al. (2026), we use amortization gap for the total excess of a PFN over the Bayes-optimal predictor, covering both the limits of the model class and those of finite pretraining. Pointwise, it is ∆θ (x, d n) = DKL 
+
+ π(· | x, d n) ∥ qθ (· | x, d n).During pretraining, the context size N ∼ ΠN is drawn independently of the task p ∼ Π. For the random-size context DN = ( Yi, Xi)Ni=1 , write L(θ) = −E[log qθ (Y | X, D N )] and L∗ =
+
+−E[log π(Y | X, D N )] , where E = EΠN EΠ averages over context sizes, tasks, and data. Since 
+
+π minimizes the pretraining loss (Proposition A.1), its expectation equals L(θ) − L ∗ with L∗ =
+
+−EΠN EΠ[log π(Y | X, D N )] . Both statements require π as the reference, though under a non-separable prior, a reference computed from the context posterior alone yields ¯π instead. An example would be MCMC draws from Π( · | dn) that are not reweighted by the query’s feature likelihood 
+
+pX (x). The discrepancy to this reference then decomposes as 
+
+qθ (y | x, d n) − ¯π(y | x, d n) =  qθ (y | x, d n) − π(y | x, d n) + ∆ π (y | x, d n),
+
+so the predictive gap ∆π (Corollary 1) is added on top of the approximation error, and any divergence or loss difference computed against ¯π mixes the two. On real data, labels do not follow π, so even with the correct reference the loss difference is no longer a divergence and can be negative (cf. H¨ ulskamp et al., 2026). 
+
+Counterexample for martingale zero-drift under non-separable priors Consider two equally likely tasks on X ∈ { 0, 1, 2} with feature probabilities (0 .5, 0.4, 0.1) and (0 .5, 0.1, 0.4) , and class 1 probabilities at X = 0 of 0.2 and 0.8, respectively. At X = 1 , 2, let both tasks assign class 1 probability 0.5. This prior is non-separable, but fixing the query and all future features at zero yields a martingale: their common feature likelihood 0.5 cancels from every update, leaving ordinary Bayesian label updates. Non-separability therefore permits drift without requiring it at every query. The two terms can also cancel while both are nonzero. With no initial context, take two equally likely tasks on X ∈ { 0, 1} with pX (0) equal to 0.8 and 0.2, and deterministic labels Y = 1 and 
+
+Y = 0 , respectively. At query and future feature x = 0 , the initial class 1 probability is 4/5
+
+and conditioning on both feature rows gives 16 /17 . The sampled label identifies the task, so the feature-update and sampling terms are 12 /85 and −12 /85 : the net drift is zero. 
+
+Transductive channels in current benchmarks and models Currently, the handling of test data differs substantially between different benchmark suites as well as between different models. Below we summarize important aspects with regard to possible transductive channels in some of the most popular benchmarks and models contained in them: • TabArena (Erickson et al., 2026) passes the full test fold to the model. It has no written rule on transductive use. Its only check is a smoke test that compares the prediction for a single row alone and within the batch, and methods can be exempted from it. • TALENT (Liu et al., 2025) processes test minibatches in its neural-model evaluation rou-tine, so a prediction can depend on the composition of the batch. • ScoringBench (Landsgesell et al., 2026) passes all test features jointly to its predictive-distribution interface. • BeyondArena (Purucker et al., 2026) explicitly documents transductive preprocessing for label-per-group tasks. It computes feature summaries within each test group and attaches them to that group’s rows (Purucker et al., 2026, Appendix C.2). This reflects tasks whose prediction unit is naturally a group and does not by itself make comparisons unfair. 19 Preprint On the model side, the commonly used attention masks, for example in TabPFN and TabICL, prevent direct attention between test rows. TabICL also excludes test rows from the shared context of its column embedding by default and includes them only with embed with test=True . While these restrictions blocks large interactions, they do not make the complete pipeline independent of the other test rows: • The standard forward path of TabPFN-v2.5 computes constant-feature masks and feature-group normalization parameters from the combined training and test input. • TALENT’s bundled LimiX implementation (Zhang et al., 2025a) performs feature filtering, categorical-type inference, and ordinal encoding on the combined training and test features. • TALENT’s default SAINT configuration enables intersample attention, so its predictions explicitly depend on the other rows in the test minibatch (Somepalli et al., 2021). • Proprietary models served through an API, such as TabPFN-Thinking, receive the whole test fold server-side and can only be probed as a black box for batch invariance. In total, an evaluation protocol should specify the prediction unit, which unlabeled observations are available and when, and how each method uses them, including any dependence on the composition of the test batch. Per-row prediction calls enforce invariance only if preprocessing and retained state have not already used other test rows. When transductive inference is permitted, all methods should receive the same information, although they need not exploit it identically. 
+
+# C EXPERIMENTAL DETAILS 
+
+C.1 ORDERED -C LUSTER PRIOR 
+
+Prior We introduce the ordered-cluster prior that lets us study our theoretical claims empirically, where we pretrain TabICL models from scratch on this custom prior. It is a finite non-separable classification prior over task distributions pa,b , where the centers a < b are chosen uniformly from the 36 ordered pairs on the grid {− 4, . . . , 4}. For each row, the class is drawn uniformly, with class 0 generating features from N (a, 0.52) and class 1 from N (b, 0.52). Because the same cluster centers determine both the feature distribution and the labeling mechanism, an unlabeled query feature can provide information about its label. More precisely, conditioning on a query x changes the label prediction exactly when its likelihood under the posterior tasks is correlated with their class probability at x (see Eq. (2)). This effect is particularly pronounced when the context contains only one class. In this case, the corresponding center is observed, while the other remains uncertain, so the query location helps identify the missing center. This is also the effect illustrated in Fig. 1. The finite task space makes both the query-updated predictive π and the context-updated predictive ¯π
+
+exactly enumerable, providing a controlled setting in which to determine which predictive standard pretraining recovers. Fig. 2: We train a 2.6M parameter version of TabICL on the non-separable ordered-cluster prior using two different query-labeling schemes: standard pretraining and a decoupled-query control, denoted decoupled . In both schemes, we sample a latent task p and use it to generate the context 
+
+dn and query features x. Under standard pretraining, the query labels are generated from the same task p, so their conditional distribution is the query-updated predictive π(y | x, d n). Under the decoupled setting, we instead draw a new task p′ from the context posterior Π( · | dn), without conditioning on the query features, and generate each query label from p′(· | x). Conditional on the context, this decouples the query feature from the task used to generate its label. The resulting marginal label distribution is therefore the context-updated predictive ¯π rather than π(y | x, d n).The two schemes thus receive identical contexts and query features but have different Bayes-optimal targets: π for standard pretraining and ¯π for the decoupled setting. At context size n = 2 , the figure plots the network difference q1 − ¯π1 against the exact target difference π1 − ¯π1 (predictives for class 1), averaged over three training seeds after 50 000 optimizer steps. For each query both coordinates are differences against the same baseline: the exact difference between the two predictives of Eq. (1), 
+
+π(1 | x, d n) − ¯π(1 | x, d n) (horizontal), and the network’s own difference qθ (1 | x, d n) − ¯π(1 |
+
+x, d n) (vertical); a network at π therefore lies on the dashed diagonal and one at ¯π on the dotted horizontal. Queries are grouped into 20 bins of equal width in the exact difference, with the bin edges running from its 0.5th to its 99 .5th percentile; bins holding fewer than 20 queries are dropped, 20 Preprint and each marker averages both coordinates over its bin, with the band giving one standard deviation across the three training seeds. Standard pretraining closely follows the identity line, indicating recovery of π, whereas the decoupled setting remains near zero, indicating recovery of ¯π. This means that pretraining on a non-separable prior actually approximates the query-updated predictive 
+
+π of Eq. (1) and in this experiment, using the wrong reference can make the apparent approximation error roughly 95 times larger than the true one. The two panels differ for a simple reason. In a single-class context, all labeled examples come from one cluster, so the location of the other cluster remains uncertain. The query feature is then valuable unlabeled evidence about that unseen cluster and can substantially change the prediction, producing a large difference between π and ¯π. In a two-class context, examples from both clusters already reveal both centers and the query adds little new information, so the target difference, and hence the plotted range, is much smaller ( y-axis). 
+
+Training details All networks are TabICL architectures (Qu et al., 2025) trained from scratch on the prior described above and consist of a column embedding, row interaction, and an in-context transformer. Two sizes, 2.6M parameters (embedding 64, blocks 2/2/4) and 8.1M (embedding 96, blocks 2/2/6). We use the Muon optimizer (Jordan et al., 2024) with standard cross-entropy loss, learning rate 8 · 10 −4, cosine schedule with restarts and 2% warmup, gradient clipping at 10, a batch size of 64 datasets, and 50 000 optimizer steps, with one pass over freshly simulated datasets. 
+
+Semi-supervised gains on the ordered-cluster prior On the ordered-cluster prior, the semi-supervised target π(y | x, v, d n) of Corollary A.1 can be computed exactly, which lets us check whether a trained PFN realizes the gain from unlabeled rows. We insert k unlabeled rows v from the generating task between the context and the queries. We pretrain TabICL with access to them either through the in-context transformer or through the column embedding ( embed with test ), and train a control with v masked. At n = 2 , the unlabeled rows lower the Bayes-optimal loss by 11% , 34% and 38% for k = 1, 8, 32 . For k ≥ 8 and n ≤ 4, the expected divergence 
+
+DKL (π(· | x, v, d n) ∥ qθ ) of the in-context network stays below 2% of this gain, and that of the column-embedding network below 5% . The masked control stays at π. Both networks approximate their own targets closely, so their loss difference, which matches the gain to within 0.2% , reflects the larger information set rather than better approximation. For a more thorough experiment regarding the use of additional unlabeled queries, refer to Appendix C.3. C.2 FEATURE EFFECTS UNDER A PRIOR WITH CONSTANT CLASS PROBABILITY 
+
+Prior Figure 3 is computed exactly on a finite non-separable classification prior with two tasks 
+
+ps, s ∈ {− 1, 1}, each with prior probability 1/2. Under ps the three features are independent. 
+
+X1 and X2 take values in {− 2, . . . , 2} with ps(X1 = t) ∝ exp {− (t − 0.75 s)2/2} and ps(X2 =
+
+t) ∝ exp {− (t − 0.5s)2/2}, and X3 is uniform on {− 1, 1}. The label does not depend on the features, Y | X ∼ Bernoulli( cs) with c−1 = 0 .2 and c1 = 0 .8. Every task therefore has a constant conditional label distribution, whereas X1 and X2 carry information about the task and hence about 
+
+cs. X3 has the same distribution under both tasks and serves as a negative control. All 50 feature combinations have positive probability under both tasks, so every input evaluated by PD, ICE and SHAP lies in the support. 
+
+Predictives Let w = Π( s = 1 | dn). By the symmetry of the grid, the normalizing constants cancel and log {rp1 (x)/r p−1 (x)} = 1 .5x1 + x2, so that 
+
+π(1 | x, d n) = 0 .2 + 0 .6 σ logit w + 1 .5x1 + x2
+
+, ¯π(1 | x, d n) = 0 .2 + 0 .6 w, 
+
+where σ is the logistic function. The figure uses the context dn with n = 2 rows, x1 = ( −1, 1, −1) 
+
+with y1 = 0 and x2 = (1 , −1, 1) with y2 = 1 . Both the feature and the label likelihood ratios of this context equal one, so w = 1 /2 and ¯π(1 | x, d n) = 0 .5 for all x. The context was chosen for illustration, not drawn from the prior. 
+
+Explanations All methods are applied to f (x) = π(1 | x, d n) and to ¯π(1 | x, d n) with the same background distribution, the feature predictive B = m(· | dn). In this case it is the equal-weight mixture of the two feature distributions. All quantities are finite sums over the grid, and no network 21 Preprint is trained. The partial dependence of X1 is PD 1(t) = EB [f (t, X 2, X 3)] , with (X2, X 3) drawn from their joint distribution under B. The ICE curves are t 7 → f (t, x 2, x 3) for x2 ∈ {− 2, . . . , 2}
+
+(Goldstein et al., 2015). Since f does not depend on x3, each x2 yields a single curve. Exact Shapley values are obtained by enumerating all 23 coalitions at each of the 50 grid points for two value functions. The marginal game uses vx(S) = EB [f (xS , X ¯S )] , where X ¯S follows its joint marginal under B. The conditional game uses vx(S) = EB [f (X) | XS = xS ] (Janzing et al., 2020). The right panel reports EX∼B |ϕj (X)|, which for π equals 0.134 and 0.073 for X1 and X2
+
+under the marginal game and 0.133 and 0.084 under the conditional game. Because ¯π is constant, its PD and ICE curves are constant and its Shapley values vanish under both games. The attribution of X3 under π is zero in both games as well, since f does not depend on x3 and X3 is independent of (X1, X 2) under B.C.3 SEMI TAB ICL: A RCHITECTURAL DETAILS AND EVALUATION 
+
+Architecture SemiTabICL uses the three-stage TabICL architecture with a column embedding (2 blocks, embedding dimension 128, 128 inducing points), a row interaction (2 blocks, 3 CLS tokens) and an in-context transformer (6 blocks, width 3 · 128 = 384 ), each with 8 attention heads, for 8.5M parameters in total. Every dataset is laid out as [ dn | v | queries ] with n labeled, k unlabeled and m
+
+query rows. Wherever TabICL attends to the training rows, i.e. in the inducing-point attention of the column embedding and in the in-context transformer, the attention context consists of the first n + k
+
+rows, so labeled and unlabeled rows attend to each other and queries attend to both. Unlabeled rows carry a single learned vector in place of the label embedding. The loss is the cross-entropy on the query rows only. The baseline TabICL is identical except for this vector and never sees unlabeled rows. 
+
+Prior Both models are trained on the unchanged graph-SCM prior of TabICLv2 (Qu et al., 2026) (random DAGs with 2–32 nodes, 1–100 features, up to 10 classes, predictability filters). The unla-beled rows are further samples of the same SCM whose labels are dropped. For SemiTabICL, every dataset has such a pool: the labeled rows make up 30% of a sequence length drawn log-uniformly from [14 , 334] , so n ∈ [4 , 100] and m ≈ 2.3 n, and the pool has k = round( r n ) rows with r
+
+log-uniform on [1 , 9] . The number of classes is capped at max(2 , ⌊min( n, m )/2⌋). The median synthetic dataset has n = 20 , k = 59 and m = 47 rows. The baseline is trained on the same distribution of (n, m ) without a pool. 
+
+Training We run pretraining for 30 000 optimizer steps, 1% warmup, with bfloat16 precision, and batches of 64 datasets in groups of 16 that share their sequence length and pool size. Each model trains in about two hours on four NVIDIA H200 GPUs. 
+
+Compared methods All methods use an ensemble of 8 members and fit preprocessing on the labeled rows only, and all see identical splits. We compare SemiTabICL with its additional un-labeld context rows ( SemiTabICL ), SemiTabICL with a the unlabeled context whose columns are permuted independently, which keeps the marginals but destroys the joint structure ( shuffled pool ), the baseline TabICL on the labeled rows ( TabICL ), and self-training (ST) with scikit-learn’s 
+
+SelfTrainingClassifier (Pedregosa et al., 2011; Yarowsky, 1995) (confidence threshold 
+
+0.75 , at most 10 rounds) around TabICL and around a gradient-boosted tree classifier (with default settings). As an upper bound, the oracle gives TabICL the pool together with its labels. The purpose of the shuffled unlabeled context is to assess to what extent possible gains from the additional unla-beled context come from only refining the marginal distributions per column vs. the model actually learning to leverage the full distribution of the additional data. 
+
+semi-TALENT We use the 150 classification datasets of TALENT (Liu et al., 2025) with at most 100 features and 10 classes, excluding the subset reserved for validation during pretraining. From the official training split, we draw a stratified labeled sample of n ∈ { 16 , 32 , 64 , 96 } rows and a pool of k = r n further rows with r ∈ { 2, 4, 8, 10 }, where pools of one labeled sample are nested. Each budget is repeated five times and evaluated on the official test split. On average over datasets, TabICL reaches 72 .6% accuracy, SemiTabICL 73 .3% and the oracle 77 .9% .22 Preprint 
+
+semi-UCI Following Guo et al. (2010), we use their 26 UCI datasets with raw features and repeat a 4-fold stratified cross-validation 10 times. In each outer training fold, 10% of the rows are labeled and the remainder forms the pool, so that k = 9 n, and the held-out fold is the test set. Two datasets with more than 10 classes (letter, vowel) and one with a preprocessing failure (sick) are excluded, leaving 23 datasets. Grouped by the categories of Sch¨ olkopf et al. (2012), the structural gain is larger on the 11 anticausal or confounded datasets ( +0 .70 pp) than on the three causal ones ( +0 .30 pp), in line with their hypothesis. With only three causal datasets, however, the difference is not significant (exact permutation test, p = 0 .42 ). Table 1: Paired comparisons of SemiTabICL and its controls. ∆acc is the difference in accuracy (percentage points) and ∆NLL the reduction in log loss (nats), both positive when the first method is better. For each dataset, differences are averaged over all its splits; for semi-TALENT, these pool the full 4 × 4 grid of n ∈ { 16 , 32 , 64 , 96 } and r ∈ { 2, 4, 8, 10 } with five repetitions each. Reported values are means of these per-dataset differences. For semi-TALENT, win is the share of the 150 datasets with a positive difference, and p is a two-sided Wilcoxon signed-rank test of whether the per-dataset differences are centred at zero.                                                          
+
+> semi-TALENT semi-UCI Comparison ∆acc win p∆NLL win p∆acc ∆NLL SemiTabICL vs. TabICL +0 .63 0.81 5e −16 +0 .015 0.85 6e −19 +0 .48 +0 .014
+> SemiTabICL vs. shuffled +0 .66 0.67 1e −10 +0 .017 0.65 2e −7+0 .47 +0 .017
+> Shuffled vs. TabICL −0.03 0.59 0.56 −0.001 0.63 0.06 +0 .01 −0.003
+> TabICL ST vs. TabICL −0.33 0.41 3e −4−0.440 0.03 6e −26 −0.53 −0.393
+> GBDT ST vs. GBDT +0 .45 0.77 3e −14 −0.577 0.01 2e −26 +0 .46 −0.452
+> Oracle vs. TabICL +5 .18 1.00 2e −26 +0 .125 1.00 2e −26 +5 .33 +0 .120
+
+C.4 SOFTWARE AND COMPUTATIONAL ENVIRONMENT 
+
+Our experiments were implemented on top of the official TabICL software repository (Qu et al., 2025; 2026) based on pytorch (Paszke et al., 2019). TabICL pretraining runs were carried out on NVIDIA H200 GPUs with a full pretraining run with up to 50k optimizer steps taking less than 3 hours of wall-clock time for both the 2.6M parameter model as well as the 8.1M and 8.5M parameter model. 
+
+# D RELATED WORK 
+
+Semi-supervised learning (in ICL) Sch¨ olkopf et al. (2012) point out the importance of analyzing the causal mechanisms underlying datasets for supervised learning and highlight under what con-ditions additional unlabeled data should prove useful with semi-supervised approaches. Li et al. (2026) show, from an expressivity perspective, that linear attention needs depth to exploit unlabeled in-context rows under a binary Gaussian-mixture prior, which is a special case of what we call a non-separable prior. Though they mention TabPFN as an application, the question studied is or-thogonal to ours: we ask whether a network pretrained on a non-separable prior natively exploits additional unlabeled rows, as its objective says it should, whereas they wrap an off-the-shelf TabPFN in an external pseudo-labeling loop and show that self-training can improve predictive performance. Swelam et al. (2025) study whether the internal representations of TabPFN contain causal informa-tion and how well these can be repurposed for causal discovery by training an additional decoder. Their positive findings provide adjacent evidence that predictive pretraining yields feature repre-sentations that not only identify the latent mechanism p(y | x) but also p(x) as required for the query-updated predictive of Eq. (4). 
+
+Bayesian targets and direct reference comparisons. M¨ uller et al. (2022) introduce PFNs and show that prior-data NLL equals the expected KL to the PPD up to the Bayes-optimal loss, so held-out NLL measures the amortization gap whenever that loss is known, which is measured for a GP with fixed hyperparameters and a Gaussian target whose mean is linear in the context labels. In these settings the PFN approaches the exact NLL with more pretraining. Furthermore, M¨ uller et al. (2024) extends the analysis by enumerating finite libraries of one-dimensional step, sine, and linear 23 Preprint functions and show on selected datasets that predictive means follow the exact posterior, including non-obvious generalizations. This setup also separates failures of the posterior from failures of the network, such as an inability to count repeated observations. For intractable priors, the existing com-parisons rank a PFN against NUTS, variational inference, or MLE-II (M¨ uller et al., 2022), primarily designed as speed comparisons and are very informative as such, but a Monte Carlo reference whose NLL never falls below the PFN’s cannot locate the Bayes-optimal loss, so the gap under a general prior has not been measured. The later literature has largely turned to predictive performance on real benchmarks (Grinsztajn et al., 2025; Hollmann et al., 2025; Qu et al., 2025; 2026), which establishes that PFNs predict well but not what they compute. 
+
+Neural processes Neural processes (NPs) share the PFN goal of learning to predict from a con-text set across a distribution of tasks. In particular, PFNs are closely related to transformer NPs, a transformer-based extension of conditional NPs (Nagler, 2023; Nguyen & Grover, 2022). Con-ditional NPs directly parameterize predictive distributions (Garnelo et al., 2018a), while latent NPs introduce a shared latent variable to model dependencies between predictions (Garnelo et al., 2018b). Attentive neural processes use query-specific context representations (Kim et al., 2019), and trans-former neural processes formulate prediction through likelihood-based sequence modeling (Nguyen & Grover, 2022). Closely related to our target-identification question, Foong et al. (2020) show, un-der their stated conditions, that the population maximum-likelihood objective recovers the ground-truth stochastic process’s prediction map. This supports interpreting learned predictions as approx-imations to conditional distributions, without guaranteeing exact Bayesian inference for a finite trained network. 24

@@ -4,24 +4,24 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-09-05">09.05</time>
+    <time class="dpr-home-notice-date" datetime="2026-10-05">10.05</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">CVPR 2026 已更新</strong>
-      <span class="dpr-home-notice-entry-summary">已收录 CVPR 2026 官方 Open Access 论文 4,042 篇，可在会议检索中查看。EMNLP 2026 预计于 10 月中下旬更新，具体以官方论文集开放时间为准。</span>
+      <strong class="dpr-home-notice-entry-title">medRxiv 自动更新已恢复</strong>
+      <span class="dpr-home-notice-entry-summary">修复超长摘要导致的向量生成失败，维护任务现会限制单条 embedding 文本长度并分片写入。受影响范围已重新同步，公开读取、关键词检索与语义检索均已验证。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-08-28">08.28</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-16">09.16</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">区间日报可正常点开</strong>
-      <span class="dpr-home-notice-entry-summary">长时间窗日报会挂在结束日那天的日历格上，此前点击没有反应，现在可以正常展开查看。</span>
+      <strong class="dpr-home-notice-entry-title">日报跨日重复推荐已修复</strong>
+      <span class="dpr-home-notice-entry-summary">历史推荐现按原始召回标签与 arXiv 论文标识去重，暂停词条不再参与评分；同一专题次日不会重复推荐相同论文。已有历史页面保留，不自动删除。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
-      <span class="dpr-home-notice-entry-summary">新增反馈功能，欢迎大家踊跃反馈各种建议，我们会第一时间查看并协调处理。</span>
+      <strong class="dpr-home-notice-entry-title">90天/365天 arXiv 专题回溯</strong>
+      <span class="dpr-home-notice-entry-summary">支持分片召回、断点评审与分页查看，核心论文与待复核结果分开展示。DeepSeek 费用按实际用量计算，不下载全量 PDF。</span>
     </div>
   </div>
   <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-03 ~ 2026-11-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 26 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>26</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:26:58 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-01 11:38:31 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,8 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-09日报：12篇中精读5篇、速读7篇，两篇9分精读聚焦贝叶斯预测与扩散先验采样。</p>
-<p>最值得看变分贝叶斯线性神经网络中似然</p>
+<p>本期速读26篇论文（精读0篇），三篇满分10.0的工作全部集中在 Prior-Data Fitted Networks（PFN），构成本期核心主题。</p>
+<p>最值得看两个方向：PFN 究竟能否有效摊销贝叶斯推断的评估研究，以及“可分性差距”和去偏方法如何影响半参数推断的可靠性。</p>
+<p>建议普通读者先读那篇评估类满分论文建立判断框架，再从“可分性差距”或“去偏半参数推断”中选一篇细看方法与实验设定。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -79,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="The Impact of Likelihood Tempering on the Limiting Predictive Moments of Variational Bayesian Linear Neural Networks">The Impact of Likelihood Tempering on the Limiting Predictive Moments of Variational Bayesian Linear Neural Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Noise, Denoise, Correct: MCMC Posterior Sampling with Diffusion Priors in Three Steps">Noise, Denoise, Correct: MCMC Posterior Sampling with Diffusion Priors in Three Steps</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparsifying Stochasticity, Not Capacity: Partial Stochasticity via Deep Weight Factorization of Prior Scales">Sparsifying Stochasticity, Not Capacity: Partial Stochasticity via Deep Weight Factorization of Prior Scales</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-dl <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayes-method <strong>2</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -92,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">26 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Astrophysical Uncertainties in Dark Matter Direct Detection with Simulation-Based Inference">Learning Astrophysical Uncertainties in Dark Matter Direct Detection with Simulation-Based Inference</span></li><li><span class="dpr-home-dashboard-paper-title" title="ProximalFM: Amortized Proximal Causal Inference under Hidden Confounding">ProximalFM: Amortized Proximal Causal Inference under Hidden Confounding</span></li><li><span class="dpr-home-dashboard-paper-title" title="Anchored Reversible Jump Sequential Monte Carlo">Anchored Reversible Jump Sequential Monte Carlo</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="How Well Do Prior-Data Fitted Networks Amortize Bayesian Inference?">How Well Do Prior-Data Fitted Networks Amortize Bayesian Inference?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Characterizing the Separability Gap in Prior-Data Fitted Networks">Characterizing the Separability Gap in Prior-Data Fitted Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Debiased Prior-Data Fitted Networks for Amortized Bayesian Semi-Parametric Inference">Debiased Prior-Data Fitted Networks for Amortized Bayesian Semi-Parametric Inference</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">bayes-method <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayesian-ml <strong>3</strong></span><span class="dpr-home-dashboard-tag">bayes-dl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">pfn <strong>26</strong></span></div>
 </section>
 </div>
 
