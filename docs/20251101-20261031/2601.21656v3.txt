@@ -1,0 +1,1434 @@
+Title: TabClustPFN: A Prior-Fitted Network for Tabular Data Clustering
+
+URL Source: https://arxiv.org/pdf/2601.21656v3
+
+Published Time: Fri, 15 May 2026 00:41:24 GMT
+
+Number of Pages: 35
+
+Markdown Content:
+# TabClustPFN: A Prior-data Fitted Network for Tabular Data Clustering 
+
+Tianqi Zhao 1 Guanyang Wang 2 Yan Shuo Tan 3 Qiong Zhang 1∗
+
+> 1
+
+Renmin University of China 2Rutgers University 3National University of Singapore 
+
+Abstract 
+
+Prior-data Fitted Networks (PFNs) have reframed supervised tabular learning as single-pass in-context inference without per-dataset optimization. Extending this paradigm to unsupervised clustering is appealing yet fundamentally more challeng-ing, due to absent supervision, unknown cluster cardinality, and label switching inherent to partition outputs. Existing PFN-based clustering methods address these challenges only partially, either requiring known cardinality as input or relying on unstable label-ordering conventions and overly restrictive synthetic priors. We in-troduce TabClustPFN , a clustering PFN that resolves all challenges jointly through co-designed prior, objective, and architecture. Our hybrid pretraining prior captures heterogeneous real-tabular geometry; our decoupled partition inference network– cardinality inference network architecture jointly infers cluster assignments and cardinality in a single pass; and our SoftARI training objective is permutation-invariant by construction, eliminating the need for any label-ordering convention. On a 44 curated real-world tabular benchmark, TabClustPFN achieves state-of-the-art clustering performance against classical, deep, and amortized baselines, with runtime comparable to efficient baselines. Code is available here. 
+
+1 Introduction 0 10 20 30 40 50 
+
+> Clustering Time (s)
+> 46810 12 14 16
+> Median Rank (ARI)
+> TabClustPFN (Ours)
+> T+Agg +
+> T+GMM +
+> T+KMeans +
+> T+Spec +
+> ZEUS+GMM +
+> ZEUS+KMeans +
+> ZEUS+S-GMM +
+> AP Agg +
+> Birch +
+> DBSCAN GMM +
+> HDBSCAN KMeans +
+> MeanShift OPTICS Spectral +
+> Our Method Other PFN-based Classical
+
+Figure 1: Time & median ARI rank (lower is better). TabClustPFN achieves the best ARI with runtime comparable to simple meth-ods and faster than other PFN-based methods. Prior-data Fitted Networks (PFNs) [11, 25, 10, 18, 31, 26] have established a new paradigm for supervised tabular learning. By pretraining a transformer to ap-proximate a Bayesian posterior predictive distribution over a broad synthetic prior, PFN-based models such as TabPFN v2.5 [10] achieve strong generalization via in-context-learning in a single forward pass, with-out any per-dataset optimization. This approach has proven remarkably effective, delivering state-of-the-art performance [7] across diverse tabular classifica-tion and regression tasks while remaining orders of magnitude faster than dataset-specific alternatives. 
+
+Applying this paradigm to unsupervised clustering would be highly valuable . While clustering is cen-tral to tabular exploratory analysis, the lack of labels forces costly trial-and-error and unreliable heuristics to select the cardinality, an algorithm with a suitable inductive bias, and hyperparameters. The PFN paradigm offers a way to amortize these choices into pretraining, using a synthetic prior to encode clustering biases and in-context inference to predict both Z and K in a single pass. However, employing the PFN paradigm to clustering is fundamentally harder than its supervised counterpart. 
+
+> ∗
+
+Correspondence: qiong.zhang@ruc.edu.cn 
+
+Preprint. 
+
+> arXiv:2601.21656v3 [cs.LG] 14 May 2026
+
+Three obstacles arise specifically from the unsupervised nature of clustering: 
+
+(1) No supervision signal : unlike supervised PFNs, where labels define class boundaries, clustering contexts contain only features. The model must hence infer the notion of clusters from a synthetic prior, making its design critical to capturing meaningful cluster structure and real-data geometry. 
+
+(2) Unknown cardinality : Context labels define the output space in supervised PFNs, whereas clustering must infer K from data, a challenge even for classical methods [17, 8]. 
+
+(3) Label switching : any permutation of the cluster labels yields an equally valid partition. Standard cross-entropy objectives assume a fixed label correspondence and are therefore inapplicable. Recent PFN-based methods only partially address these challenges. ZEUS [19] learns expressive tabular embeddings but delegates clustering to k-means with known K, hence leaving challenge (2) unresolved. Cluster-PFN [3] jointly infers assignments and cardinality but resolves label switching by hard ordering clusters by distance to the origin, a convention that is undefined when two centers are equidistant ( e.g., −1 and +1 in 1D) and unstable in high dimensions [1]. Its pretraining prior is further restricted to GMMs with D ≤ 5, which do not capture the nonlinear geometry or feature heterogeneity of real tabular data. See a detailed comparison in App. D.4. 
+
+No existing method resolves all 3 challenges simultaneously. We introduce TabClustPFN , a PFN that jointly resolves these challenges via a tightly co-designed prior, objective, and architecture. This joint design is crucial: realistic tabular priors induce diverse partitions that demand permutation-invariant loss, while robust inference of K under such partition-level objectives requires decoupling cluster-assignment inference from cardinality inference. Our contributions are: • A hybrid pretraining prior [challenge (1)]. We combine controlled-overlap GMMs with nonlinear invertible transformations and mixed numerical-categorical feature generation [19], covering the heterogeneous geometries and feature types found in real tabular data. Ablations confirm each component contributes to generalization (Tab. 7). • A decoupled novel PIN-CIN architecture [challenge (2)]. Our model has 2 components: a Partition Inference Network (PIN) maintains K explicit cluster prototypes, iteratively co-refined with data representations via cross-attention; and a Cardinality Inference Network (CIN) estimates 
+
+p(K|X) from permutation-invariant Gram matrix summaries of PIN outputs across all candidate K
+
+simultaneously, unlike prior methods that require K as input or use sequential single K extraction. • SoftARI: a permutation-invariant training objective [challenge (3)]. We train the PIN with a differentiable relaxation of the Adjusted Rand Index (ARI), which is permutation-invariant by construction and requires no label ordering convention. SoftARI matches or outperforms matching-based cross-entropy alternatives while halving per-iteration pretraining cost (Tab. 5). • State-of-the-art results on a broad tabular clustering benchmark. We introduce a curated benchmark of 44 real-world tabular datasets and evaluate TabClustPFN against classical, deep, and amortized clustering baselines (App. A). TabClustPFN achieves SOTA performance (Fig. 1), confirmed by paired t-tests, Wilcoxon tests, and critical-difference diagrams (App.D.5). 
+
+2 An overview of TabPFN 
+
+TabPFN [11] is a canonical Prior-data Fitted Network (PFN) that serves as a tabular founda-tion model for supervised learning, casting prediction as Bayesian inference. Given a dataset 
+
+D = {(Xi, Y i)}ni=1 drawn IID from an unknown distribution π∗ and a prior p over a space of data-generating distributions Π, TabPFN approximates the posterior predictive distribution (PPD): 
+
+p(y|x, D) = R 
+
+> Π
+
+π(y|x) p(π|D ) dπ. To achieve this without intractable integrals, TabPFN uses PFN: a transformer is pretrained to approximate this PPD directly, enabling ICL. At test time, the model parameters are fixed; it processes the dataset D as a sequence of tokens in the context window and predicts the target y for a query x in a single forward pass. Another core innovation of TabPFN lies in its pretraining data. Instead of using real-world datasets, the model is pretrained on a large collection of synthetic data sampled from a prior defined by structural causal models [24]. This prior is designed to produce distributions that mimic the complexity of real tabular data, including nonlinear feature interactions, heteroskedastic noise, and mixed feature types. Pretraining proceeds by repeatedly sampling synthetic datasets from this prior ( ≈ 130M datasets). Each dataset is divided 2into a context set (pseudo-training) and a query set (pseudo-test), and the transformer is trained to maximize the likelihood of query labels given the context. In summary, the PFN framework comprises three components: (i) a task-level prior that defines the distribution over data-generating processes; (ii) a transformer architecture that performs amortized inference via ICL; and (iii) a pretraining objective that aligns predictions with the true PPD. This structure provides a principled blueprint for extension. 
+
+3 TabClustPFN 𝑿 = {𝑋𝑖}𝑖=1 𝑁     
+
+> Partition Inference Network Cardinality Inference Network
+> PIN Decoder (L blocks)
+> Iterative cross attention block
+> # of clus. K
+> Iterative cross attention block
+> Iterative cross attention block
+> normalize
+> cos. similarity
+> softmax
+> PIN Encoder
+> MLP
+> First K rows
+> ⋮
+> 𝐶 (𝑙) 𝑅 (𝑙)
+> MLP
+> MLP
+> self-attention
+> cross-attention
+> MLP
+> cross-attention
+> 𝑅 (𝑙+1)
+> 𝐶 (𝑙+1)
+> Iterative cross attention block
+> 𝑃 ⊺𝑃
+> concat
+> MLP
+> 𝒁 = {𝑍𝑖}𝑖=1 𝑁
+> SoftARI loss
+> 𝑃2 = PIN(2, 𝑿) 𝑃𝐾max 𝑃3 ⋯
+> 𝐾 ∗
+> cross-entropy loss
+> V4 𝐶 (0) 𝑅 (0)
+
+Figure 2: TabClustPFN architecture & loss. 
+
+Given dataset X and candidate cluster num-ber K, the PIN uses a transformer encoder fol-lowed by L layers of iterative cross-attention between data representations and learnable cluster prototypes to produce soft assignments 
+
+P . Dotted blue lines denote query paths, and dashed arrows indicate keys and values. Co-sine similarity between normalized represen-tations and prototypes yields cluster poste-riors. For K ∈ { Kmax } \ { 1}, Gram ma-trices P ⊤ 
+
+> K
+
+PK are summarized and fed to an MLP-based CIN to estimate p(K|X). PIN is trained with permutation-invariant SoftARI loss, while CIN uses cross-entropy on true 
+
+K∗ under decoupled optimization. We consider a latent-variable model where each ob-servation Xi is generated independently from one of 
+
+K clusters, 
+
+Xi|Zi = k ∼ fk, (1) with latent assignments Zi ∈ [K] = {1, . . . , K } and unknown cluster distributions fk for K ≥ 2. Given a dataset X = {Xi}Ni=1 , we perform Bayesian infer-ence over both assignments Z = {Zi}Ni=1 and the cluster number K, approximating the joint posterior 
+
+p(K, Z|X) = p(Z|K, X) p(K|X),
+
+which factorizes into a posterior over partitions condi-tioned on the cluster number K and a marginal poste-rior over K. TabClustPFN mirrors this factorization with two modules. The Partition Inference Network 
+
+(PIN) approximates p(Z|K, X) and performs amor-tized inference over cluster assignments for a given 
+
+K. The Cardinality Inference Network (CIN) approx-imates p(K|X) and predicts cluster number directly from the dataset. Both components are implemented as prior-fitted networks that operate via in-context learning, enabling dataset adaptation without retrain-ing. Fig. 2 overviews the architecture and loss func-tions of TabClustPFN , while Sec. 5 provides abla-tions of the design choices. We describe each of the three components of our PFN-based method respec-tively below. All details related to pretraining are given in App. B. 
+
+3.1 Prior data 
+
+The effectiveness of a PFN depends critically on the diversity and fidelity of its pretraining prior. Accordingly, we design a synthetic data-generating process (DGP) that follows (1), where each dataset is generated from latent cluster assignments Zi and cluster-specific distributions fZi (see App. B.1). To ensure rich and challenging training, we define two complementary classes of cluster distributions fk. In the first class, we consider GMM-based clusters . Each fk is a Gaussian, forming a standard GMM. To vary the difficulty of clustering across datasets, we explicitly control the degree of cluster overlap. For each dataset, we sample a target maximum pairwise overlap, measured via Bayes misclassification probability, so that some datasets contain well-separated clusters while others contain highly overlapping, more challenging clusters. Further diversity is achieved by randomizing mixture proportions and covariance structures, including spherical versus ellipsoidal shapes and homoscedastic versus heteroscedastic settings. In the second class, we consider iResNet-transformed clusters . We generate K latent Gaussian clusters and then apply a randomly sampled invertible iResNet [2] transformation following ZEUS [19]. This bijective, nonlinear mapping produces complex, non-Gaussian cluster shapes while preserving cluster identity and the number of components. Categorical variables are incorporated following the same ZEUS procedure. We call this the ZEUS prior in short. Together, these two mechanisms ensure that pretraining exposes the PFN to both standard parametric clusters and more complex, highly structured cluster geometries. 33.2 Network architecture Transformer based PIN . We implement PIN as a Transformer based PFN mapping a dataset X and cluster cardinality K to a soft partition PIN θ : ( X, K ) 7 → P ∈ [0 , 1] N ×K , Pik = ˆ p(Zi = k|K, X).PIN follows an encoder–decoder design: the encoder maps X to representations in Rd, while the decoder refines them using learnable cluster prototypes. For each K, the decoder selects the first K
+
+prototypes from a shared Kmax ×d matrix and applies L layers of prototype self-attention followed by bidirectional cross-attention between prototypes and data, enabling iterative co-refinement. Crucially, both the class prototypes and the input samples are permutation-invariant with respect to their row ordering. Motivated by Set Transformer [14], all attention blocks in the PIN decoder are therefore implemented without positional encodings. Finally, normalized data representations and prototypes are compared via cosine similarity, and a softmax over clusters yields assignment probabilities. This realizes a fully amortized, permutation-invariant analogue of centroid-based clustering. We adopt the TabICL encoder [25] (column-wise embedding followed by row-wise interaction) for reproducibility, though the framework is agnostic to the specific tabular encoder. 
+
+MLP based CIN . Rather than operating on the raw dataset, CIN leverages the partition structure inferred by PIN across candidate values of K. For each K ∈ { 2, . . . , K max }, we compute the corresponding soft assignment matrix PK = PIN θ (X, K ) and form the Gram matrix P ⊤ 
+
+> K
+
+PK ,which summarizes pairwise cluster co-assignment statistics. The lower-triangular entries of GK are vectorized and concatenated across all candidate K, forming the input to a two-layer perceptron CIN ϕ. To ensure invariance to permutations of cluster labels, we impose a canonical ordering: the diagonal elements and off-diagonal elements are sorted separately in descending order. This separation is necessary because the two groups encode fundamentally different quantities — diagonal entries correspond to cluster self-mass (soft cluster sizes), whereas off-diagonal entries represent inter-cluster co-assignment strength. Sorting them jointly would mix these semantically distinct statistics and distort their structural roles, while separate sorting preserves their meaning and removes dependence on arbitrary cluster index assignments. The network outputs a (Kmax − 1) -dimensional vector giving an estimated posterior over cluster cardinalities. We exclude K = 1 , focusing on datasets that contain at least two latent clusters. 
+
+3.3 Loss functions Loss for PIN . Clustering is invariant to permutations of cluster labels, so the training objective for PIN must not depend on their indexing. Standard supervised losses violate this requirement: identical partitions differing only by label permutations incur large loss, producing spurious signals and destabilizing training. A natural choice is the Adjusted Rand Index (ARI) [12], a widely used measure of agreement based on pairwise co-assignment. ARI is permutation-invariant and aligns with standard evaluation. However, it is defined over hard assignments via an arg max and is therefore non-differentiable, making it incompatible with gradient-based optimization. We use SoftARI , a differentiable relaxation that replaces hard assignments with the model’s predicted cluster probabilities and computes soft pairwise co-assignment scores. Let Zik = 1(Zi = k) be the one-hot encoding of the ground-truth cluster assignment, which is available for synthetic pretraining datasets. SoftARI computes soft pairwise co-assignment scores using Pik and Zik , yielding a fully differentiable and permutation-invariant objective: 
+
+SoftARI( PIN θ (K, X), Z) = 
+
+P
+
+> k,ℓ
+
+ nkℓ 
+
+> 2
+
+ − { P
+
+> k
+
+ nk·
+
+> 2
+
+ P 
+
+> ℓ
+
+ n·ℓ
+
+> 2
+
+}/ n
+
+> 2
+
+P 
+
+> k
+
+ nk·
+
+> 2
+
+ + P
+
+> ℓ
+
+ n·ℓ
+
+> 2
+
+ /2 − { P
+
+> k
+
+ nk·
+
+> 2
+
+ P 
+
+> ℓ
+
+ n·ℓ
+
+> 2
+
+}/ n
+
+> 2
+
+
+
+where nkℓ = Pni=1 Pik Ziℓ , nk· = P 
+
+> ℓ
+
+nkℓ , and n·ℓ = P 
+
+> k
+
+nkℓ . The loss for PIN is defined as 
+
+LPIN (θ) = −SoftARI( PIN θ (K∗, X), Z), (2) where K∗ is the true cluster number, available during pretraining on synthetic datasets (Sec. 3.1). 
+
+Loss for CIN . Since the true cluster number K∗ is available from the DGP, we can supervise CIN using the standard cross-entropy loss over the candidate set {2, . . . , K max }. Let CIN ϕ(X) = 
+
+{ˆp(K|X)}Kmax  
+
+> K=2
+
+denote the predicted posterior. The loss is 
+
+LCIN (ϕ) = − log ˆ p(K∗|X). (3) 43.4 Model pretraining 
+
+Following the TabPFN paradigm, we pretrain the model on synthetic datasets sampled from the DGP described in Sec. 3.1. We initialize the encoder with pretrained TabICL weights [25] and randomly initialize the remaining parameters. At each optimization step, we draw a batch of 512 synthetic tasks (datasets). For each dataset, we sample the number of cluster K ∈ [2 , 10] , the number of samples 
+
+N ∈ [500 , 1000] and features D ∈ [2 , 64] , sample a distribution over RD from the prior, then generate the data and ground-truth cluster labels from this distribution. Each dataset is generated on-the-fly and never reused. We adopt a decoupled optimization scheme when optimizing the PIN loss in (2) and the CIN loss in (3). Specifically, CIN operates on detached PIN outputs, and its gradients are not backpropagated through PIN. This decoupling mitigates interference between partition inference and cardinality estimation, leading to improved performance (Tab. 6). All parameters are optimized with AdamW using a cosine learning-rate schedule with 2, 000 warm-up steps and a peak learning rate of 
+
+10 −4. Training runs for 10 , 000 optimization steps on four RTX 5090 GPUs, yielding a favorable performance–compute trade-off at a cost of ≈ 92 GPU hours. 
+
+4 Empirical results 
+
+We evaluate the performance of our pretrained TabClustPFN on both unseen synthetic datasets and a curated real-world benchmark. We first describe the baseline methods and the evaluation metric. Table 1: Performance on synthetic datasets .Median ARI/NMI ranks and k-MAE ( ↓). Brackets show IQR. Bold and underline indi-cate best and second-best per column. Method ARI Rank [IQR] ↓ NMI Rank [IQR] ↓ k-MAE [IQR] ↓                                                      
+
+> TabClustPFN 2 [4] 3 [5] 0 [1]
+> AP 14 [1] 13 [3] 44 [12] Agg +9 [4] 10 [4] 1 [4] Birch +9 [3] 10 [3] 1 [4] DBSCAN 16 [2] 17 [1] 5 [5] GMM +6 [4] 6 [5] 1 [3] HDBSCAN 15 [4] 15 [1] 3 [4] KMeans +5 [5] 6 [4] 1 [3] MeanShift 15 [2] 16 [2] 4 [5] OPTICS 16 [2] 16 [1] 4 [6] Spectral +14 [5] 14 [5] 2 [5] T+Agg +5 [7] 5 [7] 1 [3] T+GMM +5 [4] 5 [5] 1 [3] T+KMeans +4 [5] 5 [5] 1 [4] T+Spec +5 [5] 5 [4] 1 [3] Zeus+GMM +10 [6] 9 [7] 6 [5] Zeus+KMeans +9 [7] 9 [8] 6 [5] Zeus+S-GMM +8 [6] 8 [7] 6 [5]
+
+Baselines . We evaluate TabClustPFN against a wide range of classical and modern clustering algorithms, covering scenarios with known and unknown clus-ter numbers. This includes all methods available in 
+
+scikit-learn at the time of writing, as well as two PFN-based approaches: ZEUS+X [19] and T+X [16], where X denotes a classical clustering method used in an intermediate step. A full list of method names and their acronyms used in the results is provided in App. C.2. Methods marked with ∗ indicate or-acle knowledge of the cluster number, while those with + select it by maximizing the silhouette score. Methods without a suffix infer the number of clusters automatically. We exclude Cluster-PFN [3] due to its different setting and instead compare it within its intended regime in App. D.4 . Cluster-PFN is not even comparable to GMM when D ≥ 3. This results in 13 
+
+baselines with known K and 18 with selected K.
+
+Performance metric . We assess clustering quality using standard metrics: ARI and Normalized Mutual Information (NMI). Because raw ARI and NMI values can vary substantially across datasets, we report rank-based metrics in the main text. Each method is ranked independently per dataset, and we report the median and IQR of the ranks. We use median (IQR) rather than mean (std) for robustness to outliers. When the cluster number is unknown, we additionally evaluate cluster cardinality estimation using the median absolute error ( k-MAE) between the predicted and true cluster number. Other metrics, including median ARI and NMI values, are provided in App. D.1. 
+
+4.1 Generalization on synthetic datasets 
+
+We first evaluate TabClustPFN on 49 synthetic datasets, comprising 25 GMM-generated and 24 
+
+ZEUS-generated datasets. All datasets are held out from pretraining. Detailed statistics are provided in Tab. 8 and Tab. 9 in App. C.1. Results are reported in Tab. 1, which shows the ranks of 18 methods that select K. Since the number of datasets is odd, the reported medians of rank-based metrics take integer values. Ranks for methods with known K are provided in App. D.2. Across all metrics and methods, TabClustPFN significantly outperforms other methods, achieving the SOTA performance. 
+
+A closer look at the model . To understand the representations learned by our model, we visualize them on representative synthetic datasets in Fig. 3, comparing raw features, pretrained TabICL embeddings, ZEUS representations, and TabClustPFN . Visualizations for the full synthetic sets are 5Figure 3: Representation t-SNE . Columns: raw features, TabICL encoder, ZEUS, Tab-ClustPFN. Rows: increasing difficulty. K = 2K = 3K = 42 3 4 5 6 7 8 9 10                             
+
+> Candidate K
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> Probability
+> 0.855 0.103 0.022 0.0060.0030.0030.0030.0030.003 K=6K=3K=52345678910
+> Candidate K
+> 0.0 0.1 0.2 0.3 0.4
+> Probability
+> 0.0000.0000.004 0.309 0.465 0.171 0.038 0.010 0.003 K=2K=9K=10 2345678910
+> Candidate K
+> 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35
+> Probability
+> 0.150 0.033 0.027 0.022 0.027 0.055 0.114 0.213 0.359
+
+Figure 4: PIN representations & CIN pos-teriors . Columns show R(L), other K, and 
+
+ˆp(K|X).provided in App. D.3. Our method has strong performance on most of the synthetic datasets. The 1st and 2nd rows correspond to datasets where TabClustPFN outperforms ZEUS, while the last row shows a case where both methods fail. For our TabClustPFN, red stars denote cluster prototypes CL
+
+and points correspond to final representations RL after the last MLP layer and normalization. Points are colored by ground-truth labels. In the last row, the two clusters are highly overlapping, making the dataset intrinsically difficult regardless of the clustering algorithm. In the 1st row, t-SNE applied to raw features, TabICL embeddings, and ZEUS representations fails to reveal clear cluster structure. In contrast, TabClustPFN produces well-separated, blob-shaped groups, with prototypes located near cluster centers. This indicates that TabClustPFN reshapes the data into a geometry where cluster structure becomes explicit and aligned with prototype directions. In contrast, ZEUS representations often exhibit elongated, anisotropic cluster shapes. This can cause silhouette-based model selection to choose an incorrect number of clusters, as the metric implicitly favors compact, blob-like groups. We also observe that ZEUS performs well when the raw feature space already exhibits clear cluster structure (2nd row), but struggles when clusters are not well shaped in the input space (1st row). We visualize the decoder representations R(L) produced by PIN under different candidate values of K, together with the posterior over K predicted by CIN (Fig. 4). For the easiest case (1st row), CIN outputs a sharp posterior concentrated on a single K, and the representation shows compact, well-separated clusters. As difficulty increases (3rd row), the posterior becomes more diffuse, reflecting greater uncertainty in K. We also observe that K values with higher ˆp(K|X) yield more coherent and compact cluster geometry, while low-probability K leads to fragmented or less structured layouts. This alignment between representation quality and posterior mass indicates that CIN captures structural cues from PIN when estimating the cluster cardinality. Table 2: Calibration of the CIN posterior .Nominal α 80% 85% 90% 95% 99% Empirical coverage 0.875 0.907 0.937 0.968 0.993 
+
+Calibration . We evaluate the calibration of the car-dinality posterior ˆp(K|X) predicted by CIN (see App. D.6). We do not evaluate ˆp(Z|K, X), as cal-ibration of cluster assignments is not well-defined under label switching. Standard calibration methods require a fixed correspondence between pre-dicted and ground-truth labels; while one could apply optimal matching ( e.g., Hungarian algorithm), this introduces a dataset-level dependency and does not yield a principled notion of per-sample correctness. Hence, calibration lacks a clean definition in the clustering setting. Tab. 2 shows that the empirical coverage consistently exceeds the nominal level across all tested values of α. Thus, the CIN posterior is not overconfident: prediction sets formed from ˆp(K|X) reliably cover the true cluster cardinality. Moreover, the empirical coverage is close to the target at high confidence levels. These results suggest that TabClustPFN provides reliable uncertainty estimates for cluster cardinality, which is important in the unknown-K setting where overconfident cardinality predictions can directly degrade downstream clustering quality. 
+
+Generalization for larger N & D. We further evaluate out-of-distribution scaling beyond the pretraining range ( N ≤ 1000 , D ≤ 64 ), comparing against ZEUS + and KMeans +, the strongest PFN-style and classical baselines in our benchmark. TabClustPFN generalizes strongly to larger sample sizes, maintaining the best ARI and the lowest k-MAE up to N = 10 4 (Fig. 5). 610 3 10 4
+
+> Sample size N
+> 0.66 0.68 0.70 0.72 0.74 0.76 0.78 0.80
+> ARI
+
+ARI    
+
+> Train max N=1000 TabClustPFN ZEUS +
+> KMeans +
+> 10 310 4
+> Sample size N
+> 0.8 1.0 1.2 1.4 1.6 1.8
+> K MAE
+
+K MAE   
+
+> Train max N=1000 TabClustPFN ZEUS +
+> KMeans +
+
+Figure 5: OOD performance under larger 
+
+N (fixed D = 50 ). For larger feature dimensions, direct extrapolation is more challenging, but PCA provides a simple remedy in the moderate-OOD regime, where Tab-ClustPFN+PCA achieves comparable performance by mapping inputs back closer to the pretraining sup-port (Fig. 6). At higher dimensions, the main degrada-tion comes from less accurate cardinality estimation after PCA: the projection changes the global struc-ture used by CIN, increasing k-MAE, and errors in the selected K directly affect unknown-K ARI. This suggests that the current gap is mainly due to limited exposure to larger-dimensional data, and can be further reduced with continued pretraining. 
+
+4.2 Real-world clustering 10 26 × 10 1 2 × 10 2
+
+> Feature Dimension D
+> 0.650 0.675 0.700 0.725 0.750 0.775 0.800 0.825
+> ARI
+
+ARI    
+
+> Train max D=64 TabClustPFN TabClustPFN+PCA ZEUS +
+> KMeans +
+> 10 26 × 10 12 × 10 2
+> Feature Dimension D
+> 0.8 1.0 1.2 1.4 1.6 1.8
+> K MAE
+
+K MAE   
+
+> Train max D=64 TabClustPFN TabClustPFN+PCA ZEUS +
+> KMeans +
+
+Figure 6: OOD performance with larger D.We further evaluate TabClustPFN on a curated real-world benchmark to assess practical performance. 
+
+Benchmark . The benchmark contains datasets from multiple widely used sources, including OpenML-CC18 [4], TabArena [7], the AutoML benchmark suite [9], the ZEUS evaluation datasets, and a UCI clustering collection [21]. Duplicates across collections are removed, and synthetic datasets are excluded to ensure evaluation reflects generalization to truly unseen, real-world data rather than tasks similar to pretraining. To match our model regime, we retain datasets with at most 10 clusters, 64 
+
+features, and 1, 000 samples. This leads to 22 datasets from OpenML and 22 from UCI (App. C.1). 0 10 20 30    
+
+> Median ARI rank
+> TabClustPFN* TabClustPFN
+> ZEUS+KMeans* ZEUS+S-GMM* ZEUS+GMM* KMeans* T+Agg* Agg* KMeans +
+> T+KMeans* T+GMM* GMM* Agg +
+> GMM +
+> ZEUS+S-GMM +
+> Birch* T+Spec* T+GMM +
+> Birch +
+> T+Agg +
+> ZEUS+KMeans +
+> T+KMeans +
+> ZEUS+GMM +
+> T+Spec +
+> HDBSCAN MeanShift AP Spectral +
+> Spectral* OPTICS DBSCAN
+> Method
+> 7.50 8.50 8.50 8.50 9.00 9.50 10.00 10.50 10.50 11.00 12.50 13.00 13.50 13.50 14.00 14.50 14.50 16.50 16.50 18.00 18.50 18.50 19.00 22.00 24.00 25.00 25.00 26.00 26.00 28.50 29.00 010 20
+> Median k-MAE
+> Agg +
+> Birch +
+> GMM +
+> KMeans +
+> TabClustPFN
+> Spectral +
+> DBSCAN HDBSCAN OPTICS MeanShift T+GMM +
+> T+Agg +
+> T+KMeans +
+> T+Spec +
+> ZEUS+GMM +
+> ZEUS+KMeans +
+> ZEUS+S-GMM +
+> AP
+> Method
+> 0.00 0.00 0.00 0.50 1.00 1.00 2.50 4.00 4.00 5.00 5.00 5.00 5.00 6.00 8.00 8.00 8.00 28.00
+
+Figure 7: Benchmark performance on real-world benchmark . Median of ARI rank (left) and MAE in the estimated number of clusters (right); lower is better for both metrics. Red bar denotes our TabClustPFN , green bars de-note other PFN-based methods, and yellow bars denote classical methods. 
+
+Results . The median ARI rank across 31 methods under both known-K and unknown-K settings is in Fig. 7 (left). As expected, providing the true num-ber of clusters improves performance. TabClustPFN with known K achieves the best overall performance, while the variant inferring K via CIN ranks sec-ond. Notably, TabClustPFN with inferred K per-forms comparably to ZEUS followed by KMeans even when the latter is given the true K in its second stage, highlighting the effectiveness of our end-to-end inference. Fig. 7 (right) shows the k-MAE for methods that estimate K. TabClustPFN attains a 
+
+k-MAE of about 1, lower than other PFN-based ap-proaches, highlighting the effectiveness of CIN for cardinality estimation. More detailed comparisons are provided in App. D.7–D.8. Pairwise win rates show that TabClustPFN is robust across real-world datasets. We assess statistical significance using paired t-tests and Wilcoxon signed-rank tests, which show that TabClustPFN significantly outperforms all baselines on synthetic data and all but Agg + and KMeans + on real-world data, where it still achieves higher ARI on most datasets. We further report critical-difference diagrams based on average ARI ranks, which consistently rank TabClustPFN first on both benchmarks (App. D.5). 
+
+4.3 Comparison with amortized clustering 
+
+In the main experiments, we compare primarily with classical clustering algorithms and PFN-based methods, but not with existing amortized clustering approaches such as DAC [15] and NCP [23]. The reason is twofold. First, these models are typically trained under a fixed data-generating family and often generalize poorly beyond that distribution. Second, scaling their training to the diversity and size of datasets considered in our broader benchmarks is computationally intensive. Nevertheless, to understand how our approach compares within the regime these methods are designed for, we follow their original evaluation protocol and conduct a controlled comparison under the same setting. Datasets are generated from a 2D GMM -based process: each dataset D is formed by sampling 7the number of clusters K, mixture weights π, and component parameters {(μk, Σk)}Kk=1 , and then drawing instances from the resulting GMM. Both training and test datasets are independent draws from this same distribution family (see App. C.4 for details). Table 3: Quantitative comparison of clus-tering performance and efficiency under the evaluation setting used by amortized clustering methods . Results are reported in terms of median ARI, k-MAE, k-Acc, and clustering time. Bold values indicate the best result for each metric ( ↑ higher is better, ↓
+
+lower is better). Method ARI ↑ k-MAE ↓ k-Acc ↑ Time (ms) ↓                        
+
+> DAC (Anc) 0.5665 10.0 0.00625 257.20 DAC (Min) 0.5209 5.0 0.0375 235.48 NCP 0.6000 3.0 0.08125 1058.04 PFN (Random-init) 0.4222 1.0 0.4250 69.58
+> PFN (TabICL-init) 0.6294 1.0 0.4250 71.79 TabClustPFN 0.7893 1.0 0.4250 70.93
+
+Following DAC and NCP, we train all amortized base-lines on 16 ,000 synthetic training datasets with at most 10 clusters (each used once), and evaluate on 
+
+160 held-out datasets from the same GMM process. For our method, we report three models: (i) the Tab-ClustPFN foundation model pretrained under our full prior, and two variants trained only on this GMM data: (ii) PFN (Random-init), trained from scratch without TabICL initialization, and (iii) PFN (TabICL-init), initialized with TabICL encoder weights. Re-sults are summarized in Tab. 3. TabClustPFN achieves the best overall performance, showing that the PFN paradigm yields a stronger amortized clustering model even in the narrow set-ting tailored to previous amortized methods. PFN (TabICL-init) also outperforms all amortized clustering baselines and improves over PFN (Random-init), indicating that stronger initialization facilitates optimization even when the data distribution is simple and homogeneous. With larger-scale pretraining, the performance gap of the randomly initialized model is expected to shrink. In addition, our method provides a 4× speedup compared to the fastest baseline. 
+
+5 Discussion on design choices 
+
+Table 4: PIN decoder architecture ablation .Comparison of different model architectures on synthetic and real datasets using median ARI and NMI (higher is better). Bold and un-derlined values indicate the best and second-best performance in each column. synthetic Real Method ARI ↑ NMI ↑ ARI ↑ NMI ↑            
+
+> Naïve (SA + MLP) 0.8137 0.7446 0.3589 0.3271 Non-iterative (Transformer) 0.8229 0.7523 0.3505 0.3865 Iterative (Ours) 0.8308 0.8000 0.3853 0.4237
+
+Effectiveness of iterative cross attention . We evalu-ate whether the decoder architecture drives the perfor-mance gains of TabClustPFN by keeping the encoder and training setup fixed while comparing our itera-tive cross-attention decoder against two non-iterative baselines. The first baseline is a naïve SA+MLP de-coder , which directly predicts cluster assignments from point embeddings: it applies self-attention over the N points to model point–point interactions, then uses a point-wise MLP head to output K-way assign-ment logits per point. Its complexity is O(N 2 +N K ).This design contains no explicit cluster representations; clusters are implicitly represented in the MLP output layer. The second baseline is a non-iterative Transformer decoder . This variant introduces 
+
+explicit cluster prototypes but omits iterative prototype–data co-refinement: it first encodes the points with self-attention to obtain R(L), then updates the K prototypes using prototype self-attention (cluster–cluster interaction) and prototype–point cross-attention with keys/values from the fixed encoded points R(L) (cluster–point interaction). Its complexity remains O(N 2 + N K ). In con-trast, our decoder maintains K cluster prototypes and iteratively refines point–cluster assignments and prototypes: each layer alternates (i) prototype self-attention (cluster–cluster interaction) and (ii) bidirectional prototype–point cross-attention between N point embeddings and K prototypes (point–cluster interaction), while avoiding full point–point self-attention in the decoder. The resulting per-layer complexity is O(N K + K2), which is lower than the two baselines when K ≪ N .Tab. 4 shows that the iterative decoder consistently achieves the best performance across both settings. Despite its higher computational cost, the non-iterative Transformer underperforms our design. This suggests that explicit pairwise point modeling alone is insufficient; instead, iterative refinement of cluster prototypes is key. While cluster queries already improve over the naïve SA+MLP decoder, the full iterative mechanism achieves the best clustering quality and efficiency. 
+
+PIN loss ablation . To assess whether SoftARI is an appropriate objective, we compare it with several natural alternatives while keeping keeping all other components fixed. We first con-sider SoftNMI, based on normalized mutual information (NMI), a clustering metric that is in-variant to label permutations. We also include two matching-based baselines that explicitly ad-8dress the label switching issue. These methods resolve label switching by aligning predicted clusters with ground-truth labels via either minimum-weight matching [5] or a differentiable Sinkhorn relaxation [29], and then apply a cross-entropy (CE) loss or a soft accuracy loss. Table 5: PIN loss ablation . Median ARI and NMI on synthetic and real datasets. Method Synthetic Real Time(ms) ↓                           
+
+> ARI ↑NMI ↑ARI ↑NMI ↑
+> Matching+SoftAcc 0.8021 0.7364 0.3814 0.4071 70.0346 Matching+CE 0.8627 0.7637 0.3507 0.4070 6.2625 SoftNMI 0.7637 0.6929 0.3915 0.4250 3.3658 SoftARI (Ours) 0.8308 0.8000 0.3853 0.4237 2.9695
+
+Soft versions of NMI and accuracy are adopted to avoid discrete operations (e.g., hard labeling or hard matching). These baselines are denoted as Match-ing+SoftAcc and Matching+CE, respectively. Details of all loss formulations and an additional ablation study on CIN loss are provided in App. E. Tab. 5 reports the median ARI of TabClustPFN pretrained with different PIN losses on both synthetic and real datasets. SoftARI yields the best overall performance. While Matching+CE achieves comparable accuracy, its pretraining cost is substantially higher due to the additional computational overhead introduced by the matching step. In the last column, we report the total time for one forward and backward pass with batch size 8 and 1000 samples per dataset. The per-iteration time of Match-ing+CE is approximately 2× that of our approach, resulting in a doubled optimization time, which is significant given 10 ,000 steps. Table 6: Decoupled loss ablation . Median ARI and NMI on synthetic and real datasets. Synthetic Real Method ARI ↑ NMI ↑ ARI ↑ NMI ↑        
+
+> Additive 0.8103 0.7227 0.3544 0.3716 Decoupled (Ours) 0.8308 0.8000 0.3853 0.4237
+
+Decoupled optimization ablation . We compare ad-ditive joint training of PIN and CIN with our de-coupled strategy , where CIN operates on detached PIN outputs. As shown in Tab. 6, decoupling consis-tently improves performance on both synthetic and real datasets. We attribute this to reduced optimiza-tion interference: partition inference and cardinality estimation operate at different structural levels, and shared gradients can bias representations to-ward predicting K at the expense of fine-grained partition structure. Decoupling stabilizes cluster representations, improving both clustering quality and estimation of K.Table 7: Prior data types ablation . Ablation study of prior data types on synthetic and real datasets using median ARI. Prior data Synthetic ↑ Real ↑              
+
+> GMM ZEUS GMM+ZEUS GMM 0.8236 0.5434 0.7428 0.2270 ZEUS 0.6758 0.8047 0.7405 0.3414 GMM+ZEUS (Ours) 0.8230 0.8334 0.8308 0.3853
+
+Different prior data mechanisms . To evaluate the impact of prior data diversity, we consider three prior configurations: training with GMM prior data only, ZEUS prior data only, or a combination of both. We then assess performance on both synthetic and real datasets. For the synthetic benchmarks, we further provide a fine-grained analysis by grouping datasets according to their data-generation mechanisms. The results are reported in Tab. 7. Increasing the diversity of prior data consistently improves overall performance across both synthetic and real datasets. While the ZEUS-only prior performs best on datasets generated from the same family, its generalization to other dataset types is limited. These findings are consistent with [30], which show that greater prior diversity can enhance the performance of PFN models. 
+
+6 Limitations & conclusions 
+
+We introduced TabClustPFN , an extensible PFN-based framework for tabular clustering that jointly infers cluster assignments and cardinality in a single forward pass without dataset-specific tun-ing. Unlike prior PFN-based clustering methods that rely on known-cardinality assumptions, low-dimensional synthetic priors, or label-ordering conventions, TabClustPFN combines a hybrid tabular prior, permutation-invariant SoftARI training, and a decoupled PIN–CIN architecture to support high-dimensional heterogeneous tabular data. Across 44 real-world datasets, TabClustPFN achieves SOTA performance over classical, deep, and amortized baselines while maintaining fast inference. 
+
+Future work . Due to computational constraints, our experiments focus on datasets of moderate size and dimensionality. While our model already shows stronger scalability than existing approaches, extending it to larger datasets with higher sample counts and feature dimensions would further improve its practical applicability. Scaling to moderately larger regimes may mainly require additional compute, whereas truly large-scale settings will likely demand architectural innovations and richer priors. Improving robustness to noisy or missing entries through corruption-aware priors is another important direction for future work. 9Acknowledgement 
+
+Tianqi Zhao and Qiong Zhang are supported by the National Key R&D Program of China Grant 2024YFA1015800. Yan Shuo Tan is supported by NUS Start-up Grant A-8000448-00-00 and MOE AcRF Tier 1 Grants A-8002498-00-00 and A-8004458-00-00. 
+
+References 
+
+[1] C. C. Aggarwal, A. Hinneburg, and D. A. Keim. On the surprising behavior of distance metrics in high dimensional space. In International conference on database theory , pages 420–434. Springer, 2001. [2] J. Behrmann, W. Grathwohl, R. T. Q. Chen, D. Duvenaud, and J.-H. Jacobsen. Invertible residual networks. In International Conference on Machine Learning , Proceedings of Machine Learning Research, 2019. [3] P. Bhaskaran and T. Viering. Transformers can do Bayesian clustering. arXiv preprint arXiv:2510.24318 , 2025. [4] B. Bischl, B. Bischl, G. Casalicchio, M. Feurer, P. Gijsbers, F. Hutter, M. Lang, R. Gomes Man-tovani, J. van Rijn, and J. Vanschoren. Openml benchmarking suites. In J. Vanschoren and S. Yeung, editors, Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks , volume 1, 2021. [5] D. F. Crouse. On implementing 2d rectangular assignment algorithms. IEEE Transactions on Aerospace and Electronic Systems , 52(4):1679–1696, 2016. [6] J. Demšar. Statistical comparisons of classifiers over multiple data sets. Journal of Machine Learning Research , 7(1):1–30, 2006. [7] N. Erickson, L. Purucker, A. Tschalzev, D. Holzmüller, P. M. Desai, D. Salinas, and F. Hutter. Tabarena: A living benchmark for machine learning on tabular data. In Proceedings of the 39th Conference on Neural Information Processing Systems (NeurIPS) , 2025. [8] M. Ester, H.-P. Kriegel, J. Sander, X. Xu, et al. A density-based algorithm for discovering clusters in large spatial databases with noise. In KDD , volume 96, pages 226–231, 1996. [9] P. Gijsbers, M. L. P. Bueno, S. Coors, E. LeDell, S. Poirier, J. Thomas, B. Bischl, and J. Van-schoren. Amlb: an automl benchmark. Journal of Machine Learning Research , 25(101):1–65, 2024. [10] L. Grinsztajn, K. Flöge, O. Key, F. Birkel, P. Jund, B. Roof, B. Jäger, D. Safaric, S. Alessi, A. Hayler, et al. Tabpfn-2.5: Advancing the state of the art in tabular foundation models. arXiv preprint arXiv:2511.08667 , 2025. [11] N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeis-ter, and F. Hutter. Accurate predictions on small data with a tabular foundation model. Nature ,637(8045):319–326, 2025. [12] L. Hubert and P. Arabie. Comparing partitions. Journal of classification , 2(1):193–218, 1985. [13] S. C. Johnson. Hierarchical clustering schemes. Psychometrika , 32(3):241–254, 1967. [14] J. Lee, Y. Lee, J. Kim, A. Kosiorek, S. Choi, and Y. W. Teh. Set transformer: A framework for attention-based permutation-invariant neural networks. In International Conference on Machine Learning , pages 3744–3753. PMLR, 2019. [15] J. Lee, Y. Lee, and Y. W. Teh. Deep amortized clustering. arXiv preprint arXiv:1909.13433 ,2019. [16] P. Li, F. Li, J. Wang, and Y. Qian. Clustering method for tabular data based on pretrained foundation models with synthetic data. Journal of Computer Research and Development , 62(9), 2025. 10 [17] S. Lloyd. Least squares quantization in PCM. IEEE Transactions on Information Theory ,28(2):129–137, 1982. [18] J. Ma, V. Thomas, R. Hosseinzadeh, A. Labach, J. C. Cresswell, K. Golestan, G. Yu, A. L. Caterini, and M. Volkovs. TabDPT: Scaling tabular foundation models on real data. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. [19] P. Marszałek, T. Ku´ smierczyk, W. Wydma´ nski, J. Tabor, and M. ´ Smieja. ZEUS: Zero-shot embeddings for unsupervised separation of tabular data. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [20] V. Melnykov, W.-C. Chen, and R. Maitra. MixSim: An R package for simulating data to study performance of clustering algorithms. Journal of Statistical Software , 51(12):1–25, 2012. [21] milaan9. Clustering-datasets. https://github.com/milaan9/Clustering-Datasets ,2019. GitHub repository, accessed January 2026. [22] A. Ng, M. Jordan, and Y. Weiss. On spectral clustering: Analysis and an algorithm. Advances in Neural Information Processing Systems , 14, 2001. [23] A. Pakman, Y. Wang, C. Mitelut, J. Lee, and L. Paninski. Neural clustering processes. In 
+
+International Conference on Machine Learning , pages 7455–7465. PMLR, 2020. [24] J. Pearl. Causality . Cambridge university press, 2009. [25] J. Qu, D. Holzmüller, G. Varoquaux, and M. L. Morvan. TabICL: A tabular foundation model for in-context learning on large data. In Forty-second International Conference on Machine Learning , 2025. [26] J. Qu, D. Holzmüller, G. Varoquaux, and M. L. Morvan. TabICLv2: A better, faster, scalable, and open tabular foundation model. arXiv preprint arXiv:2602.11139 , 2026. [27] H. T. Rauf, A. Freitas, and N. W. Paton. TableDC: Deep clustering for tabular data. Proceedings of the ACM on Management of Data , 3(3):1–28, 2025. [28] Y. Ren, J. Pu, Z. Yang, J. Xu, G. Li, X. Pu, P. S. Yu, and L. He. Deep clustering: A comprehensive survey. IEEE transactions on neural networks and learning systems , 36(4):5858–5878, 2024. [29] R. Sinkhorn and P. Knopp. Concerning nonnegative matrices and doubly stochastic matrices. 
+
+Pacific Journal of Mathematics , 21(2):343–348, May 1967. [30] X. Zhang, D. C. Maddix, J. Yin, N. Erickson, A. F. Ansari, B. Han, S. Zhang, L. Akoglu, C. Faloutsos, M. W. Mahoney, C. Hu, H. Rangwala, G. Karypis, and B. Wang. Mitra: Mixed synthetic priors for enhancing tabular foundation models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [31] X. Zhang, D. C. Maddix, J. Yin, N. Erickson, A. F. Ansari, B. Han, S. Zhang, L. Akoglu, C. Faloutsos, M. W. Mahoney, C. Hu, H. Rangwala, G. Karypis, and B. Wang. Mitra: Mixed synthetic priors for enhancing tabular foundation models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. 
+
+A Related work 
+
+Classical probabilistic and distance-based clustering methods. Classical clustering methods remain widely used for tabular data due to their simplicity and computational efficiency. However, they typically operate directly on the input features and rely on rigid geometric or probabilistic assumptions to separate data. For example, k-means [17] favors convex centroid-based partitions, Gaussian mixture models (GMMs) assume Gaussian component densities, DBSCAN [8] relies on a global density scale, and hierarchical clustering [13] is highly sensitive to the choice of distance metric and linkage criterion. Such inductive biases are effective in simple settings, but often fail to capture the heterogeneous structures commonly observed in real-world tabular data. 11 Manifold and representation learning methods. To overcome the rigidity of classical methods, manifold and representation learning approaches seek transformations under which cluster structures become more separable. Spectral clustering [22] captures non-convex structures through graph Laplacian eigenspace embeddings, while recent deep clustering methods [27, 28] learn nonlinear rep-resentations with neural networks. Although these methods are more expressive, they still formulate clustering as a dataset-specific optimization problem. Spectral clustering requires eigendecomposition with cubic complexity in the number of samples, and deep clustering methods require training a separate model for each dataset. As a result, they are often too costly for exploratory analysis and do not provide a transferable clustering inductive bias across datasets. 
+
+Amortized clustering methods. A more recent paradigm replaces dataset-specific optimization with amortized neural inference. Amortized clustering methods [14, 15, 23] train neural networks to infer cluster assignments in a zero-shot or iterative manner, thereby reducing the need for per-dataset search or model fitting. However, existing approaches are typically trained to approximate simple generative priors such as GMMs. Consequently, while they improve inference efficiency, their clustering behavior remains constrained by the same parametric assumptions underlying the priors they emulate. 
+
+B Pretraining details 
+
+This section provides additional details on the pretraining setup. The prior data used for pretraining (Sec. B.1) are presented first, followed by network architecture details (Sec. B.2). 
+
+B.1 Prior data generation 
+
+We first sample basic dataset-level properties. The number of observations N is drawn uniformly from integers between 500 and 1000 . The feature dimension D is sampled uniformly from integers between 2 and 64 . The number of clusters K is drawn from {2, . . . , K max } using a non-uniform prior: P(K = 2) = 0 .3, while with probability 0.7, K is sampled uniformly from {3, . . . , 10 }. This non-uniform prior over the number of clusters follows the setting of [25]. It places greater probability mass on simpler cases, which can facilitate training by biasing the model toward learning from less complex clustering structures. We then select the data-generating mechanism by sampling a Bernoulli variable, using the GMM prior with probability 0.4 and the ZEUS prior with probability 0.6. The selected mechanism is then used to generate a synthetic clustering dataset in RD with N observations, along with latent component indices serving as ground-truth cluster labels. We subsequently apply the same preprocessing steps to every generated dataset, including feature z-norm, feature permutation, before assembling datasets into training mini-batches. We next describe the two priors in detail. 
+
+B.1.1 GMM prior 
+
+Clustering difficulty in mixture models is largely governed by the degree of overlap between compo-nents: well-separated components yield near-deterministic assignments, whereas heavily overlapping components make cluster identities intrinsically ambiguous. To systematically control task difficulty during pretraining, we therefore generate datasets from Gaussian mixture models (GMMs) with an explicit constraint on component overlap. 
+
+Overlap measure . For a K-component Gaussian mixture with parameters {(πk, μ k, Σk)}Kk=1 , we quantify pairwise overlap using Bayes misclassification probabilities under the model-based decision rule. Let ϕ(x|μ, Σ) denote the Gaussian density and πk the mixing weight. The one-sided overlap from component i to component j is defined as 
+
+oj|i = P (πiϕ(X|μi, Σi) < π j ϕ(X|μj , Σj )|X ∼ N (μi, Σi)) ,
+
+which is the probability that a sample generated from component i would be assigned to component 
+
+j by the Bayes classifier. The symmetric pairwise overlap is 
+
+ωij = oj|i + oi|j ,
+
+and the overall dataset difficulty is characterized by the maximum pairwise overlap 
+
+Ωmax = max  
+
+> i̸=j∈[K]
+
+ωij .
+
+12 Small Ωmax corresponds to well-separated clusters, while large values indicate intrinsically ambigu-ous clustering structure. 
+
+Controlled GMM generation . We generate GMM parameters using the M IX SIM package [20] in R, which directly constructs mixtures satisfying a prescribed upper bound on Ωmax . This enables sam-pling datasets with controlled and diverse levels of clustering difficulty. We specify the configuration of MixSim below. For each synthetic dataset, we sample mixture parameters as follows: • Mixture weights. We sample π ∼ Dirichlet (α1K ) with concentration α = 2 , encouraging moderately balanced clusters. To avoid degenerate components, we enforce a minimum proportion constraint using PiLow = 10 −1.• Target overlap (difficulty control). We first sample a target maximum pairwise overlap 
+
+Ωmax ∼ Uniform 
+
+
+
+0.01 , min 
+
+
+
+0.8, 1.5
+
+D0.82 
+
+ 
+
+.
+
+The dimension-dependent upper bound ensures feasibility of the overlap constraint in higher dimensions, where random components tend to become more separable. M IX SIM then constructs 
+
+(μk, Σk) such that the resulting mixture satisfies this target Ωmax .• Component shape diversity. To promote geometric diversity, we randomize covariance struc-tures. For each dataset, we independently sample whether components are spherical ( sph = TRUE ) or ellipsoidal ( sph = FALSE ), and whether covariances are shared across clusters ( hom = TRUE/FALSE ). When ellipsoidal covariances are used, we allow strong anisotropy via a maximum eccentricity constraint ( ecc = 0 .9), producing elongated clusters. • Component location range. Component means are constrained to a bounded hypercube by sampling each μk uniformly from [−1, 1] D . This controls the global scale of cluster locations and prevents extreme separation driven purely by mean magnitude. 
+
+Data sampling . Given the generated parameters {(πk, μ k, Σk)}Kk=1 , we first draw N latent compo-nent labels Zi
+
+> IID
+
+∼ Categorical (π), which serve as ground-truth cluster assignments. Then, condition-ing on each Zi, we draw samples from N (μZi , ΣZi ).
+
+Visualization . Overall, these controls provide a scalable way to generate GMM datasets with explicitly tunable inter-cluster ambiguity while retaining substantial diversity in cluster geometry and cluster-size imbalance. Fig. 8 shows representative 2D mixtures generated under different Ωmax 
+
+values. 
+
+B.1.2 ZEUS prior 
+
+While the GMM prior controls clustering difficulty through Gaussian overlap, the ZEUS prior generates more geometrically and statistically heterogeneous tabular data by combining latent mixture structure with nonlinear transformations and mixed feature types. Given the total feature dimensionality D, we randomly partition features into a continuous subset and a categorical subset. We first sample the number of continuous features Dcont ≥ 2, and treat the remaining D − Dcont dimensions as categorical. Each categorical feature is label-encoded (rather than one-hot), and its cardinality is sampled from a predefined range. 
+
+Continuous features . For the continuous feature subsets, we sample mixture weights π ∼
+
+Dirichlet (α1K ) with α = 2 and latent component labels Zi ∼ Categorical (π), which serve as ground-truth cluster assignments. Unlike ZEUS, which uses a smaller α to induce more imbalanced mixtures, we set α = 2 to avoid degenerate components and overly skewed cluster sizes, yielding more stable supervision and a broader range of moderately imbalanced clustering instances. Condi-tional on Zi, base continuous observations are drawn from cluster-specific distributions as described in ZEUS [19]. For completeness, we summarize the relevant settings below. To increase geometric complexity beyond a simple mixture structure, ZEUS introduces nonlinear feature interactions through an invertible transformation. With probability 0.5, the identity mapping is used, and with probability 0.5, a randomly sampled invertible iResNet bijection with Lipschitz constant constrained to [0 .1, 0.9] is applied. This transformation yields nonlinearly distorted cluster 13 Figure 8: Visualization of randomly generated 2D datasets from the GMM prior .shapes while preserving cluster identity due to invertibility. The number of invertible blocks follows a log-scaled truncated normal meta-distribution. This design choice follows prior tabular data generation work (e.g., TabICL) rather than being specific to ZEUS, as it can increase the diversity of the data generation process. Concretely, 
+
+log μ ∼ Uniform (log 3 , log 8) , log σ ∼ Uniform (log 0 .01 , log 1 .0) ,
+
+˜b ∼ N (μ, σ 2) is sampled with truncation to [0 , ∞), and the number of blocks is set as b = 3 + 
+
+round (˜b). This results in variable transformation depth across datasets. 
+
+Categorical features . Following ZEUS, categorical variables are generated conditional on the latent cluster labels. For each categorical feature j, we first sample its cardinality 
+
+Cj ∈ { 2, . . . , C max }, Cmax = 5 ,
+
+then draw cluster-specific categorical distributions (e.g., via Dirichlet priors) so that different clusters exhibit distinct category preferences. Each observation samples its categorical value from the distribution associated with its latent component zi, providing discrete cluster cues complementary to the continuous geometry. 
+
+Data assembly . Finally, we concatenate the transformed continuous features and categorical features to obtain a D-dimensional tabular dataset. This construction produces clusters that may be nonlin-early separable in the observed space and only partially identifiable from any single feature type, encouraging the model to learn flexible multimodal structure. 14 Figure 9: Visualization of randomly generated 2D datasets from the ZEUS prior .
+
+Visualization . Figure 9 shows representative 2D datasets generated from the ZEUS prior, illustrating nonlinear cluster geometry and mixed-type feature structure. 
+
+B.2 Network architecture details B.2.1 Partition Inference Network (PIN) 
+
+Given a tabular dataset X ∈ RN ×D and a candidate cluster cardinality K ∈ { 2, . . . , K max }, the PIN outputs a soft partition PIN θ : ( X, K ) 7 → P ∈ [0 , 1] N ×K , Pik = ˆ p(Zi = k|X, K ),
+
+where Zi denotes the latent cluster label of the i-th observation. 
+
+Encoder . The encoder of our PIN follows the TabICL design and consists of (i) a column-wise embedding module and (ii) a row-wise interaction module. We refer to TabICL for architectural details of these two components. Formally, given a dataset, the PIN encoder produces row representations 
+
+R(0) = Enc (X) = RowInteract (ColEmbed (X)) ∈ RN ×d,
+
+where d is the representation dimension produced by the encoder. In our implementation, we use 
+
+d = 512 following TabICL. 15 Decoder with learnable prototypes. For each candidate K, PIN instantiates K learnable cluster prototypes by selecting the first K rows from a global prototype matrix 
+
+C(0) = Select K (C) ∈ RK×d, C ∈ RKmax ×d.
+
+The decoder then applies L stacked iterative cross-attention blocks to co-refine the data representations and prototypes. As discussed in Sec. 3.2, all attention layers omit positional encodings to preserve permutation equivariance. We set L = 6 in all experiments, unless otherwise stated. At layer 
+
+ℓ ∈ { 0, . . . , L − 1}, the update consists of two stages: 1. Prototype update (prototype → data cross-attention). We first update the prototypes via (i) self-attention among prototypes and (ii) cross-attention where prototypes attend to data: 
+
+C(ℓ+ 12 ) = SA 
+
+
+
+C(ℓ)
+
+, C(ℓ+1) = CA C←R
+
+
+
+C(ℓ+ 12 ), R (ℓ)
+
+.
+
+We instantiate both SA (·) and CA (·, ·) using the same Transformer-style attention block with multi-head attention (MHA), pre-norm layer normalization, residual connections, and a position-wise feed-forward network (MLP). As discussed in Sec. 3.2, we omit positional encodings to preserve permutation equivariance. For completeness, we detail the exact attention-block formulation shared by SA and CA below. 
+
+Definition of SA/CA blocks. We adopt a pre-norm variant of the Multihead Attention Block (MAB) used in Set Transformer [14], which we denote by MAB pre (· ; ·). Let H be the number of attention heads and dh = d/H the head dimension; we use H = 4 in all experiments unless otherwise stated. Given queries Q ∈ Rnq ×d, keys K ∈ Rnk ×d, and values V ∈ Rnk ×d, multi-head attention (MHA) is 
+
+MHA( Q, K, V ) = Concat(head 1, . . . , head H ) W O ,
+
+where 
+
+head h = softmax QW Qh (KW Kh )⊤
+
+√dh
+
+!
+
+V W Vh ,
+
+{W Qh , W Kh , W Vh }Hh=1 and W O are learnable projections. An attention sublayer with pre-norm and residual is defined as 
+
+Attn( X; Y ) = X + MHA(LN( X), LN( Y ), LN( Y )) ,
+
+and the full pre-norm MAB applies a position-wise feed-forward network (MLP/FFN) with pre-norm and residual: 
+
+MAB pre (X; Y ) = Attn( X; Y ) + MLP(LN(Attn( X; Y ))) , (4) where MLP is a two-layer position-wise FFN with hidden width 2d (i.e., d → 2d → d). 
+
+Self- and cross-attention operators. Using MAB pre , we define self-attention on a set as 
+
+SA( X) := MAB pre (X; X), (5) i.e., queries/keys/values are all drawn from X (capturing within-set interactions). Cross-attention from a query set X to a context set Y is defined as 
+
+CA X←Y (X, Y ) := MAB pre (X; Y ), (6) i.e., queries come from X while keys/values come from Y (aggregating information from Y into 
+
+X). In particular, prototype self-attention and prototype-to-data cross-attention are 
+
+SA( C) ∈ RK×d, CA C←R(C, R ) ∈ RK×d,
+
+where SA( C) captures inter-cluster interactions and CA C←R(C, R ) aggregates dataset evidence into prototype summaries. 2. Representation update (data → prototype cross-attention). We then update data representations by attending to the updated prototypes: 
+
+R(ℓ+1) = CA R←C
+
+
+
+R(ℓ), C (ℓ+1) 
+
+,
+
+where CA R←C (R, C ) := Block( R; C), i.e., Q = R and K = V = C, injecting cluster-level structure back into point representations. 16 Cosine-similarity logits . After the final decoder layer, we compute logits via normalized cosine similarity between row representations and prototypes. Let 
+
+¯ri =
+
+g
+
+
+
+R(L)
+
+> i:
+
+
+
+g
+
+
+
+R(L)
+
+> i:
+
+
+
+> 2
+
+, ¯cj =
+
+g
+
+
+
+C(L)
+
+> j:
+
+
+
+g
+
+
+
+C(L)
+
+> j:
+
+
+
+> 2
+
+,
+
+where Ai: denotes the ith row of matrix A and g(·) is a shared MLP projection applied to both rows and prototypes. We then compute the logits as 
+
+ℓij = τ ¯r⊤ 
+
+> i
+
+¯cj , τ > 0,
+
+where τ is a learnable temperature. Finally, the soft partition is obtained by a row-wise softmax: 
+
+Pi: = softmax (ℓi:) ∈ [0 , 1] K .
+
+PIN is trained with the permutation-invariant SoftARI loss on P .
+
+B.2.2 Cardinality Inference Network (CIN) 
+
+To infer the cluster numbers, we run PIN for each K ∈ { 2, . . . , K max } to obtain {P (K)}. For each 
+
+K, we compute the normalized Gram matrix 
+
+G(K) = 1
+
+N (P (K))⊤P (K) ∈ RK×K ,
+
+which summarizes pairwise cluster co-assignment statistics. We then form a permutation-invariant fingerprint by extracting the diagonal entries and the strictly upper-triangular off-diagonal entries, sorting each in descending order, and concatenating them: 
+
+g(K) =
+
+h
+
+sort (diag (G(K))) ; sort (triu (G(K), 1)) 
+
+i
+
+∈ RK(K+1) /2.
+
+Concatenating {g(K)}Kmax  
+
+> K=2
+
+yields a fixed-length vector, which is passed through an MLP to output logits over K:CIN ϕ(X) = MLP 
+
+
+
+concat (g(2) , . . . , g (Kmax ))
+
+
+
+∈ RKmax −1.
+
+In our implementation, CIN is a 3-layer MLP with hidden width 256 , which is trained with cross-entropy on the ground-truth K∗. Following our decoupled optimization design, gradients from CIN do not backpropagate into PIN. 
+
+C Experimental details 
+
+This section provides additional details on the evaluation setup. Statistics of the synthetic and real-world benchmarks (Sec. C.1) are presented first, followed by descriptions of the baseline methods (Sec. C.2), data preprocessing details (Sec. C.3), and the experiment setting for amortized clustering (Sec. C.4). 
+
+C.1 Statistics of synthetic and real-world benchmarks Synthetic evaluation datasets . To assess the generalization ability of TabClustPFN on unseen data drawn from the same distribution families as the pretraining data, we construct a held-out synthetic benchmark, constructed by setting a different random seed. Following the two classes of priors introduced in Sec. 3.1, we refer to them as the GMM prior and the ZEUS prior . The benchmark contains 25 synthetic datasets generated from the GMM prior and 24 synthetic datasets generated from the ZEUS prior. Detailed statistics of these evaluation datasets are reported in Tab. 8 (GMM prior) and Tab. 9 (ZEUS prior). In both tables, the ID column provides a reference index for each synthetic dataset. 
+
+Real-world benchmark. We construct a real-world tabular clustering benchmark by aggregating datasets from several widely used sources: OpenML-CC18 [4], TabArena [7], the AutoML benchmark 17 Table 8: Statistics of synthetic datasets for evaluation generated with the GMM prior .
+
+ID # Instances # Numerical features # Categorical features Dimension # Classes 0 511 55 0 55 81 741 33 0 33 22 827 8 0 8 73 993 47 0 47 10 4 740 23 0 23 65 675 39 0 39 56 718 10 0 10 77 794 44 0 44 28 724 16 0 16 29 984 55 0 55 410 588 4 0 4 211 595 20 0 20 512 850 16 0 16 513 700 31 0 31 714 869 7 0 7 315 722 8 0 8 216 693 55 0 55 417 989 19 0 19 418 892 35 0 35 219 633 5 0 5 220 825 46 0 46 721 691 17 0 17 222 853 58 0 58 723 707 43 0 43 924 753 56 0 56 6
+
+Table 9: Statistics of synthetic datasets for evaluation generated with the ZEUS prior .
+
+ID # Instances # Numerical features # Categorical features Dimension # Classes 0 649 3 4 7 21 910 18 14 32 72 948 6 43 49 63 905 13 17 30 24 863 14 1 15 25 898 6 0 6 26 589 11 9 20 10 7 568 12 9 21 10 8 523 38 10 48 10 9 785 2 27 29 210 658 2 17 19 611 628 11 41 52 512 862 21 3 24 213 632 35 17 52 214 906 5 57 62 215 688 4 25 29 10 16 757 10 17 27 817 705 19 31 50 218 590 14 3 17 319 535 3 4 7 220 635 15 22 37 221 546 38 6 44 222 757 2 3 5 623 633 19 3 22 9
+
+suite [9], the ZEUS evaluation dataset group, and a curated UCI clustering collection [21]. Tab. 10 and Tab. 11 report dataset-level statistics and identifiers. The OpenML table lists datasets by OpenML ID, while the UCI table follows the original dataset names. For each dataset, we report the number of 18 Table 10: Statistics of OpenML datasets used in the real-world benchmark .ID # Instances # Numerical features # Categorical features Dimension # Classes 16 2000 64 0 64 10 18 2000 6 0 6 10 22 2000 47 0 47 10 51 294 6 7 13 253 270 13 0 13 2481 209 7 1 8 2694 310 8 0 8 9721 200 10 0 10 2733 209 6 0 6 2756 159 15 0 15 2796 209 6 1 7 2820 235 12 0 12 2840 205 17 8 25 2854 158 5 2 7 21063 522 21 0 21 21495 250 0 6 6 21510 569 30 0 30 21523 310 6 0 6 340496 500 7 0 7 10 40705 959 42 2 44 242585 344 4 2 6 340981 690 6 8 14 2Table 11: Statistics of UCI datasets used in the real-world benchmark .Name # Instances # Numerical features # Categorical features Dimension # Classes haberman 306 2 1 3 2banknote 1372 4 0 4 2iris 150 4 0 4 3thyroid 215 5 0 5 3ecoli 336 7 0 7 8seeds 210 7 0 7 3pima 768 8 0 8 2breast 277 9 0 9 2wisc 699 9 0 9 2glass 214 9 0 9 6wine 178 13 0 13 3heart 303 13 0 13 2vote 435 16 0 16 2zoo 101 16 0 16 7vehicle 846 18 0 18 4segment 2310 19 0 19 7wdbc 569 31 0 31 2iono 351 34 0 34 2dermatology 366 1 33 34 6landsat 2000 36 0 36 6biodeg 1055 41 0 41 2spambase 4601 57 0 57 2instances, the counts of numerical and categorical features, the total feature dimensionality (numerical + categorical), and the number of clusters. To ensure compatibility with the modeling assumptions and computational regime of TabClustPFN ,we first filter all candidate datasets by feature dimensionality and cluster cardinality, retaining only 19 those with D ≤ 64 and K ≤ 10 . We then control dataset scale through source-dependent handling of the number of instances N . For large benchmark suites with many candidate datasets (e.g., OpenML-CC18, TabArena, and the AutoML benchmark), we further restrict the pool by keeping only datasets whose original size satisfies N ≤ 1000 . This prevents these large collections from dominating the benchmark. In contrast, the curated UCI collection and the ZEUS dataset group (a subset of OpenML) contain a more limited number of eligible datasets after the D and K filtering step. For these sources, we therefore do not exclude datasets based on size. Instead, when N > 1000 ,we uniformly subsample 1000 instances to match the evaluation scale. The subsampling is performed with a fixed random seed for reproducibility. We verify that the subsampled set preserves the original number of clusters in each dataset. This procedure preserves dataset diversity across sources while ensuring a controlled and comparable sample size in evaluation. To characterize task difficulty, we stratify datasets according to empirical clustering performance measured by ARI. Let max m ARI m(D) denote the maximum ARI achieved on dataset D across all compared methods m. Datasets are categorized as Low Difficulty if max m ARI m(D) ≥ 0.4,and High Difficulty if 0.1 ≤ max m ARI m(D) < 0.4. Datasets with max m ARI m(D) < 0.1 are excluded, as such cases provide little evidence of recoverable cluster structure and would confound interpretation of method comparisons. The threshold max m ARI ≥ 0.4 follows the ZEUS evaluation protocol, where only datasets above this separability level are included. Our benchmark subsumes these ZEUS datasets and further extends the evaluation to more challenging regimes by incorporating datasets with lower but non-trivial ARI ( 0.1–0.4), thereby covering a broader spectrum of realistic clustering difficulty. 
+
+C.2 Baseline details 
+
+We first describe the baseline methods. Their acronyms are listed below together with brief descrip-tions. • AP . This method corresponds to Affinity Propagation , which forms clusters by iteratively pass-ing messages between pairs of samples until convergence to a set of exemplars. We use the implementation in the scikit-learn package with default parameter settings on all datasets. • KMeans . This method corresponds to the classical k-means clustering algorithm, which partitions data into K clusters by minimizing the within-cluster sum of squared Euclidean distances. We use the scikit-learn implementation with default settings, where the number of clusters is specified according to the evaluation protocol. • GMM . This method refers to the Gaussian Mixture Model with full covariance matrices, where each component is associated with its own general covariance matrix. Model parameters estimates are computed via the expectation–maximization (EM) algorithm. We use the scikit-learn 
+
+implementation with default configuration unless otherwise specified. • S-GMM . This method denotes a simplified Gaussian mixture model in which all components share the same identity covariance matrix. We adopt the implementation in the official implementation of ZEUS [19]. • Agg . This method corresponds to Agglomerative Clustering , a hierarchical bottom-up approach that iteratively merges clusters according to a linkage criterion. We use the scikit-learn 
+
+implementation with default linkage and distance metric settings. • Spec/Spectral . This method refers to Spectral Clustering , which constructs a similarity graph over samples and performs clustering in the space spanned by the leading eigenvectors of the graph Laplacian. We use the scikit-learn implementation with default affinity and eigen-solver settings. • Birch . This method corresponds to BIRCH (Balanced Iterative Reducing and Clustering using Hi-erarchies), which incrementally builds a clustering feature tree to summarize the data and performs clustering based on this compressed representation. We use the scikit-learn implementation with default threshold and branching factor settings. • DBSCAN . This method corresponds to Density-Based Spatial Clustering of Applications with Noise (DBSCAN) , which groups together points that lie in high-density regions and labels low-density points as noise based on neighborhood radius and minimum density criteria. We use the 
+
+scikit-learn implementation with default neighborhood and minimum-sample settings. 20 • HDBSCAN . This method refers to Hierarchical Density-Based Spatial Clustering of Applications with Noise (HDBSCAN) , an extension of DBSCAN that constructs a hierarchy of density-based clusters and extracts a stable flat clustering based on cluster persistence. We use the standard 
+
+scikit-learn library implementation with default parameter settings. • OPTICS . This method corresponds to Ordering Points To Identify the Clustering Structure (OP-TICS) , which produces an ordering of samples reflecting the underlying density-based cluster structure and enables extraction of clusters at multiple density levels. We use the scikit-learn 
+
+implementation with default reachability and minimum-sample parameters. • MeanShift . This method refers to Mean Shift Clustering , a non-parametric approach that seeks modes of a kernel density estimate by iteratively shifting points toward regions of higher density. We use the scikit-learn implementation with automatic bandwidth estimation and default settings. • ZEUS+X . This class of methods uses the pretrained checkpoint provided by ZEUS [19] to extract feature embeddings, followed by applying a downstream clustering algorithm X in the embedding space. We consider X ∈ {k-means, GMM, S-GMM}, following the evaluation protocol adopted in ZEUS. • T+X . The method is proposed in [16]. It follows an iterative pseudo-labeling scheme built on TabPFN v2. First, a subset of samples is drawn from the dataset, and a clustering algorithm X is applied to obtain initial cluster assignments. These samples and their cluster labels are then used as context to fine-tune TabPFN v2, which subsequently predicts cluster labels for all samples, producing a fully pseudo-labeled dataset. Next, a new subset is sampled from this pseudo-labeled dataset and again used as context to fine-tune TabPFN v2, which re-predicts cluster labels for the full dataset. This subsample–condition–predict procedure is repeated iteratively, progressively refining the pseudo labels. We implement this algorithm following the descriptions in the paper. 
+
+C.3 Data preprocessing details 
+
+Since the datasets contain both categorical and numerical features, preprocessing differs between 
+
+TabClustPFN and the baseline methods. For ZEUS and all baselines implemented in scikit-learn , categorical variables are converted to one-hot representations and concatenated with the numerical features along the feature dimension. In contrast, TabClustPFN does not apply explicit one-hot encoding. During both pretraining and evaluation, categorical variables are processed directly by the model’s encoder, following the treatment used in TabICL. For numerical features, we apply feature-wise standardization for all methods: each variable is centered by subtracting its sample mean and scaled by its sample standard deviation, resulting in zero mean and unit variance per feature. For ZEUS, we additionally follow their preprocessing protocol by applying a MinMax scaling step after standardization, mapping each numerical feature to the range 
+
+[0 , 1] .
+
+C.4 Amortized clustering experiments details Data generation for the amortized clustering comparison . We follow the common 2D synthetic setup in amortized clustering, but use a more diverse overlap-controlled generator to systematically vary cluster separation (see App. B.1 for details). Within each minibatch, different datasets may have different ground-truth numbers of clusters K. In addition, Gaussian components are sampled with full covariance matrices rather than being restricted to diagonal (or isotropic) covariances, yielding rotated and correlated clusters while keeping the input as an unordered set of points. 
+
+Training and evaluation protocol . We train and evaluate all methods on the same synthetic datasets: at each training step we sample a batch of datasets from the generator above, and evaluation is performed on independently sampled held-out datasets using a different random seed. We train for 
+
+1,000 iterations with batch size 16 and evaluate for 100 iterations. For NCP and DAC, we use their default optimizer and learning-rate schedules as specified in the original papers; we refer readers to those works for the complete optimization details. 21 D Additional results 
+
+This section provides additional experimental results. We first report median ARI and NMI values on the evaluation sets (Sec. D.1) and ranks of methods with known K on synthetic data (Sec. D.2). We then provide a controlled comparison with Cluster-PFN (Sec. D.4), representation visualizations (Sec. D.3), statistical significance tests (Sec. D.5), pairwise real-world comparisons (Sec. D.7), cardi-nality calibration results (Sec. D.6), and real-world results grouped by knowledge of K (Sec. D.8). 
+
+D.1 Median ARI and NMI values grouped by levels of difficulty 
+
+In the main paper, we report median ARI and NMI ranks to account for varying dataset difficulty. Here, we additionally report the median ARI and NMI values of each method. As described in Sec. C.1, datasets are grouped into two levels of difficulty (low and high), enabling a more controlled comparison. Tables 12 and 13 present the corresponding results on synthetic and real-world benchmarks. Table 12: Comprehensive performance on synthetic datasets by difficulty . Results show median [IQR] for ARI and NMI (higher is better), and k-MAE. 
+
+Method ARI [IQR] ↑ NMI [IQR] ↑ k-MAE ↓
+
+Low High Low High Low High TabClustPFN ∗ 0.8348 [0.22] 0.1125 [0.10] 0.8012 [0.28] 0.1571 [0.14] - -TabClustPFN 0.8360 [0.24] 0.1321 [0.08] 0.8046 [0.32] 0.1940 [0.10] 0 5AP 0.0551 [0.10] 0.0243 [0.02] 0.3169 [0.28] 0.1440 [0.06] 44 45 Agg ∗ 0.6586 [0.39] 0.1536 [0.07] 0.6513 [0.35] 0.1562 [0.01] - -Agg + 0.6081 [0.46] 0.1278 [0.09] 0.6006 [0.40] 0.1087 [0.04] 1 3Birch ∗ 0.6489 [0.41] 0.0886 [0.00] 0.6536 [0.36] 0.1422 [0.02] - -Birch + 0.5836 [0.48] 0.0628 [0.03] 0.5355 [0.41] 0.0947 [0.03] 1 3DBSCAN 0.0000 [0.00] 0.0000 [0.00] 0.0000 [0.00] 0.0000 [0.02] 5 6GMM ∗ 0.6990 [0.44] 0.1769 [0.08] 0.7442 [0.36] 0.1956 [0.02] - -GMM + 0.7510 [0.48] 0.1538 [0.10] 0.7142 [0.41] 0.1618 [0.05] 1 4HDBSCAN 0.0000 [0.16] -0.0071 [0.01] 0.0881 [0.25] 0.0056 [0.01] 3 5KMeans ∗ 0.6838 [0.49] 0.1688 [0.10] 0.7386 [0.39] 0.1883 [0.04] - -KMeans + 0.7350 [0.46] 0.1749 [0.09] 0.7054 [0.42] 0.1886 [0.04] 1 4MeanShift 0.0000 [0.00] -0.0002 [0.00] 0.0000 [0.00] 0.0018 [0.00] 4 4OPTICS 0.0000 [0.01] -0.0003 [0.00] 0.0110 [0.08] 0.0209 [0.02] 4 8Spectral ∗ 0.0682 [0.37] 0.1092 [0.11] 0.0867 [0.48] 0.1326 [0.09] - -Spectral + 0.0192 [0.38] 0.1100 [0.11] 0.0539 [0.49] 0.1143 [0.11] 2 4T+Agg ∗ 0.7879 [0.35] 0.0326 [0.07] 0.8160 [0.33] 0.1481 [0.03] - -T+Agg + 0.7326 [0.57] -0.0085 [0.03] 0.6875 [0.45] 0.1077 [0.01] 1 2
+
+T+GMM ∗ 0.7651 [0.43] 0.1644 [0.07] 0.7389 [0.37] 0.1827 [0.02] - -T+GMM + 0.7711 [0.59] 0.1421 [0.09] 0.7013 [0.40] 0.1582 [0.04] 1 4T+KMeans ∗ 0.7413 [0.54] 0.1642 [0.08] 0.7217 [0.45] 0.1809 [0.03] - -T+KMeans + 0.7413 [0.54] 0.1572 [0.08] 0.6457 [0.45] 0.1734 [0.03] 1 2
+
+T+Spec ∗ 0.7939 [0.47] 0.1282 [0.05] 0.7659 [0.39] 0.1505 [0.01] - -T+Spec + 0.7850 [0.66] 0.1243 [0.05] 0.7131 [0.48] 0.1286 [0.13] 1 4Zeus+GMM ∗ 0.7624 [0.47] 0.0917 [0.06] 0.6914 [0.38] 0.1534 [0.13] - -Zeus+GMM + 0.3771 [0.44] 0.0908 [0.06] 0.4821 [0.30] 0.1785 [0.11] 6 5Zeus+KMeans ∗ 0.7696 [0.47] 0.0897 [0.06] 0.6939 [0.37] 0.1538 [0.13] - -Zeus+KMeans + 0.4041 [0.51] 0.0935 [0.06] 0.5035 [0.34] 0.1771 [0.12] 6 5Zeus+S-GMM ∗ 0.7684 [0.46] 0.0912 [0.06] 0.6920 [0.38] 0.1534 [0.13] - -Zeus+S-GMM + 0.5602 [0.54] 0.0876 [0.07] 0.6129 [0.35] 0.1781 [0.12] 6 5
+
+In terms of ARI, TabClustPFN achieves the strongest overall performance in most settings, with the main exception being high-difficulty synthetic datasets. For NMI, TabClustPFN remains among the top-performing methods across nearly all groups, and stays within the top three even in its weakest regime (low-difficulty real datasets). Difficulty-stratified analysis reveals several trends. First, performance degradation on high-difficulty datasets is universal: even with oracle K, classical methods such as GMM ∗ and KMeans ∗ exhibit low ARI, indicating that the dominant challenge is recovering assignments under heavy cluster overlap and complex structure, rather than model 22 selection alone. Second, in the practical unknown-K setting, TabClustPFN achieves the best or near-best ARI/NMI on low-difficulty synthetic datasets while accurately recovering K, demonstrating good calibration of model complexity. On real datasets, TabClustPFN ∗ attains the best ARI across difficulty levels, while the automatic-K variant remains competitive, suggesting graceful degradation under distribution shift. Third, the performance gap between oracle and inferred K is generally smaller for TabClustPFN than for classical pipelines, indicating reduced sensitivity to exact model order. Finally, in settings where ARI is not strictly best but NMI remains high, errors tend to preserve coarse cluster structure rather than producing highly fragmented partitions. Overall, these results suggest that the primary strength of TabClustPFN lies in stable assignment quality and robust K inference in realistic exploratory settings, rather than dependence on favorable parametric assumptions. Further gains may be achievable by broadening the pretraining prior or extending training. Table 13: Comprehensive performance on real-world benchmark by difficulty . Results show median [IQR] for ARI and NMI (higher is better), and k-MAE. 
+
+Method ARI [IQR] ↑ NMI [IQR] ↑ k-MAE ↓
+
+Low High Low High Low High TabClustPFN ∗ 0.5754 [0.31] 0.1897 [0.21] 0.5737 [0.34] 0.1614 [0.13] - -TabClustPFN 0.4431 [0.29] 0.1801 [0.14] 0.5311 [0.28] 0.1843 [0.16] 1 1AP 0.1217 [0.18] 0.0298 [0.05] 0.3306 [0.29] 0.1408 [0.13] 27 40 Agg ∗ 0.5104 [0.27] 0.1404 [0.06] 0.5665 [0.32] 0.0786 [0.05] - -Agg + 0.5019 [0.37] 0.1359 [0.11] 0.4544 [0.34] 0.0915 [0.06] 0 2Birch ∗ 0.4157 [0.31] 0.1435 [0.08] 0.5132 [0.40] 0.0920 [0.07] - -Birch + 0.2980 [0.45] 0.1435 [0.07] 0.4245 [0.43] 0.0965 [0.08] 0 1DBSCAN 0.0000 [0.20] -0.0029 [0.02] 0.1158 [0.29] 0.0303 [0.06] 3 2GMM ∗ 0.4453 [0.28] 0.1313 [0.19] 0.5147 [0.38] 0.1068 [0.19] - -GMM + 0.3772 [0.40] 0.1430 [0.16] 0.4028 [0.38] 0.1156 [0.22] 0 1HDBSCAN 0.1663 [0.30] 0.0042 [0.04] 0.2628 [0.28] 0.0843 [0.11] 4 6KMeans ∗ 0.5106 [0.22] 0.1362 [0.13] 0.5485 [0.33] 0.1012 [0.20] - -KMeans + 0.5005 [0.32] 0.1179 [0.13] 0.4942 [0.34] 0.1168 [0.22] 0 1MeanShift 0.0707 [0.31] 0.0365 [0.21] 0.1352 [0.35] 0.0535 [0.13] 5 8OPTICS 0.0168 [0.04] -0.0195 [0.04] 0.1788 [0.19] 0.0979 [0.09] 3 9Spectral ∗ 0.0578 [0.37] 0.0081 [0.06] 0.0828 [0.53] 0.0190 [0.04] - -Spectral + 0.0786 [0.38] 0.0055 [0.01] 0.1276 [0.44] 0.0142 [0.03] 1 0
+
+T+Agg ∗ 0.5119 [0.31] 0.0867 [0.15] 0.5536 [0.29] 0.0534 [0.13] - -T+Agg + 0.3200 [0.27] 0.0903 [0.07] 0.4120 [0.32] 0.1424 [0.17] 5 6T+GMM ∗ 0.4841 [0.27] 0.0859 [0.13] 0.5535 [0.25] 0.0701 [0.16] - -T+GMM + 0.2980 [0.25] 0.1063 [0.08] 0.4091 [0.32] 0.1249 [0.17] 5 6T+KMeans ∗ 0.5148 [0.29] 0.0919 [0.13] 0.5183 [0.29] 0.0712 [0.12] - -T+KMeans + 0.2741 [0.27] 0.0882 [0.12] 0.3913 [0.32] 0.1217 [0.19] 5 5T+Spec ∗ 0.4124 [0.26] 0.0024 [0.17] 0.5141 [0.30] 0.0510 [0.14] - -T+Spec + 0.2421 [0.25] 0.0489 [0.12] 0.3813 [0.32] 0.1037 [0.20] 6 8Zeus+GMM ∗ 0.5292 [0.43] 0.0501 [0.17] 0.6192 [0.40] 0.0713 [0.12] - -Zeus+GMM + 0.3155 [0.38] 0.0698 [0.07] 0.4377 [0.39] 0.1070 [0.08] 8 8Zeus+KMeans ∗ 0.5209 [0.42] 0.0700 [0.26] 0.6199 [0.39] 0.1126 [0.15] - -Zeus+KMeans + 0.3282 [0.36] 0.0615 [0.08] 0.4561 [0.39] 0.1089 [0.08] 8 8Zeus+S-GMM ∗ 0.5186 [0.38] 0.0834 [0.24] 0.6289 [0.39] 0.1242 [0.14] - -Zeus+S-GMM + 0.4145 [0.48] 0.0800 [0.07] 0.4670 [0.35] 0.1081 [0.40] 8 8
+
+D.2 Median ARI and NMI values on the synthetic for methods with known K
+
+In the main paper, we report median ARI and NMI ranks when the number of clusters K is inferred from the data. Here, we additionally evaluate the setting where the true K is provided to all methods. Tab. 14 reports the median ARI and NMI ranks on synthetic datasets under this oracle-K scenario. When the true number of clusters is given, TabClustPFN also achieves the best median ARI rank and NMI rank overall, indicating that its advantage is not solely due to accurate K inference but also to improved assignment quality. 23 Table 14: Performance on synthetic datasets . Median ARI/NMI ranks of methods with known K.Brackets show IQR. Bold and underline indicate best and second-best per column. Method ARI Rank [IQR] ↓ NMI Rank [IQR] ↓
+
+TabClustPFN* 1 [4] 3 [5] 
+
+Agg* 8 [4] 9 [4] Birch* 8 [5] 9 [4] GMM* 6 [7] 5 [5] KMeans* 6 [6] 6 [6] Spectral* 13 [2] 13 [1] T+Agg* 4 [5] 3 [5] 
+
+T+GMM* 6 [5] 6 [6] T+KMeans* 6 [6] 6 [7] T+Spec* 4 [5] 4 [6] Zeus+GMM* 7 [6] 6 [5] Zeus+KMeans* 6 [7] 6 [6] Zeus+S-GMM* 6 [7] 6 [5] 
+
+D.3 Representation visualization on all synthetic datasets 
+
+In the main paper (Fig. 3), we presented representative examples to illustrate how different models shape the representation space. Here, we extend that analysis by providing t-SNE visualizations for 
+
+all synthetic datasets used in our evaluation. Figures 10 and 11 show results for datasets generated from GMM priors and the ZEUS prior, respectively. The same protocol is followed as in the main text: we compare raw input features, pretrained TabICL embeddings, ZEUS representations, and TabClustPFN representations after the final projection and normalization. Points are colored by ground-truth labels, and for TabClustPFN , red stars denote learned cluster prototypes. This comprehensive view confirms that the geometric patterns highlighted in the main paper—such as the tendency of TabClustPFN to form more compact and prototype-aligned clusters, and the anisotropic or elongated structures often observed in ZEUS representations—are consistent across datasets rather than isolated cases. It also becomes evident that ZEUS tends to perform better when the raw feature space already exhibits blob-like cluster structure, and comparatively worse when such structure is absent. 
+
+D.4 Comparison with Cluster-PFN 
+
+While Cluster-PFN [3] shares the objective of utilizing in-context learning to predict both cluster cardinality and assignments, its scope is restricted to a narrower low-dimensional GMM regime (2 to 5 feature dimensions). Consequently, to ensure a rigorous and fair evaluation, we compare the two approaches both methodologically and empirically under this specific controlled setting. 
+
+Methodological comparison. Table 15 summarizes the main differences between Cluster-PFN and 
+
+TabClustPFN . Although both methods follow the PFN paradigm, they differ substantially in the prior, the assignment objective, the assignment architecture, and the mechanism for cardinality inference. Cluster-PFN is primarily designed around finite GMM priors and resolves label-switching through deterministic relabeling before applying a supervised cross-entropy loss. In contrast, TabClustPFN 
+
+is pretrained on a broader prior family combining controlled-overlap GMMs and the ZEUS prior, and optimizes a permutation-invariant SoftARI objective. Architecturally, TabClustPFN introduces explicit cluster prototypes and iterative prototype–data cross-attention in the Partition Inference Network (PIN), while the Cardinality Inference Network (CIN) estimates p(K | X) from assign-ment Gram matrices produced across candidate values of K. These differences make the cluster structure more explicit and provide a different route for scaling amortized clustering beyond very low-dimensional GMMs. 
+
+Controlled GMM evaluation. To provide a fair empirical comparison within the regime where Cluster-PFN is designed to operate, we follow its low-dimensional GMM setting and evaluate all methods on newly generated held-out datasets from a GMM prior. For each feature dimension 24 Figure 10: Representation t-SNE visualizations on GMM prior . Rows are organized in groups of four; within each group, columns correspond to different datasets. From top to bottom, rows display raw features, TabICL encoder outputs, ZEUS representations, and TabClustPFN representations. 
+
+D ∈ { 2, 3, 4, 5}, we generate 320 independent datasets, resulting in 1,280 datasets in total. Each dataset contains N = 500 observations and has an unknown number of clusters with maximum cluster count Kmax = 10 . All methods are evaluated in the unknown-K setting, where the true cluster number is not provided at test time. In addition to Cluster-PFN and TabClustPFN , we include GMM + as a classical baseline, where the number of mixture components is selected by maximizing the silhouette score. This baseline is particularly relevant because the test data are themselves generated from a GMM prior, making the evaluation favorable to GMM-based methods. Figure 12 reports ARI, NMI, and k-MAE across feature dimensions. At D = 2 , the three methods perform comparably, which is expected since this is the simplest setting and is well aligned with 25 Figure 11: Representation t-SNE visualizations on ZEUS prior . Rows are organized in groups of four; within each group, columns correspond to different datasets. From top to bottom, rows display raw features, TabICL encoder outputs, ZEUS representations, and TabClustPFN representations. 26 Table 15: Methodological comparison between Cluster-PFN and TabClustPFN . Both methods perform amortized clustering, but differ in their prior, objective, architecture, and cardinality-inference mechanism. 
+
+Aspect Cluster-PFN TabClustPFN 
+
+Prior Finite GMM prior in a low-dimensional setting ( D ≤ 5). Controlled-overlap GMM prior combined with the ZEUS prior, covering both Gaussian and nonlinear non-Gaussian cluster geometries (D ≤ 64 ). Cluster-assignment objective Uses deterministic relabeling to break label permutation symmetry, followed by cross-entropy. Optimizes a permutation-invariant SoftARI loss, avoiding deterministic relabeling conventions that can be sensitive to scaling and dimensionality. Cluster-assignment architecture Uses standard Transformer layers followed by an MLP output head. Uses a TabICL encoder followed by an iterative prototype–data cross-attention decoder in PIN. Cluster-assignment mechanism Outputs membership probabilities directly from point embeddings. Maintains K cluster prototypes and computes assignments via cosine similarities between point representations and prototypes. Cardinality-inference architecture Constructs a special object ρ from a fixed all-−1 vector, concatenates it with dataset embeddings, and maps the decoded representation of ρ to 
+
+p(K | X).Uses CIN to map assignment Gram matrices {P ⊤ 
+
+> K
+
+PK }Kmax  
+
+> K=2
+
+to a posterior over K.Conditioning on K Conditions the model through an embedding of the candidate value of 
+
+K.Conditions PIN by selecting the first K
+
+cluster prototypes, so the active prototypes directly define the candidate cardinality. 
+
+the assumptions of both Cluster-PFN and GMM +. As the feature dimension increases, however, the performance of Cluster-PFN decreases in both clustering quality and cardinality estimation. In contrast, TabClustPFN remains stable and outperforms Cluster-PFN for all dimensions D > 2 across ARI, NMI, and k-MAE. The gap is most significant for D = 4 and D = 5 , where TabClustPFN 
+
+achieves substantially higher ARI and NMI while also producing more accurate estimates of the number of clusters. 2 3 4 5
+
+> Features (D)
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6
+> ARI
+
+ARI    
+
+> TabClustPFN (Ours) Cluster-PFN GMM +
+> 2345
+> Features (D)
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6
+> NMI
+
+NMI    
+
+> TabClustPFN (Ours) Cluster-PFN GMM +
+> 2345
+> Features (D)
+> 0.0 0.5 1.0 1.5 2.0
+> K-MAE
+
+K-MAE 
+
+> TabClustPFN (Ours) Cluster-PFN GMM +
+
+Figure 12: Comparison with Cluster-PFN under the low-dimensional GMM regime. All methods are evaluated in the unknown-K setting. Higher ARI/NMI and lower k-MAE indicate better performance. 
+
+TabClustPFN consistently outperforms Cluster-PFN for D > 2.27 D.5 Statistical significance tests 
+
+We further assess whether the observed performance gains are statistically reliable across datasets. For each baseline method b and each evaluation dataset s, we compute the paired ARI difference 
+
+∆b(s) = ARI TabClustPFN (s) − ARI b(s).
+
+Thus, ∆b(s) > 0 indicates that TabClustPFN achieves a higher ARI than baseline b on dataset s. All significance tests are conducted on these per-dataset paired differences, separately for the synthetic benchmark and the real-world benchmark. We use two complementary paired tests. First, we apply the one-sided paired t-test with alternative hypothesis 
+
+H1 : E[∆ b] > 0,
+
+which tests whether TabClustPFN has a larger mean ARI than baseline b across datasets. The paired 
+
+t-test is commonly used for paired algorithm comparisons, but it relies on a normality assumption for the paired differences. Since clustering scores are bounded, e.g., ARI lies in [−1, 1] and NMI lies in [0 , 1] , their empirical distributions need not be normal. We therefore also report the one-sided Wilcoxon signed-rank test, a non-parametric paired test that does not require normality of the paired differences and tests whether the distribution of ∆b is shifted toward positive values. This follows the recommendation of Demšar [6] to use non-parametric tests when comparing learning algorithms over multiple datasets. In addition to pairwise tests, we report critical-difference (CD) diagrams based on average ARI ranks. For each dataset, all methods are ranked according to ARI, with lower rank indicating better performance. The CD diagram visualizes the average rank of each method and the critical difference required for two average ranks to be considered statistically distinguishable under the corresponding rank-based post-hoc comparison. We use CD diagrams as a complementary multi-method, rank-based view of the results, while the paired tests above directly compare TabClustPFN with each baseline in terms of ARI differences. 
+
+Paired t-tests. Figure 13 shows the distributions of ∆b(s) and the one-sided paired t-test p-values. On the synthetic benchmark, TabClustPFN achieves positive paired differences against all baselines, and all paired t-tests reject the null hypothesis at the 0.05 level. Most comparisons are highly significant with p < 0.001 . On the real-world benchmark, TabClustPFN also achieves positive median ARI differences against the vast majority of baselines. The paired t-tests show significant improvements over most baselines; the only non-significant comparisons are against Agg + and KMeans +, which are the strongest classical competitors in this benchmark. Importantly, non-significance in these two comparisons does not indicate that the baselines outperform TabClustPFN ;rather, the observed paired differences are not large enough to reject the null hypothesis under the paired t-test. TabClustPFN still achieves higher ARI on the majority of real-world datasets. DBSCAN MeanShift OPTICS HDBSCAN AP Spectral +        
+
+> ZEUS+GMM +
+> ZEUS+KMeans +
+> ZEUS+S-GMM +
+> Birch +
+> Agg +
+> T+Agg +
+> GMM +
+> KMeans +
+> T+KMeans +
+> T+GMM +
+> T+Spec +
+> -0.50 -0.25 0.00 0.25 0.50 0.75 1.00
+> ARI (TabClustPFN  Baseline)
+> <0.001<0.001<0.001<0.001 <0.001 <0.001 <0.001<0.001 <0.001 <0.001<0.001 <0.001 0.012 0.001 <0.001 <0.001 <0.001
+> Synthetic data
+> Paired t-test p-value (H1: TabClustPFN > Baseline)
+> p < 0.001 0.001 p < 0.01
+> 0.01 p < 0.05
+> 0.05 p < 0.15
+> p0.15
+> OPTICS AP DBSCAN MeanShift HDBSCAN T+Spec +
+> Spectral +
+> T+GMM +
+> T+Agg +
+> ZEUS+KMeans +
+> ZEUS+GMM +
+> T+KMeans +
+> ZEUS+S-GMM +
+> Birch +
+> GMM +
+> Agg +
+> KMeans +
+> -0.6 -0.4 -0.2 0.0 0.2 0.4 0.6 0.8 1.0
+> ARI (TabClustPFN  Baseline)
+> <0.001 <0.001 <0.001 <0.001<0.001 <0.001 <0.001 <0.001 <0.001 <0.001<0.001 <0.001 0.006 0.006 0.015 0.242 0.281
+> Real-world benchmark
+> Paired t-test p-value (H1: TabClustPFN > Baseline)
+> p < 0.001 0.001 p < 0.01
+> 0.01 p < 0.05
+> 0.05 p < 0.15
+> p0.15
+
+Figure 13: Paired t-test results based on per-dataset ARI differences ∆b = ARI TabClustPFN − ARI b.The dashed red line denotes zero difference. Positive values indicate that TabClustPFN outperforms the corresponding baseline. Colors indicate the one-sided paired t-test p-value under the alternative hypothesis H1 : ARI TabClustPFN > ARI b.
+
+Wilcoxon signed-rank tests. Figure 14 reports the corresponding one-sided Wilcoxon signed-rank tests. The results are consistent with the paired t-tests while avoiding the normality assumption 28 on the paired differences. On the synthetic benchmark, TabClustPFN significantly outperforms all baselines. On the real-world benchmark, the Wilcoxon test yields the same qualitative conclusion and supports significant improvements over most baselines. DBSCAN MeanShift OPTICS HDBSCAN AP Spectral + 
+
+> ZEUS+GMM +
+> ZEUS+KMeans +
+> ZEUS+S-GMM +
+> Birch +
+> Agg +
+> T+Agg +
+> GMM +
+> KMeans +
+> T+KMeans +
+> T+GMM +
+> T+Spec +
+> -0.50 -0.25 0.00 0.25 0.50 0.75 1.00
+> ARI (TabClustPFN  Baseline)
+> <0.001<0.001<0.001<0.001 <0.001 <0.001 <0.001<0.001 <0.001 <0.001<0.001 <0.001 0.011 0.001 <0.001 0.001 0.004
+
+Synthetic data     
+
+> Wilcoxon p-value (H1: TabClustPFN > Baseline)
+> p < 0.001 0.001 p < 0.01
+> 0.01 p < 0.05
+> 0.05 p < 0.15
+> p0.15
+> OPTICS AP DBSCAN MeanShift HDBSCAN T+Spec +
+> Spectral +
+> T+GMM +
+> T+Agg +
+> ZEUS+KMeans +
+> ZEUS+GMM +
+> T+KMeans +
+> ZEUS+S-GMM +
+> Birch +
+> GMM +
+> Agg +
+> KMeans +
+> -0.6 -0.4 -0.2 0.0 0.2 0.4 0.6 0.8 1.0
+> ARI (TabClustPFN  Baseline)
+> <0.001 <0.001 <0.001 <0.001<0.001 <0.001 <0.001 <0.001 <0.001 <0.001<0.001 <0.001 0.003 0.002 0.003 0.127 0.142
+
+Real-world benchmark     
+
+> Wilcoxon p-value (H1: TabClustPFN > Baseline)
+> p < 0.001 0.001 p < 0.01
+> 0.01 p < 0.05
+> 0.05 p < 0.15
+> p0.15
+
+Figure 14: Wilcoxon signed-rank test results based on per-dataset ARI differences ∆b =ARI TabClustPFN − ARI b. Positive values indicate that TabClustPFN outperforms the corresponding baseline. Colors indicate the one-sided Wilcoxon signed-rank test p-value under the alternative hypothesis H1 : ARI TabClustPFN > ARI b.
+
+Critical-difference diagrams. Figure 15 provides a complementary rank-based comparison using critical-difference (CD) diagrams. On both the synthetic and real-world benchmarks, TabClustPFN 
+
+achieves the best average ARI rank, with average ranks of 3.80 and 4.61 , respectively. This ranking-based view is consistent with the paired tests above and further supports the overall advantage of 
+
+TabClustPFN across benchmarks. 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 
+
+Better         
+
+> CD = 3.76
+> TabClustPFN (3.80) T+KMeans +(5.10) GMM +(5.48) T+Spec +(5.63) T+GMM +(5.73) KMeans +(5.89) T+Agg +(6.58) ZEUS+S-GMM +(7.63) ZEUS+KMeans +(8.33) (8.81) Agg +
+> (8.94) ZEUS+GMM +
+> (9.26) Birch +
+> (12.77) Spectral +
+> (13.78) AP (15.29) HDBSCAN (15.78) MeanShift (15.89) OPTICS (16.34) DBSCAN
+
+Synthetic data 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 
+
+Better         
+
+> CD = 3.97
+> TabClustPFN (4.61) KMeans +(5.83) Agg +(6.33) ZEUS+S-GMM +(7.18) GMM +(7.72) ZEUS+KMeans +(7.98) T+GMM +(8.02) Birch +(8.24) ZEUS+GMM +(8.25) (8.39) T+KMeans +
+> (8.52) T+Agg +
+> (9.61) T+Spec +
+> (12.07) MeanShift (12.16) HDBSCAN (12.17) Spectral +
+> (12.98) AP (15.01) DBSCAN (15.93) OPTICS
+
+Real-world benchmark 
+
+Figure 15: Critical-difference (CD) diagrams based on ARI ranks. Lower average rank indicates better performance. 
+
+D.6 Calibration of Cardinality Inference 
+
+We evaluate the calibration of the cardinality posterior ˆp(K | X) predicted by CIN. Since ˆp(K | X) is a categorical distribution over candidate cluster cardinalities, we assess calibration through set-valued coverage. Given a nominal level α, we sort candidate cardinalities in descending order of ˆp(K | X)
+
+and construct the smallest prediction set whose cumulative posterior mass reaches α:
+
+bKα(X) = {K(1) , . . . , K (mα)}, mα = min 
+
+(
+
+m :
+
+mX
+
+ℓ=1 
+
+ˆp(K(ℓ) | X) ≥ α
+
+)
+
+,
+
+where ˆp(K(1) | X) ≥ ˆp(K(2) | X) ≥ · · · . We then compute the empirical coverage 
+
+1
+
+S
+
+SX
+
+s=1 
+
+1
+
+n
+
+K∗
+
+s ∈ bKα(Xs)
+
+o
+
+,
+
+29 where K∗
+
+s is the ground-truth cluster cardinality for dataset s. A well-calibrated posterior should have empirical coverage close to the nominal level, while systematic undercoverage would indicate overconfidence. Cardinality calibration is considered instead of point-level assignment calibration, since the latter is not directly well-defined in clustering. Since cluster labels are identifiable only up to permutation, assessing assignment calibration would require a post-hoc matching between predicted clusters and ground-truth labels, making the notion of a “correct” label dependent on a dataset-level permutation. By contrast, the cluster cardinality K is label-free and comparable across datasets. We therefore evaluate set-valued calibration of ˆp(K | X) on 3,200 held-out datasets generated from the GMM prior, covering feature dimensions from 2 to 64 , sample sizes from 500 to 1000 , and maximum cluster count Kmax = 10 .
+
+D.7 Pairwise win-rate comparison on real-world benchmark 
+
+To compare methods beyond average metrics, we visualize pairwise win rates across datasets in Fig. 16. The heatmap entry at row i and column j denotes the percentage of datasets on which TabClustPFN* TabClustPFN ZEUS+KMeans* ZEUS+S-GMM* T+Agg* Agg* ZEUS+GMM* KMeans +
+
+> KMeans* T+KMeans* Agg +
+> T+GMM* Birch* GMM* ZEUS+S-GMM +
+> GMM +
+> T+Spec* T+GMM +
+> ZEUS+KMeans +
+> T+KMeans +
+> ZEUS+GMM +
+> T+Agg +
+> Birch +
+> T+Spec +
+> MeanShift HDBSCAN Spectral +
+> AP Spectral* DBSCAN OPTICS
+
+Opponent Algorithm TabClustPFN* TabClustPFN ZEUS+KMeans* ZEUS+S-GMM* T+Agg* Agg* ZEUS+GMM* KMeans +
+
+KMeans* T+KMeans* Agg +
+
+T+GMM* Birch* GMM* ZEUS+S-GMM +
+
+GMM +
+
+T+Spec* T+GMM +
+
+ZEUS+KMeans +
+
+T+KMeans +
+
+ZEUS+GMM +
+
+T+Agg +
+
+Birch +
+
+T+Spec +
+
+MeanShift HDBSCAN Spectral +
+
+AP Spectral* DBSCAN OPTICS Algorithm                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+
+> 056 55 55 59 59 57 64 68 68 61 66 74 74 75 77 68 73 77 75 75 77 79 82 93 95 89 95 91 95 98 44 048 48 57 50 52 57 55 61 57 64 57 68 70 73 68 73 75 80 77 73 73 77 86 93 89 93 91 95 98 45 52 071 57 60 43 55 50 57 64 58 68 58 77 65 64 64 80 68 77 73 75 75 82 80 86 91 93 86 91 45 52 29 057 60 43 50 50 59 64 58 70 60 82 65 66 66 77 68 77 66 75 75 82 80 84 91 93 86 91 41 43 43 43 058 50 58 57 56 62 58 71 52 64 58 66 73 66 70 64 76 78 73 81 86 81 84 79 89 95 41 50 40 40 42 043 51 53 49 62 56 69 60 61 67 61 70 66 70 66 73 72 75 89 93 86 89 89 93 98 43 48 57 57 50 57 052 50 55 61 56 64 53 67 60 61 59 70 64 72 66 68 73 77 75 82 82 86 82 86 36 43 45 50 42 49 48 059 52 57 48 55 52 57 61 59 66 59 68 66 70 70 73 81 91 86 86 84 91 98 32 45 50 50 43 47 50 41 052 53 57 55 51 57 60 66 70 61 66 61 61 64 68 81 84 82 86 81 89 100 32 39 43 41 44 51 45 48 48 063 56 52 57 59 61 60 68 66 64 68 68 69 66 75 77 79 82 79 89 95 39 43 36 36 38 38 39 43 47 37 044 50 53 52 55 55 68 59 66 61 66 64 70 84 86 81 84 84 93 95 34 36 42 42 42 44 44 52 43 44 56 048 52 52 55 51 60 57 52 59 61 64 64 73 73 77 80 77 89 93 26 43 32 30 29 31 36 45 45 48 50 52 044 57 51 52 61 66 68 68 70 81 70 77 82 79 86 81 91 95 26 32 42 40 48 40 47 48 49 43 47 48 56 052 57 61 61 57 59 59 59 63 70 74 84 73 82 79 84 93 25 30 23 18 36 39 33 43 43 41 48 48 43 48 052 50 50 60 59 61 64 57 68 75 77 68 86 75 89 95 23 27 35 35 42 33 40 39 40 39 45 45 49 43 48 052 57 55 52 61 57 64 59 67 73 78 73 77 84 91 32 32 36 34 34 39 39 41 34 40 45 49 48 39 50 48 055 55 52 52 52 57 57 64 66 66 70 66 77 84 27 27 36 34 27 30 41 34 30 32 32 40 39 39 50 43 45 050 50 52 57 43 61 70 77 77 89 82 86 98 23 25 20 23 34 34 30 41 39 34 41 43 34 43 40 45 45 50 052 47 59 45 68 70 75 66 91 77 89 95 25 20 32 32 30 30 36 32 34 36 34 48 32 41 41 48 48 50 48 041 50 45 59 68 80 70 91 80 86 98 25 23 23 23 36 34 28 34 39 32 39 41 32 41 39 39 48 48 53 59 055 43 66 68 75 66 89 75 86 95 23 27 27 34 24 27 34 30 39 32 34 39 30 41 36 43 48 43 41 50 45 043 64 68 77 68 93 77 86 98 21 27 25 25 22 28 32 30 36 31 36 36 19 37 43 36 43 57 55 55 57 57 061 70 68 72 75 78 86 89 18 23 25 25 27 25 27 27 32 34 30 36 30 30 32 41 43 39 32 41 34 36 39 061 73 66 86 73 82 98 714 18 18 19 11 23 19 19 25 16 27 23 26 25 33 36 30 30 32 32 32 30 39 040 52 45 49 68 57 5720 20 14 725 916 23 14 27 18 16 23 27 34 23 25 20 25 23 32 27 60 053 45 57 84 86 11 11 14 16 19 14 18 14 18 21 19 23 21 27 32 22 34 23 34 30 34 32 28 34 48 47 039 50 68 64 579916 11 18 14 14 18 16 20 14 18 14 27 30 11 9911 725 14 55 55 61 061 75 93 997721 11 14 16 19 21 16 23 19 21 25 23 34 18 23 20 25 23 22 27 51 43 50 39 068 64 5514 14 11 718 911 11 711 916 11 16 23 14 11 14 14 14 14 18 32 16 32 25 32 045 22995214 20557575916 2525211 243 14 36 736 55 0
+
+Win-Rate Comparison (ARI) 
+
+Figure 16: Pairwise win rate comparison on real-world benchmark . Each entry shows the percentage of datasets on which the row method achieves a higher ARI than the column method. method i achieves a higher ARI than method j. Values greater than 50 therefore indicate that method 
+
+i outperforms method j on the majority of datasets, while values below 50 indicate the opposite. Diagonal entries are undefined and omitted. The figure compares all 31 methods, including those that assume known K and those that infer K
+
+from the data. As such, it provides a global view of relative robustness across datasets rather than isolating specific evaluation settings. TabClustPFN ∗ (with known K) exhibits win counts above 50 against all other methods, indicating consistent superiority across the majority of datasets. In contrast, TabClustPFN (with inferred K)does not outperform TabClustPFN ∗, ZEUS+Kmeans ∗, ZEUS+GMM ∗, and Agg ∗, but achieves higher win counts than the remaining baselines. This behavior is expected, as these four methods are provided with the true number of clusters, giving them additional information unavailable in the unknown-K setting. 30 D.8 Results grouped by information on the number of clusters 
+
+In the main paper, we report the median ARI rank of all methods on the real-world benchmark. To provide a more controlled comparison, we further group methods according to whether the number of clusters K is given or must be inferred. Fig. 17 reports median ARI ranks for methods with known K
+
+(top row) and methods with unknown K (bottom row). This stratified evaluation isolates performance 0 2 4 6
+
+Clustering Time (s)   
+
+> 6810 12
+> Median Rank (ARI)
+> TabClustPFN* (Ours)
+> T+Agg* T+GMM* T+KMeans* T+Spec* ZEUS+GMM* ZEUS+KMeans* ZEUS+S-GMM* Agg* Birch* GMM* KMeans* Spectral* Our Method Other PFN-based Classical 0510
+
+Median ARI rank      
+
+> TabClustPFN*
+> ZEUS+KMeans* ZEUS+GMM* ZEUS+S-GMM* T+Agg* KMeans* T+KMeans* Agg* T+GMM* GMM* T+Spec* Birch* Spectral*
+> Method
+> 4.50 5.00 5.50 5.50 6.00 6.00 6.50 6.50 7.00 8.00 9.00 9.00 12.50 010 20 30 40 50
+
+Clustering Time (s)    
+
+> 46810 12 14 16
+> Median Rank (ARI)
+> TabClustPFN (Ours)
+> T+Agg +
+> T+GMM +
+> T+KMeans +
+> T+Spec +
+> ZEUS+GMM +
+> ZEUS+KMeans +
+> ZEUS+S-GMM +
+> AP Agg +
+> Birch +
+> DBSCAN GMM +
+> HDBSCAN KMeans +
+> MeanShift OPTICS Spectral +
+> Our Method Other PFN-based Classical 0510 15
+
+Median ARI rank 
+
+> TabClustPFN
+> Agg +
+> KMeans +
+> ZEUS+S-GMM +
+> GMM +
+> Birch +
+> ZEUS+KMeans +
+> T+GMM +
+> T+KMeans +
+> T+Agg +
+> ZEUS+GMM +
+> T+Spec +
+> HDBSCAN MeanShift AP Spectral +
+> OPTICS DBSCAN
+> Method
+> 3.00 5.00 5.00 6.50 7.00 7.50 8.00 8.00 8.50 9.00 9.00 11.00 13.00 13.50 14.00 14.50 16.00 16.00
+
+Figure 17: Runtime and median ARI rank grouped by knowledge of K on real-world benchmark .Top row: methods with known K. Bottom row: methods with unknown K.differences under equal information conditions. In both settings, TabClustPFN achieves the best (lowest) median ARI rank among the compared methods, indicating consistently strong clustering performance given the same level of prior knowledge about K.We additionally plot inference time against median ARI rank. These scatter plots illustrate the joint relationship between computational cost and clustering quality. TabClustPFN lies in the favorable region of this space, achieving the best clustering performance (lowest median ARI rank) while requiring substantially less inference time than computationally intensive baselines such as Spectral clustering, and remaining more efficient than other PFN-based approaches. 
+
+E Ablation study details 
+
+This section provides additional ablation results. Details of the baselines used in the PIN loss ablation are given in Sec. E.1, followed by the PIN decoder ablation (Sec. E.2) and further analysis of the CIN loss (Sec. E.3). 
+
+E.1 Different losses in PIN loss ablation 
+
+SoftARI is the default objective for PIN (Eq. (2)). To evaluate its effectiveness, we keep the PIN architecture, training protocol, and priors fixed, and replace only the training objective with several alternatives. Throughout, for a dataset with N observations and ground-truth cluster labels {zi}Ni=1 
+
+(zi ∈ { 1, . . . , K }), PIN produces logits ℓi ∈ RK and soft assignments Pik = softmax( ℓi)k. Let 
+
+Z ∈ { 0, 1}N ×K be the one-hot encoding of {zi}, i.e., Zij = 1[zi = j]. We define the soft confusion matrix 
+
+M = P ⊤Z ∈ RK×K , Mkj =
+
+NX
+
+i=1 
+
+Pik Zij .
+
+31 Intuitively, Mkj is the total probability mass assigned to predicted cluster k by samples whose true label is j. Using P , instead of hard assignments from arg max , keeps M differentiable w.r.t. the logits, enabling gradient-based optimization. A central challenge in clustering is label switching: relabeling predicted clusters corresponds to permuting the columns of P , which in turn permutes the rows of the soft confusion matrix M . An objective is permutation-invariant if it remains unchanged under such reindexing of M (e.g., by depending only on row/column-order-agnostic statistics) or if it explicitly optimizes over the best reindexing (e.g., via matching or a differentiable relaxation). We highlight this property for each ablated objective below. 
+
+E.1.1 SoftNMI loss 
+
+We compute a differentiable variant of normalized mutual information (SoftNMI) between the predicted partition and the ground-truth labels using the soft confusion matrix M . We first form the empirical joint distribution and marginals 
+
+ˆpkj = Mkj 
+
+N , ˆpk =
+
+> K
+
+X
+
+> j=1
+
+ˆpkj , ˆpj =
+
+> K
+
+X
+
+> k=1
+
+ˆpkj .
+
+The corresponding entropies are 
+
+H(ˆ pk) = −
+
+> K
+
+X
+
+> k=1
+
+ˆpk log ˆ pk, H(ˆ pj ) = −
+
+> K
+
+X
+
+> j=1
+
+ˆpj log ˆ pj ,
+
+and the mutual information is 
+
+I =
+
+> K
+
+X
+
+> k=1
+> K
+
+X
+
+> j=1
+
+ˆpkj log ˆpkj 
+
+ˆpk ˆpj
+
+.
+
+We adopt the arithmetic-mean normalization 
+
+SoftNMI = 2IH(ˆ pk) + H(ˆ pj ) .
+
+The resulting training objective is 
+
+LSoftNMI = 1 − SoftNMI .
+
+This objective is permutation-invariant: permuting predicted cluster indices only reorders the index k
+
+in the sums above, leaving the value unchanged. 
+
+E.1.2 Matching+CE loss 
+
+We consider a matching-based baseline that resolves label switching by explicitly selecting the best one-to-one reindexing between predicted clusters and ground-truth labels. Using the soft confusion matrix M ∈ RK×K as the matching score matrix, we compute a permutation matrix 
+
+Π⋆ ∈ arg max 
+
+> Π∈P K
+
+⟨Π, M ⟩F ,
+
+where PK = {Π ∈ { 0, 1}K×K : Π 1 = 1, Π⊤1 = 1} and ⟨A, B ⟩F = P 
+
+> k,j
+
+Akj Bkj . Let π⋆ be the permutation induced by Π⋆ (i.e., Π⋆k,j = 1 ⇔ k = π⋆(j)). We then remap each ground-truth label 
+
+Zi to a target predicted-cluster index ˜Zi = π⋆(Zi), and apply standard cross-entropy on the logits: 
+
+LMatch+CE = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+CE (ℓi, ˜Zi).
+
+Permutation invariance comes from the maximization over π: any reindexing of predicted clusters corresponds to permuting rows of M , but the optimal matching (and the resulting best-achievable agreement) is unchanged after re-solving the assignment. In practice, the matching step is discrete and is treated as a stop-gradient operation; gradients flow only through the cross-entropy term given the matched targets. 32 E.1.3 Matching+SoftAcc loss 
+
+To avoid the non-differentiability of discrete matching in PK , we replace Π⋆ with a differentiable relaxation Π ∈ [0 , 1] K×K obtained via Sinkhorn normalization, and define a soft matched agreement by ⟨Π, M ⟩F , which reduces to ⟨Π⋆, M ⟩F when Π is a hard permutation matrix. We relax PK to its convex hull, i.e., the Birkhoff polytope of doubly-stochastic matrices BK = {Π ≥
+
+0 : Π 1 = 1, Π⊤1 = 1}. Intuitively, BK contains “soft permutations”: each row and column sums to one, so Πkj can be interpreted as a fractional one-to-one alignment weight between predicted cluster 
+
+k and true cluster j. We obtain such a Π by applying Sinkhorn-Knopp normalization [29] to the log-scaled affinities: 
+
+Π = Sinkhorn 
+
+ log( M + ϵ)
+
+ϵ
+
+
+
+∈ [0 , 1] K×K ,
+
+which iteratively normalizes rows and columns to produce an approximately doubly-stochastic matrix. The temperature ϵ controls how “hard” the alignment is: as ϵ decreases, Π becomes increasingly peaked and approaches a permutation-like matrix, recovering a continuous analogue of hard matching while remaining differentiable. Given Π, we define a soft matched accuracy as the expected aligned agreement under this soft one-to-one correspondence: SoftAcc = 1
+
+N ⟨Π, M ⟩F = 1
+
+N
+
+> K
+
+X
+
+> k=1
+> K
+
+X
+
+> j=1
+
+Πkj Mkj , LMatch+SoftAcc = 1 − SoftAcc .
+
+This quantity is a natural relaxation of matched clustering accuracy: when Π is a hard permutation matrix, ⟨Π, M ⟩F reduces to the sum of the entries of M on the permuted diagonal, i.e., the total correctly aligned mass (and dividing by N yields an accuracy-like normalization). When Π is soft, the same expression computes the agreement averaged over fractional matchings, hence a “soft” accuracy. Because both Sinkhorn normalization and the Frobenius inner product are differentiable w.r.t. M , gradients flow through M = P ⊤Z to the soft assignments P , enabling end-to-end training. 
+
+E.2 PIN decoder ablation baselines 
+
+To isolate the contribution of the decoder, we keep the PIN encoder unchanged and replace only the PIN decoder with two non-iterative alternatives. All variants take the same per-point representations 
+
+R(0) ∈ RN ×D from the PIN encoder as input and output per-point cluster-assignment logits. For a fair comparison, we align model capacity by using the same embedding dimension, number of heads, and feedforward width, and by matching the total number of attention layers in the decoder (counting both self-attention and cross-attention). 
+
+E.2.1 Na¨ ve (SA+MLP) decoder 
+
+The Naïve decoder predicts cluster assignments directly from point embeddings, without maintaining explicit cluster representations. We reuse the self-attention operator SA( ·) defined in Eq. (5) and stack 2L SA blocks (without positional encodings) to refine the point features: 
+
+R(l+1) = SA( R(l)), l = 0 , . . . , 2L − 1, ˜R = R(2 L) ∈ RN ×d.
+
+We use 2L blocks to match the parameter budget of other ablations. We then apply a point-wise two-layer MLP head (hidden size 2d) to produce logits over Kmax clusters for every point: 
+
+ℓ = MLP( ˜R) ∈ RN ×Kmax .
+
+For a dataset with K clusters, we use the first K coordinates ℓ(K) = ( ℓ:,1, ..., ℓ :,K ) ∈ RN ×K and mask the remaining coordinates as invalid. This baseline follows the SA+MLP intuition: stacked self-attention captures point–point interactions, while the MLP produces K-way assignment logits per point. Since clusters are only implicitly represented in the output layer, this baseline does not maintain cluster prototypes. 33 E.2.2 Non-iterative Transformer decoder 
+
+This baseline introduces explicit cluster representations but performs decoding without iterative refinement. We first compute set-aware point features by stacking L self-attention blocks (Eq. (5)) on the input set, without positional encodings: 
+
+R(l+1) = SA 
+
+
+
+R(l)
+
+, l = 0 , . . . , L − 1, R(L) ∈ RN ×d.
+
+We then introduce Kmax learnable cluster prototypes C(0) ∈ RKmax ×d and update them for L layers using (i) prototype self-attention (Eq. (5)) and (ii) prototype-to-data cross-attention CA C←R(·, ·)
+
+(Eq. (6)), both without positional encodings: 
+
+˜C(ℓ) = SA 
+
+
+
+C(ℓ)
+
+, C(ℓ+1) = CA C←R
+
+ ˜C(ℓ), R (L)
+
+, ℓ = 0 , . . . , L − 1.
+
+Given the final prototypes C(L) and encoded point features R(L), we compute data-to-prototype assignment logits using the same projection, normalization, and similarity computation as the main model, producing ℓ ∈ RN ×Kmax . For a dataset with K clusters, we select the first K coordinates to form ℓ(K) ∈ RN ×K and mask the remaining coordinates as invalid. The rest of the pipeline follows the main experiments. 
+
+E.3 CIN ordinal loss ablation 
+
+CIN predicts the number of clusters K, which naturally has an ordinal structure. Our default CIN loss, however, treats K ∈ { 2, . . . , K max } as a categorical label and optimizes a flat multi-class cross-entropy objective. To assess whether explicitly leveraging the ordering of K is beneficial, we replace this objective with an order-aware ordinal logistic regression loss , while keeping the PIN backbone, CIN fingerprint construction, and the overall training protocol unchanged. Concretely, for each candidate K ∈ { 2, . . . , K max }, we compute the same normalized Gram matrix G(K) = 
+
+> 1
+> N
+
+(P (K))⊤P (K) and the same permutation-invariant fingerprint g(K) ∈ RK(K+1) /2 as in App. B.2.2, and concatenate {g(K)}Kmax  
+
+> K=2
+
+into a fixed-length feature vector. Following our decoupled optimization design, we detach ℓ(K) and hence P (K), G(K), and g(K), when forming the input features, so the ordinal logistic regression loss only updates the head parameters and does not backpropagate into PIN. The order-aware CIN head first maps the concatenated fingerprints through an MLP to produce a scalar score CIN Order-aware (X) ∈ R. We then introduce monotonic thresholds {bK }Kmax −1 
+
+> K=2
+
+parameterized by unconstrained variables {δj }Kmax −2 
+
+> j=1
+
+via 
+
+bK =
+
+> K−1
+
+X
+
+> j=1
+
+softplus (δj ), K = 2 , . . . , K max − 1,
+
+which enforces b2 ≤ b3 ≤ · · · ≤ bKmax −1 automatically. With a positive scale s, the ordinal logits are defined as 
+
+ηK (X) = s(CIN Order-aware (X) − bK ), K = 2 , . . . , K max − 1,
+
+where ηK (X) is interpreted as the logit for the binary event Pr( K⋆ > K | X). Given the ground-truth cardinality K⋆, we construct binary targets I[K⋆ > K ] and optimize the average binary cross-entropy across thresholds: 
+
+Lord = 1
+
+Kmax − 2
+
+> Kmax −1
+
+X
+
+> K=2
+
+BCEWithLogits (ηK (X), I[K⋆ > K ]) .
+
+At inference time, we predict ˆK by counting how many thresholds are exceeded: 
+
+ˆK = 2 + 
+
+> Kmax −1
+
+X
+
+> K=2
+
+I[ηK (X) ≥ 0] ,
+
+34 Table 16: CIN loss ablation . Median kMAE on synthetic and real datasets using different CIN losses. CIN loss Synthetic Real Order-aware 1.0 2.5 CE (Ours) 0.0 1.0 
+
+which yields ˆK ∈ { 2, . . . , K max } and respects the natural ordering of K.Tab. 16 reports the median kMAE of TabClustPFN pretrained with order-aware ordinal logistic regression loss. Overall, incorporating ordinal supervision does not yield improvements over the default cross-entropy training of CIN. 35
